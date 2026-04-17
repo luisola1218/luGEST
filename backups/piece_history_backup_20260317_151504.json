@@ -1,0 +1,66 @@
+{
+  "created_at": "2026-03-17T15:15:04.896451",
+  "orc_refs": {
+    "CL0001-TEST-03": {
+      "ref_interna": "CL0001-0002REV00",
+      "ref_externa": "CL0001-TEST-03",
+      "descricao": "AISI 304L 2mm teste",
+      "material": "AISI 304L",
+      "espessura": "2",
+      "preco_unit": 140.0,
+      "operacao": "Corte Laser + Embalamento",
+      "desenho": ""
+    },
+    "CL0002-TEST-01": {
+      "ref_interna": "CL0002-0007REV00",
+      "ref_externa": "CL0002-TEST-01",
+      "descricao": "S275JR 8mm teste",
+      "material": "S275JR",
+      "espessura": "8",
+      "preco_unit": 10.54,
+      "operacao": "Corte Laser + Embalamento",
+      "desenho": ""
+    },
+    "CL0002-TEST-02": {
+      "ref_interna": "CL0002-0010REV00",
+      "ref_externa": "CL0002-TEST-02",
+      "descricao": "S235JR 8mm teste",
+      "material": "S235JR",
+      "espessura": "8",
+      "preco_unit": 158.4,
+      "operacao": "Corte Laser + Embalamento",
+      "desenho": ""
+    },
+    "CL0002-TEST-03": {
+      "ref_interna": "CL0002-0010REV00",
+      "ref_externa": "CL0002-TEST-03",
+      "descricao": "S235JR 8mm teste",
+      "material": "S235JR",
+      "espessura": "8",
+      "preco_unit": 10.54,
+      "operacao": "Corte Laser + Embalamento",
+      "desenho": ""
+    },
+    "CL0001-TEST-01": {
+      "ref_interna": "CL0001-0001REV00",
+      "ref_externa": "CL0001-TEST-01",
+      "descricao": "S235JR 8mm teste",
+      "material": "S235JR",
+      "espessura": "8",
+      "preco_unit": 10.54,
+      "operacao": "Corte Laser + Embalamento",
+      "desenho": ""
+    },
+    "PeçaQuinagem8mm": {
+      "ref_interna": "CL0002-0012REV00",
+      "ref_externa": "PeçaQuinagem8mm",
+      "descricao": "",
+      "material": "S235JR",
+      "espessura": "8",
+      "preco_unit": 1.22,
+      "operacao": "Corte Laser + Quinagem + Embalamento",
+      "desenho": ""
+    }
+  },
+  "peca_hist": {}
+}

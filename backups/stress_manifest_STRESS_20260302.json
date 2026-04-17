@@ -1,0 +1,28 @@
+{
+  "tag": "STRESS_20260302",
+  "created_at": "2026-04-14T10:34:58",
+  "baseline": {
+    "clientes": 13,
+    "orcamentos": 3,
+    "encomendas": 2,
+    "plano": 1,
+    "notas_encomenda": 1,
+    "materiais": 35,
+    "produtos": 10,
+    "produtos_mov": 2
+  },
+  "tagged_counts": {
+    "clientes_tag": 500,
+    "produtos_tag": 140,
+    "materiais_tag": 60,
+    "orcamentos_tag": 500,
+    "encomendas_tag": 500,
+    "encomendas_tag_concluidas": 0,
+    "notas_encomenda_tag": 100,
+    "plano_tag": 500,
+    "produtos_mov_tag": 300
+  },
+  "save_elapsed_sec": 6.806,
+  "total_elapsed_sec": 7.822,
+  "notes": "Apagar apenas com script de cleanup usando o mesmo TAG."
+}

@@ -1,0 +1,31 @@
+ATUALIZACAO SEGURA DO LUGEST EM CLIENTE COM DADOS
+=================================================
+
+NAO importar novamente:
+- lugest.sql
+- lugest_instalacao_unica.sql
+
+Esses ficheiros sao para instalacao nova.
+
+Para atualizar um cliente ja em uso:
+
+1. Fazer backup
+   powershell -ExecutionPolicy Bypass -File .\backup_lugest_mysql.ps1 -DbHost 127.0.0.1 -Port 3306 -User lugest_user -Password "PASSWORD_APP" -Database lugest -Label pre_update
+
+2. Ver estado das migracoes
+   powershell -ExecutionPolicy Bypass -File .\apply_lugest_migrations.ps1 -DbHost 127.0.0.1 -Port 3306 -AdminUser root -AdminPassword "PASSWORD_ADMIN" -Database lugest -Status
+
+3. Se a base ja estiver alinhada com a versao atual mas ainda sem historico:
+   powershell -ExecutionPolicy Bypass -File .\apply_lugest_migrations.ps1 -DbHost 127.0.0.1 -Port 3306 -AdminUser root -AdminPassword "PASSWORD_ADMIN" -Database lugest -BaselineCurrent
+
+4. Nas atualizacoes seguintes:
+   powershell -ExecutionPolicy Bypass -File .\apply_lugest_migrations.ps1 -DbHost 127.0.0.1 -Port 3306 -AdminUser root -AdminPassword "PASSWORD_ADMIN" -Database lugest
+
+5. Validar
+   powershell -ExecutionPolicy Bypass -File .\validate_lugest_mysql.ps1 -DbHost 127.0.0.1 -Port 3306 -User lugest_user -Password "PASSWORD_APP" -Database lugest
+
+SO usar -LegacyApplyAll quando:
+- a base e antiga
+- ainda nao tem historico de migracoes
+- e ainda precisa correr todos os patch_*.sql
+- ja existe backup feito

@@ -1,0 +1,28 @@
+{
+  "tag": "STRESS_20260302",
+  "executed_at": "2026-04-14T10:55:16",
+  "before": {
+    "clientes_tag": 500,
+    "produtos_tag": 140,
+    "materiais_tag": 60,
+    "orcamentos_tag": 500,
+    "encomendas_tag": 500,
+    "notas_encomenda_tag": 100,
+    "plano_tag": 500,
+    "produtos_mov_tag": 300,
+    "stock_log_tag": 100,
+    "fornecedores_tag": 1
+  },
+  "after": {
+    "clientes_tag": 0,
+    "produtos_tag": 0,
+    "materiais_tag": 0,
+    "orcamentos_tag": 0,
+    "encomendas_tag": 0,
+    "notas_encomenda_tag": 0,
+    "plano_tag": 0,
+    "produtos_mov_tag": 0,
+    "stock_log_tag": 0,
+    "fornecedores_tag": 0
+  }
+}

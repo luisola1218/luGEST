@@ -1,0 +1,6 @@
+{
+  "dart.flutterHotReloadOnSave": "all",
+  "editor.formatOnSave": true,
+    "dart.flutterSdkPath": "C:\\Users\\engenharia\\.puro\\envs\\stable\\flutter",
+    "dart.sdkPath": "C:\\Users\\engenharia\\.puro\\envs\\stable\\flutter\\bin\\cache\\dart-sdk"
+}

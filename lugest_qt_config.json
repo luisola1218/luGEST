@@ -1,0 +1,1282 @@
+{
+  "ui_options": {
+    "operator_supervisor_password": "pbkdf2_sha256$260000$Dczo8e8M2yEItuYtcXoFrw$vu-Hulnz4b-uXf06C1gJshEomlwANc4maY-dIpDSXMo",
+    "operator_show_client_name": true
+  },
+  "user_profiles": {
+    "luisola": {
+      "posto": "Geral",
+      "active": true,
+      "menu_permissions": {
+        "home": true,
+        "stock_dashboard": true,
+        "materials": true,
+        "products": true,
+        "clients": true,
+        "suppliers": true,
+        "orders": true,
+        "quotes": true,
+        "planning": true,
+        "operator": true,
+        "opp": true,
+        "shipping": true,
+        "purchase_notes": true,
+        "pulse": true,
+        "avarias": true
+      }
+    },
+    "test": {
+      "posto": "Laser 1",
+      "active": true,
+      "menu_permissions": {
+        "home": false,
+        "stock_dashboard": false,
+        "materials": true,
+        "products": false,
+        "clients": false,
+        "suppliers": false,
+        "orders": false,
+        "quotes": false,
+        "planning": true,
+        "operator": true,
+        "opp": true,
+        "shipping": false,
+        "purchase_notes": false,
+        "pulse": false,
+        "avarias": false
+      }
+    }
+  },
+  "material_assistant_feedback": {},
+  "material_assistant_checks": {
+    "BARCELBAL0001|S235JR|8|AMD-ATL08-A|reserva": {
+      "sep": false,
+      "conf": false,
+      "updated_at": "2026-04-02T09:50:11"
+    }
+  },
+  "pulse_plan_delay_reasons": {},
+  "laser_quote": {
+    "active_machine": "BLT641 12kW",
+    "active_commercial": "Laser Oficina",
+    "layer_rules": {
+      "mark_patterns": [
+        "mark",
+        "scribe",
+        "engrave",
+        "grav",
+        "texto",
+        "text",
+        "txt"
+      ],
+      "ignore_patterns": [
+        "fold",
+        "bend",
+        "guide",
+        "construction",
+        "dim",
+        "assist",
+        "layer0-ignore"
+      ]
+    },
+    "nesting": {
+      "default_part_spacing_mm": 5.0,
+      "default_edge_margin_mm": 5.0,
+      "allow_rotate": true,
+      "auto_select_sheet": false,
+      "use_stock_first": true,
+      "allow_purchase_fallback": true,
+      "shape_aware": true,
+      "shape_grid_mm": 20.0,
+      "common_line_estimate": true,
+      "common_line_tolerance_mm": 1.0,
+      "lead_optimization": true,
+      "lead_optimization_pct": 8.0,
+      "sheet_profiles": [
+        {
+          "name": "1000 x 2000",
+          "width_mm": 2000.0,
+          "height_mm": 1000.0,
+          "area_mm2": 2000000.0,
+          "source_kind": "purchase",
+          "source_label": "1000 x 2000",
+          "material_id": "",
+          "lote": "",
+          "local": "",
+          "quantity_available": 0,
+          "is_retalho": false,
+          "p_compra": 0.0,
+          "peso_unid": 0.0,
+          "outer_polygons": [],
+          "hole_polygons": []
+        },
+        {
+          "name": "1250 x 2500",
+          "width_mm": 2500.0,
+          "height_mm": 1250.0,
+          "area_mm2": 3125000.0,
+          "source_kind": "purchase",
+          "source_label": "1250 x 2500",
+          "material_id": "",
+          "lote": "",
+          "local": "",
+          "quantity_available": 0,
+          "is_retalho": false,
+          "p_compra": 0.0,
+          "peso_unid": 0.0,
+          "outer_polygons": [],
+          "hole_polygons": []
+        },
+        {
+          "name": "1500 x 3000",
+          "width_mm": 3000.0,
+          "height_mm": 1500.0,
+          "area_mm2": 4500000.0,
+          "source_kind": "purchase",
+          "source_label": "1500 x 3000",
+          "material_id": "",
+          "lote": "",
+          "local": "",
+          "quantity_available": 0,
+          "is_retalho": false,
+          "p_compra": 0.0,
+          "peso_unid": 0.0,
+          "outer_polygons": [],
+          "hole_polygons": []
+        },
+        {
+          "name": "2000 x 4000",
+          "width_mm": 4000.0,
+          "height_mm": 2000.0,
+          "area_mm2": 8000000.0,
+          "source_kind": "purchase",
+          "source_label": "2000 x 4000",
+          "material_id": "",
+          "lote": "",
+          "local": "",
+          "quantity_available": 0,
+          "is_retalho": false,
+          "p_compra": 0.0,
+          "peso_unid": 0.0,
+          "outer_polygons": [],
+          "hole_polygons": []
+        },
+        {
+          "name": "3007x1507",
+          "width_mm": 3007.0,
+          "height_mm": 1507.0,
+          "area_mm2": 4531549.0,
+          "source_kind": "purchase",
+          "source_label": "3007x1507",
+          "material_id": "",
+          "lote": "",
+          "local": "",
+          "quantity_available": 0,
+          "is_retalho": false,
+          "p_compra": 0.0,
+          "peso_unid": 0.0,
+          "outer_polygons": [],
+          "hole_polygons": []
+        }
+      ]
+    },
+    "machine_profiles": {
+      "BLT641 12kW": {
+        "name": "BLT641 12kW",
+        "motion": {
+          "rapid_speed_mm_s": 200.0,
+          "travel_acc_mm_s2": 2000.0,
+          "cut_acc_mm_s2": 2000.0,
+          "mark_speed_m_min": 18.0,
+          "effective_speed_factor_pct": 92.0,
+          "lead_in_mm": 2.0,
+          "lead_out_mm": 2.0,
+          "lead_move_speed_mm_s": 3.0,
+          "pierce_base_ms": 400.0,
+          "pierce_per_mm_ms": 35.0,
+          "first_gas_delay_ms": 200.0,
+          "gas_delay_ms": 0.0,
+          "motion_overhead_pct": 4.0
+        },
+        "materials": {
+          "Aco carbono": {
+            "density_kg_m3": 7874.0,
+            "default_gas": "Oxigenio",
+            "gases": {
+              "Oxigenio": {
+                "rows": [
+                  {
+                    "thickness_mm": 1.0,
+                    "speed_min_m_min": 9.0,
+                    "speed_max_m_min": 12.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 3.0,
+                    "gas_pressure_bar_max": 3.0,
+                    "focus_mm": 3.0,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 1.0
+                  },
+                  {
+                    "thickness_mm": 2.0,
+                    "speed_min_m_min": 5.0,
+                    "speed_max_m_min": 6.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 3.0,
+                    "gas_pressure_bar_max": 3.0,
+                    "focus_mm": 3.0,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 2.0
+                  },
+                  {
+                    "thickness_mm": 3.0,
+                    "speed_min_m_min": 3.6,
+                    "speed_max_m_min": 4.5,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 4.0,
+                    "gas_pressure_bar_max": 4.0,
+                    "focus_mm": 6.5,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 3.0
+                  },
+                  {
+                    "thickness_mm": 4.0,
+                    "speed_min_m_min": 3.3,
+                    "speed_max_m_min": 3.6,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 0.6,
+                    "gas_pressure_bar_max": 0.6,
+                    "focus_mm": 7.0,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 3.0
+                  },
+                  {
+                    "thickness_mm": 5.0,
+                    "speed_min_m_min": 3.0,
+                    "speed_max_m_min": 3.3,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 0.6,
+                    "gas_pressure_bar_max": 0.6,
+                    "focus_mm": 7.0,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 4.0
+                  },
+                  {
+                    "thickness_mm": 6.0,
+                    "speed_min_m_min": 2.8,
+                    "speed_max_m_min": 3.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 0.65,
+                    "gas_pressure_bar_max": 0.65,
+                    "focus_mm": 7.5,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 4.0
+                  },
+                  {
+                    "thickness_mm": 8.0,
+                    "speed_min_m_min": 2.4,
+                    "speed_max_m_min": 2.6,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 0.7,
+                    "gas_pressure_bar_max": 0.7,
+                    "focus_mm": 8.0,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 5.0
+                  },
+                  {
+                    "thickness_mm": 10.0,
+                    "speed_min_m_min": 1.9,
+                    "speed_max_m_min": 2.2,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 0.75,
+                    "gas_pressure_bar_max": 0.75,
+                    "focus_mm": 8.5,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 65.0
+                  },
+                  {
+                    "thickness_mm": 12.0,
+                    "speed_min_m_min": 1.8,
+                    "speed_max_m_min": 2.1,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 0.75,
+                    "gas_pressure_bar_max": 0.75,
+                    "focus_mm": 9.0,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 7.0
+                  },
+                  {
+                    "thickness_mm": 14.0,
+                    "speed_min_m_min": 1.7,
+                    "speed_max_m_min": 2.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 0.75,
+                    "gas_pressure_bar_max": 0.75,
+                    "focus_mm": 11.0,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 8.0
+                  },
+                  {
+                    "thickness_mm": 16.0,
+                    "speed_min_m_min": 1.6,
+                    "speed_max_m_min": 1.8,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 0.8,
+                    "gas_pressure_bar_max": 0.8,
+                    "focus_mm": 12.5,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 96.0
+                  },
+                  {
+                    "thickness_mm": 20.0,
+                    "speed_min_m_min": 1.3,
+                    "speed_max_m_min": 1.5,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 0.85,
+                    "gas_pressure_bar_max": 0.85,
+                    "focus_mm": 13.0,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 22.0,
+                    "speed_min_m_min": 1.2,
+                    "speed_max_m_min": 1.4,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 0.85,
+                    "gas_pressure_bar_max": 0.85,
+                    "focus_mm": 13.0,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 25.0,
+                    "speed_min_m_min": 1.0,
+                    "speed_max_m_min": 1.3,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 0.8,
+                    "gas_pressure_bar_max": 1.0,
+                    "focus_mm": 14.0,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 30.0,
+                    "speed_min_m_min": 0.5,
+                    "speed_max_m_min": 0.8,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 0.8,
+                    "gas_pressure_bar_max": 1.1,
+                    "focus_mm": 16.0,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 35.0,
+                    "speed_min_m_min": 0.4,
+                    "speed_max_m_min": 0.6,
+                    "nozzle_distance_mm": 1.2,
+                    "gas_pressure_bar_min": 0.8,
+                    "gas_pressure_bar_max": 1.2,
+                    "focus_mm": 16.5,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 40.0,
+                    "speed_min_m_min": 0.2,
+                    "speed_max_m_min": 0.4,
+                    "nozzle_distance_mm": 1.2,
+                    "gas_pressure_bar_min": 0.8,
+                    "gas_pressure_bar_max": 1.3,
+                    "focus_mm": 17.0,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 45.0,
+                    "speed_min_m_min": 0.1,
+                    "speed_max_m_min": 0.3,
+                    "nozzle_distance_mm": 1.2,
+                    "gas_pressure_bar_min": 0.8,
+                    "gas_pressure_bar_max": 1.3,
+                    "focus_mm": 17.0,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 50.0,
+                    "speed_min_m_min": 0.1,
+                    "speed_max_m_min": 0.2,
+                    "nozzle_distance_mm": 1.2,
+                    "gas_pressure_bar_min": 0.8,
+                    "gas_pressure_bar_max": 1.4,
+                    "focus_mm": 17.5,
+                    "nozzle": "",
+                    "duty_pct": 0.0,
+                    "frequency_hz": 0.0,
+                    "power_w": 12.0
+                  }
+                ]
+              }
+            }
+          },
+          "Aco inox": {
+            "density_kg_m3": 7930.0,
+            "default_gas": "Oxigenio",
+            "gases": {
+              "Azoto": {
+                "rows": [
+                  {
+                    "thickness_mm": 1.0,
+                    "speed_min_m_min": 30.0,
+                    "speed_max_m_min": 50.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": 0.0,
+                    "nozzle": "3.0",
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 2.0,
+                    "speed_min_m_min": 30.0,
+                    "speed_max_m_min": 38.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -0.5,
+                    "nozzle": "3.0",
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 3.0,
+                    "speed_min_m_min": 23.0,
+                    "speed_max_m_min": 30.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -0.5,
+                    "nozzle": "3.0",
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 4.0,
+                    "speed_min_m_min": 20.0,
+                    "speed_max_m_min": 25.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -1.0,
+                    "nozzle": "3.0",
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 5.0,
+                    "speed_min_m_min": 14.0,
+                    "speed_max_m_min": 18.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -1.5,
+                    "nozzle": "3.0",
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 6.0,
+                    "speed_min_m_min": 12.0,
+                    "speed_max_m_min": 15.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -2.0,
+                    "nozzle": "3.0",
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 8.0,
+                    "speed_min_m_min": 9.0,
+                    "speed_max_m_min": 11.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -3.0,
+                    "nozzle": "3.0",
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 10.0,
+                    "speed_min_m_min": 6.0,
+                    "speed_max_m_min": 8.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -4.0,
+                    "nozzle": "5.0",
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 12.0,
+                    "speed_min_m_min": 4.5,
+                    "speed_max_m_min": 5.5,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -5.0,
+                    "nozzle": "5.0",
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 14.0,
+                    "speed_min_m_min": 3.0,
+                    "speed_max_m_min": 3.8,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -7.5,
+                    "nozzle": "5.0",
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 16.0,
+                    "speed_min_m_min": 2.2,
+                    "speed_max_m_min": 2.6,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 7.0,
+                    "gas_pressure_bar_max": 7.0,
+                    "focus_mm": -9.0,
+                    "nozzle": "7.0",
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 20.0,
+                    "speed_min_m_min": 1.6,
+                    "speed_max_m_min": 1.8,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 7.0,
+                    "gas_pressure_bar_max": 7.0,
+                    "focus_mm": -12.0,
+                    "nozzle": "7.0",
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 25.0,
+                    "speed_min_m_min": 0.4,
+                    "speed_max_m_min": 1.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 7.0,
+                    "gas_pressure_bar_max": 7.0,
+                    "focus_mm": -15.0,
+                    "nozzle": "7.0",
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 30.0,
+                    "speed_min_m_min": 0.35,
+                    "speed_max_m_min": 0.6,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 7.0,
+                    "gas_pressure_bar_max": 7.0,
+                    "focus_mm": -17.0,
+                    "nozzle": "7.0",
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 35.0,
+                    "speed_min_m_min": 0.2,
+                    "speed_max_m_min": 0.4,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 7.0,
+                    "gas_pressure_bar_max": 7.0,
+                    "focus_mm": -20.0,
+                    "nozzle": "7.0",
+                    "duty_pct": 65.0,
+                    "frequency_hz": 2.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 40.0,
+                    "speed_min_m_min": 0.15,
+                    "speed_max_m_min": 0.3,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 7.0,
+                    "gas_pressure_bar_max": 7.0,
+                    "focus_mm": -25.0,
+                    "nozzle": "7.0",
+                    "duty_pct": 60.0,
+                    "frequency_hz": 275.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 45.0,
+                    "speed_min_m_min": 0.1,
+                    "speed_max_m_min": 0.2,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 7.0,
+                    "gas_pressure_bar_max": 7.0,
+                    "focus_mm": -30.0,
+                    "nozzle": "7.0",
+                    "duty_pct": 75.0,
+                    "frequency_hz": 275.0,
+                    "power_w": 12.0
+                  },
+                  {
+                    "thickness_mm": 50.0,
+                    "speed_min_m_min": 0.1,
+                    "speed_max_m_min": 0.2,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 7.0,
+                    "gas_pressure_bar_max": 7.0,
+                    "focus_mm": -34.0,
+                    "nozzle": "7.0",
+                    "duty_pct": 55.0,
+                    "frequency_hz": 125.0,
+                    "power_w": 12.0
+                  }
+                ]
+              },
+              "Ar comprimido": {
+                "rows": [
+                  {
+                    "thickness_mm": 1,
+                    "speed_min_m_min": 30.0,
+                    "speed_max_m_min": 50.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": 0.0,
+                    "nozzle": "3.0",
+                    "power_w": 12000,
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5000.0
+                  },
+                  {
+                    "thickness_mm": 2,
+                    "speed_min_m_min": 30.0,
+                    "speed_max_m_min": 38.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -0.5,
+                    "nozzle": "3.0",
+                    "power_w": 12000,
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5000.0
+                  },
+                  {
+                    "thickness_mm": 3,
+                    "speed_min_m_min": 24.0,
+                    "speed_max_m_min": 32.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -0.5,
+                    "nozzle": "3.0",
+                    "power_w": 12000,
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5000.0
+                  },
+                  {
+                    "thickness_mm": 4,
+                    "speed_min_m_min": 22.0,
+                    "speed_max_m_min": 26.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -1.0,
+                    "nozzle": "3.0",
+                    "power_w": 12000,
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5000.0
+                  },
+                  {
+                    "thickness_mm": 5,
+                    "speed_min_m_min": 16.0,
+                    "speed_max_m_min": 20.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -1.5,
+                    "nozzle": "3.0",
+                    "power_w": 12000,
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5000.0
+                  },
+                  {
+                    "thickness_mm": 6,
+                    "speed_min_m_min": 12.5,
+                    "speed_max_m_min": 15.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -2.0,
+                    "nozzle": "3.0",
+                    "power_w": 12000,
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5000.0
+                  },
+                  {
+                    "thickness_mm": 8,
+                    "speed_min_m_min": 10.0,
+                    "speed_max_m_min": 12.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -3.0,
+                    "nozzle": "3.0",
+                    "power_w": 12000,
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5000.0
+                  },
+                  {
+                    "thickness_mm": 10,
+                    "speed_min_m_min": 6.5,
+                    "speed_max_m_min": 8.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -4.0,
+                    "nozzle": "5.0",
+                    "power_w": 12000,
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5000.0
+                  },
+                  {
+                    "thickness_mm": 12,
+                    "speed_min_m_min": 4.6,
+                    "speed_max_m_min": 5.6,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -5.0,
+                    "nozzle": "5.0",
+                    "power_w": 12000,
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5000.0
+                  },
+                  {
+                    "thickness_mm": 14,
+                    "speed_min_m_min": 3.2,
+                    "speed_max_m_min": 4.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 6.0,
+                    "gas_pressure_bar_max": 6.0,
+                    "focus_mm": -7.5,
+                    "nozzle": "5.0",
+                    "power_w": 12000,
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5000.0
+                  },
+                  {
+                    "thickness_mm": 16,
+                    "speed_min_m_min": 2.3,
+                    "speed_max_m_min": 2.8,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 7.0,
+                    "gas_pressure_bar_max": 7.0,
+                    "focus_mm": -9.0,
+                    "nozzle": "7.0",
+                    "power_w": 12000,
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5000.0
+                  },
+                  {
+                    "thickness_mm": 20,
+                    "speed_min_m_min": 1.6,
+                    "speed_max_m_min": 2.0,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 7.0,
+                    "gas_pressure_bar_max": 7.0,
+                    "focus_mm": -12.0,
+                    "nozzle": "7.0",
+                    "power_w": 12000,
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5000.0
+                  },
+                  {
+                    "thickness_mm": 25,
+                    "speed_min_m_min": 0.7,
+                    "speed_max_m_min": 1.1,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 7.0,
+                    "gas_pressure_bar_max": 7.0,
+                    "focus_mm": -15.0,
+                    "nozzle": "7.0",
+                    "power_w": 12000,
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5000.0
+                  },
+                  {
+                    "thickness_mm": 30,
+                    "speed_min_m_min": 0.5,
+                    "speed_max_m_min": 0.6,
+                    "nozzle_distance_mm": 0.8,
+                    "gas_pressure_bar_min": 7.0,
+                    "gas_pressure_bar_max": 7.0,
+                    "focus_mm": -17.0,
+                    "nozzle": "7.0",
+                    "power_w": 12000,
+                    "duty_pct": 100.0,
+                    "frequency_hz": 5000.0
+                  }
+                ]
+              },
+              "Oxigenio": {
+                "rows": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "commercial_profiles": {
+      "Laser Oficina": {
+        "name": "Laser Oficina",
+        "currency": "EUR",
+        "cost_mode": "hybrid_max",
+        "minimum_line_eur": 0.0,
+        "margin_pct": 1.0,
+        "setup_time_min": 1.0,
+        "handling_eur": 0.0,
+        "material_utilization_pct": 79.0,
+        "fallback_fill_pct": 62.0,
+        "use_scrap_credit": true,
+        "series_pricing": {
+          "tiers": [
+            {
+              "key": "tier_1",
+              "label": "Peca unica",
+              "qty_min": 1,
+              "qty_max": 10,
+              "margin_delta_pct": 6.0,
+              "setup_multiplier": 1.6
+            },
+            {
+              "key": "tier_2",
+              "label": "Pequena serie",
+              "qty_min": 10,
+              "qty_max": 30,
+              "margin_delta_pct": 2.0,
+              "setup_multiplier": 1.15
+            },
+            {
+              "key": "tier_3",
+              "label": "Media serie",
+              "qty_min": 30,
+              "qty_max": 150,
+              "margin_delta_pct": 0.0,
+              "setup_multiplier": 1.0
+            },
+            {
+              "key": "tier_4",
+              "label": "Grande serie",
+              "qty_min": 150,
+              "qty_max": 999999,
+              "margin_delta_pct": -3.0,
+              "setup_multiplier": 0.8
+            }
+          ]
+        },
+        "materials": {
+          "Aco carbono": {
+            "density_kg_m3": 7874.0,
+            "price_per_kg": 1.0,
+            "scrap_credit_per_kg": 1.0
+          },
+          "Aco inox": {
+            "density_kg_m3": 7930.0,
+            "price_per_kg": 3.0,
+            "scrap_credit_per_kg": 3.0
+          }
+        },
+        "material_catalog": {
+          "Aco carbono": {
+            "S235JR": {
+              "price_per_kg": 1.0,
+              "scrap_credit_per_kg": 0.9
+            },
+            "S275JR": {
+              "price_per_kg": 1.0,
+              "scrap_credit_per_kg": 0.9
+            },
+            "S355JR": {
+              "price_per_kg": 1.3,
+              "scrap_credit_per_kg": 1.2
+            },
+            "S355J2+N": {
+              "price_per_kg": 1.3,
+              "scrap_credit_per_kg": 1.2
+            },
+            "S355MC": {
+              "price_per_kg": 1.3,
+              "scrap_credit_per_kg": 1.2
+            },
+            "S420MC": {
+              "price_per_kg": 1.3,
+              "scrap_credit_per_kg": 1.2
+            },
+            "DX51D+Z": {
+              "price_per_kg": 1.3,
+              "scrap_credit_per_kg": 1.2
+            },
+            "DX53D+Z": {
+              "price_per_kg": 1.3,
+              "scrap_credit_per_kg": 1.2
+            },
+            "DD11": {
+              "price_per_kg": 1.3,
+              "scrap_credit_per_kg": 1.2
+            },
+            "DC01": {
+              "price_per_kg": 1.3,
+              "scrap_credit_per_kg": 1.2
+            },
+            "CORTEN": {
+              "price_per_kg": 1.3,
+              "scrap_credit_per_kg": 1.2
+            },
+            "S355JOW": {
+              "price_per_kg": 1.3,
+              "scrap_credit_per_kg": 1.2
+            },
+            "HARDOX 400": {
+              "price_per_kg": 1.3,
+              "scrap_credit_per_kg": 1.2
+            },
+            "HARDOX 450": {
+              "price_per_kg": 1.3,
+              "scrap_credit_per_kg": 1.2
+            },
+            "DX51D": {
+              "price_per_kg": 1.3,
+              "scrap_credit_per_kg": 1.2
+            },
+            "HARDOX": {
+              "price_per_kg": 1.3,
+              "scrap_credit_per_kg": 1.2
+            }
+          },
+          "Aco inox": {
+            "INOX304 2B": {
+              "price_per_kg": 2.85,
+              "scrap_credit_per_kg": 2.75
+            },
+            "INOX304 BA": {
+              "price_per_kg": 3.15,
+              "scrap_credit_per_kg": 3.05
+            },
+            "INOX304 Escovado": {
+              "price_per_kg": 3.15,
+              "scrap_credit_per_kg": 3.05
+            },
+            "INOX304L 2B": {
+              "price_per_kg": 2.65,
+              "scrap_credit_per_kg": 2.55
+            },
+            "INOX316 2B": {
+              "price_per_kg": 0.0,
+              "scrap_credit_per_kg": 0.0
+            },
+            "INOX316L 2B": {
+              "price_per_kg": 3.1,
+              "scrap_credit_per_kg": 3.0
+            },
+            "INOX316L Escovado": {
+              "price_per_kg": 3.15,
+              "scrap_credit_per_kg": 3.05
+            },
+            "INOX430 2B": {
+              "price_per_kg": 2.8,
+              "scrap_credit_per_kg": 2.7
+            },
+            "INOX430 BA": {
+              "price_per_kg": 0.0,
+              "scrap_credit_per_kg": 0.0
+            },
+            "AISI304": {
+              "price_per_kg": 0.0,
+              "scrap_credit_per_kg": 0.0
+            },
+            "AISI304L": {
+              "price_per_kg": 2.65,
+              "scrap_credit_per_kg": 2.55
+            },
+            "AISI316": {
+              "price_per_kg": 3.1,
+              "scrap_credit_per_kg": 3.0
+            },
+            "AISI316L": {
+              "price_per_kg": 3.1,
+              "scrap_credit_per_kg": 3.0
+            },
+            "INOX316 Escovado": {
+              "price_per_kg": 3.15,
+              "scrap_credit_per_kg": 3.05
+            }
+          }
+        },
+        "rates": {
+          "cut_per_m_eur": 0.5,
+          "defilm_per_m_eur": 0.5,
+          "marking_per_m_eur": 0.61,
+          "pierce_eur": 0.1,
+          "machine_hour_eur": 80.0
+        },
+        "material_catalog_hidden": {
+          "Aco inox": [
+            "1.4016",
+            "1.4301",
+            "1.4307",
+            "1.4401",
+            "1.4404"
+          ]
+        }
+      }
+    },
+    "material_subtypes": {
+      "Aco carbono": [
+        "S235JR",
+        "S275JR",
+        "S355JR",
+        "S355J2+N",
+        "S355MC",
+        "S420MC",
+        "DX51D+Z",
+        "DX53D+Z",
+        "DD11",
+        "DC01",
+        "CORTEN",
+        "S355JOW",
+        "HARDOX 400",
+        "HARDOX 450",
+        "DX51D",
+        "HARDOX"
+      ],
+      "Aco inox": [
+        "INOX304 2B",
+        "INOX304 BA",
+        "INOX304 Escovado",
+        "INOX304L 2B",
+        "INOX316 2B",
+        "INOX316L 2B",
+        "INOX316L Escovado",
+        "INOX430 2B",
+        "INOX430 BA",
+        "AISI304",
+        "AISI304L",
+        "AISI316",
+        "AISI316L",
+        "INOX316 Escovado"
+      ]
+    },
+    "material_subtypes_hidden": {
+      "Aco inox": [
+        "1.4016",
+        "1.4301",
+        "1.4307",
+        "1.4401",
+        "1.4404"
+      ]
+    }
+  },
+  "operation_costing": {
+    "active_profile": "Base",
+    "profiles": {
+      "Base": {
+        "Corte Laser": {
+          "pricing_mode": "manual",
+          "driver_label": "Programa",
+          "default_units": 1.0,
+          "setup_min": 0.0,
+          "unit_time_min": 0.0,
+          "hour_rate_eur": 0.0,
+          "fixed_unit_eur": 0.0,
+          "min_unit_eur": 0.0,
+          "extra_unit_eur": 0.0,
+          "requires_driver_input": false,
+          "note": "Usar o motor de corte laser ou detalhe manual quando esta operacao aparece combinada com outras."
+        },
+        "Embalamento": {
+          "pricing_mode": "per_piece",
+          "driver_label": "Volumes/peca",
+          "default_units": 1.0,
+          "setup_min": 2.0,
+          "unit_time_min": 0.8,
+          "hour_rate_eur": 24.0,
+          "fixed_unit_eur": 0.0,
+          "min_unit_eur": 0.25,
+          "extra_unit_eur": 0.0,
+          "requires_driver_input": false,
+          "note": ""
+        },
+        "Lacagem": {
+          "pricing_mode": "per_area_m2",
+          "driver_label": "m2/peca",
+          "default_units": 1.0,
+          "setup_min": 6.0,
+          "unit_time_min": 0.0,
+          "hour_rate_eur": 0.0,
+          "fixed_unit_eur": 14.0,
+          "min_unit_eur": 0.0,
+          "extra_unit_eur": 0.0,
+          "requires_driver_input": false,
+          "note": ""
+        },
+        "Maquinacao": {
+          "pricing_mode": "per_feature",
+          "driver_label": "Operacoes/peca",
+          "default_units": 1.0,
+          "setup_min": 12.0,
+          "unit_time_min": 3.0,
+          "hour_rate_eur": 55.0,
+          "fixed_unit_eur": 0.0,
+          "min_unit_eur": 0.0,
+          "extra_unit_eur": 0.0,
+          "requires_driver_input": true,
+          "note": ""
+        },
+        "Montagem": {
+          "pricing_mode": "per_piece",
+          "driver_label": "Operacoes/peca",
+          "default_units": 1.0,
+          "setup_min": 5.0,
+          "unit_time_min": 2.5,
+          "hour_rate_eur": 30.0,
+          "fixed_unit_eur": 0.0,
+          "min_unit_eur": 0.0,
+          "extra_unit_eur": 0.0,
+          "requires_driver_input": false,
+          "note": ""
+        },
+        "Pintura": {
+          "pricing_mode": "manual",
+          "driver_label": "Qtd./peca",
+          "default_units": 1.0,
+          "setup_min": 0.0,
+          "unit_time_min": 0.0,
+          "hour_rate_eur": 0.0,
+          "fixed_unit_eur": 0.0,
+          "min_unit_eur": 0.0,
+          "extra_unit_eur": 0.0,
+          "requires_driver_input": false,
+          "note": ""
+        },
+        "Quinagem": {
+          "pricing_mode": "per_feature",
+          "driver_label": "Dobras/peca",
+          "default_units": 1.0,
+          "setup_min": 3.0,
+          "unit_time_min": 0.35,
+          "hour_rate_eur": 42.0,
+          "fixed_unit_eur": 0.0,
+          "min_unit_eur": 0.0,
+          "extra_unit_eur": 0.0,
+          "requires_driver_input": true,
+          "note": ""
+        },
+        "Roscagem": {
+          "pricing_mode": "per_feature",
+          "driver_label": "Roscas/peca",
+          "default_units": 1.0,
+          "setup_min": 4.0,
+          "unit_time_min": 0.2,
+          "hour_rate_eur": 38.0,
+          "fixed_unit_eur": 0.0,
+          "min_unit_eur": 0.0,
+          "extra_unit_eur": 0.0,
+          "requires_driver_input": true,
+          "note": ""
+        },
+        "Serralharia": {
+          "pricing_mode": "per_piece",
+          "driver_label": "Operacoes/peca",
+          "default_units": 1.0,
+          "setup_min": 10.0,
+          "unit_time_min": 4.0,
+          "hour_rate_eur": 40.0,
+          "fixed_unit_eur": 0.0,
+          "min_unit_eur": 0.0,
+          "extra_unit_eur": 0.0,
+          "requires_driver_input": true,
+          "note": ""
+        },
+        "Soldadura": {
+          "pricing_mode": "per_feature",
+          "driver_label": "Pontos cordoes/peca",
+          "default_units": 1.0,
+          "setup_min": 8.0,
+          "unit_time_min": 1.5,
+          "hour_rate_eur": 42.0,
+          "fixed_unit_eur": 0.0,
+          "min_unit_eur": 0.0,
+          "extra_unit_eur": 0.0,
+          "requires_driver_input": true,
+          "note": ""
+        }
+      }
+    }
+  }
+}

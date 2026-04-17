@@ -1,0 +1,1241 @@
+{
+  "orcamentos": [
+    {
+      "numero": "ORC-2026-0001",
+      "data": "2026-03-13T15:32:33",
+      "estado": "Convertido em Encomenda",
+      "cliente": {
+        "codigo": "CL0002",
+        "nome": "Gadoor",
+        "empresa": "Gadoor",
+        "nif": "",
+        "morada": "",
+        "contacto": "",
+        "email": ""
+      },
+      "linhas": [
+        {
+          "ref_interna": "CL0002-0010REV00",
+          "ref_externa": "CL0002-TEST-02",
+          "descricao": "S235JR 8mm teste",
+          "material": "S235JR",
+          "espessura": "8",
+          "operacao": "Corte Laser + Embalamento",
+          "of": "OF-2026-0013",
+          "tempo_peca_min": 0.0,
+          "qtd": 10.0,
+          "preco_unit": 158.4,
+          "total": 1584.0,
+          "desenho": ""
+        },
+        {
+          "ref_interna": "CL0002-0011REV00",
+          "ref_externa": "CL0002-TEST-03",
+          "descricao": "S235JR 8mm teste",
+          "material": "S235JR",
+          "espessura": "8",
+          "operacao": "Corte Laser + Embalamento",
+          "of": "OF-2026-0014",
+          "tempo_peca_min": 0.0,
+          "qtd": 10.0,
+          "preco_unit": 10.54,
+          "total": 105.4,
+          "desenho": ""
+        }
+      ],
+      "iva_perc": 23.0,
+      "preco_transporte": 79.03,
+      "subtotal": 1768.43,
+      "total": 2175.17,
+      "numero_encomenda": "BARCELBAL0004",
+      "executado_por": "Claudio",
+      "nota_transporte": "Transporte a Nosso Cargo",
+      "notas_pdf": "- Foi considerado: Corte Laser.\n- Foi considerado: Roscagem.\n- Foi considerado: Soldadura.\n- Foi considerado: Quinagem.\n- Foi considerado: Furo Manual.",
+      "nota_cliente": "LuisFinaltest"
+    },
+    {
+      "numero": "ORC-2026-0002",
+      "data": "2026-03-16T12:32:15",
+      "estado": "Convertido em Encomenda",
+      "cliente": {
+        "codigo": "CL0002",
+        "nome": "Gadoor",
+        "empresa": "Gadoor",
+        "nif": "",
+        "morada": "",
+        "contacto": "",
+        "email": ""
+      },
+      "linhas": [
+        {
+          "ref_interna": "CL0002-0007REV00",
+          "ref_externa": "CL0002-TEST-01",
+          "descricao": "S275JR 8mm teste",
+          "material": "S275JR",
+          "espessura": "8",
+          "operacao": "Corte Laser + Embalamento",
+          "of": "OF-2026-0004",
+          "tempo_peca_min": 0.0,
+          "qtd": 1.0,
+          "preco_unit": 158.4,
+          "total": 158.4,
+          "desenho": ""
+        },
+        {
+          "ref_interna": "CL0002-0008REV00",
+          "ref_externa": "CL0002-TEST-02",
+          "descricao": "S235JR 8mm teste",
+          "material": "S235JR",
+          "espessura": "8",
+          "operacao": "Corte Laser + Embalamento",
+          "of": "OF-2026-0005",
+          "tempo_peca_min": 0.0,
+          "qtd": 1.0,
+          "preco_unit": 158.4,
+          "total": 158.4,
+          "desenho": ""
+        },
+        {
+          "ref_interna": "CL0002-0009REV00",
+          "ref_externa": "CL0002-TEST-03",
+          "descricao": "S235JR 8mm teste",
+          "material": "S235JR",
+          "espessura": "8",
+          "operacao": "Corte Laser + Embalamento",
+          "of": "OF-2026-0006",
+          "tempo_peca_min": 0.0,
+          "qtd": 1.0,
+          "preco_unit": 10.54,
+          "total": 10.54,
+          "desenho": ""
+        }
+      ],
+      "iva_perc": 23.0,
+      "preco_transporte": 0.0,
+      "subtotal": 327.34,
+      "total": 402.63,
+      "numero_encomenda": "BARCELBAL0001",
+      "executado_por": "Claudio",
+      "nota_transporte": "",
+      "notas_pdf": "",
+      "nota_cliente": "00005"
+    },
+    {
+      "numero": "ORC-2026-0003",
+      "data": "2026-03-17T14:10:56",
+      "estado": "Convertido em Encomenda",
+      "cliente": {
+        "codigo": "CL0002",
+        "nome": "Gadoor",
+        "empresa": "Gadoor",
+        "nif": "",
+        "morada": "",
+        "contacto": "",
+        "email": ""
+      },
+      "linhas": [
+        {
+          "ref_interna": "CL0002-0012REV00",
+          "ref_externa": "PeçaQuinagem8mm",
+          "descricao": "",
+          "material": "S235JR",
+          "espessura": "8",
+          "operacao": "Corte Laser + Quinagem + Embalamento",
+          "of": "OF-2026-0016",
+          "tempo_peca_min": 1.0,
+          "qtd": 10.0,
+          "preco_unit": 1.22,
+          "total": 12.2,
+          "desenho": ""
+        }
+      ],
+      "iva_perc": 23.0,
+      "preco_transporte": 0.0,
+      "subtotal": 12.2,
+      "total": 15.01,
+      "numero_encomenda": "BARCELBAL0005",
+      "executado_por": "Claudio",
+      "nota_transporte": "",
+      "notas_pdf": "",
+      "nota_cliente": "peçaquinagem"
+    }
+  ],
+  "encomendas": [
+    {
+      "numero": "BARCELBAL0001",
+      "cliente": "CL0002",
+      "nota_cliente": "00005",
+      "data_criacao": "2026-03-16T12:32:39",
+      "data_entrega": "",
+      "tempo": 0.0,
+      "tempo_estimado": 0.0,
+      "cativar": false,
+      "observacoes": "ALERTA: Encomenda gerada por conversao do orcamento ORC-2026-0002. Confirmar dados de cliente, materiais, espessuras e prazos. | Origem: Orcamento ORC-2026-0002 | Nota cliente: 00005",
+      "estado": "Preparacao",
+      "materiais": [
+        {
+          "material": "S275JR",
+          "estado": "Preparacao",
+          "espessuras": [
+            {
+              "espessura": "8",
+              "tempo_min": 30.0,
+              "estado": "Preparacao",
+              "pecas": [
+                {
+                  "id": "PEC00001",
+                  "ref_interna": "CL0002-0007REV00",
+                  "ref_externa": "CL0002-TEST-01",
+                  "material": "S275JR",
+                  "espessura": "8",
+                  "quantidade_pedida": 1.0,
+                  "Operacoes": "Corte Laser + Embalamento",
+                  "Observacoes": "S275JR 8mm teste",
+                  "of": "OF-2026-0001",
+                  "opp": "OPP-2026-0001",
+                  "estado": "Preparacao",
+                  "produzido_ok": 0.0,
+                  "produzido_nok": 0.0,
+                  "inicio_producao": "",
+                  "fim_producao": "",
+                  "produzido_qualidade": 0.0,
+                  "tempo_producao_min": 0.0,
+                  "hist": [],
+                  "lote_baixa": "",
+                  "desenho": "",
+                  "operacoes_fluxo": [
+                    {
+                      "nome": "Corte Laser",
+                      "estado": "Pendente",
+                      "inicio": "",
+                      "fim": "",
+                      "user": "",
+                      "qtd_ok": 0.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    },
+                    {
+                      "nome": "Embalamento",
+                      "estado": "Pendente",
+                      "inicio": "",
+                      "fim": "",
+                      "user": "",
+                      "qtd_ok": 0.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    }
+                  ],
+                  "qtd_expedida": 0.0,
+                  "expedicoes": []
+                }
+              ],
+              "inicio_producao": "",
+              "fim_producao": "",
+              "tempo_producao_min": 0.0,
+              "lote_baixa": ""
+            }
+          ]
+        },
+        {
+          "material": "S235JR",
+          "estado": "Preparacao",
+          "espessuras": [
+            {
+              "espessura": "8",
+              "tempo_min": 30.0,
+              "estado": "Preparacao",
+              "pecas": [
+                {
+                  "id": "PEC00002",
+                  "ref_interna": "CL0002-0008REV00",
+                  "ref_externa": "CL0002-TEST-02",
+                  "material": "S235JR",
+                  "espessura": "8",
+                  "quantidade_pedida": 1.0,
+                  "Operacoes": "Corte Laser + Embalamento",
+                  "Observacoes": "S235JR 8mm teste",
+                  "of": "OF-2026-0002",
+                  "opp": "OPP-2026-0002",
+                  "estado": "Preparacao",
+                  "produzido_ok": 0.0,
+                  "produzido_nok": 0.0,
+                  "inicio_producao": "",
+                  "fim_producao": "",
+                  "produzido_qualidade": 0.0,
+                  "tempo_producao_min": 0.0,
+                  "hist": [],
+                  "lote_baixa": "",
+                  "desenho": "",
+                  "operacoes_fluxo": [
+                    {
+                      "nome": "Corte Laser",
+                      "estado": "Pendente",
+                      "inicio": "",
+                      "fim": "",
+                      "user": "",
+                      "qtd_ok": 0.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    },
+                    {
+                      "nome": "Embalamento",
+                      "estado": "Pendente",
+                      "inicio": "",
+                      "fim": "",
+                      "user": "",
+                      "qtd_ok": 0.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    }
+                  ],
+                  "qtd_expedida": 0.0,
+                  "expedicoes": []
+                },
+                {
+                  "id": "PEC00003",
+                  "ref_interna": "CL0002-0009REV00",
+                  "ref_externa": "CL0002-TEST-03",
+                  "material": "S235JR",
+                  "espessura": "8",
+                  "quantidade_pedida": 1.0,
+                  "Operacoes": "Corte Laser + Embalamento",
+                  "Observacoes": "S235JR 8mm teste",
+                  "of": "OF-2026-0003",
+                  "opp": "OPP-2026-0003",
+                  "estado": "Preparacao",
+                  "produzido_ok": 0.0,
+                  "produzido_nok": 0.0,
+                  "inicio_producao": "",
+                  "fim_producao": "",
+                  "produzido_qualidade": 0.0,
+                  "tempo_producao_min": 0.0,
+                  "hist": [],
+                  "lote_baixa": "",
+                  "desenho": "",
+                  "operacoes_fluxo": [
+                    {
+                      "nome": "Corte Laser",
+                      "estado": "Pendente",
+                      "inicio": "",
+                      "fim": "",
+                      "user": "",
+                      "qtd_ok": 0.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    },
+                    {
+                      "nome": "Embalamento",
+                      "estado": "Pendente",
+                      "inicio": "",
+                      "fim": "",
+                      "user": "",
+                      "qtd_ok": 0.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    }
+                  ],
+                  "qtd_expedida": 0.0,
+                  "expedicoes": []
+                }
+              ],
+              "inicio_producao": "",
+              "fim_producao": "",
+              "tempo_producao_min": 0.0,
+              "lote_baixa": ""
+            }
+          ]
+        }
+      ],
+      "reservas": [],
+      "numero_orcamento": "ORC-2026-0002",
+      "Observacoes": "",
+      "inicio_producao": "",
+      "tempo_pecas_min": 0.0,
+      "tempo_espessuras_min": 0.0,
+      "fim_producao": "",
+      "tempo_producao_min": 0.0,
+      "inicio_encomenda": "",
+      "fim_encomenda": "",
+      "estado_operador": "",
+      "obs_inicio": "",
+      "obs_interrupcao": "",
+      "tempo_por_espessura": {},
+      "espessuras": [],
+      "estado_expedicao": "Não expedida"
+    },
+    {
+      "numero": "BARCELBAL0002",
+      "cliente": "CL0002",
+      "nota_cliente": "VERIFY_OPERATOR_EXP",
+      "data_criacao": "2026-03-16T14:33:32",
+      "data_entrega": "2026-03-31",
+      "tempo": 0.0,
+      "tempo_estimado": 30.0,
+      "cativar": false,
+      "observacoes": "",
+      "estado": "Em pausa",
+      "materiais": [
+        {
+          "material": "S275JR",
+          "estado": "Em pausa",
+          "espessuras": [
+            {
+              "espessura": "8",
+              "tempo_min": 30.0,
+              "estado": "Em pausa",
+              "pecas": [
+                {
+                  "id": "PEC00001-2",
+                  "ref_interna": "CL0002-0005REV00",
+                  "ref_externa": "VERIFY-OPP-EXP-001",
+                  "material": "S275JR",
+                  "espessura": "8",
+                  "quantidade_pedida": 5.0,
+                  "Operacoes": "Corte Laser + Embalamento",
+                  "Observacoes": "VERIFY OPERATOR -> EXPEDITION",
+                  "of": "OF-2026-0007",
+                  "opp": "OPP-2026-0004",
+                  "estado": "Incompleta",
+                  "produzido_ok": 5.0,
+                  "produzido_nok": 0.0,
+                  "inicio_producao": "",
+                  "fim_producao": "",
+                  "produzido_qualidade": 0.0,
+                  "tempo_producao_min": 0.05,
+                  "hist": [
+                    {
+                      "ts": "2026-03-17T11:50:43",
+                      "user": "admin",
+                      "acao": "Registo Operacao",
+                      "operacoes": [
+                        "Corte Laser"
+                      ],
+                      "ok": 5.0,
+                      "nok": 0.0,
+                      "qual": 0.0,
+                      "tempo_min": 0.05,
+                      "limite_operacao": 5.0,
+                      "registo_acumulado": 5.0
+                    }
+                  ],
+                  "lote_baixa": "S275-8-A",
+                  "desenho": "",
+                  "operacoes_fluxo": [
+                    {
+                      "nome": "Corte Laser",
+                      "estado": "Concluida",
+                      "inicio": "2026-03-17T11:50:40",
+                      "fim": "2026-03-17T11:50:43",
+                      "user": "admin",
+                      "qtd_ok": 5.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    },
+                    {
+                      "nome": "Embalamento",
+                      "estado": "Pendente",
+                      "inicio": "",
+                      "fim": "",
+                      "user": "",
+                      "qtd_ok": 0.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    }
+                  ],
+                  "qtd_expedida": 0.0,
+                  "expedicoes": []
+                }
+              ],
+              "inicio_producao": "",
+              "fim_producao": "",
+              "tempo_producao_min": 0.0,
+              "lote_baixa": "S275-8-A"
+            }
+          ]
+        }
+      ],
+      "reservas": [],
+      "numero_orcamento": "",
+      "Observacoes": "",
+      "inicio_producao": "",
+      "tempo_pecas_min": 0.05,
+      "tempo_espessuras_min": 0.0,
+      "fim_producao": "",
+      "tempo_producao_min": 0.0,
+      "inicio_encomenda": "",
+      "fim_encomenda": "",
+      "estado_operador": "",
+      "obs_inicio": "",
+      "obs_interrupcao": "",
+      "tempo_por_espessura": {},
+      "espessuras": [],
+      "estado_expedicao": "Não expedida"
+    },
+    {
+      "numero": "BARCELBAL0003",
+      "cliente": "CL0002",
+      "nota_cliente": "VERIFY_OPP_DASHBOARD",
+      "data_criacao": "2026-03-16T16:38:13",
+      "data_entrega": "2026-03-31",
+      "tempo": 0.0,
+      "tempo_estimado": 30.0,
+      "cativar": false,
+      "observacoes": "",
+      "estado": "Em pausa",
+      "materiais": [
+        {
+          "material": "AISI 304L 2B",
+          "estado": "Em pausa",
+          "espessuras": [
+            {
+              "espessura": "2",
+              "tempo_min": 30.0,
+              "estado": "Em pausa",
+              "pecas": [
+                {
+                  "id": "PEC00001-3",
+                  "ref_interna": "CL0002-0006REV00",
+                  "ref_externa": "VERIFY-OPP-DASH-001",
+                  "material": "AISI 304L 2B",
+                  "espessura": "2",
+                  "quantidade_pedida": 3.0,
+                  "Operacoes": "Corte Laser + Embalamento",
+                  "Observacoes": "VERIFY OPP DASHBOARD",
+                  "of": "OF-2026-0008",
+                  "opp": "OPP-2026-0005",
+                  "estado": "Incompleta",
+                  "produzido_ok": 3.0,
+                  "produzido_nok": 0.0,
+                  "inicio_producao": "",
+                  "fim_producao": "",
+                  "produzido_qualidade": 0.0,
+                  "tempo_producao_min": 0.17,
+                  "hist": [
+                    {
+                      "ts": "2026-03-17T11:50:22",
+                      "user": "admin",
+                      "acao": "Registo Operacao",
+                      "operacoes": [
+                        "Corte Laser"
+                      ],
+                      "ok": 3.0,
+                      "nok": 0.0,
+                      "qual": 0.0,
+                      "tempo_min": 0.17,
+                      "limite_operacao": 3.0,
+                      "registo_acumulado": 3.0
+                    }
+                  ],
+                  "lote_baixa": "",
+                  "desenho": "",
+                  "operacoes_fluxo": [
+                    {
+                      "nome": "Corte Laser",
+                      "estado": "Concluida",
+                      "inicio": "2026-03-17T11:50:12",
+                      "fim": "2026-03-17T11:50:22",
+                      "user": "admin",
+                      "qtd_ok": 3.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    },
+                    {
+                      "nome": "Embalamento",
+                      "estado": "Pendente",
+                      "inicio": "",
+                      "fim": "",
+                      "user": "",
+                      "qtd_ok": 0.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    }
+                  ],
+                  "qtd_expedida": 0.0,
+                  "expedicoes": []
+                }
+              ],
+              "inicio_producao": "",
+              "fim_producao": "",
+              "tempo_producao_min": 0.0,
+              "lote_baixa": ""
+            }
+          ]
+        }
+      ],
+      "reservas": [],
+      "numero_orcamento": "",
+      "Observacoes": "",
+      "inicio_producao": "",
+      "tempo_pecas_min": 0.17,
+      "tempo_espessuras_min": 0.0,
+      "fim_producao": "",
+      "tempo_producao_min": 0.0,
+      "inicio_encomenda": "",
+      "fim_encomenda": "",
+      "estado_operador": "",
+      "obs_inicio": "",
+      "obs_interrupcao": "",
+      "tempo_por_espessura": {},
+      "espessuras": [],
+      "estado_expedicao": "Não expedida"
+    },
+    {
+      "numero": "BARCELBAL0004",
+      "cliente": "CL0002",
+      "nota_cliente": "LuisFinaltest",
+      "data_criacao": "2026-03-17T10:10:15",
+      "data_entrega": "",
+      "tempo": 0.0,
+      "tempo_estimado": 0.0,
+      "cativar": false,
+      "observacoes": "ALERTA: Encomenda gerada por conversao do orcamento ORC-2026-0001. Confirmar dados de cliente, materiais, espessuras e prazos. | Origem: Orcamento ORC-2026-0001 | Nota cliente: LuisFinaltest",
+      "estado": "Concluida",
+      "materiais": [
+        {
+          "material": "S235JR",
+          "estado": "Concluida",
+          "espessuras": [
+            {
+              "espessura": "8",
+              "tempo_min": 30.0,
+              "estado": "Concluida",
+              "pecas": [
+                {
+                  "id": "PEC00001-4",
+                  "ref_interna": "CL0002-0010REV00",
+                  "ref_externa": "CL0002-TEST-02",
+                  "material": "S235JR",
+                  "espessura": "8",
+                  "quantidade_pedida": 10.0,
+                  "Operacoes": "Corte Laser + Embalamento",
+                  "Observacoes": "S235JR 8mm teste",
+                  "of": "OF-2026-0011",
+                  "opp": "OPP-2026-0006",
+                  "estado": "Concluida",
+                  "produzido_ok": 10.0,
+                  "produzido_nok": 0.0,
+                  "inicio_producao": "",
+                  "fim_producao": "2026-03-17T10:15:40",
+                  "produzido_qualidade": 0.0,
+                  "tempo_producao_min": 1.65,
+                  "hist": [
+                    {
+                      "ts": "2026-03-17T10:14:43",
+                      "user": "admin",
+                      "acao": "Registo Operacao",
+                      "operacoes": [
+                        "Corte Laser"
+                      ],
+                      "ok": 10.0,
+                      "nok": 0.0,
+                      "qual": 0.0,
+                      "tempo_min": 1.45,
+                      "limite_operacao": 10.0,
+                      "registo_acumulado": 10.0
+                    },
+                    {
+                      "ts": "2026-03-17T10:15:40",
+                      "user": "admin",
+                      "acao": "Fim Peca",
+                      "operacoes": [
+                        "Embalamento"
+                      ],
+                      "ok": 10.0,
+                      "nok": 0.0,
+                      "qual": 0.0,
+                      "tempo_min": 1.65,
+                      "limite_operacao": 10.0,
+                      "registo_acumulado": 10.0
+                    }
+                  ],
+                  "lote_baixa": "S235-8-A",
+                  "desenho": "",
+                  "operacoes_fluxo": [
+                    {
+                      "nome": "Corte Laser",
+                      "estado": "Concluida",
+                      "inicio": "2026-03-17T10:13:16",
+                      "fim": "2026-03-17T10:14:43",
+                      "user": "admin",
+                      "qtd_ok": 10.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    },
+                    {
+                      "nome": "Embalamento",
+                      "estado": "Concluida",
+                      "inicio": "2026-03-17T10:15:28",
+                      "fim": "2026-03-17T10:15:40",
+                      "user": "admin",
+                      "qtd_ok": 10.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    }
+                  ],
+                  "qtd_expedida": 10.0,
+                  "expedicoes": []
+                },
+                {
+                  "id": "PEC00002-2",
+                  "ref_interna": "CL0002-0011REV00",
+                  "ref_externa": "CL0002-TEST-03",
+                  "material": "S235JR",
+                  "espessura": "8",
+                  "quantidade_pedida": 10.0,
+                  "Operacoes": "Corte Laser + Embalamento",
+                  "Observacoes": "S235JR 8mm teste",
+                  "of": "OF-2026-0012",
+                  "opp": "OPP-2026-0007",
+                  "estado": "Concluida",
+                  "produzido_ok": 10.0,
+                  "produzido_nok": 0.0,
+                  "inicio_producao": "",
+                  "fim_producao": "2026-03-17T10:15:50",
+                  "produzido_qualidade": 0.0,
+                  "tempo_producao_min": 1.72,
+                  "hist": [
+                    {
+                      "ts": "2026-03-17T10:14:44",
+                      "user": "admin",
+                      "acao": "Registo Operacao",
+                      "operacoes": [
+                        "Corte Laser"
+                      ],
+                      "ok": 10.0,
+                      "nok": 0.0,
+                      "qual": 0.0,
+                      "tempo_min": 1.45,
+                      "limite_operacao": 10.0,
+                      "registo_acumulado": 10.0
+                    },
+                    {
+                      "ts": "2026-03-17T10:15:44",
+                      "user": "admin",
+                      "acao": "Registo Operacao",
+                      "operacoes": [
+                        "Embalamento"
+                      ],
+                      "ok": 5.0,
+                      "nok": 0.0,
+                      "qual": 0.0,
+                      "tempo_min": 1.72,
+                      "limite_operacao": 10.0,
+                      "registo_acumulado": 5.0
+                    },
+                    {
+                      "ts": "2026-03-17T10:15:50",
+                      "user": "admin",
+                      "acao": "Fim Peca",
+                      "operacoes": [
+                        "Embalamento"
+                      ],
+                      "ok": 5.0,
+                      "nok": 0.0,
+                      "qual": 0.0,
+                      "tempo_min": 1.72,
+                      "limite_operacao": 10.0,
+                      "registo_acumulado": 10.0
+                    }
+                  ],
+                  "lote_baixa": "S235-8-A",
+                  "desenho": "",
+                  "operacoes_fluxo": [
+                    {
+                      "nome": "Corte Laser",
+                      "estado": "Concluida",
+                      "inicio": "2026-03-17T10:13:17",
+                      "fim": "2026-03-17T10:14:44",
+                      "user": "admin",
+                      "qtd_ok": 10.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    },
+                    {
+                      "nome": "Embalamento",
+                      "estado": "Concluida",
+                      "inicio": "2026-03-17T10:15:28",
+                      "fim": "2026-03-17T10:15:50",
+                      "user": "admin",
+                      "qtd_ok": 10.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    }
+                  ],
+                  "qtd_expedida": 10.0,
+                  "expedicoes": []
+                }
+              ],
+              "inicio_producao": "",
+              "fim_producao": "",
+              "tempo_producao_min": 0.0,
+              "lote_baixa": "S235-8-A"
+            }
+          ]
+        }
+      ],
+      "reservas": [],
+      "numero_orcamento": "ORC-2026-0001",
+      "Observacoes": "",
+      "inicio_producao": "",
+      "tempo_pecas_min": 3.37,
+      "tempo_espessuras_min": 0.0,
+      "fim_producao": "2026-03-17T10:15:50",
+      "tempo_producao_min": 0.0,
+      "inicio_encomenda": "",
+      "fim_encomenda": "",
+      "estado_operador": "",
+      "obs_inicio": "",
+      "obs_interrupcao": "",
+      "tempo_por_espessura": {},
+      "espessuras": [],
+      "estado_expedicao": "Totalmente expedida"
+    },
+    {
+      "numero": "BARCELBAL0005",
+      "cliente": "CL0002",
+      "nota_cliente": "peçaquinagem",
+      "data_criacao": "2026-03-17T14:11:02",
+      "data_entrega": "",
+      "tempo": 0.0,
+      "tempo_estimado": 10.0,
+      "cativar": false,
+      "observacoes": "ALERTA: Encomenda gerada por conversao do orcamento ORC-2026-0003. Confirmar dados de cliente, materiais, espessuras e prazos. | Origem: Orcamento ORC-2026-0003 | Nota cliente: peçaquinagem",
+      "estado": "Em pausa",
+      "materiais": [
+        {
+          "material": "S235JR",
+          "estado": "Em pausa",
+          "espessuras": [
+            {
+              "espessura": "8",
+              "tempo_min": 15.0,
+              "estado": "Em pausa",
+              "pecas": [
+                {
+                  "id": "PEC00001-5",
+                  "ref_interna": "CL0002-0012REV00",
+                  "ref_externa": "PeçaQuinagem8mm",
+                  "material": "S235JR",
+                  "espessura": "8",
+                  "quantidade_pedida": 10.0,
+                  "Operacoes": "Corte Laser + Quinagem + Embalamento",
+                  "Observacoes": "",
+                  "of": "OF-2026-0015",
+                  "opp": "OPP-2026-0008",
+                  "estado": "Incompleta",
+                  "produzido_ok": 10.0,
+                  "produzido_nok": 0.0,
+                  "inicio_producao": "",
+                  "fim_producao": "",
+                  "produzido_qualidade": 0.0,
+                  "tempo_producao_min": 0.12,
+                  "hist": [
+                    {
+                      "ts": "2026-03-17T14:11:31",
+                      "user": "admin",
+                      "acao": "Registo Operacao",
+                      "operacoes": [
+                        "Corte Laser"
+                      ],
+                      "ok": 10.0,
+                      "nok": 0.0,
+                      "qual": 0.0,
+                      "tempo_min": 0.12,
+                      "limite_operacao": 10.0,
+                      "registo_acumulado": 10.0
+                    }
+                  ],
+                  "lote_baixa": "S235-8-A",
+                  "desenho": "",
+                  "operacoes_fluxo": [
+                    {
+                      "nome": "Corte Laser",
+                      "estado": "Concluida",
+                      "inicio": "2026-03-17T14:11:24",
+                      "fim": "2026-03-17T14:11:31",
+                      "user": "admin",
+                      "qtd_ok": 10.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    },
+                    {
+                      "nome": "Quinagem",
+                      "estado": "Pendente",
+                      "inicio": "",
+                      "fim": "",
+                      "user": "",
+                      "qtd_ok": 0.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    },
+                    {
+                      "nome": "Embalamento",
+                      "estado": "Pendente",
+                      "inicio": "",
+                      "fim": "",
+                      "user": "",
+                      "qtd_ok": 0.0,
+                      "qtd_nok": 0.0,
+                      "qtd_qual": 0.0
+                    }
+                  ],
+                  "qtd_expedida": 0.0,
+                  "expedicoes": []
+                }
+              ],
+              "inicio_producao": "",
+              "fim_producao": "",
+              "tempo_producao_min": 0.0,
+              "lote_baixa": "S235-8-A"
+            }
+          ]
+        }
+      ],
+      "reservas": [],
+      "numero_orcamento": "ORC-2026-0003",
+      "Observacoes": "",
+      "inicio_producao": "",
+      "tempo_pecas_min": 0.12,
+      "tempo_espessuras_min": 0.0,
+      "fim_producao": "",
+      "tempo_producao_min": 0.0,
+      "inicio_encomenda": "",
+      "fim_encomenda": "",
+      "estado_operador": "",
+      "obs_inicio": "",
+      "obs_interrupcao": "",
+      "tempo_por_espessura": {},
+      "espessuras": [],
+      "estado_expedicao": "Não expedida"
+    }
+  ],
+  "orc_refs": {
+    "CL0002-TEST-02": {
+      "ref_interna": "CL0002-0010REV00",
+      "ref_externa": "CL0002-TEST-02",
+      "descricao": "S235JR 8mm teste",
+      "material": "S235JR",
+      "espessura": "8",
+      "preco_unit": 158.4,
+      "operacao": "Corte Laser + Embalamento",
+      "desenho": ""
+    },
+    "CL0002-TEST-03": {
+      "ref_interna": "CL0002-0011REV00",
+      "ref_externa": "CL0002-TEST-03",
+      "descricao": "S235JR 8mm teste",
+      "material": "S235JR",
+      "espessura": "8",
+      "preco_unit": 10.54,
+      "operacao": "Corte Laser + Embalamento",
+      "desenho": ""
+    },
+    "CL0002-TEST-01": {
+      "ref_interna": "CL0002-0007REV00",
+      "ref_externa": "CL0002-TEST-01",
+      "descricao": "S275JR 8mm teste",
+      "material": "S275JR",
+      "espessura": "8",
+      "preco_unit": 158.4,
+      "operacao": "Corte Laser + Embalamento",
+      "desenho": ""
+    },
+    "PeçaQuinagem8mm": {
+      "ref_interna": "CL0002-0012REV00",
+      "ref_externa": "PeçaQuinagem8mm",
+      "descricao": "",
+      "material": "S235JR",
+      "espessura": "8",
+      "preco_unit": 1.22,
+      "operacao": "Corte Laser + Quinagem + Embalamento",
+      "desenho": ""
+    },
+    "VERIFY-OPP-EXP-001": {
+      "ref_interna": "CL0002-0005REV00",
+      "ref_externa": "VERIFY-OPP-EXP-001",
+      "descricao": "VERIFY OPERATOR -> EXPEDITION",
+      "material": "S275JR",
+      "espessura": "8",
+      "preco_unit": 0.0,
+      "operacao": "Corte Laser + Embalamento",
+      "desenho": ""
+    },
+    "VERIFY-OPP-DASH-001": {
+      "ref_interna": "CL0002-0006REV00",
+      "ref_externa": "VERIFY-OPP-DASH-001",
+      "descricao": "VERIFY OPP DASHBOARD",
+      "material": "AISI 304L 2B",
+      "espessura": "2",
+      "preco_unit": 0.0,
+      "operacao": "Corte Laser + Embalamento",
+      "desenho": ""
+    }
+  },
+  "expedicoes": [
+    {
+      "numero": "GT-2026-0023",
+      "tipo": "OFF",
+      "encomenda": "BARCELBAL0004",
+      "cliente": "CL0002",
+      "cliente_nome": "Gadoor",
+      "codigo_at": "TESTE-GT2026",
+      "serie_id": "GT2026",
+      "seq_num": 23,
+      "at_validation_code": "TESTE-GT2026",
+      "atcud": "TESTE-GT2026-23",
+      "emitente_nome": "Barcelbal - Balanças e Básculas, S.A.",
+      "emitente_nif": "502403843",
+      "emitente_morada": "Rua dos Canteiros, nº 53 - Adaufe",
+      "destinatario": "Gadoor",
+      "dest_nif": "",
+      "dest_morada": "",
+      "local_carga": "Rua dos Canteiros, nº 53 - Adaufe",
+      "local_descarga": "",
+      "data_emissao": "2026-03-17T10:16:42",
+      "data_transporte": "2026-03-17T10:16:28",
+      "matricula": "",
+      "transportador": "",
+      "estado": "Emitida",
+      "observacoes": "Expedicao da encomenda BARCELBAL0004",
+      "created_by": "admin",
+      "anulada": false,
+      "anulada_motivo": "",
+      "linhas": [
+        {
+          "encomenda": "BARCELBAL0004",
+          "peca_id": "PEC00002-2",
+          "ref_interna": "CL0002-0011REV00",
+          "ref_externa": "CL0002-TEST-03",
+          "descricao": "S235JR 8mm teste",
+          "qtd": 10.0,
+          "unid": "UN",
+          "peso": 0.0,
+          "manual": false
+        },
+        {
+          "encomenda": "BARCELBAL0004",
+          "peca_id": "PEC00001-4",
+          "ref_interna": "CL0002-0010REV00",
+          "ref_externa": "CL0002-TEST-02",
+          "descricao": "S235JR 8mm teste",
+          "qtd": 10.0,
+          "unid": "UN",
+          "peso": 0.0,
+          "manual": false
+        }
+      ]
+    }
+  ],
+  "op_eventos": [
+    {
+      "created_at": "2026-03-17T10:13:16",
+      "evento": "START_OP",
+      "encomenda_numero": "BARCELBAL0004",
+      "peca_id": "PEC00001-4",
+      "ref_interna": "CL0002-0010REV00",
+      "material": "S235JR",
+      "espessura": "8",
+      "operacao": "Corte Laser",
+      "operador": "admin",
+      "qtd_ok": 0.0,
+      "qtd_nok": 0.0,
+      "info": "[POSTO:Geral] Operacao iniciada no Qt Operador"
+    },
+    {
+      "created_at": "2026-03-17T10:13:17",
+      "evento": "START_OP",
+      "encomenda_numero": "BARCELBAL0004",
+      "peca_id": "PEC00002-2",
+      "ref_interna": "CL0002-0011REV00",
+      "material": "S235JR",
+      "espessura": "8",
+      "operacao": "Corte Laser",
+      "operador": "admin",
+      "qtd_ok": 0.0,
+      "qtd_nok": 0.0,
+      "info": "[POSTO:Geral] Operacao iniciada no Qt Operador"
+    },
+    {
+      "created_at": "2026-03-17T10:14:43",
+      "evento": "FINISH_OP",
+      "encomenda_numero": "BARCELBAL0004",
+      "peca_id": "PEC00001-4",
+      "ref_interna": "CL0002-0010REV00",
+      "material": "S235JR",
+      "espessura": "8",
+      "operacao": "Corte Laser",
+      "operador": "admin",
+      "qtd_ok": 10.0,
+      "qtd_nok": 0.0,
+      "info": "[POSTO:Geral] Operacao concluida no Qt Operador"
+    },
+    {
+      "created_at": "2026-03-17T10:14:44",
+      "evento": "FINISH_OP",
+      "encomenda_numero": "BARCELBAL0004",
+      "peca_id": "PEC00002-2",
+      "ref_interna": "CL0002-0011REV00",
+      "material": "S235JR",
+      "espessura": "8",
+      "operacao": "Corte Laser",
+      "operador": "admin",
+      "qtd_ok": 10.0,
+      "qtd_nok": 0.0,
+      "info": "[POSTO:Geral] Operacao concluida no Qt Operador"
+    },
+    {
+      "created_at": "2026-03-17T10:15:28",
+      "evento": "START_OP",
+      "encomenda_numero": "BARCELBAL0004",
+      "peca_id": "PEC00001-4",
+      "ref_interna": "CL0002-0010REV00",
+      "material": "S235JR",
+      "espessura": "8",
+      "operacao": "Embalamento",
+      "operador": "admin",
+      "qtd_ok": 0.0,
+      "qtd_nok": 0.0,
+      "info": "[POSTO:Geral] Operacao iniciada no Qt Operador"
+    },
+    {
+      "created_at": "2026-03-17T10:15:28",
+      "evento": "START_OP",
+      "encomenda_numero": "BARCELBAL0004",
+      "peca_id": "PEC00002-2",
+      "ref_interna": "CL0002-0011REV00",
+      "material": "S235JR",
+      "espessura": "8",
+      "operacao": "Embalamento",
+      "operador": "admin",
+      "qtd_ok": 0.0,
+      "qtd_nok": 0.0,
+      "info": "[POSTO:Geral] Operacao iniciada no Qt Operador"
+    },
+    {
+      "created_at": "2026-03-17T10:15:40",
+      "evento": "FINISH_OP",
+      "encomenda_numero": "BARCELBAL0004",
+      "peca_id": "PEC00001-4",
+      "ref_interna": "CL0002-0010REV00",
+      "material": "S235JR",
+      "espessura": "8",
+      "operacao": "Embalamento",
+      "operador": "admin",
+      "qtd_ok": 10.0,
+      "qtd_nok": 0.0,
+      "info": "[POSTO:Geral] Operacao concluida no Qt Operador"
+    },
+    {
+      "created_at": "2026-03-17T10:15:44",
+      "evento": "FINISH_OP",
+      "encomenda_numero": "BARCELBAL0004",
+      "peca_id": "PEC00002-2",
+      "ref_interna": "CL0002-0011REV00",
+      "material": "S235JR",
+      "espessura": "8",
+      "operacao": "Embalamento",
+      "operador": "admin",
+      "qtd_ok": 5.0,
+      "qtd_nok": 0.0,
+      "info": "[POSTO:Geral] Operacao concluida no Qt Operador"
+    },
+    {
+      "created_at": "2026-03-17T10:15:50",
+      "evento": "FINISH_OP",
+      "encomenda_numero": "BARCELBAL0004",
+      "peca_id": "PEC00002-2",
+      "ref_interna": "CL0002-0011REV00",
+      "material": "S235JR",
+      "espessura": "8",
+      "operacao": "Embalamento",
+      "operador": "admin",
+      "qtd_ok": 5.0,
+      "qtd_nok": 0.0,
+      "info": "[POSTO:Geral] Operacao concluida no Qt Operador"
+    },
+    {
+      "created_at": "2026-03-17T11:50:12",
+      "evento": "START_OP",
+      "encomenda_numero": "BARCELBAL0003",
+      "peca_id": "PEC00001-3",
+      "ref_interna": "CL0002-0006REV00",
+      "material": "AISI 304L 2B",
+      "espessura": "2",
+      "operacao": "Corte Laser",
+      "operador": "admin",
+      "qtd_ok": 0.0,
+      "qtd_nok": 0.0,
+      "info": "[POSTO:Geral] Operacao iniciada no Qt Operador"
+    },
+    {
+      "created_at": "2026-03-17T11:50:22",
+      "evento": "FINISH_OP",
+      "encomenda_numero": "BARCELBAL0003",
+      "peca_id": "PEC00001-3",
+      "ref_interna": "CL0002-0006REV00",
+      "material": "AISI 304L 2B",
+      "espessura": "2",
+      "operacao": "Corte Laser",
+      "operador": "admin",
+      "qtd_ok": 3.0,
+      "qtd_nok": 0.0,
+      "info": "[POSTO:Geral] Operacao concluida no Qt Operador"
+    },
+    {
+      "created_at": "2026-03-17T11:50:40",
+      "evento": "START_OP",
+      "encomenda_numero": "BARCELBAL0002",
+      "peca_id": "PEC00001-2",
+      "ref_interna": "CL0002-0005REV00",
+      "material": "S275JR",
+      "espessura": "8",
+      "operacao": "Corte Laser",
+      "operador": "admin",
+      "qtd_ok": 0.0,
+      "qtd_nok": 0.0,
+      "info": "[POSTO:Geral] Operacao iniciada no Qt Operador"
+    },
+    {
+      "created_at": "2026-03-17T11:50:43",
+      "evento": "FINISH_OP",
+      "encomenda_numero": "BARCELBAL0002",
+      "peca_id": "PEC00001-2",
+      "ref_interna": "CL0002-0005REV00",
+      "material": "S275JR",
+      "espessura": "8",
+      "operacao": "Corte Laser",
+      "operador": "admin",
+      "qtd_ok": 5.0,
+      "qtd_nok": 0.0,
+      "info": "[POSTO:Geral] Operacao concluida no Qt Operador"
+    },
+    {
+      "created_at": "2026-03-17T14:11:24",
+      "evento": "START_OP",
+      "encomenda_numero": "BARCELBAL0005",
+      "peca_id": "PEC00001-5",
+      "ref_interna": "CL0002-0012REV00",
+      "material": "S235JR",
+      "espessura": "8",
+      "operacao": "Corte Laser",
+      "operador": "admin",
+      "qtd_ok": 0.0,
+      "qtd_nok": 0.0,
+      "info": "[POSTO:Geral] Operacao iniciada no Qt Operador"
+    },
+    {
+      "created_at": "2026-03-17T14:11:31",
+      "evento": "FINISH_OP",
+      "encomenda_numero": "BARCELBAL0005",
+      "peca_id": "PEC00001-5",
+      "ref_interna": "CL0002-0012REV00",
+      "material": "S235JR",
+      "espessura": "8",
+      "operacao": "Corte Laser",
+      "operador": "admin",
+      "qtd_ok": 10.0,
+      "qtd_nok": 0.0,
+      "info": "[POSTO:Geral] Operacao concluida no Qt Operador"
+    }
+  ]
+}

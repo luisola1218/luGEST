@@ -1,0 +1,27 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ATCommunicationPreparation generatedAt="2026-03-25T10:36:44">
+  <Header>
+    <IssuerName>Barcelbal - Balanças e Básculas, S.A.</IssuerName>
+    <IssuerTaxID>502403843</IssuerTaxID>
+    <SoftwareCertificateNumber>0</SoftwareCertificateNumber>
+    <ProductID>LuGEST</ProductID>
+    <ProductVersion>2026.03</ProductVersion>
+    <PreparationMode>manual</PreparationMode>
+  </Header>
+  <Documents>
+    <Document>
+      <DocumentID>34D85CEE61CE</DocumentID>
+      <InvoiceNo>FT FT2026/4</InvoiceNo>
+      <InvoiceDate>2026-03-24</InvoiceDate>
+      <InvoiceType>FT</InvoiceType>
+      <ATCUD>TESTE-FT2026-4</ATCUD>
+      <Hash>0</Hash>
+      <HashControl>0</HashControl>
+      <CustomerTaxID>500000001</CustomerTaxID>
+      <GrossTotal>366.05</GrossTotal>
+      <Status>Preparada</Status>
+      <SourceBilling>P</SourceBilling>
+      <SystemEntryDate>2026-03-24T09:20:10</SystemEntryDate>
+    </Document>
+  </Documents>
+</ATCommunicationPreparation>

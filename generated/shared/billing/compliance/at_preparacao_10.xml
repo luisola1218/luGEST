@@ -1,0 +1,153 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ATCommunicationPreparation generatedAt="2026-03-27T17:42:10">
+  <Header>
+    <IssuerName>Barcelbal - Balanças e Básculas, S.A.</IssuerName>
+    <IssuerTaxID>502403843</IssuerTaxID>
+    <SoftwareCertificateNumber>0</SoftwareCertificateNumber>
+    <ProductID>LuGEST</ProductID>
+    <ProductVersion>2026.03</ProductVersion>
+    <PreparationMode>manual</PreparationMode>
+  </Header>
+  <Documents>
+    <Document>
+      <DocumentID>A3A4C18671A6</DocumentID>
+      <InvoiceNo>FT FT2026/1</InvoiceNo>
+      <InvoiceDate>2026-03-24</InvoiceDate>
+      <InvoiceType>FT</InvoiceType>
+      <ATCUD>TESTE-FT2026-1</ATCUD>
+      <Hash>0</Hash>
+      <HashControl>0</HashControl>
+      <CustomerTaxID>500000001</CustomerTaxID>
+      <GrossTotal>366.05</GrossTotal>
+      <Status>Preparada</Status>
+      <SourceBilling>P</SourceBilling>
+      <SystemEntryDate>2026-03-24T08:47:10</SystemEntryDate>
+    </Document>
+    <Document>
+      <DocumentID>5A95F9E93AD7</DocumentID>
+      <InvoiceNo>FT FT2026/2</InvoiceNo>
+      <InvoiceDate>2026-03-24</InvoiceDate>
+      <InvoiceType>FT</InvoiceType>
+      <ATCUD>TESTE-FT2026-2</ATCUD>
+      <Hash>0</Hash>
+      <HashControl>0</HashControl>
+      <CustomerTaxID>500000002</CustomerTaxID>
+      <GrossTotal>764.75</GrossTotal>
+      <Status>Preparada</Status>
+      <SourceBilling>P</SourceBilling>
+      <SystemEntryDate>2026-03-24T09:01:56</SystemEntryDate>
+    </Document>
+    <Document>
+      <DocumentID>4C7D62C83AD7</DocumentID>
+      <InvoiceNo>FT FT2026/3</InvoiceNo>
+      <InvoiceDate>2026-03-24</InvoiceDate>
+      <InvoiceType>FT</InvoiceType>
+      <ATCUD>TESTE-FT2026-3</ATCUD>
+      <Hash>0</Hash>
+      <HashControl>0</HashControl>
+      <CustomerTaxID>500000001</CustomerTaxID>
+      <GrossTotal>366.05</GrossTotal>
+      <Status>Preparada</Status>
+      <SourceBilling>P</SourceBilling>
+      <SystemEntryDate>2026-03-24T09:15:45</SystemEntryDate>
+    </Document>
+    <Document>
+      <DocumentID>34D85CEE61CE</DocumentID>
+      <InvoiceNo>FT FT2026/4</InvoiceNo>
+      <InvoiceDate>2026-03-24</InvoiceDate>
+      <InvoiceType>FT</InvoiceType>
+      <ATCUD>TESTE-FT2026-4</ATCUD>
+      <Hash>0</Hash>
+      <HashControl>0</HashControl>
+      <CustomerTaxID>500000001</CustomerTaxID>
+      <GrossTotal>366.05</GrossTotal>
+      <Status>Preparada</Status>
+      <SourceBilling>P</SourceBilling>
+      <SystemEntryDate>2026-03-24T09:20:10</SystemEntryDate>
+    </Document>
+    <Document>
+      <DocumentID>FB5C438C792A</DocumentID>
+      <InvoiceNo>FT FT2026/5</InvoiceNo>
+      <InvoiceDate>2026-03-24</InvoiceDate>
+      <InvoiceType>FT</InvoiceType>
+      <ATCUD>TESTE-FT2026-5</ATCUD>
+      <Hash>0</Hash>
+      <HashControl>0</HashControl>
+      <CustomerTaxID>500000001</CustomerTaxID>
+      <GrossTotal>366.05</GrossTotal>
+      <Status>Preparada</Status>
+      <SourceBilling>P</SourceBilling>
+      <SystemEntryDate>2026-03-24T10:25:23</SystemEntryDate>
+    </Document>
+    <Document>
+      <DocumentID>DC84F6C024D8</DocumentID>
+      <InvoiceNo>FT FT2026/6</InvoiceNo>
+      <InvoiceDate>2026-03-24</InvoiceDate>
+      <InvoiceType>FT</InvoiceType>
+      <ATCUD>TESTE-FT2026-6</ATCUD>
+      <Hash>0</Hash>
+      <HashControl>0</HashControl>
+      <CustomerTaxID>500000001</CustomerTaxID>
+      <GrossTotal>366.05</GrossTotal>
+      <Status>Preparada</Status>
+      <SourceBilling>P</SourceBilling>
+      <SystemEntryDate>2026-03-24T11:57:44</SystemEntryDate>
+    </Document>
+    <Document>
+      <DocumentID>F0106F9E2636</DocumentID>
+      <InvoiceNo>FT FT2026/10</InvoiceNo>
+      <InvoiceDate>2026-03-25</InvoiceDate>
+      <InvoiceType>FT</InvoiceType>
+      <ATCUD>TESTE-FT2026-10</ATCUD>
+      <Hash>0</Hash>
+      <HashControl>0</HashControl>
+      <CustomerTaxID>500000001</CustomerTaxID>
+      <GrossTotal>366.05</GrossTotal>
+      <Status>Preparada</Status>
+      <SourceBilling>P</SourceBilling>
+      <SystemEntryDate>2026-03-25T10:42:30</SystemEntryDate>
+    </Document>
+    <Document>
+      <DocumentID>023BCAE19888</DocumentID>
+      <InvoiceNo>FT FT2026/11</InvoiceNo>
+      <InvoiceDate>2026-03-27</InvoiceDate>
+      <InvoiceType>FT</InvoiceType>
+      <ATCUD>TESTE-FT2026-11</ATCUD>
+      <Hash>0</Hash>
+      <HashControl>0</HashControl>
+      <CustomerTaxID>500000001</CustomerTaxID>
+      <GrossTotal>366.05</GrossTotal>
+      <Status>Preparada</Status>
+      <SourceBilling>P</SourceBilling>
+      <SystemEntryDate>2026-03-27T09:39:37</SystemEntryDate>
+    </Document>
+    <Document>
+      <DocumentID>A91ADCDB616F</DocumentID>
+      <InvoiceNo>FT FT2026/13</InvoiceNo>
+      <InvoiceDate>2026-03-27</InvoiceDate>
+      <InvoiceType>FT</InvoiceType>
+      <ATCUD>TESTE-FT2026-13</ATCUD>
+      <Hash>0</Hash>
+      <HashControl>0</HashControl>
+      <CustomerTaxID>500000001</CustomerTaxID>
+      <GrossTotal>366.05</GrossTotal>
+      <Status>Por comunicar</Status>
+      <SourceBilling>P</SourceBilling>
+      <SystemEntryDate>2026-03-27T17:31:14</SystemEntryDate>
+    </Document>
+    <Document>
+      <DocumentID>6995D6258BFB</DocumentID>
+      <InvoiceNo>FT FT2026/14</InvoiceNo>
+      <InvoiceDate>2026-03-25</InvoiceDate>
+      <InvoiceType>FT</InvoiceType>
+      <ATCUD>TESTE-FT2026-14</ATCUD>
+      <Hash>0</Hash>
+      <HashControl>0</HashControl>
+      <CustomerTaxID>500000001</CustomerTaxID>
+      <GrossTotal>182.04</GrossTotal>
+      <Status>Por comunicar</Status>
+      <SourceBilling>P</SourceBilling>
+      <SystemEntryDate>2026-03-27T17:42:09</SystemEntryDate>
+    </Document>
+  </Documents>
+</ATCommunicationPreparation>

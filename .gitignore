@@ -1,0 +1,35 @@
+# Secrets and local environment
+lugest.env
+impulse_mobile_api/.env
+impulse_mobile_app/android/key.properties
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build outputs
+build/
+dist/
+build_qt_stable/
+dist_qt_stable/
+previews/
+
+# Logs and runtime files
+*.log
+*.pid
+
+# Mobile / Flutter / Android
+impulse_mobile_app/.dart_tool/
+impulse_mobile_app/.idea/
+impulse_mobile_app/android/.gradle/
+impulse_mobile_app/android/.kotlin/
+impulse_mobile_app/build/
+impulse_mobile_app/.flutter-plugins-dependencies
+
+# Local virtualenvs and IDE
+impulse_mobile_api/.venv/
+.venv/
+.idea/
