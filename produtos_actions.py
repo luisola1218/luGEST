@@ -159,6 +159,144 @@ def _prod_pdf_metric_grid_layout(group_right, banner_top, banner_height, cols=3,
         "cols": col_positions,
     }
 
+
+def _produto_from_material_record(material):
+    if not isinstance(material, dict):
+        return {}
+    formato = str(material.get("formato") or detect_materia_formato(material) or "Chapa").strip() or "Chapa"
+    comp = parse_float(material.get("comprimento", 0), 0)
+    larg = parse_float(material.get("largura", 0), 0)
+    esp = parse_float(material.get("espessura", 0), 0)
+    metros = parse_float(material.get("metros", 0), 0)
+    peso = parse_float(material.get("peso_unid", 0), 0)
+    if formato == "Tubo":
+        desc_dim = f"{fmt_num(metros)}m"
+    else:
+        desc_dim = f"{fmt_num(comp)}x{fmt_num(larg)}" if (comp > 0 and larg > 0) else "-"
+    return {
+        "descricao": f"{material.get('material', '')} {fmt_num(esp)}mm | {desc_dim}".strip(),
+        "categoria": formato,
+        "tipo": str(material.get("material", "") or "").strip() or formato,
+        "comp": comp,
+        "larg": larg,
+        "esp": esp,
+        "metros_unid": metros,
+        "peso_unid": peso,
+        "p_compra": parse_float(material.get("p_compra", 0), 0),
+        "unid": "UN",
+    }
+
+
+def _dialog_escolher_materia_para_produto(self):
+    _ensure_configured()
+    mats = self.data.get("materiais", [])
+    if not mats:
+        messagebox.showinfo("Info", "Sem registos em Matéria-Prima.")
+        return None
+    use_custom = CUSTOM_TK_AVAILABLE and os.environ.get("USE_CUSTOM_PROD", "1") != "0"
+    Dlg = ctk.CTkToplevel if use_custom else Toplevel
+    FrameCls = ctk.CTkFrame if use_custom else ttk.Frame
+    LabelCls = ctk.CTkLabel if use_custom else ttk.Label
+    EntryCls = ctk.CTkEntry if use_custom else ttk.Entry
+    ButtonCls = ctk.CTkButton if use_custom else ttk.Button
+
+    dlg = Dlg(self.root)
+    dlg.title("Selecionar da Matéria-Prima em Stock")
+    try:
+        dlg.geometry("1080x620")
+        dlg.transient(self.root)
+    except Exception:
+        pass
+    dlg.grab_set()
+
+    filtro = StringVar()
+    top = FrameCls(dlg, fg_color="#f7f8fb") if use_custom else FrameCls(dlg)
+    top.pack(fill="x", padx=8, pady=8)
+    LabelCls(top, text="Pesquisar").pack(side="left", padx=6)
+    ent = EntryCls(top, textvariable=filtro, width=340 if use_custom else 42)
+    ent.pack(side="left", padx=6)
+    ButtonCls(top, text="Atualizar", command=lambda: refresh()).pack(side="left", padx=6)
+
+    frame = FrameCls(dlg, fg_color="#ffffff") if use_custom else FrameCls(dlg)
+    frame.pack(fill="both", expand=True, padx=8, pady=6)
+    cols = ("id", "material", "esp", "dim", "metros", "peso", "compra", "stock", "lote", "local")
+    tree = ttk.Treeview(frame, columns=cols, show="headings", height=14)
+    headers = {
+        "id": "ID",
+        "material": "Material",
+        "esp": "Esp.",
+        "dim": "Dimensão",
+        "metros": "Metros",
+        "peso": "Peso/Unid",
+        "compra": "Compra",
+        "stock": "Stock",
+        "lote": "Lote",
+        "local": "Localização",
+    }
+    widths = {"id": 95, "material": 180, "esp": 70, "dim": 160, "metros": 80, "peso": 90, "compra": 90, "stock": 80, "lote": 120, "local": 160}
+    for col in cols:
+        tree.heading(col, text=headers[col])
+        tree.column(col, width=widths[col], anchor=("w" if col in ("material", "lote", "local") else "center"))
+    tree.pack(fill="both", expand=True, side="left")
+    sb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+    tree.configure(yscrollcommand=sb.set)
+    sb.pack(side="right", fill="y")
+    tree.tag_configure("even", background="#f8fbff")
+    tree.tag_configure("odd", background="#eef4fb")
+
+    mat_map = {m.get("id"): m for m in mats}
+
+    def refresh():
+        q = (filtro.get() or "").strip().lower()
+        for iid in tree.get_children():
+            tree.delete(iid)
+        for idx, m in enumerate(mats):
+            formato = str(m.get("formato") or detect_materia_formato(m) or "Chapa").strip() or "Chapa"
+            comp = parse_float(m.get("comprimento", 0), 0)
+            larg = parse_float(m.get("largura", 0), 0)
+            metros = parse_float(m.get("metros", 0), 0)
+            dim = f"{fmt_num(metros)}m" if formato == "Tubo" else (f"{fmt_num(comp)}x{fmt_num(larg)}" if (comp > 0 and larg > 0) else "-")
+            vals = (
+                m.get("id", ""),
+                m.get("material", ""),
+                fmt_num(m.get("espessura", "")),
+                dim,
+                fmt_num(metros),
+                fmt_num(m.get("peso_unid", 0)),
+                fmt_num(m.get("p_compra", 0)),
+                fmt_num(m.get("quantidade", 0)),
+                m.get("lote_fornecedor", ""),
+                m.get("Localizacao", m.get("Localização", "")),
+            )
+            if q and not any(q in str(v).lower() for v in vals):
+                continue
+            tree.insert("", END, values=vals, tags=("odd" if idx % 2 else "even",))
+
+    chosen = {}
+
+    def on_ok():
+        sel = tree.selection()
+        if not sel:
+            return
+        mat_id = tree.item(sel[0], "values")[0]
+        material = mat_map.get(mat_id)
+        if material:
+            chosen.update(_produto_from_material_record(material))
+        dlg.destroy()
+
+    bottom = FrameCls(dlg, fg_color="#f7f8fb") if use_custom else FrameCls(dlg)
+    bottom.pack(fill="x", padx=8, pady=8)
+    ButtonCls(bottom, text="Selecionar", command=on_ok).pack(side="right", padx=4)
+    ButtonCls(bottom, text="Cancelar", command=dlg.destroy).pack(side="right", padx=4)
+
+    refresh()
+    ent.bind("<KeyRelease>", lambda _e: refresh())
+    ent.bind("<Return>", lambda _e: refresh())
+    tree.bind("<Double-1>", lambda _e: on_ok())
+    tree.bind("<Return>", lambda _e: on_ok())
+    dlg.wait_window()
+    return chosen if chosen else None
+
 def produto_dict_from_form(self):
     _ensure_configured()
     return {
@@ -340,6 +478,19 @@ def dialog_novo_produto(self, prod_init=None):
     except Exception:
         pass
 
+    if use_custom:
+        pick_btn = ctk.CTkButton(
+            tech,
+            text="Selecionar da Matéria-Prima em Stock",
+            width=260,
+            fg_color="#f59e0b",
+            hover_color="#d97706",
+        )
+        pick_btn.grid(row=7, column=0, columnspan=2, padx=8, pady=(10, 6), sticky="w")
+    else:
+        pick_btn = ttk.Button(tech, text="Selecionar da Matéria-Prima em Stock")
+        pick_btn.grid(row=6, column=0, columnspan=2, padx=6, pady=(10, 6), sticky="w")
+
     def _set_state(w, st):
         try:
             w.configure(state=st)
@@ -383,10 +534,31 @@ def dialog_novo_produto(self, prod_init=None):
             pu = compra
         vars["preco_unid"].set(fmt_num(pu))
 
+    def apply_material_template():
+        chosen = self._dialog_escolher_materia_para_produto()
+        if not chosen:
+            return
+        vars["descricao"].set(str(chosen.get("descricao", "") or ""))
+        vars["categoria"].set(str(chosen.get("categoria", "") or ""))
+        vars["tipo"].set(str(chosen.get("tipo", "") or ""))
+        vars["comp"].set(str(chosen.get("comp", 0) or 0))
+        vars["larg"].set(str(chosen.get("larg", 0) or 0))
+        vars["esp"].set(str(chosen.get("esp", 0) or 0))
+        vars["metros_unid"].set(str(chosen.get("metros_unid", 0) or 0))
+        vars["peso_unid"].set(str(chosen.get("peso_unid", 0) or 0))
+        vars["p_compra"].set(str(chosen.get("p_compra", 0) or 0))
+        vars["unid"].set(str(chosen.get("unid", "UN") or "UN"))
+        update_tech_visibility()
+        update_preco_unid()
+
     vars["categoria"].trace_add("write", update_tech_visibility)
     vars["tipo"].trace_add("write", update_tech_visibility)
     for k in ("p_compra", "peso_unid", "metros_unid"):
         vars[k].trace_add("write", update_preco_unid)
+    try:
+        pick_btn.configure(command=apply_material_template)
+    except Exception:
+        pass
     if prod_init and not (vars["comp"].get() != "0" or vars["larg"].get() != "0" or vars["esp"].get() != "0"):
         try:
             dim = str(prod_init.get("dimensoes", ""))

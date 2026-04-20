@@ -7676,6 +7676,8 @@ class PurchaseNotesPage(QWidget):
         self.line_rows: list[dict] = []
         self.supplier_rows: list[dict] = []
         self.current_number = ""
+        self._rfq_outlook_to = ""
+        self._rfq_outlook_cc = ""
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(14)
@@ -7690,7 +7692,7 @@ class PurchaseNotesPage(QWidget):
         self.filter_edit.lineEdit().setPlaceholderText("Filtrar por número, fornecedor ou estado")
         self.filter_edit.lineEdit().textChanged.connect(self.refresh)
         self.state_combo = QComboBox()
-        self.state_combo.addItems(["Ativas", "Em edicao", "Aprovada", "Parcial", "Entregue", "Convertidas", "Todas"])
+        self.state_combo.addItems(["Ativas", "Em edicao", "Aprovada", "Enviada", "Parcial", "Entregue", "Convertidas", "Todas"])
         self.state_combo.currentTextChanged.connect(self.refresh)
         filters_layout.addWidget(QLabel("Pesquisa"))
         filters_layout.addWidget(self.filter_edit, 1)
@@ -7736,8 +7738,11 @@ class PurchaseNotesPage(QWidget):
         self.pdf_btn = QPushButton("Pre-visualizar NE")
         self.pdf_btn.setProperty("variant", "secondary")
         self.pdf_btn.clicked.connect(lambda: self._open_pdf(False))
+        self.send_order_btn = QPushButton("Enviar encomenda")
+        self.send_order_btn.setProperty("variant", "secondary")
+        self.send_order_btn.clicked.connect(self._send_order_email)
         self.quote_btn = QPushButton("Pedir orçamento")
-        self.quote_btn.clicked.connect(lambda: self._open_pdf(True))
+        self.quote_btn.clicked.connect(self._request_quote_email)
         self.quote_btn.setStyleSheet(
             "QPushButton {background: #f4c542; color: #0f172a; border: 1px solid #caa12b; "
             "border-radius: 10px; padding: 8px 14px; font-weight: 800;}"
@@ -7763,6 +7768,7 @@ class PurchaseNotesPage(QWidget):
             self.generate_btn,
             self.remove_btn,
             self.pdf_btn,
+            self.send_order_btn,
             self.suppliers_btn,
             self.delivery_btn,
             self.attach_doc_btn,
@@ -7966,8 +7972,8 @@ class PurchaseNotesPage(QWidget):
         line_actions.addStretch(1)
         lines_layout.addLayout(line_actions)
 
-        self.lines_table = QTableWidget(0, 11)
-        self.lines_table.setHorizontalHeaderLabels(["Código", "Descrição", "Origem", "Fornecedor", "Qtd", "Unid.", "P.Unit.", "Desc.%", "IVA%", "Total", "Entrega"])
+        self.lines_table = QTableWidget(0, 13)
+        self.lines_table.setHorizontalHeaderLabels(["Código", "Material", "Esp.", "Descrição", "Origem", "Fornecedor", "Qtd", "Unid.", "P.Unit.", "Desc.%", "IVA%", "Total", "Entrega"])
         self.lines_table.verticalHeader().setVisible(False)
         self.lines_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.lines_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -7975,17 +7981,19 @@ class PurchaseNotesPage(QWidget):
         _set_table_columns(
             self.lines_table,
             [
-                (0, "fixed", 150),
+                (0, "fixed", 130),
                 (1, "stretch", 0),
-                (2, "fixed", 110),
+                (2, "fixed", 72),
                 (3, "stretch", 0),
-                (4, "fixed", 72),
-                (5, "fixed", 62),
-                (6, "fixed", 96),
-                (7, "fixed", 74),
-                (8, "fixed", 68),
-                (9, "fixed", 102),
-                (10, "fixed", 118),
+                (4, "fixed", 110),
+                (5, "stretch", 0),
+                (6, "fixed", 72),
+                (7, "fixed", 62),
+                (8, "fixed", 96),
+                (9, "fixed", 74),
+                (10, "fixed", 68),
+                (11, "fixed", 102),
+                (12, "fixed", 118),
             ],
         )
         self.lines_table.setStyleSheet(
@@ -8121,11 +8129,29 @@ class PurchaseNotesPage(QWidget):
             if self.backend.desktop_main.origem_is_materia(row.get("origem", "")):
                 return "ID pendente"
             return "Manual"
+        def _line_material(row: dict[str, Any]) -> str:
+            material_txt = str(row.get("material", "") or "").strip()
+            if material_txt:
+                return material_txt
+            if self.backend.desktop_main.origem_is_materia(row.get("origem", "")):
+                return "-"
+            categoria_txt = str(row.get("categoria", "") or "").strip()
+            tipo_txt = str(row.get("tipo", "") or "").strip()
+            if categoria_txt and tipo_txt:
+                return f"{categoria_txt} / {tipo_txt}"
+            return categoria_txt or tipo_txt or "-"
+        def _line_espessura(row: dict[str, Any]) -> str:
+            if not self.backend.desktop_main.origem_is_materia(row.get("origem", "")):
+                return ""
+            esp_txt = str(row.get("espessura", "") or "").strip()
+            return esp_txt or "-"
         _fill_table(
             self.lines_table,
             [
                 [
                     _line_code(row),
+                    _elide_middle(_line_material(row), 36) or "-",
+                    _line_espessura(row),
                     row.get("descricao", "-"),
                     row.get("origem", "-"),
                     row.get("fornecedor_linha", "-"),
@@ -8139,7 +8165,7 @@ class PurchaseNotesPage(QWidget):
                 ]
                 for row in self.line_rows
             ],
-            align_center_from=3,
+            align_center_from=6,
         )
         for row_index, row in enumerate(self.line_rows):
             row_total = float(row.get("total", 0) or 0)
@@ -8153,10 +8179,16 @@ class PurchaseNotesPage(QWidget):
             tone = "Concluida" if "ENTREGUE" in entrega else "Em pausa" if "PARCIAL" in entrega else "Preparacao"
             _paint_table_row(self.lines_table, row_index, tone)
             code_item = self.lines_table.item(row_index, 0)
-            desc_item = self.lines_table.item(row_index, 1)
-            supplier_item = self.lines_table.item(row_index, 3)
+            material_item = self.lines_table.item(row_index, 1)
+            esp_item = self.lines_table.item(row_index, 2)
+            desc_item = self.lines_table.item(row_index, 3)
+            supplier_item = self.lines_table.item(row_index, 5)
             if code_item is not None:
                 code_item.setToolTip(_line_code(row))
+            if material_item is not None:
+                material_item.setToolTip(_line_material(row))
+            if esp_item is not None:
+                esp_item.setToolTip(_line_espessura(row))
             if desc_item is not None:
                 desc_item.setToolTip(str(row.get("descricao", "") or "").strip())
             if supplier_item is not None:
@@ -8881,8 +8913,8 @@ class PurchaseNotesPage(QWidget):
             meta_layout.setColumnStretch(col, 1)
         layout.addWidget(meta_card)
 
-        table = QTableWidget(len(self.line_rows), 6)
-        table.setHorizontalHeaderLabels(["Ref", "Descrição", "Pendente", "Receber", "Lote (opc.)", "Localização (opc.)"])
+        table = QTableWidget(len(self.line_rows), 8)
+        table.setHorizontalHeaderLabels(["Ref", "Material", "Esp.", "Descrição", "Pendente", "Receber", "Lote", "Localização"])
         table.verticalHeader().setVisible(False)
         table.setSelectionMode(QTableWidget.NoSelection)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -8894,14 +8926,17 @@ class PurchaseNotesPage(QWidget):
         header.setSectionResizeMode(0, QHeaderView.Fixed)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.Fixed)
-        header.setSectionResizeMode(3, QHeaderView.Fixed)
+        header.setSectionResizeMode(3, QHeaderView.Stretch)
         header.setSectionResizeMode(4, QHeaderView.Fixed)
         header.setSectionResizeMode(5, QHeaderView.Fixed)
-        table.setColumnWidth(0, 110)
-        table.setColumnWidth(2, 92)
-        table.setColumnWidth(3, 98)
-        table.setColumnWidth(4, 138)
-        table.setColumnWidth(5, 162)
+        header.setSectionResizeMode(6, QHeaderView.Fixed)
+        header.setSectionResizeMode(7, QHeaderView.Fixed)
+        table.setColumnWidth(0, 108)
+        table.setColumnWidth(2, 68)
+        table.setColumnWidth(4, 88)
+        table.setColumnWidth(5, 94)
+        table.setColumnWidth(6, 136)
+        table.setColumnWidth(7, 176)
         table.setMinimumHeight(max(220, min(380, _table_visible_height(table, min(len(self.line_rows), 7), extra=12))))
         qty_inputs: list[QDoubleSpinBox] = []
         lote_inputs: list[QLineEdit] = []
@@ -8915,6 +8950,8 @@ class PurchaseNotesPage(QWidget):
         for row_index, row in enumerate(self.line_rows):
             ref = str(row.get("ref", "") or "").strip()
             desc = str(row.get("descricao", "") or "").strip()
+            material_txt = str(row.get("material", "") or "").strip()
+            esp_txt = str(row.get("espessura", "") or "").strip()
             entrega_txt = str(row.get("entrega", "PENDENTE") or "PENDENTE").upper()
             qtd_total = float(row.get("qtd", 0) or 0)
             pending = qtd_total
@@ -8927,10 +8964,19 @@ class PurchaseNotesPage(QWidget):
             elif "ENTREGUE" in entrega_txt:
                 pending = 0.0
             table.setItem(row_index, 0, QTableWidgetItem(ref))
-            table.setItem(row_index, 1, QTableWidgetItem(desc))
+            material_item = QTableWidgetItem(_elide_middle(material_txt, 34))
+            material_item.setToolTip(material_txt)
+            table.setItem(row_index, 1, material_item)
+            esp_item = QTableWidgetItem(esp_txt if self.backend.desktop_main.origem_is_materia(row.get("origem", "")) else "")
+            esp_item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
+            esp_item.setToolTip(esp_txt)
+            table.setItem(row_index, 2, esp_item)
+            desc_item = QTableWidgetItem(_elide_middle(desc, 52))
+            desc_item.setToolTip(desc)
+            table.setItem(row_index, 3, desc_item)
             pending_item = QTableWidgetItem(f"{pending:.2f}")
             pending_item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
-            table.setItem(row_index, 2, pending_item)
+            table.setItem(row_index, 4, pending_item)
             qty_spin = QDoubleSpinBox()
             qty_spin.setRange(0.0, pending)
             qty_spin.setDecimals(2)
@@ -8939,31 +8985,21 @@ class PurchaseNotesPage(QWidget):
             qty_spin.setMinimumHeight(30)
             qty_spin.setAlignment(Qt.AlignCenter)
             qty_inputs.append(qty_spin)
-            table.setCellWidget(row_index, 3, qty_spin)
+            table.setCellWidget(row_index, 5, qty_spin)
             is_material_line = self.backend.desktop_main.origem_is_materia(row.get("origem", ""))
-            needs_material_entry = (
-                is_material_line
-                and (
-                    bool(row.get("_material_pending_create"))
-                    or not ref
-                    or self.backend.material_by_id(ref) is None
-                )
-            )
-            lote_edit = QLineEdit(str(row.get("lote_fornecedor", "") or "").strip())
+            lote_edit = QLineEdit("")
             lote_edit.setMinimumHeight(30)
-            lote_edit.setPlaceholderText("Opcional nesta entrada")
-            lote_edit.setEnabled(needs_material_entry)
-            if not needs_material_entry and not lote_edit.text().strip():
-                lote_edit.setText(str(row.get("lote_fornecedor", "") or "").strip())
+            lote_edit.setPlaceholderText("Escrever apenas se necessário")
+            lote_edit.setEnabled(is_material_line)
             lote_inputs.append(lote_edit)
-            table.setCellWidget(row_index, 4, lote_edit)
+            table.setCellWidget(row_index, 6, lote_edit)
             local_combo = QComboBox()
             local_combo.setEditable(True)
             local_combo.setInsertPolicy(QComboBox.NoInsert)
             local_combo.addItem("")
             for option in location_options:
                 local_combo.addItem(option)
-            local_combo.setCurrentText(str(row.get("localizacao", "") or "").strip())
+            local_combo.setCurrentText("")
             local_combo.setMinimumHeight(30)
             local_combo.setEnabled(is_material_line)
             local_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
@@ -8971,7 +9007,7 @@ class PurchaseNotesPage(QWidget):
             if local_combo.lineEdit() is not None:
                 local_combo.lineEdit().setPlaceholderText("Selecionar / escrever")
             local_inputs.append(local_combo)
-            table.setCellWidget(row_index, 5, local_combo)
+            table.setCellWidget(row_index, 7, local_combo)
         lines_card = CardFrame()
         lines_layout = QVBoxLayout(lines_card)
         lines_layout.setContentsMargins(14, 12, 14, 12)
@@ -9005,14 +9041,6 @@ class PurchaseNotesPage(QWidget):
         for row_index, row in enumerate(self.line_rows):
             value = qty_inputs[row_index].value()
             if value > 0:
-                needs_material_entry = (
-                    self.backend.desktop_main.origem_is_materia(row.get("origem", ""))
-                    and (
-                        bool(row.get("_material_pending_create"))
-                        or not str(row.get("ref", "") or "").strip()
-                        or self.backend.material_by_id(str(row.get("ref", "") or "").strip()) is None
-                    )
-                )
                 lote_txt = lote_inputs[row_index].text().strip()
                 lines.append(
                     {
@@ -9059,8 +9087,9 @@ class PurchaseNotesPage(QWidget):
         self.attach_doc_btn.setEnabled(False)
         self.documents_btn.setEnabled(False)
         self.pdf_btn.setEnabled(True)
+        self.send_order_btn.setEnabled(False)
         self.quote_btn.setEnabled(True)
-        self.quote_btn.setToolTip("Gera o PDF de pedido de orçamento/cotação para a nota atual.")
+        self.quote_btn.setToolTip("Gera o PDF de cotação e prepara o email no Outlook com os fornecedores em BCC.")
         self.supplier_combo.setCurrentText("")
         self.contact_edit.clear()
         self._set_delivery_text("")
@@ -9089,6 +9118,8 @@ class PurchaseNotesPage(QWidget):
         self.current_documents = [dict(row) for row in list(detail.get("documents", []) or [])]
         self.line_rows = [dict(line) for line in list(detail.get("lines", []) or [])]
         kind = str(detail.get("kind", "") or "").strip()
+        estado_txt = str(detail.get("estado", "") or "").strip().lower()
+        can_send_order = kind != "rfq" and ("aprov" in estado_txt or "enviad" in estado_txt)
         generated = list(detail.get("ne_geradas", []) or [])
         doc_count = int(detail.get("document_count", len(self.current_documents)) or 0)
         if kind == "rfq":
@@ -9103,8 +9134,9 @@ class PurchaseNotesPage(QWidget):
             self.attach_doc_btn.setEnabled(False)
             self.documents_btn.setEnabled(doc_count > 0)
             self.pdf_btn.setEnabled(False)
+            self.send_order_btn.setEnabled(False)
             self.quote_btn.setEnabled(True)
-            self.quote_btn.setToolTip("Gera o PDF de pedido de orçamento/cotação para a nota atual.")
+            self.quote_btn.setToolTip("Gera o PDF de cotação e prepara o email no Outlook com os fornecedores em BCC.")
         elif kind == "supplier_order":
             summary = "NE gerada"
             if doc_count:
@@ -9115,6 +9147,7 @@ class PurchaseNotesPage(QWidget):
             self.attach_doc_btn.setEnabled(True)
             self.documents_btn.setEnabled(True)
             self.pdf_btn.setEnabled(True)
+            self.send_order_btn.setEnabled(can_send_order)
             self.quote_btn.setEnabled(False)
             self.quote_btn.setToolTip("As NEs já geradas por fornecedor usam o botão 'Pre-visualizar NE'.")
         else:
@@ -9127,8 +9160,9 @@ class PurchaseNotesPage(QWidget):
             self.attach_doc_btn.setEnabled(True)
             self.documents_btn.setEnabled(True)
             self.pdf_btn.setEnabled(True)
+            self.send_order_btn.setEnabled(can_send_order)
             self.quote_btn.setEnabled(True)
-            self.quote_btn.setToolTip("Também podes emitir um pedido de orçamento para uma nota com fornecedor único.")
+            self.quote_btn.setToolTip("Também podes preparar um email de pedido de cotação para uma nota com fornecedor único.")
         self._render_lines()
 
     def _line_dialog(self, title: str, initial: dict | None = None, material_mode: bool = False) -> dict | None:
@@ -9349,7 +9383,7 @@ class PurchaseNotesPage(QWidget):
             selector_title = QLabel("Seleção de matéria-prima")
             selector_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
             selector_hint = QLabel(
-                "Começa vazio. Filtra por tipo, qualidade, espessura e dimensão. "
+                "O stock disponível aparece logo no seletor abaixo. Usa os filtros de tipo, qualidade, espessura e dimensão apenas para afinar a lista. "
                 "O stock é identificado pelo ID do material; o lote aparece apenas como referência adicional. "
                 "Quando a qualidade é escrita à mão, escolhe a família para acertar a densidade e o peso."
             )
@@ -9660,7 +9694,7 @@ class PurchaseNotesPage(QWidget):
                 esp_txt = _combo_text(espessura_combo)
                 dim_txt = _combo_text(dimensao_combo)
                 if not formato_txt:
-                    return []
+                    return list(material_rows)
                 return [row for row in material_rows if _matches(row, formato_txt, quality_txt, esp_txt, dim_txt)]
 
             def _set_combo_items(combo: QComboBox, values: list[str], current: str = "", allow_blank: bool = False) -> None:
@@ -9683,7 +9717,19 @@ class PurchaseNotesPage(QWidget):
                 combo.blockSignals(False)
 
             def _stock_label(row: dict[str, Any]) -> str:
-                parts = [str(row.get("id", "") or "").strip()]
+                material_txt = str(row.get("material", "") or "").strip()
+                esp_txt = str(row.get("espessura", "") or "").strip()
+                dim_txt = _dimension_text(row)
+                stock_id = str(row.get("id", "") or "").strip()
+                parts: list[str] = []
+                if material_txt:
+                    parts.append(material_txt)
+                if esp_txt:
+                    parts.append(f"{esp_txt} mm")
+                if dim_txt and dim_txt != "-":
+                    parts.append(dim_txt)
+                if stock_id:
+                    parts.append(stock_id)
                 lote_txt = str(row.get("lote", "") or "").strip()
                 local_txt = str(row.get("localizacao", "") or "").strip()
                 if lote_txt:
@@ -10390,6 +10436,887 @@ class PurchaseNotesPage(QWidget):
         self.refresh()
         summary = ", ".join(f"{row.get('numero')} ({row.get('fornecedor')})" for row in created)
         QMessageBox.information(self, "Gerar NEs", f"Notas geradas: {summary}")
+
+    def _split_email_tokens(self, raw: str) -> list[str]:
+        tokens = []
+        seen: set[str] = set()
+        for part in re.split(r"[;\n,]+", str(raw or "").strip()):
+            value = str(part or "").strip()
+            if not value:
+                continue
+            key = value.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            tokens.append(value)
+        return tokens
+
+    def _extract_first_email(self, *values: object) -> str:
+        for value in values:
+            match = re.search(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", str(value or ""), re.IGNORECASE)
+            if match:
+                return str(match.group(0) or "").strip()
+        return ""
+
+    def _default_outbound_email(self) -> str:
+        fixed_default = "Engenharia@barcelbal.com"
+        if self._rfq_outlook_to:
+            return self._rfq_outlook_to
+        if fixed_default:
+            return fixed_default
+        branding = dict(getattr(self.backend, "branding", {}) or {})
+        direct = self._extract_first_email(
+            branding.get("company_email", ""),
+            branding.get("email", ""),
+        )
+        if direct:
+            return direct
+        for row in list(branding.get("empresa_info_rodape", []) or []):
+            found = self._extract_first_email(row)
+            if found:
+                return found
+        try:
+            for row in list(self.backend.desktop_main.get_empresa_rodape_lines() or []):
+                found = self._extract_first_email(row)
+                if found:
+                    return found
+        except Exception:
+            pass
+        return ""
+
+    def _business_company_name(self) -> str:
+        branding = dict(getattr(self.backend, "branding_settings", lambda: {})() or {})
+        emit = dict(branding.get("guia_emitente", {}) or {})
+        branding_public = dict(getattr(self.backend, "branding", {}) or {})
+        return (
+            str(emit.get("nome", "") or "").strip()
+            or str(branding_public.get("company_name", "") or "").strip()
+            or "luGEST"
+        )
+
+    def _business_primary_color(self) -> str:
+        branding = dict(getattr(self.backend, "branding_settings", lambda: {})() or {})
+        return str(branding.get("primary_color", "") or "#000040").strip() or "#000040"
+
+    def _quote_recipient_label(self, detail: dict[str, object] | None = None) -> str:
+        supplier_context = self._note_quote_supplier_targets(detail)
+        suppliers = list(supplier_context.get("suppliers", []) or [])
+        if len(suppliers) == 1:
+            return str(suppliers[0].get("nome", "") or "").strip() or "Exmos. Senhores"
+        return "Exmos. Senhores"
+
+    def _order_recipient_label(self, detail: dict[str, object] | None = None) -> str:
+        supplier = self._note_order_supplier(detail)
+        return str(supplier.get("nome", "") or "").strip() or "Exmos. Senhores"
+
+    def _build_commercial_email_html(
+        self,
+        *,
+        title: str,
+        reference: str,
+        greeting: str,
+        intro_lines: list[str],
+        summary_title: str,
+        summary_rows: list[dict[str, str]],
+        note_title: str = "",
+        note_lines: list[str] | None = None,
+        logo_cid: str = "",
+    ) -> str:
+        company = self._business_company_name()
+        primary = self._business_primary_color()
+        header_logo = (
+            "<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">"
+            "<tr><td style=\"height:10px; line-height:10px; font-size:0;\">&nbsp;</td></tr>"
+            "<tr><td>"
+            f"<img src=\"cid:{html.escape(logo_cid)}\" alt=\"{html.escape(company)}\" width=\"218\" "
+            "style=\"display:block; width:218px; height:auto; border:0; outline:none; text-decoration:none;\" />"
+            "</td></tr>"
+            "</table>"
+            if logo_cid
+            else f"<div style=\"font-size:24px; font-weight:800; letter-spacing:-0.5px; color:#ffffff;\">{html.escape(company)}</div>"
+        )
+        intro_html = "".join(
+            f"<p style=\"margin:0 0 16px 0; font-size:14px; line-height:1.7; color:#334155;\">{html.escape(row)}</p>"
+            for row in [str(value or "").strip() for value in intro_lines if str(value or "").strip()]
+        )
+        note_block = ""
+        clean_notes = [str(value or "").strip() for value in list(note_lines or []) if str(value or "").strip()]
+        if clean_notes:
+            note_items = "".join(
+                f"<li style=\"margin:0 0 6px 0;\">{html.escape(row)}</li>"
+                for row in clean_notes
+            )
+            note_block = (
+                "<div style=\"margin:24px 0 0 0; padding:16px 18px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px;\">"
+                f"<div style=\"margin:0 0 10px 0; font-size:11px; font-weight:800; color:#94a3b8; letter-spacing:0.55px; text-transform:uppercase;\">{html.escape(note_title or 'Notas')}</div>"
+                f"<ul style=\"margin:0; padding-left:18px; font-size:13px; line-height:1.55; color:#334155;\">{note_items}</ul>"
+                "</div>"
+            )
+        summary_html_rows = []
+        greeting_txt = str(greeting or "").strip()
+        if greeting_txt.lower().startswith("exm"):
+            greeting_title = greeting_txt
+        else:
+            greeting_title = f"Exmo(a). {greeting_txt}"
+        for row in list(summary_rows or []):
+            label = str(row.get("label", "") or "").strip()
+            value = str(row.get("value", "") or "").strip() or "-"
+            emphasis = str(row.get("emphasis", "") or "").strip().lower()
+            value_style = "font-size:13px; color:#0f172a;"
+            if emphasis == "money":
+                value_style = "font-size:26px; font-weight:800; color:#16a34a;"
+            elif emphasis == "strong":
+                value_style = "font-size:14px; font-weight:700; color:#0f172a;"
+            summary_html_rows.append(
+                "<tr>"
+                f"<td style=\"padding:12px 14px; border-top:1px solid #e2e8f0; font-size:13px; color:#475569;\">{html.escape(label)}</td>"
+                f"<td style=\"padding:12px 14px; border-top:1px solid #e2e8f0; {value_style}\">{html.escape(value)}</td>"
+                "</tr>"
+            )
+        summary_html = "".join(summary_html_rows)
+        return (
+            "<html><body style=\"margin:0; padding:0; background:#eef2f7; font-family:Segoe UI, Arial, sans-serif; color:#334155;\">"
+            "<div style=\"padding:26px 0;\">"
+            "<div style=\"width:660px; margin:0 auto; background:#ffffff; border-radius:20px; overflow:hidden; box-shadow:0 16px 40px rgba(15,23,42,0.10);\">"
+            f"<div style=\"background:{html.escape(primary)}; padding:22px 28px;\">"
+            "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">"
+            "<tr>"
+            f"<td valign=\"bottom\" style=\"vertical-align:bottom; width:72%; height:112px;\">{header_logo}</td>"
+            "<td valign=\"top\" style=\"vertical-align:top; text-align:right; color:#dbe4f0; font-size:10px; letter-spacing:0.55px; text-transform:uppercase;\">"
+            f"{html.escape(title)}<br>"
+            f"<span style=\"display:inline-block; margin-top:3px; padding-left:16px; border-left:1px solid rgba(255,255,255,0.5); font-size:18px; font-weight:800; color:#ffffff;\">{html.escape(reference or '-')}</span>"
+            "</td>"
+            "</tr>"
+            "</table>"
+            "</div>"
+            "<div style=\"padding:28px 30px 22px 30px;\">"
+            f"<p style=\"margin:0 0 18px 0; font-size:19px; font-weight:800; color:#0f172a;\">{html.escape(greeting_title)},</p>"
+            "<p style=\"margin:0 0 16px 0; font-size:15px; line-height:1.7; color:#334155;\">Boa tarde,</p>"
+            f"{intro_html}"
+            f"{note_block}"
+            f"<div style=\"margin:24px 0 10px 0; font-size:11px; font-weight:800; color:#94a3b8; letter-spacing:0.6px; text-transform:uppercase;\">{html.escape(summary_title)}</div>"
+            "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse; border:1px solid #e2e8f0; border-radius:12px; overflow:hidden;\">"
+            "<tr style=\"background:#1f2933; color:#ffffff; font-size:11px; font-weight:800; text-transform:uppercase;\">"
+            "<td style=\"padding:10px 14px;\">Campo</td>"
+            "<td style=\"padding:10px 14px;\">Valor</td>"
+            "</tr>"
+            f"{summary_html}"
+            "</table>"
+            "</div>"
+            "<div style=\"padding:12px 18px; background:#f8fafc; border-top:1px solid #e2e8f0; text-align:center;\">"
+            f"<div style=\"font-size:11px; color:#64748b;\">{html.escape(company)}</div>"
+            "<div style=\"margin-top:2px; font-size:10px; color:#94a3b8;\">Gerado automaticamente pelo programa luGEST</div>"
+            "</div>"
+            "</div>"
+            "</div>"
+            "</body></html>"
+        )
+
+    def _note_quote_supplier_targets(self, detail: dict[str, object] | None = None) -> dict[str, object]:
+        payload = dict(detail or {})
+        unique_rows: dict[str, dict[str, str]] = {}
+        missing: list[str] = []
+        seen_missing: set[str] = set()
+        candidates: list[tuple[str, str]] = []
+        supplier_id = str(payload.get("fornecedor_id", "") or "").strip()
+        supplier_txt = str(payload.get("fornecedor", "") or "").strip()
+        if supplier_id or supplier_txt:
+            candidates.append((supplier_id, supplier_txt))
+        for line in list(payload.get("lines", []) or []):
+            line_supplier = str((line or {}).get("fornecedor_linha", "") or "").strip()
+            if line_supplier:
+                candidates.append(("", line_supplier))
+        for supplier_id_txt, label_txt in candidates:
+            supplier = {}
+            if supplier_id_txt:
+                supplier = next(
+                    (row for row in self.supplier_rows if str(row.get("id", "") or "").strip() == supplier_id_txt),
+                    {},
+                )
+            if not supplier and label_txt:
+                supplier = self._supplier_lookup(label_txt)
+            supplier_name = str((supplier or {}).get("nome", "") or label_txt).strip()
+            supplier_key = str((supplier or {}).get("id", "") or supplier_name).strip().lower()
+            if not supplier_key:
+                continue
+            email = str((supplier or {}).get("email", "") or "").strip()
+            if email:
+                unique_rows[supplier_key] = {
+                    "id": str((supplier or {}).get("id", "") or "").strip(),
+                    "nome": supplier_name,
+                    "email": email,
+                }
+            elif supplier_name and supplier_key not in seen_missing:
+                seen_missing.add(supplier_key)
+                missing.append(supplier_name)
+        suppliers = list(unique_rows.values())
+        suppliers.sort(key=lambda row: str(row.get("nome", "") or "").lower())
+        bcc = [str(row.get("email", "") or "").strip() for row in suppliers if str(row.get("email", "") or "").strip()]
+        return {"suppliers": suppliers, "bcc": bcc, "missing": missing}
+
+    def _note_quote_line_preview(self, detail: dict[str, object] | None = None, limit: int = 6) -> list[str]:
+        payload = dict(detail or {})
+        preview: list[str] = []
+        for line in list(payload.get("lines", []) or [])[: max(1, limit)]:
+            row = dict(line or {})
+            ref = str(row.get("ref", "") or "").strip()
+            material = str(row.get("material", "") or "").strip()
+            desc = str(row.get("descricao", "") or "").strip()
+            esp = str(row.get("espessura", "") or "").strip()
+            qty = self.backend._fmt(row.get("qtd", 0))
+            unit = str(row.get("unid", "") or "").strip() or "UN"
+            lead = material or desc or ref or "Linha"
+            if material and esp:
+                lead = f"{material} {esp} mm"
+            elif desc:
+                lead = desc
+            if ref:
+                lead = f"{ref} | {lead}"
+            preview.append(f"{lead} | Qtd {qty} {unit}".strip())
+        return preview
+
+    def _note_quote_email_subject(self, detail: dict[str, object] | None = None) -> str:
+        payload = dict(detail or {})
+        numero = str(payload.get("numero", "") or self.current_number or "").strip()
+        company = self._business_company_name()
+        return f"Pedido de Cotação - {company} [{numero}]" if numero else f"Pedido de Cotação - {company}"
+
+    def _note_quote_email_body(self, detail: dict[str, object] | None = None, *, reply_email: str = "") -> str:
+        payload = dict(detail or {})
+        numero = str(payload.get("numero", "") or self.current_number or "").strip()
+        data_entrega = str(payload.get("data_entrega", "") or "").strip()
+        local_descarga = str(payload.get("local_descarga", "") or "").strip()
+        transporte = str(payload.get("meio_transporte", "") or "").strip()
+        company = self._business_company_name()
+        greeting = self._quote_recipient_label(payload)
+        lines = [
+            f"{greeting},",
+            "",
+            "Boa tarde,",
+            "",
+            f"Segue em anexo o pedido de cotação {numero}." if numero else "Segue em anexo o pedido de cotação.",
+            "Agradecemos o envio da vossa melhor proposta para os itens indicados no documento em anexo.",
+            "Solicitamos, por favor, indicação de preço, prazo de entrega e condições de pagamento.",
+        ]
+        if data_entrega:
+            lines.append(f"Data pretendida de entrega: {data_entrega}")
+        if local_descarga:
+            lines.append(f"Local de descarga: {local_descarga}")
+        if transporte:
+            lines.append(f"Transporte: {transporte}")
+        if reply_email:
+            lines.extend(["", f"Podem responder diretamente para: {reply_email}"])
+        lines.extend(["", "Ficamos ao dispor para qualquer esclarecimento.", "", "Cumprimentos,", company])
+        return "\n".join(lines)
+
+    def _note_quote_email_html_body(
+        self,
+        detail: dict[str, object] | None = None,
+        *,
+        body_plain: str = "",
+        logo_cid: str = "",
+    ) -> str:
+        payload = dict(detail or {})
+        numero = str(payload.get("numero", "") or self.current_number or "").strip()
+        data_entrega = str(payload.get("data_entrega", "") or "").strip() or "-"
+        local_descarga = str(payload.get("local_descarga", "") or "").strip() or "-"
+        transporte = str(payload.get("meio_transporte", "") or "").strip() or "-"
+        response_email = self._default_outbound_email()
+        preview_lines = self._note_quote_line_preview(payload, limit=4)
+        obs_txt = str(payload.get("obs", "") or "").strip()
+        note_lines = list(preview_lines)
+        if obs_txt:
+            note_lines.insert(0, obs_txt)
+        return self._build_commercial_email_html(
+            title="Pedido de Cotação",
+            reference=numero,
+            greeting=self._quote_recipient_label(payload),
+            intro_lines=[
+                f"Segue em anexo o pedido de cotação referente ao documento {numero}." if numero else "Segue em anexo o pedido de cotação solicitado.",
+                "Agradecemos o envio da vossa melhor proposta para os itens identificados no documento em anexo.",
+                "Solicitamos, por favor, indicação de preço, prazo de entrega e condições de pagamento.",
+            ],
+            summary_title="Condições do pedido",
+            summary_rows=[
+                {"label": "Documento", "value": numero or "-", "emphasis": "strong"},
+                {"label": "Entrega pretendida", "value": data_entrega},
+                {"label": "Local de descarga", "value": local_descarga},
+                {"label": "Transporte", "value": transporte},
+                {"label": "Responder para", "value": response_email or "-", "emphasis": "strong"},
+            ],
+            note_title="Notas e itens em destaque",
+            note_lines=note_lines,
+            logo_cid=logo_cid,
+        )
+
+    def _note_quote_email_dialog(self, detail: dict[str, object]) -> dict[str, object] | None:
+        supplier_context = self._note_quote_supplier_targets(detail)
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Pedido de cotação | Outlook")
+        dialog.setMinimumWidth(860)
+        dialog.resize(920, 700)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+
+        intro = QLabel(
+            "O pedido vai ser preparado para Outlook com o PDF de cotação em anexo. "
+            "O campo BCC é preenchido automaticamente com os emails encontrados nos fornecedores da nota e continua editável."
+        )
+        intro.setWordWrap(True)
+        intro.setProperty("role", "muted")
+        layout.addWidget(intro)
+
+        info_card = CardFrame()
+        info_layout = QVBoxLayout(info_card)
+        info_layout.setContentsMargins(12, 10, 12, 10)
+        info_layout.setSpacing(6)
+        supplier_names = ", ".join(
+            str(row.get("nome", "") or "").strip()
+            for row in list(supplier_context.get("suppliers", []) or [])
+            if str(row.get("nome", "") or "").strip()
+        ) or "Sem fornecedores com email detetados automaticamente."
+        info_main = QLabel(f"Fornecedores em BCC: {supplier_names}")
+        info_main.setWordWrap(True)
+        info_layout.addWidget(info_main)
+        missing_rows = list(supplier_context.get("missing", []) or [])
+        if missing_rows:
+            missing_label = QLabel("Sem email na ficha: " + ", ".join(missing_rows))
+            missing_label.setWordWrap(True)
+            missing_label.setStyleSheet("color: #b54708; font-weight: 700;")
+            info_layout.addWidget(missing_label)
+        layout.addWidget(info_card)
+
+        to_edit = QLineEdit(self._default_outbound_email())
+        cc_edit = QLineEdit(self._rfq_outlook_cc)
+        bcc_edit = QTextEdit("; ".join(list(supplier_context.get("bcc", []) or [])))
+        bcc_edit.setMaximumHeight(84)
+        add_supplier_combo = QComboBox()
+        self._configure_supplier_selector(add_supplier_combo)
+        add_supplier_combo.addItem("")
+        for supplier in self.supplier_rows:
+            supplier_label = f"{supplier.get('id', '')} - {supplier.get('nome', '')}".strip(" -")
+            add_supplier_combo.addItem(supplier_label)
+        add_supplier_btn = QPushButton("Adicionar fornecedor ao BCC")
+        add_supplier_btn.setProperty("variant", "secondary")
+        bcc_list = QListWidget()
+        bcc_list.setMaximumHeight(120)
+        bcc_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        remove_bcc_btn = QPushButton("Remover selecionado")
+        remove_bcc_btn.setProperty("variant", "secondary")
+        subject_edit = QLineEdit(self._note_quote_email_subject(detail))
+        body_edit = QTextEdit(self._note_quote_email_body(detail, reply_email=to_edit.text().strip()))
+        body_edit.setMinimumHeight(280)
+        send_now_check = QCheckBox("Enviar diretamente sem abrir o rascunho no Outlook")
+
+        def _bcc_tokens() -> list[str]:
+            return self._split_email_tokens(bcc_edit.toPlainText())
+
+        def _set_bcc_tokens(values: list[str]) -> None:
+            clean = self._split_email_tokens("; ".join(values))
+            bcc_edit.blockSignals(True)
+            bcc_edit.setPlainText("; ".join(clean))
+            bcc_edit.blockSignals(False)
+            bcc_list.clear()
+            for value in clean:
+                bcc_list.addItem(value)
+
+        def _append_bcc_supplier() -> None:
+            supplier = self._supplier_lookup(add_supplier_combo.currentText())
+            email = str((supplier or {}).get("email", "") or "").strip()
+            if not supplier:
+                QMessageBox.warning(dialog, "Pedido de cotação", "Seleciona um fornecedor da base de dados.")
+                return
+            if not email:
+                QMessageBox.warning(dialog, "Pedido de cotação", "O fornecedor selecionado não tem email na ficha.")
+                return
+            _set_bcc_tokens(_bcc_tokens() + [email])
+            add_supplier_combo.setCurrentText("")
+
+        def _remove_selected_bcc() -> None:
+            item = bcc_list.currentItem()
+            if item is None:
+                return
+            selected_email = str(item.text() or "").strip().lower()
+            _set_bcc_tokens([value for value in _bcc_tokens() if value.strip().lower() != selected_email])
+
+        _set_bcc_tokens(list(supplier_context.get("bcc", []) or []))
+        add_supplier_btn.clicked.connect(_append_bcc_supplier)
+        remove_bcc_btn.clicked.connect(_remove_selected_bcc)
+
+        form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setSpacing(10)
+        form.addRow("Para", to_edit)
+        form.addRow("CC", cc_edit)
+        form.addRow("BCC", bcc_edit)
+        bcc_tools = QWidget()
+        bcc_tools_layout = QVBoxLayout(bcc_tools)
+        bcc_tools_layout.setContentsMargins(0, 0, 0, 0)
+        bcc_tools_layout.setSpacing(6)
+        bcc_add_row = QHBoxLayout()
+        bcc_add_row.setContentsMargins(0, 0, 0, 0)
+        bcc_add_row.setSpacing(6)
+        bcc_add_row.addWidget(add_supplier_combo, 1)
+        bcc_add_row.addWidget(add_supplier_btn)
+        bcc_tools_layout.addLayout(bcc_add_row)
+        bcc_tools_layout.addWidget(bcc_list)
+        bcc_tools_layout.addWidget(remove_bcc_btn, 0, Qt.AlignRight)
+        form.addRow("Fornecedores BCC", bcc_tools)
+        form.addRow("Assunto", subject_edit)
+        form.addRow("Mensagem", body_edit)
+        layout.addLayout(form)
+        layout.addWidget(send_now_check)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        ok_btn = buttons.button(QDialogButtonBox.Ok)
+        cancel_btn = buttons.button(QDialogButtonBox.Cancel)
+        if ok_btn is not None:
+            ok_btn.setText("Abrir Outlook")
+        if cancel_btn is not None:
+            cancel_btn.setText("Cancelar")
+
+        def _sync_ok_text() -> None:
+            if ok_btn is not None:
+                ok_btn.setText("Enviar" if send_now_check.isChecked() else "Abrir Outlook")
+
+        def _accept() -> None:
+            to_tokens = self._split_email_tokens(to_edit.text())
+            if not to_tokens:
+                QMessageBox.warning(dialog, "Pedido de cotação", "Indica pelo menos o teu email no campo 'Para'.")
+                return
+            if not subject_edit.text().strip():
+                QMessageBox.warning(dialog, "Pedido de cotação", "Indica um assunto para o email.")
+                return
+            if not body_edit.toPlainText().strip():
+                QMessageBox.warning(dialog, "Pedido de cotação", "Indica a mensagem do email.")
+                return
+            dialog.accept()
+
+        send_now_check.toggled.connect(_sync_ok_text)
+        _sync_ok_text()
+        buttons.accepted.connect(_accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        to_tokens = self._split_email_tokens(to_edit.text())
+        cc_tokens = self._split_email_tokens(cc_edit.text())
+        bcc_tokens = _bcc_tokens()
+        self._rfq_outlook_to = to_tokens[0] if to_tokens else ""
+        self._rfq_outlook_cc = "; ".join(cc_tokens)
+        return {
+            "to": "; ".join(to_tokens),
+            "cc": "; ".join(cc_tokens),
+            "bcc": "; ".join(bcc_tokens),
+            "subject": subject_edit.text().strip(),
+            "body_plain": body_edit.toPlainText().strip(),
+            "send_now": bool(send_now_check.isChecked()),
+        }
+
+    def _open_note_quote_email_draft(self, detail: dict[str, object], mail_payload: dict[str, object]) -> None:
+        payload = dict(detail or {})
+        numero = str(payload.get("numero", "") or self.current_number or "").strip()
+        if not numero:
+            raise ValueError("Guarda primeiro a nota antes de preparar o email.")
+        safe_number = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in numero)[:48] or "pedido_cotacao"
+        attachment_name = f"Pedido_Cotacao_{safe_number}.pdf"
+        attachment_path: Path | None = Path(tempfile.gettempdir()) / attachment_name
+        attachment_issue = ""
+        try:
+            self.backend.ne_render_pdf(numero, quote=True, output_path=attachment_path)
+        except Exception as exc:
+            attachment_issue = str(exc)
+            attachment_path = None
+
+        logo_path = getattr(self.backend, "logo_path", None)
+        logo_file = Path(logo_path) if isinstance(logo_path, Path) and logo_path.exists() else None
+        logo_cid = "lugest-ne-mail-logo" if logo_file is not None else ""
+        subject = str(mail_payload.get("subject", "") or "").strip()
+        body_plain = str(mail_payload.get("body_plain", "") or "").strip()
+        body_html = self._note_quote_email_html_body(payload, body_plain=body_plain, logo_cid=logo_cid)
+        send_now = bool(mail_payload.get("send_now"))
+
+        env = os.environ.copy()
+        env["LUGEST_MAIL_TO"] = str(mail_payload.get("to", "") or "").strip()
+        env["LUGEST_MAIL_CC"] = str(mail_payload.get("cc", "") or "").strip()
+        env["LUGEST_MAIL_BCC"] = str(mail_payload.get("bcc", "") or "").strip()
+        env["LUGEST_MAIL_SUBJECT"] = subject
+        env["LUGEST_MAIL_BODY"] = body_html
+        env["LUGEST_MAIL_ATTACHMENT"] = str(attachment_path) if attachment_path is not None else ""
+        env["LUGEST_MAIL_LOGO"] = str(logo_file) if logo_file is not None else ""
+        env["LUGEST_MAIL_LOGO_CID"] = logo_cid
+        env["LUGEST_MAIL_SEND_NOW"] = "1" if send_now else "0"
+        powershell_script = (
+            "$ErrorActionPreference='Stop'; "
+            "$outlook = New-Object -ComObject Outlook.Application; "
+            "$mail = $outlook.CreateItem(0); "
+            "$mail.To = $env:LUGEST_MAIL_TO; "
+            "if ($env:LUGEST_MAIL_CC) { $mail.CC = $env:LUGEST_MAIL_CC }; "
+            "if ($env:LUGEST_MAIL_BCC) { $mail.BCC = $env:LUGEST_MAIL_BCC }; "
+            "$mail.Subject = $env:LUGEST_MAIL_SUBJECT; "
+            "if ($env:LUGEST_MAIL_LOGO -and (Test-Path $env:LUGEST_MAIL_LOGO)) "
+            "{ "
+            "  $logo = $mail.Attachments.Add($env:LUGEST_MAIL_LOGO); "
+            "  $logo.PropertyAccessor.SetProperty('http://schemas.microsoft.com/mapi/proptag/0x3712001F', $env:LUGEST_MAIL_LOGO_CID); "
+            "  $logo.PropertyAccessor.SetProperty('http://schemas.microsoft.com/mapi/proptag/0x7FFE000B', $true) "
+            "}; "
+            "if ($env:LUGEST_MAIL_ATTACHMENT -and (Test-Path $env:LUGEST_MAIL_ATTACHMENT)) "
+            "{ $null = $mail.Attachments.Add($env:LUGEST_MAIL_ATTACHMENT) }; "
+            "$mail.HTMLBody = $env:LUGEST_MAIL_BODY; "
+            "if ($env:LUGEST_MAIL_SEND_NOW -eq '1') { $mail.Send() } else { $mail.Display() }"
+        )
+        try:
+            subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    powershell_script,
+                ],
+                check=True,
+                env=env,
+                timeout=30,
+            )
+        except Exception:
+            mailto = (
+                f"mailto:{quote(str(mail_payload.get('to', '') or '').strip())}"
+                f"?cc={quote(str(mail_payload.get('cc', '') or '').strip())}"
+                f"&bcc={quote(str(mail_payload.get('bcc', '') or '').strip())}"
+                f"&subject={quote(subject)}"
+                f"&body={quote(body_plain)}"
+            )
+            os.startfile(mailto)
+            fallback_message = "Outlook indisponível. Foi aberto o cliente de email por defeito."
+            if attachment_issue:
+                fallback_message += f"\n\nTambém não foi possível gerar o PDF em anexo:\n{attachment_issue}"
+            else:
+                fallback_message += "\n\nNota: o anexo PDF terá de ser adicionado manualmente neste modo."
+            QMessageBox.information(self, "Pedido de cotação", fallback_message)
+            return
+
+        if attachment_issue:
+            QMessageBox.information(
+                self,
+                "Pedido de cotação",
+                f"O email foi preparado no Outlook, mas o PDF não foi anexado automaticamente:\n{attachment_issue}",
+            )
+        elif send_now:
+            QMessageBox.information(self, "Pedido de cotação", "Email enviado com sucesso pelo Outlook.")
+
+    def _note_order_supplier(self, detail: dict[str, object] | None = None) -> dict[str, str]:
+        payload = dict(detail or {})
+        supplier = self._supplier_lookup(str(payload.get("fornecedor", "") or "").strip())
+        if supplier:
+            return {
+                "id": str(supplier.get("id", "") or "").strip(),
+                "nome": str(supplier.get("nome", "") or "").strip(),
+                "email": str(supplier.get("email", "") or "").strip(),
+                "contacto": str(supplier.get("contacto", "") or "").strip(),
+            }
+        return {
+            "id": str(payload.get("fornecedor_id", "") or "").strip(),
+            "nome": str(payload.get("fornecedor", "") or "").strip(),
+            "email": "",
+            "contacto": str(payload.get("contacto", "") or "").strip(),
+        }
+
+    def _note_order_email_subject(self, detail: dict[str, object] | None = None) -> str:
+        payload = dict(detail or {})
+        numero = str(payload.get("numero", "") or self.current_number or "").strip()
+        company = self._business_company_name()
+        return f"Encomenda - {company} [{numero}]" if numero else f"Encomenda - {company}"
+
+    def _note_order_email_body(self, detail: dict[str, object] | None = None) -> str:
+        payload = dict(detail or {})
+        numero = str(payload.get("numero", "") or self.current_number or "").strip()
+        data_entrega = str(payload.get("data_entrega", "") or "").strip()
+        local_descarga = str(payload.get("local_descarga", "") or "").strip()
+        transporte = str(payload.get("meio_transporte", "") or "").strip()
+        company = self._business_company_name()
+        greeting = self._order_recipient_label(payload)
+        lines = [
+            f"{greeting},",
+            "",
+            "Boa tarde,",
+            "",
+            f"Segue em anexo a encomenda {numero}." if numero else "Segue em anexo a encomenda.",
+            "Agradecemos confirmação de receção e do prazo previsto de entrega.",
+        ]
+        if data_entrega:
+            lines.append(f"Data pretendida de entrega: {data_entrega}")
+        if local_descarga:
+            lines.append(f"Local de descarga: {local_descarga}")
+        if transporte:
+            lines.append(f"Transporte: {transporte}")
+        lines.extend(["", "Ficamos ao dispor para qualquer esclarecimento.", "", "Cumprimentos,", company])
+        return "\n".join(lines)
+
+    def _note_order_email_html_body(
+        self,
+        detail: dict[str, object] | None = None,
+        *,
+        body_plain: str = "",
+        logo_cid: str = "",
+    ) -> str:
+        payload = dict(detail or {})
+        numero = str(payload.get("numero", "") or self.current_number or "").strip()
+        data_entrega = str(payload.get("data_entrega", "") or "").strip() or "-"
+        local_descarga = str(payload.get("local_descarga", "") or "").strip() or "-"
+        transporte = str(payload.get("meio_transporte", "") or "").strip() or "-"
+        total_txt = _fmt_eur(float(payload.get("total", 0) or 0))
+        obs_txt = str(payload.get("obs", "") or "").strip()
+        return self._build_commercial_email_html(
+            title="Encomenda",
+            reference=numero,
+            greeting=self._order_recipient_label(payload),
+            intro_lines=[
+                f"Segue em anexo a nossa encomenda {numero}." if numero else "Segue em anexo a nossa encomenda.",
+                "Agradecemos confirmação de receção e do prazo previsto de entrega.",
+            ],
+            summary_title="Condições da encomenda",
+            summary_rows=[
+                {"label": "Documento", "value": numero or "-", "emphasis": "strong"},
+                {"label": "Valor total", "value": total_txt, "emphasis": "money"},
+                {"label": "Entrega pretendida", "value": data_entrega},
+                {"label": "Local de descarga", "value": local_descarga},
+                {"label": "Transporte", "value": transporte},
+            ],
+            note_title="Observações",
+            note_lines=[obs_txt] if obs_txt else [],
+            logo_cid=logo_cid,
+        )
+
+    def _note_order_email_dialog(self, detail: dict[str, object]) -> dict[str, object] | None:
+        supplier = self._note_order_supplier(detail)
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Enviar encomenda | Outlook")
+        dialog.setMinimumWidth(780)
+        dialog.resize(860, 620)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+
+        intro = QLabel("A encomenda vai ser preparada para Outlook com o PDF oficial em anexo e o fornecedor desta NE como destinatário principal.")
+        intro.setWordWrap(True)
+        intro.setProperty("role", "muted")
+        layout.addWidget(intro)
+
+        info_card = CardFrame()
+        info_layout = QVBoxLayout(info_card)
+        info_layout.setContentsMargins(12, 10, 12, 10)
+        info_layout.setSpacing(4)
+        info_layout.addWidget(QLabel(f"Fornecedor: {supplier.get('nome', '') or '-'}"))
+        info_layout.addWidget(QLabel(f"Email fornecedor: {supplier.get('email', '') or 'Sem email na ficha'}"))
+        layout.addWidget(info_card)
+
+        to_edit = QLineEdit(str(supplier.get("email", "") or "").strip())
+        cc_edit = QLineEdit(self._default_outbound_email())
+        bcc_edit = QLineEdit("")
+        subject_edit = QLineEdit(self._note_order_email_subject(detail))
+        body_edit = QTextEdit(self._note_order_email_body(detail))
+        body_edit.setMinimumHeight(240)
+        send_now_check = QCheckBox("Enviar diretamente sem abrir o rascunho no Outlook")
+
+        form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setSpacing(10)
+        form.addRow("Para", to_edit)
+        form.addRow("CC", cc_edit)
+        form.addRow("BCC", bcc_edit)
+        form.addRow("Assunto", subject_edit)
+        form.addRow("Mensagem", body_edit)
+        layout.addLayout(form)
+        layout.addWidget(send_now_check)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        ok_btn = buttons.button(QDialogButtonBox.Ok)
+        cancel_btn = buttons.button(QDialogButtonBox.Cancel)
+        if ok_btn is not None:
+            ok_btn.setText("Abrir Outlook")
+        if cancel_btn is not None:
+            cancel_btn.setText("Cancelar")
+
+        def _sync_ok_text() -> None:
+            if ok_btn is not None:
+                ok_btn.setText("Enviar" if send_now_check.isChecked() else "Abrir Outlook")
+
+        def _accept() -> None:
+            if not self._split_email_tokens(to_edit.text()):
+                QMessageBox.warning(dialog, "Enviar encomenda", "O fornecedor da encomenda precisa de ter um email válido.")
+                return
+            if not subject_edit.text().strip():
+                QMessageBox.warning(dialog, "Enviar encomenda", "Indica um assunto para o email.")
+                return
+            if not body_edit.toPlainText().strip():
+                QMessageBox.warning(dialog, "Enviar encomenda", "Indica a mensagem do email.")
+                return
+            dialog.accept()
+
+        send_now_check.toggled.connect(_sync_ok_text)
+        _sync_ok_text()
+        buttons.accepted.connect(_accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        return {
+            "to": "; ".join(self._split_email_tokens(to_edit.text())),
+            "cc": "; ".join(self._split_email_tokens(cc_edit.text())),
+            "bcc": "; ".join(self._split_email_tokens(bcc_edit.text())),
+            "subject": subject_edit.text().strip(),
+            "body_plain": body_edit.toPlainText().strip(),
+            "send_now": bool(send_now_check.isChecked()),
+        }
+
+    def _open_note_order_email_draft(self, detail: dict[str, object], mail_payload: dict[str, object]) -> None:
+        payload = dict(detail or {})
+        numero = str(payload.get("numero", "") or self.current_number or "").strip()
+        if not numero:
+            raise ValueError("Guarda primeiro a nota antes de preparar o email.")
+        safe_number = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in numero)[:48] or "encomenda"
+        attachment_name = f"Encomenda_{safe_number}.pdf"
+        attachment_path: Path | None = Path(tempfile.gettempdir()) / attachment_name
+        attachment_issue = ""
+        try:
+            self.backend.ne_render_pdf(numero, quote=False, output_path=attachment_path)
+        except Exception as exc:
+            attachment_issue = str(exc)
+            attachment_path = None
+
+        logo_path = getattr(self.backend, "logo_path", None)
+        logo_file = Path(logo_path) if isinstance(logo_path, Path) and logo_path.exists() else None
+        logo_cid = "lugest-ne-order-logo" if logo_file is not None else ""
+        subject = str(mail_payload.get("subject", "") or "").strip()
+        body_plain = str(mail_payload.get("body_plain", "") or "").strip()
+        body_html = self._note_order_email_html_body(payload, body_plain=body_plain, logo_cid=logo_cid)
+        send_now = bool(mail_payload.get("send_now"))
+
+        env = os.environ.copy()
+        env["LUGEST_MAIL_TO"] = str(mail_payload.get("to", "") or "").strip()
+        env["LUGEST_MAIL_CC"] = str(mail_payload.get("cc", "") or "").strip()
+        env["LUGEST_MAIL_BCC"] = str(mail_payload.get("bcc", "") or "").strip()
+        env["LUGEST_MAIL_SUBJECT"] = subject
+        env["LUGEST_MAIL_BODY"] = body_html
+        env["LUGEST_MAIL_ATTACHMENT"] = str(attachment_path) if attachment_path is not None else ""
+        env["LUGEST_MAIL_LOGO"] = str(logo_file) if logo_file is not None else ""
+        env["LUGEST_MAIL_LOGO_CID"] = logo_cid
+        env["LUGEST_MAIL_SEND_NOW"] = "1" if send_now else "0"
+        powershell_script = (
+            "$ErrorActionPreference='Stop'; "
+            "$outlook = New-Object -ComObject Outlook.Application; "
+            "$mail = $outlook.CreateItem(0); "
+            "$mail.To = $env:LUGEST_MAIL_TO; "
+            "if ($env:LUGEST_MAIL_CC) { $mail.CC = $env:LUGEST_MAIL_CC }; "
+            "if ($env:LUGEST_MAIL_BCC) { $mail.BCC = $env:LUGEST_MAIL_BCC }; "
+            "$mail.Subject = $env:LUGEST_MAIL_SUBJECT; "
+            "if ($env:LUGEST_MAIL_LOGO -and (Test-Path $env:LUGEST_MAIL_LOGO)) "
+            "{ "
+            "  $logo = $mail.Attachments.Add($env:LUGEST_MAIL_LOGO); "
+            "  $logo.PropertyAccessor.SetProperty('http://schemas.microsoft.com/mapi/proptag/0x3712001F', $env:LUGEST_MAIL_LOGO_CID); "
+            "  $logo.PropertyAccessor.SetProperty('http://schemas.microsoft.com/mapi/proptag/0x7FFE000B', $true) "
+            "}; "
+            "if ($env:LUGEST_MAIL_ATTACHMENT -and (Test-Path $env:LUGEST_MAIL_ATTACHMENT)) "
+            "{ $null = $mail.Attachments.Add($env:LUGEST_MAIL_ATTACHMENT) }; "
+            "$mail.HTMLBody = $env:LUGEST_MAIL_BODY; "
+            "if ($env:LUGEST_MAIL_SEND_NOW -eq '1') { $mail.Send() } else { $mail.Display() }"
+        )
+        try:
+            subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    powershell_script,
+                ],
+                check=True,
+                env=env,
+                timeout=30,
+            )
+        except Exception:
+            mailto = (
+                f"mailto:{quote(str(mail_payload.get('to', '') or '').strip())}"
+                f"?cc={quote(str(mail_payload.get('cc', '') or '').strip())}"
+                f"&bcc={quote(str(mail_payload.get('bcc', '') or '').strip())}"
+                f"&subject={quote(subject)}"
+                f"&body={quote(body_plain)}"
+            )
+            os.startfile(mailto)
+            fallback_message = "Outlook indisponível. Foi aberto o cliente de email por defeito."
+            if attachment_issue:
+                fallback_message += f"\n\nTambém não foi possível gerar o PDF em anexo:\n{attachment_issue}"
+            else:
+                fallback_message += "\n\nNota: o anexo PDF terá de ser adicionado manualmente neste modo."
+            QMessageBox.information(self, "Enviar encomenda", fallback_message)
+            return
+
+        if attachment_issue:
+            QMessageBox.information(
+                self,
+                "Enviar encomenda",
+                f"O email foi preparado no Outlook, mas o PDF não foi anexado automaticamente:\n{attachment_issue}",
+            )
+        elif send_now:
+            QMessageBox.information(self, "Enviar encomenda", "Encomenda enviada com sucesso pelo Outlook.")
+
+    def _request_quote_email(self) -> None:
+        if not self.current_number:
+            QMessageBox.warning(self, "Notas Encomenda", "Seleciona ou guarda primeiro a nota.")
+            return
+        try:
+            self.backend.ne_save(self._note_payload())
+            detail = self.backend.ne_detail(self.current_number)
+        except Exception as exc:
+            QMessageBox.critical(self, "Notas Encomenda", str(exc))
+            return
+        if not list(detail.get("lines", []) or []):
+            QMessageBox.warning(self, "Notas Encomenda", "A nota não tem linhas para pedir cotação.")
+            return
+        mail_payload = self._note_quote_email_dialog(detail)
+        if mail_payload is None:
+            return
+        try:
+            self._open_note_quote_email_draft(detail, mail_payload)
+        except Exception as exc:
+            QMessageBox.critical(self, "Pedido de cotação", str(exc))
+
+    def _send_order_email(self) -> None:
+        if not self.current_number:
+            QMessageBox.warning(self, "Notas Encomenda", "Seleciona ou guarda primeiro a nota.")
+            return
+        try:
+            self.backend.ne_save(self._note_payload())
+            detail = self.backend.ne_detail(self.current_number)
+        except Exception as exc:
+            QMessageBox.critical(self, "Enviar encomenda", str(exc))
+            return
+        kind = str(detail.get("kind", "") or "").strip()
+        estado_txt = str(detail.get("estado", "") or "").strip().lower()
+        if kind == "rfq":
+            QMessageBox.warning(self, "Enviar encomenda", "Este botão é para NEs aprovadas. Usa 'Pedir orçamento' nas notas de cotação.")
+            return
+        if "aprov" not in estado_txt and "enviad" not in estado_txt:
+            QMessageBox.warning(self, "Enviar encomenda", "Aprova primeiro a encomenda antes de a enviar ao fornecedor.")
+            return
+        supplier = self._note_order_supplier(detail)
+        if not str(supplier.get("email", "") or "").strip():
+            QMessageBox.warning(self, "Enviar encomenda", "O fornecedor desta encomenda não tem email na ficha.")
+            return
+        mail_payload = self._note_order_email_dialog(detail)
+        if mail_payload is None:
+            return
+        try:
+            self._open_note_order_email_draft(detail, mail_payload)
+            self.backend.ne_mark_sent(self.current_number)
+            self.refresh()
+        except Exception as exc:
+            QMessageBox.critical(self, "Enviar encomenda", str(exc))
 
 
 class ClientsPage(QWidget):

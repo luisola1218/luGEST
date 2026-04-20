@@ -1417,6 +1417,10 @@ def _mysql_sync_relational_schema(cur, data):
                 fatura VARCHAR(60) NULL,
                 obs TEXT NULL,
                 qtd DECIMAL(10,2) NULL,
+                lote_fornecedor VARCHAR(100) NULL,
+                localizacao VARCHAR(100) NULL,
+                entrega_total BOOLEAN NULL,
+                stock_ref VARCHAR(30) NULL,
                 INDEX idx_ne_linha_entregas_num_ord (ne_numero, linha_ordem),
                 FOREIGN KEY (ne_numero) REFERENCES notas_encomenda(numero) ON DELETE CASCADE
             )
@@ -2142,6 +2146,10 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "notas_encomenda_linha_entregas", "fatura", "VARCHAR(60) NULL")
         _mysql_ensure_column(cur, "notas_encomenda_linha_entregas", "obs", "TEXT NULL")
         _mysql_ensure_column(cur, "notas_encomenda_linha_entregas", "qtd", "DECIMAL(10,2) NULL")
+        _mysql_ensure_column(cur, "notas_encomenda_linha_entregas", "lote_fornecedor", "VARCHAR(100) NULL")
+        _mysql_ensure_column(cur, "notas_encomenda_linha_entregas", "localizacao", "VARCHAR(100) NULL")
+        _mysql_ensure_column(cur, "notas_encomenda_linha_entregas", "entrega_total", "BOOLEAN NULL")
+        _mysql_ensure_column(cur, "notas_encomenda_linha_entregas", "stock_ref", "VARCHAR(30) NULL")
     if "notas_encomenda_documentos" in tables:
         _mysql_ensure_column(cur, "notas_encomenda_documentos", "ne_numero", "VARCHAR(30) NOT NULL")
         _mysql_ensure_column(cur, "notas_encomenda_documentos", "data_registo", "DATETIME NULL")
@@ -3455,8 +3463,9 @@ def _mysql_sync_relational_schema(cur, data):
                             cur.execute(
                                 """
                                 INSERT INTO notas_encomenda_linha_entregas (
-                                    ne_numero, linha_ordem, data_registo, data_entrega, data_documento, guia, fatura, obs, qtd
-                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    ne_numero, linha_ordem, data_registo, data_entrega, data_documento, guia, fatura, obs, qtd,
+                                    lote_fornecedor, localizacao, entrega_total, stock_ref
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                 """,
                                 (
                                     ne_num,
@@ -3468,6 +3477,10 @@ def _mysql_sync_relational_schema(cur, data):
                                     _clip(ent_l.get("fatura"), 60),
                                     ent_l.get("obs"),
                                     _to_num(ent_l.get("qtd")),
+                                    _clip(ent_l.get("lote_fornecedor"), 100),
+                                    _clip(ent_l.get("localizacao"), 100),
+                                    1 if _to_bool(ent_l.get("entrega_total")) else 0,
+                                    _clip(ent_l.get("stock_ref"), 30),
                                 ),
                             )
 
@@ -4670,6 +4683,10 @@ def _mysql_load_relational_data():
                             "fatura": str(ent_l.get("fatura", "") or ""),
                             "obs": str(ent_l.get("obs", "") or ""),
                             "qtd": _to_num(ent_l.get("qtd")) or 0.0,
+                            "lote_fornecedor": str(ent_l.get("lote_fornecedor", "") or ""),
+                            "localizacao": str(ent_l.get("localizacao", "") or ""),
+                            "entrega_total": bool(ent_l.get("entrega_total")),
+                            "stock_ref": str(ent_l.get("stock_ref", "") or ""),
                         }
                     )
 
@@ -10734,6 +10751,9 @@ class App:
     def _dialog_escolher_materia_prima_ne(self):
         return ne_expedicao_actions._dialog_escolher_materia_prima_ne(self)
 
+    def _dialog_escolher_materia_para_produto(self):
+        return produtos_actions._dialog_escolher_materia_para_produto(self)
+
 
     def on_ne_lin_select(self, _e=None):
         pass
@@ -10778,8 +10798,8 @@ class App:
         return ne_expedicao_actions._next_materia_id(self)
 
 
-    def _receber_linha_materia_ne(self, l, ne_num, qtd_recebida=None):
-        return ne_expedicao_actions._receber_linha_materia_ne(self, l, ne_num, qtd_recebida)
+    def _receber_linha_materia_ne(self, l, ne_num, qtd_recebida=None, **kwargs):
+        return ne_expedicao_actions._receber_linha_materia_ne(self, l, ne_num, qtd_recebida, **kwargs)
 
 
     def _dialog_associar_fatura_ne(self, ne):

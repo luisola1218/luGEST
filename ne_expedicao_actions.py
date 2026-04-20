@@ -725,24 +725,36 @@ def ne_collect_lines(self):
             "entregue": entregue_txt in ("SIM", "ENTREGUE", "TRUE", "1"),
             "qtd_entregue": parse_float(d.get("qtd", 0), 0) if (entregue_txt in ("SIM", "ENTREGUE", "TRUE", "1")) else 0.0,
         }
-        # Para linhas de Materia-Prima, guarda dados tecnicos para criar/atualizar postura no recebimento.
+        # Para linhas de Materia-Prima guardamos os dados tecnicos da selecao e mantemos
+        # lote/localizacao como campos independentes da rececao.
         if origem_is_materia(line.get("origem")):
-            m = next((x for x in self.data.get("materiais", []) if x.get("id") == line.get("ref")), None)
+            meta = _ne_material_meta_defaults()
+            for key, default in meta.items():
+                meta[key] = _ne_meta_get(self, item, key, default)
+            source_id = str(meta.get("source_material_id", "") or line.get("ref", "")).strip()
+            m = next((x for x in self.data.get("materiais", []) if x.get("id") == source_id), None)
             if m:
-                line.update(
-                    {
-                        "material": m.get("material", ""),
-                        "espessura": m.get("espessura", ""),
-                        "comprimento": parse_float(m.get("comprimento", 0), 0),
-                        "largura": parse_float(m.get("largura", 0), 0),
-                        "metros": parse_float(m.get("metros", 0), 0),
-                        "localizacao": m.get("Localizacao", ""),
-                        "lote_fornecedor": m.get("lote_fornecedor", ""),
-                        "peso_unid": parse_float(m.get("peso_unid", 0), 0),
-                        "p_compra": parse_float(m.get("p_compra", 0), 0),
-                        "formato": m.get("formato", detect_materia_formato(m)),
-                    }
-                )
+                source_meta = _ne_material_meta_from_record(m)
+                for key, value in source_meta.items():
+                    if key in ("lote_fornecedor", "localizacao"):
+                        continue
+                    if not meta.get(key):
+                        meta[key] = value
+            line.update(
+                {
+                    "source_material_id": source_id,
+                    "material": str(meta.get("material", "") or "").strip(),
+                    "espessura": str(meta.get("espessura", "") or "").strip(),
+                    "comprimento": parse_float(meta.get("comprimento", 0), 0),
+                    "largura": parse_float(meta.get("largura", 0), 0),
+                    "metros": parse_float(meta.get("metros", 0), 0),
+                    "localizacao": str(meta.get("localizacao", "") or "").strip(),
+                    "lote_fornecedor": str(meta.get("lote_fornecedor", "") or "").strip(),
+                    "peso_unid": parse_float(meta.get("peso_unid", 0), 0),
+                    "p_compra": parse_float(meta.get("p_compra", 0), 0),
+                    "formato": str(meta.get("formato", "") or "Chapa").strip() or "Chapa",
+                }
+            )
         linhas.append(line)
     return linhas
 
@@ -982,6 +994,7 @@ def on_ne_select(self, _e=None):
             iid,
             desconto=parse_float(l.get("desconto", 0), 0),
             iva=parse_float(l.get("iva", 23), 23),
+            **_ne_material_meta_from_line(l),
         )
     self.ne_refresh_line_tags()
     self.refresh_ne_total()
@@ -1079,6 +1092,100 @@ def _ne_meta_cleanup(self):
     dead = [k for k in list(meta.keys()) if k not in valid]
     for k in dead:
         meta.pop(k, None)
+
+
+def _ne_material_meta_defaults():
+    return {
+        "source_material_id": "",
+        "material": "",
+        "espessura": "",
+        "comprimento": 0.0,
+        "largura": 0.0,
+        "metros": 0.0,
+        "peso_unid": 0.0,
+        "p_compra": 0.0,
+        "formato": "Chapa",
+        "lote_fornecedor": "",
+        "localizacao": "",
+    }
+
+
+def _ne_build_material_desc(material, espessura, formato, comprimento=0.0, largura=0.0, metros=0.0):
+    formato_txt = str(formato or "").strip() or "Chapa"
+    esp_txt = fmt_num(espessura)
+    if formato_txt == "Tubo":
+        dim_txt = f"{fmt_num(metros)}m"
+    else:
+        comp = parse_float(comprimento, 0)
+        larg = parse_float(largura, 0)
+        dim_txt = f"{fmt_num(comp)}x{fmt_num(larg)}" if (comp > 0 and larg > 0) else "-"
+    return f"{str(material or '').strip()} {esp_txt}mm | {dim_txt}".strip()
+
+
+def _ne_material_meta_from_record(record, *, keep_receiving=False):
+    meta = _ne_material_meta_defaults()
+    if not isinstance(record, dict):
+        return meta
+    formato = str(record.get("formato") or detect_materia_formato(record) or "Chapa").strip() or "Chapa"
+    meta.update(
+        {
+            "source_material_id": str(record.get("id", "") or "").strip(),
+            "material": str(record.get("material", "") or "").strip(),
+            "espessura": str(record.get("espessura", "") or "").strip(),
+            "comprimento": parse_float(record.get("comprimento", 0), 0),
+            "largura": parse_float(record.get("largura", 0), 0),
+            "metros": parse_float(record.get("metros", 0), 0),
+            "peso_unid": parse_float(record.get("peso_unid", 0), 0),
+            "p_compra": parse_float(record.get("p_compra", 0), 0),
+            "formato": formato,
+        }
+    )
+    if keep_receiving:
+        meta["lote_fornecedor"] = str(record.get("lote_fornecedor", "") or "").strip()
+        meta["localizacao"] = str(record.get("Localizacao", record.get("Localização", "")) or "").strip()
+    return meta
+
+
+def _ne_material_meta_from_line(line):
+    meta = _ne_material_meta_defaults()
+    if not isinstance(line, dict):
+        return meta
+    meta.update(
+        {
+            "source_material_id": str(line.get("source_material_id", line.get("ref", "")) or "").strip(),
+            "material": str(line.get("material", "") or "").strip(),
+            "espessura": str(line.get("espessura", "") or "").strip(),
+            "comprimento": parse_float(line.get("comprimento", 0), 0),
+            "largura": parse_float(line.get("largura", 0), 0),
+            "metros": parse_float(line.get("metros", 0), 0),
+            "peso_unid": parse_float(line.get("peso_unid", 0), 0),
+            "p_compra": parse_float(line.get("p_compra", 0), 0),
+            "formato": str(line.get("formato", "") or "Chapa").strip() or "Chapa",
+            "lote_fornecedor": str(line.get("lote_fornecedor", "") or "").strip(),
+            "localizacao": str(line.get("localizacao", "") or "").strip(),
+        }
+    )
+    return meta
+
+
+def _ne_unique_location_values(self, extra_values=None):
+    values = []
+    seen = set()
+    candidates = list(extra_values or [])
+    for m in self.data.get("materiais", []):
+        candidates.append(m.get("Localizacao", m.get("Localização", "")))
+    for ne in self.data.get("notas_encomenda", []):
+        for line in ne.get("linhas", []):
+            candidates.append(line.get("localizacao", ""))
+    for raw in candidates:
+        txt = str(raw or "").strip()
+        key = txt.lower()
+        if not txt or key in seen:
+            continue
+        seen.add(key)
+        values.append(txt)
+    values.sort(key=lambda item: item.lower())
+    return values
 
 def _on_ne_estado_filter_click(self, value=None):
     _ensure_configured()
@@ -1183,6 +1290,7 @@ def ne_add_linha(self):
     origem = self._dialog_ne_origem_linha()
     if not origem:
         return
+    meta_kwargs = {"desconto": 0.0, "iva": 23.0}
     if origem_is_materia(origem):
         mp = self._dialog_escolher_materia_prima_ne()
         if not mp:
@@ -1193,6 +1301,7 @@ def ne_add_linha(self):
         unid = mp.get("unid", "UN")
         forn = self.ne_fornecedor.get().strip()
         origem_txt = "Materia-Prima"
+        meta_kwargs.update(_ne_material_meta_from_line(mp))
     else:
         prod = self._dialog_escolher_produto(for_ne=True)
         if not prod:
@@ -1220,7 +1329,7 @@ def ne_add_linha(self):
             "PENDENTE",
         ),
     )
-    _ne_meta_set(self, iid, desconto=0.0, iva=23.0)
+    _ne_meta_set(self, iid, **meta_kwargs)
     self.ne_refresh_line_tags()
     self.refresh_ne_total()
 
@@ -1238,6 +1347,29 @@ def ne_edit_linha(self, _e=None):
     desc = p.get("descricao", "")
     unid = p.get("unid", "UN")
     entregue_txt = p.get("entregue_txt", "PENDENTE")
+    is_materia_line = origem_is_materia(origem_txt)
+    material_meta = _ne_material_meta_defaults()
+    if is_materia_line:
+        for key, default in material_meta.items():
+            material_meta[key] = _ne_meta_get(self, iid, key, default)
+        source_id = str(material_meta.get("source_material_id", "") or ref).strip()
+        src = next((x for x in self.data.get("materiais", []) if x.get("id") == source_id), None)
+        if src:
+            source_meta = _ne_material_meta_from_record(src)
+            for key, value in source_meta.items():
+                if key in ("lote_fornecedor", "localizacao"):
+                    continue
+                if not material_meta.get(key):
+                    material_meta[key] = value
+            if not desc:
+                desc = _ne_build_material_desc(
+                    source_meta.get("material", ""),
+                    source_meta.get("espessura", ""),
+                    source_meta.get("formato", ""),
+                    source_meta.get("comprimento", 0),
+                    source_meta.get("largura", 0),
+                    source_meta.get("metros", 0),
+                )
     use_custom = CUSTOM_TK_AVAILABLE and os.environ.get("USE_CUSTOM_NE", "1") != "0"
     DlgCls = ctk.CTkToplevel if use_custom else Toplevel
     dlg = DlgCls(self.root)
@@ -1265,6 +1397,9 @@ def ne_edit_linha(self, _e=None):
     v_desc_perc = StringVar(value=str(fmt_num(_ne_meta_get(self, iid, "desconto", 0))))
     v_iva_perc = StringVar(value=str(fmt_num(_ne_meta_get(self, iid, "iva", p.get("iva", 23)))))
     v_forn = StringVar(value=str(fornecedor_line or ""))
+    v_lote = StringVar(value=str(material_meta.get("lote_fornecedor", "") or ""))
+    v_local = StringVar(value=str(material_meta.get("localizacao", "") or ""))
+    local_values = _ne_unique_location_values(self, [v_local.get()])
     forn_values = []
     for f in self.data.get("fornecedores", []):
         fid = str(f.get("id", "")).strip()
@@ -1330,7 +1465,12 @@ def ne_edit_linha(self, _e=None):
                 except Exception:
                     pass
         self.ne_refresh_line_tags()
-        _ne_meta_set(self, iid, desconto=desc_perc, iva=iva_perc)
+        meta_payload = {"desconto": desc_perc, "iva": iva_perc}
+        if is_materia_line:
+            meta_payload.update(material_meta)
+            meta_payload["lote_fornecedor"] = (v_lote.get() or "").strip()
+            meta_payload["localizacao"] = (v_local.get() or "").strip()
+        _ne_meta_set(self, iid, **meta_payload)
         self.refresh_ne_total()
         dlg.destroy()
 
@@ -1350,14 +1490,37 @@ def ne_edit_linha(self, _e=None):
             text_color="#7a0f1a",
         ).grid(row=0, column=0, columnspan=3, padx=12, pady=(12, 6), sticky="w")
         ctk.CTkLabel(wrap, text=f"Origem: {origem_txt}", font=("Segoe UI", 11), text_color="#4a5f77").grid(row=1, column=0, columnspan=3, padx=12, pady=(0, 10), sticky="w")
-        ctk.CTkLabel(wrap, text="Fornecedor", font=("Segoe UI", 12, "bold")).grid(row=2, column=0, padx=12, pady=6, sticky="w")
-        ctk.CTkComboBox(wrap, variable=v_forn, values=forn_values or [""], width=320).grid(row=2, column=1, columnspan=2, padx=12, pady=6, sticky="w")
-        ctk.CTkLabel(wrap, text="Quantidade", font=("Segoe UI", 12, "bold")).grid(row=3, column=0, padx=12, pady=6, sticky="w")
-        ctk.CTkEntry(wrap, textvariable=v_qtd, width=180).grid(row=3, column=1, padx=12, pady=6, sticky="w")
-        ctk.CTkLabel(wrap, text="Preço (EUR)", font=("Segoe UI", 12, "bold")).grid(row=4, column=0, padx=12, pady=6, sticky="w")
-        ctk.CTkEntry(wrap, textvariable=v_preco, width=180).grid(row=4, column=1, padx=12, pady=6, sticky="w")
+        next_row = 2
+        if is_materia_line:
+            resumo = _ne_build_material_desc(
+                material_meta.get("material", ""),
+                material_meta.get("espessura", ""),
+                material_meta.get("formato", ""),
+                material_meta.get("comprimento", 0),
+                material_meta.get("largura", 0),
+                material_meta.get("metros", 0),
+            )
+            info = ctk.CTkFrame(wrap, fg_color="#eef4fb", corner_radius=10, border_width=1, border_color="#d7e2f0")
+            info.grid(row=2, column=0, columnspan=3, sticky="we", padx=12, pady=(0, 8))
+            ctk.CTkLabel(info, text="Base técnica do stock", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, padx=10, pady=(8, 2), sticky="w")
+            ctk.CTkLabel(info, text=resumo, font=("Segoe UI", 11), text_color="#41556d").grid(row=1, column=0, padx=10, pady=(0, 4), sticky="w")
+            ctk.CTkLabel(info, text=f"Peso/Unid: {fmt_num(material_meta.get('peso_unid', 0))} kg", font=("Segoe UI", 10), text_color="#41556d").grid(row=2, column=0, padx=10, pady=(0, 8), sticky="w")
+            next_row = 3
+        ctk.CTkLabel(wrap, text="Fornecedor", font=("Segoe UI", 12, "bold")).grid(row=next_row, column=0, padx=12, pady=6, sticky="w")
+        ctk.CTkComboBox(wrap, variable=v_forn, values=forn_values or [""], width=320).grid(row=next_row, column=1, columnspan=2, padx=12, pady=6, sticky="w")
+        ctk.CTkLabel(wrap, text="Quantidade", font=("Segoe UI", 12, "bold")).grid(row=next_row + 1, column=0, padx=12, pady=6, sticky="w")
+        ctk.CTkEntry(wrap, textvariable=v_qtd, width=180).grid(row=next_row + 1, column=1, padx=12, pady=6, sticky="w")
+        ctk.CTkLabel(wrap, text="Preço (EUR)", font=("Segoe UI", 12, "bold")).grid(row=next_row + 2, column=0, padx=12, pady=6, sticky="w")
+        ctk.CTkEntry(wrap, textvariable=v_preco, width=180).grid(row=next_row + 2, column=1, padx=12, pady=6, sticky="w")
+        extra_row = next_row + 3
+        if is_materia_line:
+            ctk.CTkLabel(wrap, text="Lote (manual/receção)", font=("Segoe UI", 12, "bold")).grid(row=extra_row, column=0, padx=12, pady=6, sticky="w")
+            ctk.CTkEntry(wrap, textvariable=v_lote, width=180).grid(row=extra_row, column=1, padx=12, pady=6, sticky="w")
+            ctk.CTkLabel(wrap, text="Localização prevista", font=("Segoe UI", 12, "bold")).grid(row=extra_row + 1, column=0, padx=12, pady=6, sticky="w")
+            ctk.CTkComboBox(wrap, variable=v_local, values=local_values or [""], width=320).grid(row=extra_row + 1, column=1, columnspan=2, padx=12, pady=6, sticky="w")
+            extra_row += 2
         desc_box = ctk.CTkFrame(wrap, fg_color="#eef4fb", corner_radius=10, border_width=1, border_color="#cfd9e6")
-        desc_box.grid(row=5, column=0, columnspan=3, sticky="we", padx=12, pady=(8, 6))
+        desc_box.grid(row=extra_row, column=0, columnspan=3, sticky="we", padx=12, pady=(8, 6))
         ctk.CTkLabel(desc_box, text="Desconto fornecedor (%)", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, padx=10, pady=8, sticky="w")
         ctk.CTkEntry(desc_box, textvariable=v_desc_perc, width=140).grid(row=0, column=1, padx=8, pady=8, sticky="w")
         ctk.CTkLabel(desc_box, text="Aplicado ao total da linha", font=("Segoe UI", 10), text_color="#4a5f77").grid(row=0, column=2, padx=8, pady=8, sticky="w")
@@ -1365,7 +1528,7 @@ def ne_edit_linha(self, _e=None):
         ctk.CTkEntry(desc_box, textvariable=v_iva_perc, width=140).grid(row=1, column=1, padx=8, pady=8, sticky="w")
         ctk.CTkLabel(desc_box, text="Pré-definido: 23", font=("Segoe UI", 10), text_color="#4a5f77").grid(row=1, column=2, padx=8, pady=8, sticky="w")
         totais = ctk.CTkFrame(wrap, fg_color="#ffffff", corner_radius=10, border_width=1, border_color="#d8dee8")
-        totais.grid(row=6, column=0, columnspan=3, sticky="we", padx=12, pady=(6, 4))
+        totais.grid(row=extra_row + 1, column=0, columnspan=3, sticky="we", padx=12, pady=(6, 4))
         total_bruto_var = StringVar(value="0.00")
         total_sem_iva_var = StringVar(value="0.00")
         total_final_var = StringVar(value="0.00")
@@ -1395,7 +1558,7 @@ def ne_edit_linha(self, _e=None):
             pass
         _live_totals()
         btns = ctk.CTkFrame(wrap, fg_color="#f7f8fb")
-        btns.grid(row=7, column=0, columnspan=3, sticky="e", padx=12, pady=(10, 10))
+        btns.grid(row=extra_row + 2, column=0, columnspan=3, sticky="e", padx=12, pady=(10, 10))
         ctk.CTkButton(btns, text="Cancelar", width=120, command=dlg.destroy).pack(side="left", padx=(0, 8))
         ctk.CTkButton(btns, text="Guardar", width=150, command=on_ok, fg_color="#f59e0b", hover_color="#d97706").pack(side="left")
     else:
@@ -1411,7 +1574,15 @@ def ne_edit_linha(self, _e=None):
         ttk.Entry(dlg, textvariable=v_desc_perc, width=15).grid(row=4, column=1, padx=8, pady=4)
         ttk.Label(dlg, text="IVA (%)").grid(row=5, column=0, padx=8, pady=4, sticky="w")
         ttk.Entry(dlg, textvariable=v_iva_perc, width=15).grid(row=5, column=1, padx=8, pady=4)
-        ttk.Button(dlg, text="Guardar", command=on_ok).grid(row=6, column=0, columnspan=2, pady=8)
+        if is_materia_line:
+            ttk.Label(dlg, text="Lote").grid(row=6, column=0, padx=8, pady=4, sticky="w")
+            ttk.Entry(dlg, textvariable=v_lote, width=20).grid(row=6, column=1, padx=8, pady=4)
+            ttk.Label(dlg, text="Localização").grid(row=7, column=0, padx=8, pady=4, sticky="w")
+            ttk.Combobox(dlg, textvariable=v_local, values=local_values, width=34).grid(row=7, column=1, padx=8, pady=4)
+            save_row = 8
+        else:
+            save_row = 6
+        ttk.Button(dlg, text="Guardar", command=on_ok).grid(row=save_row, column=0, columnspan=2, pady=8)
 
 def ne_del_linha(self):
     _ensure_configured()
@@ -2985,22 +3156,54 @@ def _next_materia_id(self):
             max_n = max(max_n, int(mid[3:]))
     return f"MAT{max_n + 1:05d}"
 
-def _receber_linha_materia_ne(self, l, ne_num, qtd_recebida=None):
+def _receber_linha_materia_ne(self, l, ne_num, qtd_recebida=None, lote_override=None, localizacao_override=None):
     _ensure_configured()
     qtd = parse_float(qtd_recebida if qtd_recebida is not None else l.get("qtd", 0), 0)
     if qtd <= 0:
-        return True
+        return ""
     mats = self.data.setdefault("materiais", [])
-    ref = (l.get("ref") or "").strip()
-    m = next((x for x in mats if x.get("id") == ref), None)
+    material = (l.get("material") or "").strip()
+    if not material:
+        return ""
+    comp = parse_float(l.get("comprimento", 0), 0)
+    larg = parse_float(l.get("largura", 0), 0)
+    metros = parse_float(l.get("metros", 0), 0)
+    peso_unid = parse_float(l.get("peso_unid", 0), 0)
+    formato = (l.get("formato") or "").strip() or ("Tubo" if metros > 0 and (comp <= 0 or larg <= 0) else "Chapa")
+    lote_txt = str(lote_override if lote_override is not None else l.get("lote_fornecedor", "")).strip()
+    local_txt = str(localizacao_override if localizacao_override is not None else l.get("localizacao", "")).strip()
+
+    def _same_num(a, b):
+        return abs(parse_float(a, 0) - parse_float(b, 0)) <= 1e-6
+
+    target = None
+    for row in mats:
+        if not isinstance(row, dict) or bool(row.get("is_sobra")):
+            continue
+        row_formato = str(row.get("formato") or detect_materia_formato(row) or "").strip() or "Chapa"
+        if row_formato != formato:
+            continue
+        if norm_text(row.get("material", "")) != norm_text(material):
+            continue
+        if str(row.get("espessura", "") or "").strip() != str(l.get("espessura", "") or "").strip():
+            continue
+        if str(row.get("lote_fornecedor", "") or "").strip() != lote_txt:
+            continue
+        if str(row.get("Localizacao", row.get("Localização", "")) or "").strip() != local_txt:
+            continue
+        if formato == "Tubo":
+            if not _same_num(row.get("metros", 0), metros):
+                continue
+        elif comp > 0 or larg > 0:
+            if not (_same_num(row.get("comprimento", 0), comp) and _same_num(row.get("largura", 0), larg)):
+                continue
+        elif metros > 0 and not _same_num(row.get("metros", 0), metros):
+            continue
+        target = row
+        break
+
+    m = target
     if not m:
-        material = (l.get("material") or "").strip()
-        if not material:
-            return False
-        comp = parse_float(l.get("comprimento", 0), 0)
-        larg = parse_float(l.get("largura", 0), 0)
-        metros = parse_float(l.get("metros", 0), 0)
-        formato = (l.get("formato") or "").strip() or ("Tubo" if metros > 0 and (comp <= 0 or larg <= 0) else "Chapa")
         m = {
             "id": self._next_materia_id(),
             "formato": formato,
@@ -3011,20 +3214,26 @@ def _receber_linha_materia_ne(self, l, ne_num, qtd_recebida=None):
             "metros": metros,
             "quantidade": 0.0,
             "reservado": 0.0,
-            "Localizacao": (l.get("localizacao") or "").strip(),
-            "lote_fornecedor": (l.get("lote_fornecedor") or "").strip(),
-            "peso_unid": parse_float(l.get("peso_unid", 0), 0),
+            "Localizacao": local_txt,
+            "lote_fornecedor": lote_txt,
+            "peso_unid": peso_unid,
             "p_compra": parse_float(l.get("p_compra", 0), 0),
             "is_sobra": False,
             "atualizado_em": now_iso(),
+            "origem_encomenda": str(ne_num or "").strip(),
+            "origem_lote": lote_txt,
         }
         mats.append(m)
-        ref = m["id"]
-        l["ref"] = ref
     else:
         if not m.get("formato"):
-            m["formato"] = (l.get("formato") or "").strip() or detect_materia_formato(m)
+            m["formato"] = formato
     m["quantidade"] = parse_float(m.get("quantidade", 0), 0) + qtd
+    if peso_unid > 0 and parse_float(m.get("peso_unid", 0), 0) <= 0:
+        m["peso_unid"] = peso_unid
+    if local_txt:
+        m["Localizacao"] = local_txt
+    if lote_txt:
+        m["lote_fornecedor"] = lote_txt
     preco_unit = parse_float(l.get("preco", 0), 0)
     if preco_unit > 0:
         formato = m.get("formato", detect_materia_formato(m))
@@ -3040,7 +3249,7 @@ def _receber_linha_materia_ne(self, l, ne_num, qtd_recebida=None):
     push_unique(self.data.setdefault("materiais_hist", []), m.get("material", ""))
     push_unique(self.data.setdefault("espessuras_hist", []), m.get("espessura", ""))
     log_stock(self.data, "ENTRADA_NE", f"{m.get('id','')} qtd+={qtd} via {ne_num}")
-    return True
+    return str(m.get("id", "") or "")
 
 def _dialog_associar_fatura_ne(self, ne):
     _ensure_configured()
@@ -3434,12 +3643,18 @@ def _dialog_confirmar_entrega_ne(self, ne):
     canvas.pack(side="left", fill="both", expand=True)
     vsb.pack(side="right", fill="y")
 
-    Lbl(inner, text="Selecionar posturas a entregar", font=("Segoe UI", 12, "bold") if use_custom else None).grid(row=0, column=0, columnspan=5, sticky="w", padx=6, pady=(6, 4))
+    location_values = _ne_unique_location_values(self)
+
+    Lbl(inner, text="Selecionar posturas a entregar", font=("Segoe UI", 12, "bold") if use_custom else None).grid(row=0, column=0, columnspan=7, sticky="w", padx=6, pady=(6, 4))
     Lbl(inner, text="Linha").grid(row=1, column=0, sticky="w", padx=8, pady=(2, 4))
     Lbl(inner, text="Qtd Total").grid(row=1, column=1, sticky="e", padx=8, pady=(2, 4))
     Lbl(inner, text="Qtd em Falta").grid(row=1, column=2, sticky="e", padx=8, pady=(2, 4))
-    Lbl(inner, text="Rececionar").grid(row=1, column=3, sticky="e", padx=8, pady=(2, 4))
+    Lbl(inner, text="Rececionar").grid(row=1, column=3, sticky="w", padx=8, pady=(2, 4))
+    Lbl(inner, text="Entrega Total").grid(row=1, column=4, sticky="w", padx=8, pady=(2, 4))
+    Lbl(inner, text="Qtd Recebida").grid(row=1, column=5, sticky="e", padx=8, pady=(2, 4))
+    Lbl(inner, text="Lote / Localização").grid(row=1, column=6, sticky="w", padx=8, pady=(2, 4))
     line_rows = []
+    pulse_hosts = []
     row = 2
     for idx, l in enumerate(ne.get("linhas", [])):
         qtd_total = parse_float(l.get("qtd", 0), 0)
@@ -3449,45 +3664,153 @@ def _dialog_confirmar_entrega_ne(self, ne):
         )
         qtd_falta = max(0.0, qtd_total - qtd_entregue)
         entregue = bool(l.get("_stock_in")) or qtd_falta <= 1e-9
+        is_materia_line = origem_is_materia(l.get("origem", ""))
         txt = f"{l.get('ref','')} | {l.get('descricao','')}"
         if entregue:
             txt += " [ENTREGUE]"
         var = BooleanVar(value=(not entregue))
+        total_var = BooleanVar(value=False)
         qtd_var = StringVar(value=(fmt_num(qtd_falta) if qtd_falta > 0 else "0"))
+        lote_var = StringVar(value=str(l.get("lote_fornecedor", "") or ""))
+        loc_var = StringVar(value=str(l.get("localizacao", "") or ""))
         chk = Chk(inner, text=txt, variable=var)
         chk.grid(row=row, column=0, sticky="w", padx=8, pady=3)
         Lbl(inner, text=fmt_num(qtd_total)).grid(row=row, column=1, sticky="e", padx=8, pady=3)
         Lbl(inner, text=fmt_num(qtd_falta)).grid(row=row, column=2, sticky="e", padx=8, pady=3)
-        Ent(inner, textvariable=qtd_var, width=100 if use_custom else 12).grid(row=row, column=3, sticky="e", padx=8, pady=3)
+        if use_custom:
+            pulse_host = ctk.CTkFrame(inner, fg_color="#fff4cc", corner_radius=8, border_width=1, border_color="#f59e0b", width=126, height=34)
+            pulse_host.grid(row=row, column=4, sticky="w", padx=8, pady=3)
+            pulse_host.grid_propagate(False)
+        else:
+            pulse_host = Frame(inner, bg="#fff4cc", highlightthickness=1, highlightbackground="#f59e0b", bd=0)
+            pulse_host.grid(row=row, column=4, sticky="w", padx=8, pady=3)
+        total_chk = Chk(
+            pulse_host,
+            text="Total",
+            variable=total_var,
+            onvalue=True,
+            offvalue=False,
+        )
+        if use_custom:
+            total_chk.pack(anchor="center", padx=6, pady=4)
+        else:
+            total_chk.pack(anchor="center", padx=6, pady=3)
+        qty_entry = Ent(inner, textvariable=qtd_var, width=100 if use_custom else 12)
+        qty_entry.grid(row=row, column=5, sticky="e", padx=8, pady=3)
+        if is_materia_line:
+            lot_local_box = Frm(inner, fg_color="#ffffff") if use_custom else ttk.Frame(inner)
+            lot_local_box.grid(row=row, column=6, sticky="we", padx=8, pady=3)
+            lot_entry = Ent(lot_local_box, textvariable=lote_var, width=140 if use_custom else 16)
+            lot_entry.pack(side="left", padx=(0, 6))
+            loc_combo = ttk.Combobox(lot_local_box, textvariable=loc_var, values=location_values, width=18, state="normal")
+            loc_combo.pack(side="left", padx=(0, 4))
+        else:
+            lot_entry = None
+            loc_combo = None
+            Lbl(inner, text="-").grid(row=row, column=6, sticky="w", padx=8, pady=3)
+
+        def _update_row_state(*_, row_ref=None):
+            if not row_ref:
+                return
+            active = bool(row_ref["var"].get()) and not row_ref["entregue"]
+            force_total = active and bool(row_ref["total_var"].get())
+            if force_total:
+                row_ref["qtd_var"].set(fmt_num(row_ref["qtd_falta"]))
+            try:
+                row_ref["qty_entry"].configure(state=("disabled" if (not active or force_total) else "normal"))
+            except Exception:
+                pass
+            try:
+                row_ref["total_chk"].configure(state=("normal" if active else "disabled"))
+            except Exception:
+                pass
+            if row_ref.get("lot_entry") is not None:
+                try:
+                    row_ref["lot_entry"].configure(state=("normal" if active else "disabled"))
+                except Exception:
+                    pass
+            if row_ref.get("loc_combo") is not None:
+                try:
+                    row_ref["loc_combo"].configure(state=("normal" if active else "disabled"))
+                except Exception:
+                    pass
+
         if entregue:
             try:
                 chk.configure(state="disabled")
             except Exception:
                 pass
-        line_rows.append(
-            {
-                "idx": idx,
-                "var": var,
-                "qtd_var": qtd_var,
-                "qtd_falta": qtd_falta,
-                "entregue": entregue,
-                "ref": l.get("ref", ""),
-            }
-        )
+        row_ref = {
+            "idx": idx,
+            "var": var,
+            "total_var": total_var,
+            "qtd_var": qtd_var,
+            "qtd_falta": qtd_falta,
+            "entregue": entregue,
+            "ref": l.get("ref", ""),
+            "is_materia": is_materia_line,
+            "lote_var": lote_var,
+            "loc_var": loc_var,
+            "qty_entry": qty_entry,
+            "total_chk": total_chk,
+            "lot_entry": lot_entry,
+            "loc_combo": loc_combo,
+        }
+        try:
+            var.trace_add("write", lambda *_a, row_ref=row_ref: _update_row_state(row_ref=row_ref))
+            total_var.trace_add("write", lambda *_a, row_ref=row_ref: _update_row_state(row_ref=row_ref))
+        except Exception:
+            pass
+        _update_row_state(row_ref=row_ref)
+        line_rows.append(row_ref)
+        pulse_hosts.append((pulse_host, entregue))
         row += 1
+
+    def _blink_total_hosts():
+        try:
+            if not win.winfo_exists():
+                return
+        except Exception:
+            return
+        blink_on = not bool(getattr(win, "_ne_total_blink_on", False))
+        win._ne_total_blink_on = blink_on
+        for host, entregue in pulse_hosts:
+            if entregue:
+                continue
+            try:
+                if use_custom:
+                    host.configure(fg_color=("#ffe08a" if blink_on else "#fff4cc"))
+                else:
+                    host.configure(bg=("#ffe08a" if blink_on else "#fff4cc"))
+            except Exception:
+                pass
+        try:
+            win.after(700, _blink_total_hosts)
+        except Exception:
+            pass
+
+    _blink_total_hosts()
 
     def on_confirm():
         itens = []
         for it in line_rows:
             if it.get("entregue") or not bool(it["var"].get()):
                 continue
-            qtd = parse_float(it["qtd_var"].get(), 0)
+            qtd = parse_float(it["qtd_falta"], 0) if bool(it["total_var"].get()) else parse_float(it["qtd_var"].get(), 0)
             if qtd <= 0:
                 continue
             if qtd > parse_float(it.get("qtd_falta", 0), 0) + 1e-9:
                 messagebox.showerror("Erro", f"Quantidade acima do pendente na linha {it.get('ref','')}.")
                 return
-            itens.append({"idx": it["idx"], "qtd": qtd})
+            item = {
+                "idx": it["idx"],
+                "qtd": qtd,
+                "entrega_total": bool(it["total_var"].get()),
+            }
+            if it.get("is_materia"):
+                item["lote_fornecedor"] = (it["lote_var"].get() or "").strip()
+                item["localizacao"] = (it["loc_var"].get() or "").strip()
+            itens.append(item)
         if not itens:
             messagebox.showerror("Erro", "Selecione pelo menos uma postura para entregar.")
             return
@@ -3537,7 +3860,7 @@ def confirmar_entrega_ne(self):
             idx = int(it.get("idx"))
         except Exception:
             continue
-        selected_items[idx] = parse_float(it.get("qtd", 0), 0)
+        selected_items[idx] = dict(it)
     if not selected_items:
         for i in entrega_data.get("indices", []) or []:
             try:
@@ -3545,7 +3868,11 @@ def confirmar_entrega_ne(self):
                 linha = ne.get("linhas", [])[idx]
             except Exception:
                 continue
-            selected_items[idx] = parse_float(linha.get("qtd", 0), 0)
+            selected_items[idx] = {
+                "idx": idx,
+                "qtd": parse_float(linha.get("qtd", 0), 0),
+                "entrega_total": True,
+            }
     moved = 0
     moved_qtd = 0.0
     missing = []
@@ -3553,6 +3880,7 @@ def confirmar_entrega_ne(self):
     for idx, l in enumerate(ne.get("linhas", [])):
         if idx not in selected_items:
             continue
+        item_data = selected_items.get(idx, {})
         qtd_total = parse_float(l.get("qtd", 0), 0)
         qtd_entregue = parse_float(
             l.get("qtd_entregue", l.get("qtd", 0) if l.get("entregue") else 0),
@@ -3564,20 +3892,30 @@ def confirmar_entrega_ne(self):
             l["entregue"] = True
             l["_stock_in"] = True
             continue
-        qtd = min(parse_float(selected_items.get(idx, 0), 0), qtd_pendente)
+        qtd = min(parse_float(item_data.get("qtd", 0), 0), qtd_pendente)
         if qtd <= 0:
             continue
         origem = l.get("origem", "Produto")
         ref = l.get("ref", "")
         if origem_is_materia(origem):
-            ok = self._receber_linha_materia_ne(l, ne.get("numero", ""), qtd_recebida=qtd)
-            if not ok:
+            lote_txt = str(item_data.get("lote_fornecedor", "") or "").strip()
+            local_txt = str(item_data.get("localizacao", "") or "").strip()
+            stock_ref = self._receber_linha_materia_ne(
+                l,
+                ne.get("numero", ""),
+                qtd_recebida=qtd,
+                lote_override=lote_txt,
+                localizacao_override=local_txt,
+            )
+            if not stock_ref:
                 missing.append(ref or l.get("descricao", ""))
                 continue
             qtd_new = min(qtd_total, qtd_entregue + qtd)
             l["qtd_entregue"] = qtd_new
             l["entregue"] = qtd_new >= (qtd_total - 1e-9)
             l["_stock_in"] = bool(l.get("entregue"))
+            l["lote_fornecedor"] = lote_txt
+            l["localizacao"] = local_txt
             l["guia_entrega"] = entrega_data.get("guia", "")
             l["fatura_entrega"] = entrega_data.get("fatura", "")
             l["data_doc_entrega"] = entrega_data.get("data_doc", "")
@@ -3585,7 +3923,12 @@ def confirmar_entrega_ne(self):
             l["obs_entrega"] = entrega_data.get("obs", "")
             moved += 1
             moved_qtd += qtd
-            delivered_refs.append(f"{ref or l.get('descricao', '')} ({fmt_num(qtd)})")
+            resumo = f"{ref or l.get('descricao', '')} ({fmt_num(qtd)})"
+            if lote_txt:
+                resumo += f" lote {lote_txt}"
+            if local_txt:
+                resumo += f" @ {local_txt}"
+            delivered_refs.append(resumo)
             l.setdefault("entregas_linha", []).append(
                 {
                     "data_registo": now_iso(),
@@ -3595,6 +3938,10 @@ def confirmar_entrega_ne(self):
                     "fatura": entrega_data.get("fatura", ""),
                     "obs": entrega_data.get("obs", ""),
                     "qtd": qtd,
+                    "lote_fornecedor": lote_txt,
+                    "localizacao": local_txt,
+                    "entrega_total": bool(item_data.get("entrega_total")),
+                    "stock_ref": stock_ref,
                 }
             )
             continue
@@ -3625,6 +3972,7 @@ def confirmar_entrega_ne(self):
                 "fatura": entrega_data.get("fatura", ""),
                 "obs": entrega_data.get("obs", ""),
                 "qtd": qtd,
+                "entrega_total": bool(item_data.get("entrega_total")),
             }
         )
         self.data.setdefault("produtos_mov", []).append(
@@ -5127,26 +5475,29 @@ def _sync_ne_linhas_with_materia(self, ne):
         comp = parse_float(m.get("comprimento", 0), 0)
         larg = parse_float(m.get("largura", 0), 0)
         metros = parse_float(m.get("metros", 0), 0)
-        if formato == "Tubo":
-            dim_txt = f"{fmt_num(metros)}m"
-        else:
-            dim_txt = f"{fmt_num(comp)}x{fmt_num(larg)}" if (comp > 0 and larg > 0) else "-"
-        new_desc = f"{m.get('material','')} {fmt_num(m.get('espessura',''))}mm | {dim_txt}"
+        new_desc = _ne_build_material_desc(
+            m.get("material", ""),
+            m.get("espessura", ""),
+            formato,
+            comp,
+            larg,
+            metros,
+        )
         if (l.get("descricao", "") or "") != new_desc:
             l["descricao"] = new_desc
             changed = True
         if l.get("unid", "") != "UN":
             l["unid"] = "UN"
             changed = True
-        # manter dados tecnicos sincronizados para recebimento
+        # Mantemos apenas a base tecnica sincronizada. Lote e localizacao passam
+        # a ser decididos linha a linha no momento da rececao.
         new_meta = {
+            "source_material_id": m.get("id", ""),
             "material": m.get("material", ""),
             "espessura": m.get("espessura", ""),
             "comprimento": parse_float(m.get("comprimento", 0), 0),
             "largura": parse_float(m.get("largura", 0), 0),
             "metros": parse_float(m.get("metros", 0), 0),
-            "localizacao": m.get("Localizacao", ""),
-            "lote_fornecedor": m.get("lote_fornecedor", ""),
             "peso_unid": parse_float(m.get("peso_unid", 0), 0),
             "p_compra": parse_float(m.get("p_compra", 0), 0),
             "formato": formato,
@@ -5165,7 +5516,7 @@ def _dialog_ne_origem_linha(self):
     if not use_custom:
         ans = messagebox.askyesnocancel(
             "Origem da Linha",
-            "Adicionar linha de Materia-Prima?\n\nSim = Materia-Prima\nNao = Produto",
+            "Adicionar linha por seleção do stock de Matéria-Prima?\n\nSim = Selecionar da Matéria-Prima em Stock\nNao = Produto",
         )
         if ans is None:
             return None
@@ -5189,8 +5540,8 @@ def _dialog_ne_origem_linha(self):
     row.pack(fill="x", padx=10, pady=8)
     ctk.CTkButton(
         row,
-        text="Materia-Prima",
-        width=150,
+        text="Selecionar da Matéria-Prima em Stock",
+        width=240,
         height=36,
         fg_color="#b42318",
         command=lambda: (chosen.update(v="Materia-Prima"), dlg.destroy()),
@@ -5226,7 +5577,7 @@ def _dialog_escolher_materia_prima_ne(self):
     ButtonCls = ctk.CTkButton if use_custom else ttk.Button
 
     dlg = DlgCls(self.root)
-    dlg.title("Escolher Matéria-Prima")
+    dlg.title("Selecionar da Matéria-Prima em Stock")
     try:
         dlg.geometry("1100x620")
         dlg.transient(self.root)
@@ -5326,7 +5677,15 @@ def _dialog_escolher_materia_prima_ne(self):
                 "unid": un,
                 "material": m.get("material", ""),
                 "espessura": fmt_num(m.get("espessura", "")),
+                "source_material_id": m.get("id", ""),
+                "comprimento": comp,
+                "largura": larg,
+                "metros": metros,
+                "peso_unid": parse_float(m.get("peso_unid", 0), 0),
+                "p_compra": parse_float(m.get("p_compra", 0), 0),
                 "formato": formato,
+                "lote_fornecedor": "",
+                "localizacao": "",
             }
         )
         dlg.destroy()

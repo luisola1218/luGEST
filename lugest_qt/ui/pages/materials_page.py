@@ -481,10 +481,13 @@ class _HistoryDialog(QDialog):
 
 
 class _MaterialEditorDialog(QDialog):
-    def __init__(self, backend, parent=None) -> None:
+    def __init__(self, backend, parent=None, record: dict | None = None, mode: str = "add") -> None:
         super().__init__(parent)
         self.backend = backend
-        self.setWindowTitle("Adicionar material")
+        self._record = dict(record or {})
+        self._mode = str(mode or "add").strip().lower()
+        editing = self._mode == "edit"
+        self.setWindowTitle("Editar material" if editing else "Adicionar material")
         self.setModal(True)
         self.resize(980, 360)
         self.setStyleSheet(
@@ -499,7 +502,9 @@ class _MaterialEditorDialog(QDialog):
         layout.setSpacing(10)
 
         intro = QLabel(
-            "Novo registo de matéria-prima. O formulário abre sempre limpo para "
+            "Confirma os dados do registo selecionado e guarda apenas no fim."
+            if editing
+            else "Novo registo de matéria-prima. O formulário abre sempre limpo para "
             "evitar herdar o material atualmente selecionado."
         )
         intro.setWordWrap(True)
@@ -592,7 +597,7 @@ class _MaterialEditorDialog(QDialog):
         calc_btn = QPushButton("Calc. peso")
         calc_btn.setProperty("variant", "secondary")
         calc_btn.clicked.connect(self._open_weight_calculator)
-        save_btn = QPushButton("Adicionar")
+        save_btn = QPushButton("Guardar alterações" if editing else "Adicionar")
         save_btn.clicked.connect(self._accept_if_valid)
         cancel_btn = QPushButton("Cancelar")
         cancel_btn.setProperty("variant", "secondary")
@@ -624,6 +629,8 @@ class _MaterialEditorDialog(QDialog):
 
         self._load_presets()
         self._set_form_defaults()
+        if self._record:
+            self._load_record(self._record)
 
     def _make_combo(self) -> QComboBox:
         combo = QComboBox()
@@ -724,6 +731,33 @@ class _MaterialEditorDialog(QDialog):
             edit.clear()
         self.preco_unit_edit.setText("0,00 EUR")
         self.reservado_edit.setText("0")
+        self._refresh_form_state()
+        self._refresh_price_preview()
+
+    def _load_record(self, record: dict[str, object]) -> None:
+        preview = self.backend.material_geometry_preview(record)
+        formato = str(record.get("formato", "Chapa") or "Chapa")
+        material = str(record.get("material", "") or "").strip()
+        familia = str(record.get("material_familia", "") or "").strip()
+        self.formato_combo.setCurrentText(formato)
+        self.material_combo.setCurrentText(material)
+        _set_material_family_combo(self.backend, self.material_family_combo, familia, material=material)
+        self._set_section_options(formato, str(preview.get("secao_tipo", record.get("secao_tipo", "")) or "").strip())
+        self.secao_tipo_combo.setCurrentText(str(preview.get("secao_tipo", record.get("secao_tipo", "")) or "").strip())
+        self.espessura_combo.setCurrentText(str(record.get("espessura", "") or ""))
+        self.lote_edit.setText(str(record.get("lote_fornecedor", "") or ""))
+        self.comprimento_edit.setText(self.backend._fmt(preview.get("comprimento", record.get("comprimento", 0))))
+        self.largura_edit.setText(self.backend._fmt(preview.get("largura", record.get("largura", 0))))
+        self.altura_edit.setText(self.backend._fmt(preview.get("altura", record.get("altura", 0))))
+        self.diametro_edit.setText(self.backend._fmt(preview.get("diametro", record.get("diametro", 0))))
+        self.contorno_edit.setText(self.backend.format_material_contour_points(record.get("contorno_points", record.get("shape_points", []))))
+        self.metros_edit.setText(self.backend._fmt(preview.get("metros", record.get("metros", 0))))
+        self.kg_m_edit.setText(self.backend._fmt(preview.get("kg_m", record.get("kg_m", 0))))
+        self.peso_edit.setText(self.backend._fmt(preview.get("peso_unid", record.get("peso_unid", 0))))
+        self.preco_compra_edit.setText(self.backend._fmt(record.get("p_compra", 0)))
+        self.quantidade_edit.setText(self.backend._fmt(record.get("quantidade", 0)))
+        self.reservado_edit.setText(self.backend._fmt(record.get("reservado", 0)))
+        self.local_combo.setCurrentText(self.backend._localizacao(record))
         self._refresh_form_state()
         self._refresh_price_preview()
 
@@ -892,32 +926,85 @@ class MaterialsPage(QWidget):
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(14)
+        root.setSpacing(12)
 
         form_card = CardFrame()
+        form_card.setStyleSheet(
+            "QLineEdit:disabled, QComboBox:disabled {"
+            " background: #f8fbff;"
+            " color: #0f172a;"
+            " border: 1px solid #d6e3f3;"
+            " border-radius: 8px;"
+            "}"
+        )
         form_layout = QVBoxLayout(form_card)
-        form_layout.setContentsMargins(16, 14, 16, 14)
-        form_layout.setSpacing(12)
+        form_layout.setContentsMargins(14, 12, 14, 12)
+        form_layout.setSpacing(8)
 
         top = QHBoxLayout()
         title = QLabel("Gestão de Stock")
         title.setStyleSheet("font-size: 18px; font-weight: 800; color: #0f172a;")
-        subtitle = QLabel("Filtros, edição e baixa de stock numa vista única.")
+        subtitle = QLabel("Consulta rápida do stock. Adicionar e editar abrem um quadro próprio, separado da lista.")
         subtitle.setProperty("role", "muted")
         ttl_wrap = QVBoxLayout()
         ttl_wrap.setContentsMargins(0, 0, 0, 0)
+        ttl_wrap.setSpacing(2)
         ttl_wrap.addWidget(title)
         ttl_wrap.addWidget(subtitle)
         top.addLayout(ttl_wrap, 1)
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Pesquisar material, lote, dimensão, local...")
+        self.filter_edit.setMaximumWidth(280)
         self.filter_edit.textChanged.connect(self.refresh)
         top.addWidget(self.filter_edit)
         form_layout.addLayout(top)
 
+        info_row = QHBoxLayout()
+        info_row.setSpacing(10)
+        self.selection_hint = QLabel("Seleciona uma linha da tabela para ver o detalhe completo aqui.")
+        self.selection_hint.setStyleSheet("font-size: 12px; color: #1d4ed8; font-weight: 600;")
+        self.stock_hint = QLabel("Stock baixo deixa de pintar a linha toda e passa a ser assinalado só em Disponível.")
+        self.stock_hint.setProperty("role", "muted")
+        info_row.addWidget(self.selection_hint, 1)
+        info_row.addWidget(self.stock_hint)
+        form_layout.addLayout(info_row)
+
+        detail_card = CardFrame()
+        detail_card.setStyleSheet("QFrame#Card { background: #f8fbff; border-color: #d6e3f3; }")
+        detail_layout = QHBoxLayout(detail_card)
+        detail_layout.setContentsMargins(12, 10, 12, 10)
+        detail_layout.setSpacing(12)
+        detail_text = QVBoxLayout()
+        detail_text.setContentsMargins(0, 0, 0, 0)
+        detail_text.setSpacing(2)
+        self.detail_title = QLabel("Nenhum registo selecionado")
+        self.detail_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        self.detail_meta = QLabel("Escolhe uma linha para ver o resumo técnico e de stock.")
+        self.detail_meta.setProperty("role", "muted")
+        detail_text.addWidget(self.detail_title)
+        detail_text.addWidget(self.detail_meta)
+        detail_layout.addLayout(detail_text, 1)
+        self.detail_status = QLabel("Sem seleção")
+        self.detail_status.setAlignment(Qt.AlignCenter)
+        self.detail_status.setMinimumWidth(116)
+        self.detail_status.setStyleSheet(
+            "background: #eef2f8; color: #334155; border: 1px solid #d6e3f3; "
+            "border-radius: 10px; padding: 6px 10px; font-weight: 700;"
+        )
+        detail_layout.addWidget(self.detail_status)
+        self.detail_available = QLabel("Disponível: -")
+        self.detail_available.setAlignment(Qt.AlignCenter)
+        self.detail_available.setMinimumWidth(140)
+        self.detail_available.setStyleSheet(
+            "background: white; color: #0f172a; border: 1px solid #d6e3f3; "
+            "border-radius: 10px; padding: 6px 10px; font-weight: 700;"
+        )
+        detail_layout.addWidget(self.detail_available)
+        form_layout.addWidget(detail_card)
+
         grid = QGridLayout()
-        grid.setHorizontalSpacing(10)
-        grid.setVerticalSpacing(10)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
         self.formato_combo = self._make_combo()
         self.material_combo = self._make_combo()
         self.material_family_combo = QComboBox()
@@ -944,6 +1031,16 @@ class MaterialsPage(QWidget):
         self.preco_compra_edit.setPlaceholderText("EUR/kg ou EUR/m")
         self.contorno_edit.setPlaceholderText("Opcional: 0,0; 1000,0; 900,400; 0,400")
         self.kg_m_edit.setPlaceholderText("Auto por tabela / fórmula")
+        for combo, placeholder in (
+            (self.formato_combo, "Formato"),
+            (self.material_combo, "Material"),
+            (self.secao_tipo_combo, "Tipo / série"),
+            (self.espessura_combo, "Espessura"),
+            (self.local_combo, "Localização"),
+        ):
+            line_edit = combo.lineEdit()
+            if line_edit is not None:
+                line_edit.setPlaceholderText(placeholder)
 
         fields = [
             ("Formato", self.formato_combo),
@@ -969,8 +1066,8 @@ class MaterialsPage(QWidget):
         self._field_labels: dict[str, QLabel] = {}
         self._field_widgets: dict[str, QWidget] = {}
         for index, (label_text, widget) in enumerate(fields):
-            row = index // 4
-            col = (index % 4) * 2
+            row = index // 5
+            col = (index % 5) * 2
             label = QLabel(label_text)
             label.setProperty("role", "muted")
             self._field_labels[label_text] = label
@@ -979,7 +1076,8 @@ class MaterialsPage(QWidget):
             grid.addWidget(widget, row, col + 1)
         form_layout.addLayout(grid)
 
-        actions = QHBoxLayout()
+        actions_primary = QHBoxLayout()
+        actions_primary.setSpacing(8)
         self.add_btn = QPushButton("Adicionar")
         self.add_btn.clicked.connect(self.add_material)
         self.edit_btn = QPushButton("Editar")
@@ -1026,6 +1124,14 @@ class MaterialsPage(QWidget):
             self.remove_btn,
             self.baixa_btn,
             self.correct_btn,
+        ):
+            actions_primary.addWidget(button)
+        actions_primary.addStretch(1)
+        form_layout.addLayout(actions_primary)
+
+        actions_secondary = QHBoxLayout()
+        actions_secondary.setSpacing(8)
+        for button in (
             self.history_btn,
             self.label_btn,
             self.label_print_btn,
@@ -1036,9 +1142,9 @@ class MaterialsPage(QWidget):
             self.refresh_btn,
             self.export_btn,
         ):
-            actions.addWidget(button)
-        actions.addStretch(1)
-        form_layout.addLayout(actions)
+            actions_secondary.addWidget(button)
+        actions_secondary.addStretch(1)
+        form_layout.addLayout(actions_secondary)
         root.addWidget(form_card)
 
         table_card = CardFrame()
@@ -1046,6 +1152,20 @@ class MaterialsPage(QWidget):
         table_layout.setContentsMargins(16, 14, 16, 14)
         table_layout.setSpacing(10)
         self.table = QTableWidget(0, 16)
+        self.table.setStyleSheet(
+            "QTableWidget {"
+            " gridline-color: #d8e3f2;"
+            " selection-background-color: #dbeafe;"
+            " selection-color: #0f172a;"
+            "}"
+            "QHeaderView::section {"
+            " background: #0b0f5c;"
+            " color: white;"
+            " padding: 8px 6px;"
+            " border: 0;"
+            " font-weight: 700;"
+            "}"
+        )
         self.table.setHorizontalHeaderLabels(
             [
                 "Lote",
@@ -1067,10 +1187,14 @@ class MaterialsPage(QWidget):
             ]
         )
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(34)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setAlternatingRowColors(False)
+        self.table.setWordWrap(False)
         self.table.itemSelectionChanged.connect(self.on_selection_changed)
+        self.table.itemDoubleClicked.connect(lambda *_args: self.edit_material())
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         for col in range(2, 16):
@@ -1097,6 +1221,7 @@ class MaterialsPage(QWidget):
         ):
             edit.textChanged.connect(self._on_form_value_changed)
 
+        self._set_preview_fields_enabled(False)
         self._set_form_defaults()
 
     def _make_combo(self) -> QComboBox:
@@ -1163,8 +1288,107 @@ class MaterialsPage(QWidget):
             except Exception:
                 pass
             self.table.blockSignals(False)
+        self.selection_hint.setText("Seleciona uma linha da tabela para ver o detalhe completo aqui.")
+        self._set_detail_summary(None)
         self._refresh_form_state()
         self._refresh_price_preview()
+
+    def _severity_for_record(self, record: dict[str, object] | None) -> str:
+        if not isinstance(record, dict):
+            return "ok"
+        quantidade = self.backend._parse_float(record.get("quantidade", 0), 0)
+        reservado = self.backend._parse_float(record.get("reservado", 0), 0)
+        disponivel = quantidade - reservado
+        if quantidade == 1:
+            return "one"
+        if disponivel <= float(self.backend.desktop_main.STOCK_VERMELHO):
+            return "critical"
+        if disponivel <= float(self.backend.desktop_main.STOCK_AMARELO):
+            return "warning"
+        return "ok"
+
+    def _set_detail_summary(self, record: dict[str, object] | None) -> None:
+        if not isinstance(record, dict):
+            self.detail_title.setText("Nenhum registo selecionado")
+            self.detail_meta.setText("Escolhe uma linha para ver o resumo técnico e de stock.")
+            self.detail_status.setText("Sem seleção")
+            self.detail_status.setStyleSheet(
+                "background: #eef2f8; color: #334155; border: 1px solid #d6e3f3; "
+                "border-radius: 10px; padding: 6px 10px; font-weight: 700;"
+            )
+            self.detail_available.setText("Disponível: -")
+            self.detail_available.setStyleSheet(
+                "background: white; color: #0f172a; border: 1px solid #d6e3f3; "
+                "border-radius: 10px; padding: 6px 10px; font-weight: 700;"
+            )
+            return
+        material_id = str(record.get("id", "") or "").strip()
+        material = str(record.get("material", "") or "").strip() or "Sem material"
+        formato = str(record.get("formato", "") or "").strip() or "-"
+        local = self.backend._localizacao(record) or "Sem localização"
+        lote = str(record.get("lote_fornecedor", "") or "").strip() or "Sem lote"
+        quantidade = self.backend._parse_float(record.get("quantidade", 0), 0)
+        reservado = self.backend._parse_float(record.get("reservado", 0), 0)
+        disponivel = quantidade - reservado
+        self.detail_title.setText(f"{material} | {material_id}")
+        self.detail_meta.setText(f"{formato} | Lote: {lote} | Localização: {local}")
+        severity = self._severity_for_record(record)
+        if severity == "critical":
+            self.detail_status.setText("Stock crítico")
+            self.detail_status.setStyleSheet(
+                "background: #fee4e2; color: #b42318; border: 1px solid #f3b7b3; "
+                "border-radius: 10px; padding: 6px 10px; font-weight: 800;"
+            )
+        elif severity == "warning":
+            self.detail_status.setText("Stock baixo")
+            self.detail_status.setStyleSheet(
+                "background: #fff4e5; color: #b54708; border: 1px solid #efcf98; "
+                "border-radius: 10px; padding: 6px 10px; font-weight: 800;"
+            )
+        elif severity == "one":
+            self.detail_status.setText("Última unidade")
+            self.detail_status.setStyleSheet(
+                "background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; "
+                "border-radius: 10px; padding: 6px 10px; font-weight: 800;"
+            )
+        else:
+            self.detail_status.setText("Stock normal")
+            self.detail_status.setStyleSheet(
+                "background: #ecfdf3; color: #027a48; border: 1px solid #abefc6; "
+                "border-radius: 10px; padding: 6px 10px; font-weight: 800;"
+            )
+        self.detail_available.setText(
+            f"Disponível: {self.backend._fmt(disponivel)}  |  Qtd: {self.backend._fmt(quantidade)}"
+        )
+        self.detail_available.setStyleSheet(
+            "background: white; color: #0f172a; border: 1px solid #d6e3f3; "
+            "border-radius: 10px; padding: 6px 10px; font-weight: 700;"
+        )
+
+    def _set_preview_fields_enabled(self, enabled: bool) -> None:
+        preview_only = (
+            self.formato_combo,
+            self.material_combo,
+            self.material_family_combo,
+            self.secao_tipo_combo,
+            self.espessura_combo,
+            self.local_combo,
+            self.lote_edit,
+            self.comprimento_edit,
+            self.largura_edit,
+            self.altura_edit,
+            self.diametro_edit,
+            self.contorno_edit,
+            self.metros_edit,
+            self.kg_m_edit,
+            self.peso_edit,
+            self.preco_compra_edit,
+            self.preco_unit_edit,
+            self.quantidade_edit,
+            self.reservado_edit,
+        )
+        for widget in preview_only:
+            widget.setEnabled(enabled)
 
     def _payload(self) -> dict[str, str]:
         return {
@@ -1282,12 +1506,7 @@ class MaterialsPage(QWidget):
         self.preco_unit_edit.setToolTip(" | ".join(tooltip_bits))
 
     def _apply_row_colors(self, row_index: int, severity: str, band: str) -> None:
-        if severity == "critical":
-            background = QColor("#eef2f8" if band == "even" else "#e6ecf5")
-        elif severity == "warning":
-            background = QColor("#f7f1e1" if band == "even" else "#f1ead8")
-        else:
-            background = QColor("#eef2f8" if band == "even" else "#e6ecf5")
+        background = QColor("#eef2f8" if band == "even" else "#e6ecf5")
         foreground = QColor("#0f172a")
         for col in range(self.table.columnCount()):
             item = self.table.item(row_index, col)
@@ -1295,6 +1514,23 @@ class MaterialsPage(QWidget):
                 continue
             item.setBackground(QBrush(background))
             item.setForeground(QBrush(foreground))
+        available_item = self.table.item(row_index, 12)
+        if available_item is None:
+            return
+        if severity == "critical":
+            available_item.setBackground(QBrush(QColor("#fee4e2")))
+            available_item.setForeground(QBrush(QColor("#b42318")))
+            available_item.setToolTip("Stock crítico: disponível abaixo do limite vermelho.")
+        elif severity == "warning":
+            available_item.setBackground(QBrush(QColor("#fff4e5")))
+            available_item.setForeground(QBrush(QColor("#b54708")))
+            available_item.setToolTip("Stock baixo: disponível abaixo do limite amarelo.")
+        elif severity == "one":
+            available_item.setBackground(QBrush(QColor("#eff6ff")))
+            available_item.setForeground(QBrush(QColor("#1d4ed8")))
+            available_item.setToolTip("Última unidade em stock.")
+        else:
+            available_item.setToolTip("")
 
     def _selected_material_id(self) -> str:
         selection_model = self.table.selectionModel()
@@ -1388,11 +1624,17 @@ class MaterialsPage(QWidget):
         material_id = self._selected_material_id()
         if not material_id:
             self.current_material_id = ""
+            self.selection_hint.setText("Seleciona uma linha da tabela para ver o detalhe completo aqui.")
+            self._set_detail_summary(None)
             return
         record = self.backend.material_by_id(material_id)
         if record is None:
             return
         self.current_material_id = material_id
+        self.selection_hint.setText(
+            f"Registo selecionado: {material_id} | {str(record.get('material', '') or '').strip() or 'Sem material'}"
+        )
+        self._set_detail_summary(record)
         self.formato_combo.setCurrentText(str(record.get("formato", "Chapa") or "Chapa"))
         self.material_combo.setCurrentText(str(record.get("material", "")))
         _set_material_family_combo(
@@ -1438,8 +1680,15 @@ class MaterialsPage(QWidget):
         if not material_id:
             QMessageBox.warning(self, "Aviso", "Seleciona um material primeiro.")
             return
+        record = self.backend.material_by_id(material_id)
+        if record is None:
+            QMessageBox.warning(self, "Aviso", "O material selecionado já não existe.")
+            return
+        dialog = _MaterialEditorDialog(self.backend, self, record=record, mode="edit")
+        if dialog.exec() != QDialog.Accepted:
+            return
         try:
-            self.backend.update_material(material_id, self._payload())
+            self.backend.update_material(material_id, dialog.payload())
         except Exception as exc:
             QMessageBox.critical(self, "Erro", str(exc))
             return

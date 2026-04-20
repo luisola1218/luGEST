@@ -13654,6 +13654,8 @@ class LegacyBackend:
                     continue
                 if "apro" in state_raw and "apro" not in estado_norm:
                     continue
+                if "enviad" in state_raw and "enviad" not in estado_norm:
+                    continue
                 if "parcial" in state_raw and not is_partial:
                     continue
                 if "entreg" in state_raw and not is_delivered:
@@ -13833,21 +13835,21 @@ class LegacyBackend:
 
     def _find_existing_material_from_note_line(self, line: dict[str, Any]) -> dict[str, Any] | None:
         material_id = str(line.get("ref", "") or "").strip()
-        if material_id:
-            material = self.material_by_id(material_id)
-            if material is not None:
-                return material
         material_txt = self._norm_material_token(line.get("material", ""))
         esp_txt = self._norm_esp_token(line.get("espessura", ""))
         formato_txt = str(line.get("formato", "") or "Chapa").strip() or "Chapa"
         lote_txt = str(line.get("lote_fornecedor", "") or "").strip().lower()
+        local_txt = str(line.get("localizacao", "") or "").strip().lower()
         family_txt = ""
         if str(line.get("material_familia", "") or "").strip():
             family_txt = str(self.material_family_profile(line.get("material", ""), line.get("material_familia", "")).get("key", "") or "").strip()
         probe = self.material_geometry_preview(line)
         if not material_txt:
             return None
-        for record in list(self.ensure_data().get("materiais", []) or []):
+        records = [record for record in list(self.ensure_data().get("materiais", []) or []) if isinstance(record, dict)]
+        if material_id:
+            records.sort(key=lambda record: 0 if str(record.get("id", "") or "").strip() == material_id else 1)
+        for record in records:
             if self._norm_material_token(record.get("material", "")) != material_txt:
                 continue
             if self._norm_esp_token(record.get("espessura", "")) != esp_txt:
@@ -13855,6 +13857,8 @@ class LegacyBackend:
             if str(record.get("formato") or self.desktop_main.detect_materia_formato(record) or "").strip() != formato_txt:
                 continue
             if lote_txt and str(record.get("lote_fornecedor", "") or "").strip().lower() != lote_txt:
+                continue
+            if local_txt and self._localizacao(record).strip().lower() != local_txt:
                 continue
             rec_family = ""
             if str(record.get("material_familia", "") or "").strip():
@@ -14188,6 +14192,17 @@ class LegacyBackend:
         self._save(force=True)
         return note
 
+    def ne_mark_sent(self, numero: str) -> dict[str, Any]:
+        numero = str(numero or "").strip()
+        note = next((row for row in self.ensure_data().get("notas_encomenda", []) if str(row.get("numero", "") or "").strip() == numero), None)
+        if note is None:
+            raise ValueError("Nota de Encomenda n?o encontrada.")
+        note["estado"] = "Enviada"
+        note["data_envio"] = self.desktop_main.now_iso()
+        note["_draft"] = False
+        self._save(force=True)
+        return note
+
     def ne_generate_supplier_orders(self, numero: str) -> list[dict[str, Any]]:
         data = self.ensure_data()
         number = str(numero or "").strip()
@@ -14262,17 +14277,21 @@ class LegacyBackend:
         self._save(force=True)
         return created
 
-    def ne_open_pdf(self, numero: str, quote: bool = False) -> Path:
+    def ne_render_pdf(self, numero: str, quote: bool = False, output_path: str | Path = "") -> Path:
         numero = str(numero or "").strip()
         note = next((row for row in self.ensure_data().get("notas_encomenda", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if note is None:
             raise ValueError("Nota de Encomenda n?o encontrada.")
         suffix = "_cotacao" if quote else ""
-        path = Path(tempfile.gettempdir()) / f"lugest_ne_{numero}{suffix}.pdf"
+        path = Path(output_path) if str(output_path or "").strip() else Path(tempfile.gettempdir()) / f"lugest_ne_{numero}{suffix}.pdf"
         if quote:
             self.ne_expedicao_actions.render_ne_cotacao_pdf(self, str(path), note)
         else:
             self.ne_expedicao_actions.render_ne_pdf(self, str(path), note)
+        return path
+
+    def ne_open_pdf(self, numero: str, quote: bool = False) -> Path:
+        path = self.ne_render_pdf(numero, quote=quote)
         os.startfile(str(path))
         return path
 
@@ -14361,8 +14380,9 @@ class LegacyBackend:
         note = next((row for row in self.ensure_data().get("notas_encomenda", []) if str(row.get("numero", "") or "").strip() == str(numero or "").strip()), None)
         if note is None:
             raise ValueError("Nota de Encomenda n?o encontrada.")
+        note_lines = list(note.get("linhas", []) or [])
         line_updates_by_index: dict[int, dict[str, Any]] = {}
-        line_updates_by_ref: dict[str, dict[str, Any]] = {}
+        unresolved_legacy_items: list[dict[str, Any]] = []
         for item in list(payload.get("lines", []) or []):
             if not isinstance(item, dict):
                 continue
@@ -14373,10 +14393,34 @@ class LegacyBackend:
             if line_index >= 0:
                 line_updates_by_index[line_index] = dict(item)
                 continue
-            ref_txt = str(item.get("ref", "") or "").strip()
-            if ref_txt:
-                line_updates_by_ref[ref_txt] = dict(item)
-        if not line_updates_by_index and not line_updates_by_ref:
+            unresolved_legacy_items.append(dict(item))
+        if unresolved_legacy_items:
+            used_indexes = set(line_updates_by_index.keys())
+            for item in unresolved_legacy_items:
+                ref = str(item.get("ref", "") or "").strip()
+                descricao = str(item.get("descricao", "") or "").strip().casefold()
+                origem = str(item.get("origem", "") or "").strip().casefold()
+                if not ref and not descricao:
+                    continue
+                matches: list[int] = []
+                for idx, line in enumerate(note_lines):
+                    if idx in used_indexes:
+                        continue
+                    line_ref = str(line.get("ref", "") or "").strip()
+                    line_desc = str(line.get("descricao", "") or "").strip().casefold()
+                    line_origin = str(line.get("origem", "") or "").strip().casefold()
+                    if ref and line_ref != ref:
+                        continue
+                    if descricao and line_desc != descricao:
+                        continue
+                    if origem and line_origin != origem:
+                        continue
+                    matches.append(idx)
+                if len(matches) == 1:
+                    match_index = matches[0]
+                    line_updates_by_index[match_index] = dict(item) | {"index": match_index}
+                    used_indexes.add(match_index)
+        if not line_updates_by_index:
             raise ValueError("Seleciona pelo menos uma linha para entregar.")
         data_entrega = str(payload.get("data_entrega", "") or "").strip()
         data_documento = str(payload.get("data_documento", "") or "").strip()
@@ -14389,13 +14433,11 @@ class LegacyBackend:
         any_delivery = False
         delivered_lines: list[str] = []
         total_qtd = 0.0
-        for line_index, line in enumerate(list(note.get("linhas", []) or [])):
+        for line_index, line in enumerate(note_lines):
             update = line_updates_by_index.get(line_index)
-            ref = str(line.get("ref", "") or "").strip()
-            if update is None and ref:
-                update = line_updates_by_ref.get(ref)
             if update is None:
                 continue
+            ref = str(line.get("ref", "") or "").strip()
             add_qtd = max(0.0, self._parse_float(update.get("qtd", 0), 0))
             if add_qtd <= 0:
                 continue
@@ -14407,6 +14449,10 @@ class LegacyBackend:
             qty_apply = min(qtd_left, add_qtd)
             if qty_apply <= 0:
                 continue
+            working_line = dict(line)
+            # Lote e localizacao da entrega sao sempre decididos nesta operacao.
+            working_line["lote_fornecedor"] = lote_override
+            working_line["localizacao"] = local_override
             qtd_new = qtd_old + qty_apply
             line["qtd_entregue"] = qtd_new
             line["entregue"] = qtd_new >= (qtd_total - 1e-9)
@@ -14424,18 +14470,15 @@ class LegacyBackend:
                     "fatura": fatura,
                     "obs": obs,
                     "qtd": qty_apply,
+                    "lote_fornecedor": lote_override,
+                    "localizacao": local_override,
                 }
             )
             if self.desktop_main.origem_is_materia(line.get("origem", "")):
-                material = self.material_by_id(ref)
+                material = self._find_existing_material_from_note_line(working_line)
                 if material is None:
-                    new_material_line = dict(line)
-                    if lote_override:
-                        new_material_line["lote_fornecedor"] = lote_override
-                    if local_override:
-                        new_material_line["localizacao"] = local_override
                     material = self._create_material_placeholder_from_note_line(
-                        new_material_line,
+                        working_line,
                         str(note.get("numero", "") or "").strip(),
                         quantity=qty_apply,
                         lote_override=lote_override,
@@ -14449,6 +14492,8 @@ class LegacyBackend:
                         )
                 else:
                     material["quantidade"] = self._parse_float(material.get("quantidade", 0), 0) + qty_apply
+                    if lote_override:
+                        material["lote_fornecedor"] = lote_override
                     if local_override:
                         material["Localização"] = local_override
                         material["Localizacao"] = local_override
