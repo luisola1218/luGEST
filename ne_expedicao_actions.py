@@ -183,6 +183,24 @@ def _pdf_draw_banner_title_block(
     c.setFont(regular_font, fitted_subtitle_size)
     c.drawCentredString(center_x, page_h - subtitle_y, pdf_normalize_text(subtitle_txt))
 
+
+def _pdf_draw_soft_header_panel(c, page_h, x, top_y, width, height, radius=12):
+    drawer = globals().get("draw_pdf_header_panel")
+    if callable(drawer):
+        try:
+            drawer(c, page_h, x, top_y, width, height, radius=radius, stroke_color="#D5DDE7", accent_color="#EAF0F6", accent_height=5)
+            return
+        except Exception:
+            pass
+    from reportlab.lib import colors
+
+    c.saveState()
+    c.setFillColor(colors.white)
+    c.setStrokeColor(colors.HexColor("#D5DDE7"))
+    c.setLineWidth(1.0)
+    c.roundRect(x, page_h - top_y - height, width, height, radius, stroke=1, fill=1)
+    c.restoreState()
+
 def refresh_expedicao(self):
     _ensure_configured()
     if getattr(self, "_refresh_expedicao_busy", False):
@@ -2363,11 +2381,13 @@ def _render_expedicao_pdf_modern(self, path, ex, include_all_vias=True):
 
     def draw_table_header(top_y):
         c.saveState()
-        c.setFillColor(palette["primary"])
-        c.roundRect(m, yinv(top_y + header_row_h), content_w, header_row_h, 7, stroke=0, fill=1)
+        c.setFillColor(palette["primary_soft"])
+        c.setStrokeColor(palette["line"])
+        c.setLineWidth(0.8)
+        c.roundRect(m, yinv(top_y + header_row_h), content_w, header_row_h, 7, stroke=1, fill=1)
         c.restoreState()
         c.setFont(fonts["bold"], 8.6)
-        c.setFillColor(colors.white)
+        c.setFillColor(palette["primary_dark"])
         c.drawString(x_code + 8, yinv(top_y + 13), ntxt("Referencia"))
         c.drawString(x_desc + 8, yinv(top_y + 13), ntxt("Descricao"))
         c.drawRightString(x_qty + qty_w - 8, yinv(top_y + 13), ntxt("Qtd."))
@@ -2423,21 +2443,21 @@ def _render_expedicao_pdf_modern(self, path, ex, include_all_vias=True):
         c.restoreState()
 
     def draw_first_header(page_no, total_pages, via_nome):
-        c.saveState()
-        c.setFillColor(palette["primary"])
-        c.roundRect(m, yinv(98), content_w, 80, 12, stroke=0, fill=1)
-        c.restoreState()
-        logo_x = m + 14
         logo_w = 116
+        logo_gap = 14
+        banner_x = m + logo_w + logo_gap
+        banner_w = content_w - logo_w - logo_gap
+        _pdf_draw_soft_header_panel(c, h, banner_x, 18, banner_w, 80, radius=12)
+        logo_x = m
         metric_grid = _pdf_metric_grid_layout(w - m, 18, 80, group_w=230, gap=6)
-        draw_pdf_logo_box(c, h, logo_x, 28, box_size=logo_w, box_h=50, padding=4, draw_border=False)
-        c.setFillColor(colors.white)
+        draw_pdf_logo_plate(c, h, logo_x, 28, box_w=logo_w, box_h=50, padding=4)
+        c.setFillColor(palette["primary_dark"])
         _pdf_draw_banner_title_block(
             c,
             h,
             "Guia de Transporte",
             emit_nome or "Emitente",
-            logo_x + logo_w + 8,
+            banner_x + 16,
             metric_grid["col1"] - 10,
             46,
             64,
@@ -4595,10 +4615,12 @@ def _render_ne_pdf_modern(self, path, ne):
 
     def draw_table_header(top_y):
         c.saveState()
-        c.setFillColor(palette["primary"])
-        c.roundRect(m, yinv(top_y + header_row_h), table_w, header_row_h, 7, stroke=0, fill=1)
+        c.setFillColor(palette["primary_soft"])
+        c.setStrokeColor(palette["line"])
+        c.setLineWidth(0.8)
+        c.roundRect(m, yinv(top_y + header_row_h), table_w, header_row_h, 7, stroke=1, fill=1)
         c.restoreState()
-        c.setFillColor(colors.white)
+        c.setFillColor(palette["primary_dark"])
         c.setFont(fonts["bold"], 8.15)
         xx = m
         for name, width, align in cols:
@@ -4718,21 +4740,21 @@ def _render_ne_pdf_modern(self, path, ne):
 
     def draw_header(page_no, total_pages, first_page):
         if first_page:
-            c.saveState()
-            c.setFillColor(palette["primary"])
-            c.roundRect(m, yinv(102), content_w, 82, 12, stroke=0, fill=1)
-            c.restoreState()
-            logo_x = m + 12
             logo_w = 118
+            logo_gap = 14
+            banner_x = m + logo_w + logo_gap
+            banner_w = content_w - logo_w - logo_gap
+            _pdf_draw_soft_header_panel(c, h, banner_x, 20, banner_w, 82, radius=12)
+            logo_x = m
             metric_grid = _pdf_metric_grid_layout(w - m, 20, 82, group_w=230, gap=6)
-            draw_pdf_logo_box(c, h, logo_x, 30, box_size=logo_w, box_h=52, padding=4, draw_border=False)
-            c.setFillColor(colors.white)
+            draw_pdf_logo_plate(c, h, logo_x, 30, box_w=logo_w, box_h=52, padding=4)
+            c.setFillColor(palette["primary_dark"])
             _pdf_draw_banner_title_block(
                 c,
                 h,
                 "Nota de Encomenda",
                 "Documento de adjudicacao ao fornecedor",
-                logo_x + logo_w + 8,
+                banner_x + 16,
                 metric_grid["col1"] - 10,
                 47,
                 64,
@@ -5238,10 +5260,12 @@ def _render_ne_cotacao_pdf_modern(self, path, ne):
 
     def draw_table_header(top_y):
         c.saveState()
-        c.setFillColor(palette["primary"])
-        c.roundRect(m, yinv(top_y + header_row_h), table_w, header_row_h, 7, stroke=0, fill=1)
+        c.setFillColor(palette["primary_soft"])
+        c.setStrokeColor(palette["line"])
+        c.setLineWidth(0.8)
+        c.roundRect(m, yinv(top_y + header_row_h), table_w, header_row_h, 7, stroke=1, fill=1)
         c.restoreState()
-        c.setFillColor(colors.white)
+        c.setFillColor(palette["primary_dark"])
         c.setFont(fonts["bold"], 8.2)
         xx = m
         for name, width, align in cols:
@@ -5298,21 +5322,21 @@ def _render_ne_cotacao_pdf_modern(self, path, ne):
 
     def draw_header(page_no, total_pages, first_page):
         if first_page:
-            c.saveState()
-            c.setFillColor(palette["primary"])
-            c.roundRect(m, yinv(102), content_w, 82, 12, stroke=0, fill=1)
-            c.restoreState()
-            logo_x = m + 12
             logo_w = 118
+            logo_gap = 14
+            banner_x = m + logo_w + logo_gap
+            banner_w = content_w - logo_w - logo_gap
+            _pdf_draw_soft_header_panel(c, h, banner_x, 20, banner_w, 82, radius=12)
+            logo_x = m
             metric_grid = _pdf_metric_grid_layout(w - m, 20, 82, group_w=230, gap=6)
-            draw_pdf_logo_box(c, h, logo_x, 30, box_size=logo_w, box_h=52, padding=4, draw_border=False)
-            c.setFillColor(colors.white)
+            draw_pdf_logo_plate(c, h, logo_x, 30, box_w=logo_w, box_h=52, padding=4)
+            c.setFillColor(palette["primary_dark"])
             _pdf_draw_banner_title_block(
                 c,
                 h,
                 "Pedido de Cotacao",
                 "Documento para consulta comercial ao fornecedor",
-                logo_x + logo_w + 8,
+                banner_x + 16,
                 metric_grid["col1"] - 10,
                 47,
                 64,

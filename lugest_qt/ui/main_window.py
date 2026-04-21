@@ -1122,6 +1122,25 @@ class MainWindow(QMainWindow):
             host_layout.setContentsMargins(0, 0, 0, 0)
             host_layout.setSpacing(12)
 
+            table_panel = QWidget()
+            table_panel_layout = QVBoxLayout(table_panel)
+            table_panel_layout.setContentsMargins(0, 0, 0, 0)
+            table_panel_layout.setSpacing(8)
+
+            table_tools = QHBoxLayout()
+            table_tools.setContentsMargins(0, 0, 0, 0)
+            table_tools.setSpacing(8)
+            table_hint = QLabel("Seleciona uma linha, edita à direita e guarda. Também podes eliminar a linha selecionada.")
+            table_hint.setProperty("role", "muted")
+            table_tools.addWidget(table_hint, 1)
+            edit_selected_btn = QPushButton("Editar linha selecionada")
+            edit_selected_btn.setProperty("variant", "secondary")
+            table_tools.addWidget(edit_selected_btn, 0)
+            remove_selected_btn = QPushButton("Eliminar linha selecionada")
+            remove_selected_btn.setProperty("variant", "danger")
+            table_tools.addWidget(remove_selected_btn, 0)
+            table_panel_layout.addLayout(table_tools)
+
             workcenters_table = QTableWidget(0, 8)
             workcenters_table.setHorizontalHeaderLabels(["Tipo", "Nome", "Grupo", "Operacao", "Utiliz.", "Orc.", "Enc.", "Plan."])
             workcenters_table.verticalHeader().setVisible(False)
@@ -1137,7 +1156,8 @@ class MainWindow(QMainWindow):
             workcenters_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
             for column in range(4, 8):
                 workcenters_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeToContents)
-            host_layout.addWidget(workcenters_table, 6)
+            table_panel_layout.addWidget(workcenters_table, 1)
+            host_layout.addWidget(table_panel, 6)
 
             side = QWidget()
             side_layout = QVBoxLayout(side)
@@ -1306,6 +1326,8 @@ class MainWindow(QMainWindow):
                 clear_group_form()
                 clear_machine_form()
                 workcenters_table.clearSelection()
+                edit_selected_btn.setEnabled(False)
+                remove_selected_btn.setEnabled(False)
 
             def selected_workcenter_row() -> dict:
                 current_item = workcenters_table.currentItem()
@@ -1332,6 +1354,8 @@ class MainWindow(QMainWindow):
                 )
 
             def load_workcenter_form(row: dict) -> None:
+                edit_selected_btn.setEnabled(True)
+                remove_selected_btn.setEnabled(True)
                 entry_type = str(row.get("entry_type", "") or "").strip()
                 if entry_type == "group":
                     current_group["value"] = str(row.get("name", "") or "").strip()
@@ -1364,6 +1388,8 @@ class MainWindow(QMainWindow):
                 rows = list(getter_rows() or [])
                 refresh_group_options(machine_group_combo.currentText().strip())
                 workcenters_table.setRowCount(len(rows))
+                edit_selected_btn.setEnabled(bool(rows))
+                remove_selected_btn.setEnabled(bool(rows))
                 target_row = -1
                 for row_index, row in enumerate(rows):
                     values = [
@@ -1404,6 +1430,55 @@ class MainWindow(QMainWindow):
                 row = selected_workcenter_row()
                 if row:
                     load_workcenter_form(row)
+                else:
+                    edit_selected_btn.setEnabled(False)
+                    remove_selected_btn.setEnabled(False)
+
+            def edit_selected_workcenter_row() -> None:
+                row = selected_workcenter_row()
+                if not row:
+                    QMessageBox.warning(wc_dialog, "Postos de Trabalho", "Seleciona a linha que pretendes editar.")
+                    return
+                load_workcenter_form(row)
+                if str(row.get("entry_type", "") or "").strip() == "group":
+                    group_name_edit.setFocus()
+                    group_name_edit.selectAll()
+                else:
+                    machine_name_edit.setFocus()
+                    machine_name_edit.selectAll()
+
+            def remove_selected_workcenter_row() -> None:
+                row = selected_workcenter_row()
+                entry_type = str(row.get("entry_type", "") or "").strip()
+                target_name = str(row.get("name", "") or "").strip()
+                if not entry_type or not target_name:
+                    QMessageBox.warning(wc_dialog, "Postos de Trabalho", "Seleciona a linha que pretendes eliminar.")
+                    return
+                if entry_type == "group":
+                    title = "Remover posto"
+                    prompt = f"Remover o posto '{target_name}'?"
+                else:
+                    title = "Remover maquina"
+                    prompt = f"Remover a maquina '{target_name}'?"
+                if QMessageBox.question(wc_dialog, title, prompt) != QMessageBox.Yes:
+                    return
+                try:
+                    if entry_type == "group":
+                        remove_group(target_name)
+                    else:
+                        remove_machine(target_name)
+                except Exception as exc:
+                    QMessageBox.critical(wc_dialog, "Postos de Trabalho", str(exc))
+                    return
+                refresh_posto_options(posto_combo.currentText().strip())
+                refresh_users(current_username["value"])
+                refresh_workcenters("")
+                clear_workcenter_form()
+                QMessageBox.information(
+                    wc_dialog,
+                    "Postos de Trabalho",
+                    "Maquina removida com sucesso." if entry_type == "machine" else "Posto removido com sucesso.",
+                )
 
             def on_save_group() -> None:
                 group_name = group_name_edit.text().strip()
@@ -1427,9 +1502,10 @@ class MainWindow(QMainWindow):
 
             def on_remove_group() -> None:
                 row = selected_workcenter_row()
-                target_name = str(row.get("name", "") or current_group["value"] or "").strip()
-                if str(row.get("entry_type", "") or "").strip() == "machine":
-                    target_name = current_group["value"]
+                if str(row.get("entry_type", "") or "").strip() == "group":
+                    remove_selected_workcenter_row()
+                    return
+                target_name = str(current_group["value"] or "").strip()
                 if not target_name:
                     QMessageBox.warning(wc_dialog, "Postos de Trabalho", "Seleciona um posto de trabalho.")
                     return
@@ -1476,9 +1552,10 @@ class MainWindow(QMainWindow):
 
             def on_remove_machine() -> None:
                 row = selected_workcenter_row()
-                target_name = str(row.get("name", "") or current_machine["value"] or "").strip()
-                if str(row.get("entry_type", "") or "").strip() == "group":
-                    target_name = current_machine["value"]
+                if str(row.get("entry_type", "") or "").strip() == "machine":
+                    remove_selected_workcenter_row()
+                    return
+                target_name = str(current_machine["value"] or "").strip()
                 if not target_name:
                     QMessageBox.warning(wc_dialog, "Postos de Trabalho", "Seleciona uma maquina.")
                     return
@@ -1500,12 +1577,15 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(wc_dialog, "Postos de Trabalho", "Maquina removida com sucesso.")
 
             workcenters_table.itemSelectionChanged.connect(on_workcenter_selected)
+            workcenters_table.itemDoubleClicked.connect(lambda *_: edit_selected_workcenter_row())
             new_group_btn.clicked.connect(clear_group_form)
             new_machine_btn.clicked.connect(clear_machine_form)
             save_group_btn.clicked.connect(on_save_group)
             remove_group_btn.clicked.connect(on_remove_group)
             save_machine_btn.clicked.connect(on_save_machine)
             remove_machine_btn.clicked.connect(on_remove_machine)
+            edit_selected_btn.clicked.connect(edit_selected_workcenter_row)
+            remove_selected_btn.clicked.connect(remove_selected_workcenter_row)
             refresh_workcenters("")
             wc_dialog.exec()
 

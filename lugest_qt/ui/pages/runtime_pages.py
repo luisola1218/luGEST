@@ -4924,7 +4924,7 @@ class PlanningPage(QWidget):
     def _planning_deadline_email_html_body(self, ctx: dict[str, object], *, logo_cid: str = "") -> str:
         company = str(ctx.get("company", "") or "luGEST")
         logo_html = (
-            f'<img src="cid:{html.escape(logo_cid)}" alt="{html.escape(company)}" style="height:46px; display:block;">'
+            f'<img src="cid:{html.escape(logo_cid)}" alt="{html.escape(company)}" style="height:23px; display:block;">'
             if logo_cid
             else f'<div style="font-size:22px; font-weight:900; color:#0f172a;">{html.escape(company)}</div>'
         )
@@ -11149,8 +11149,8 @@ class PurchaseNotesPage(QWidget):
             "<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">"
             "<tr><td style=\"height:10px; line-height:10px; font-size:0;\">&nbsp;</td></tr>"
             "<tr><td>"
-            f"<img src=\"cid:{html.escape(logo_cid)}\" alt=\"{html.escape(company)}\" width=\"218\" "
-            "style=\"display:block; width:218px; height:auto; border:0; outline:none; text-decoration:none;\" />"
+            f"<img src=\"cid:{html.escape(logo_cid)}\" alt=\"{html.escape(company)}\" width=\"109\" "
+            "style=\"display:block; width:109px; height:auto; border:0; outline:none; text-decoration:none;\" />"
             "</td></tr>"
             "</table>"
             if logo_cid
@@ -16418,7 +16418,7 @@ class QuotesPage(QWidget):
         if logo_cid:
             header_logo = (
                 f"<img src=\"cid:{html.escape(logo_cid)}\" alt=\"{html.escape(company_name)}\" "
-                "style=\"max-width:220px; max-height:72px; display:block;\" />"
+                "style=\"max-width:110px; max-height:36px; display:block;\" />"
             )
         else:
             header_logo = (

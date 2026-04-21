@@ -910,16 +910,42 @@ def render_produtos_stock_pdf(self, path):
             except Exception:
                 pass
 
+    def draw_logo_plate(x, top_y, box_w=124, box_h=52):
+        drawer = globals().get("draw_pdf_logo_plate")
+        if callable(drawer):
+            try:
+                drawer(c, h, x, top_y, box_w=box_w, box_h=box_h, padding=4)
+                return
+            except Exception:
+                pass
+        draw_logo(x, top_y, box_w=box_w, box_h=box_h)
+
     def draw_title_block(left_x, right_x, title, subtitle):
         area_w = max(40.0, float(right_x) - float(left_x))
         center_x = float(left_x) + (area_w / 2.0)
         title_size = _prod_pdf_fit_font_size(title, fonts["bold"], area_w, 22.0, 16.0)
         subtitle_size = _prod_pdf_fit_font_size(subtitle, fonts["regular"], area_w, 10.0, 8.0)
-        c.setFillColor(colors.white)
+        c.setFillColor(palette["primary_dark"])
         c.setFont(fonts["bold"], title_size)
         c.drawCentredString(center_x, yinv(46), ntxt(_prod_pdf_clip_text(title, area_w, fonts["bold"], title_size)))
         c.setFont(fonts["regular"], subtitle_size)
+        c.setFillColor(palette["muted"])
         c.drawCentredString(center_x, yinv(63), ntxt(_prod_pdf_clip_text(subtitle, area_w, fonts["regular"], subtitle_size)))
+
+    def draw_header_panel(x, top_y, box_w, box_h):
+        drawer = globals().get("draw_pdf_header_panel")
+        if callable(drawer):
+            try:
+                drawer(c, h, x, top_y, box_w, box_h, radius=12, stroke_color="#D5DDE7", accent_color="#EAF0F6", accent_height=5)
+                return
+            except Exception:
+                pass
+        c.saveState()
+        c.setFillColor(colors.white)
+        c.setStrokeColor(colors.HexColor("#d5dde7"))
+        c.setLineWidth(1.0)
+        c.roundRect(x, yinv(top_y + box_h), box_w, box_h, 12, stroke=1, fill=1)
+        c.restoreState()
 
     def card(x, top_y, box_w, box_h, title, lines_, accent=False, font_size=8.2):
         title_fill = palette["primary_soft"] if accent else palette["primary_soft_2"]
@@ -1010,10 +1036,12 @@ def render_produtos_stock_pdf(self, path):
 
     def draw_table_header(y_top):
         c.saveState()
-        c.setFillColor(palette["primary"])
-        c.roundRect(x0, yinv(y_top + table_header_h), table_w, table_header_h, 7, stroke=0, fill=1)
+        c.setFillColor(palette["primary_soft"])
+        c.setStrokeColor(palette["line"])
+        c.setLineWidth(0.8)
+        c.roundRect(x0, yinv(y_top + table_header_h), table_w, table_header_h, 7, stroke=1, fill=1)
         c.restoreState()
-        c.setFillColor(colors.white)
+        c.setFillColor(palette["primary_dark"])
         c.setFont(fonts["bold"], 8.2)
         xx = x0
         for name, cw, align in cols:
@@ -1028,13 +1056,14 @@ def render_produtos_stock_pdf(self, path):
 
     def draw_header(page_no, total_pages, first_page):
         if first_page:
+            logo_w = 124
+            logo_gap = 14
+            banner_x = margin + logo_w + logo_gap
+            banner_w = content_w - logo_w - logo_gap
             metric_grid = _prod_pdf_metric_grid_layout(w - margin, 20, 82, cols=3, rows=2, group_w=338, gap=6)
-            c.saveState()
-            c.setFillColor(palette["primary"])
-            c.roundRect(margin, yinv(102), content_w, 82, 12, stroke=0, fill=1)
-            c.restoreState()
-            draw_logo(margin + 12, 30)
-            draw_title_block(margin + 152, metric_grid["group_x"] - 14, "Stock de Produtos", "Relatorio consolidado de artigos e reposicao")
+            draw_header_panel(banner_x, 20, banner_w, 82)
+            draw_logo_plate(margin, 30)
+            draw_title_block(banner_x + 14, metric_grid["group_x"] - 14, "Stock de Produtos", "Relatorio consolidado de artigos e reposicao")
             info_chip(metric_grid["cols"][0], metric_grid["rows"][0], metric_grid["chip_w"], "Emitido", datetime.now().strftime("%d/%m/%Y"))
             info_chip(metric_grid["cols"][1], metric_grid["rows"][0], metric_grid["chip_w"], "Pagina", f"{page_no}/{total_pages}")
             info_chip(metric_grid["cols"][2], metric_grid["rows"][0], metric_grid["chip_w"], "Categorias", str(len(category_counts)))

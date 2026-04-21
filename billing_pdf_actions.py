@@ -246,10 +246,12 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
 
     def draw_table_header(top_y: float) -> float:
         canvas_obj.saveState()
-        canvas_obj.setFillColor(palette["primary"])
-        canvas_obj.roundRect(margin, yinv(top_y + 22), table_w, 22, 7, stroke=0, fill=1)
+        canvas_obj.setFillColor(palette["primary_soft"])
+        canvas_obj.setStrokeColor(palette["line"])
+        canvas_obj.setLineWidth(0.8)
+        canvas_obj.roundRect(margin, yinv(top_y + 22), table_w, 22, 7, stroke=1, fill=1)
         canvas_obj.restoreState()
-        canvas_obj.setFillColor(colors.white)
+        canvas_obj.setFillColor(palette["primary_dark"])
         canvas_obj.setFont(fonts["bold"], 8.4)
         xx = margin
         for label, width_col, align in table_cols:
@@ -336,41 +338,53 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
         banner_h = 106
         inner_pad = 14
         logo_slot_w = 102
+        logo_plate_gap = 12
         metrics_w = 206
         section_gap = 16
-        canvas_obj.saveState()
-        canvas_obj.setFillColor(palette["primary"])
-        canvas_obj.roundRect(margin, yinv(banner_top + banner_h), content_w, banner_h, 12, stroke=0, fill=1)
-        canvas_obj.restoreState()
-
-        banner_inner_x = margin + inner_pad
-        banner_inner_w = content_w - (inner_pad * 2)
-        metrics_x = margin + content_w - inner_pad - metrics_w
-        title_x = banner_inner_x + logo_slot_w + section_gap
-        title_w = max(120.0, metrics_x - title_x - section_gap)
-
-        draw_logo = getattr(desktop_main, "draw_pdf_logo_box", None)
-        if callable(draw_logo):
+        banner_x = margin + logo_slot_w + logo_plate_gap
+        banner_w = width - margin - banner_x
+        draw_header_panel = getattr(desktop_main, "draw_pdf_header_panel", None)
+        if callable(draw_header_panel):
             try:
-                draw_logo(
+                draw_header_panel(canvas_obj, height, banner_x, banner_top, banner_w, banner_h, radius=12, stroke_color="#D5DDE7", accent_color="#EAF0F6", accent_height=5)
+            except Exception:
+                draw_header_panel = None
+        if not callable(draw_header_panel):
+            canvas_obj.saveState()
+            canvas_obj.setFillColor(colors.white)
+            canvas_obj.setStrokeColor(palette["line_strong"])
+            canvas_obj.setLineWidth(1.0)
+            canvas_obj.roundRect(banner_x, yinv(banner_top + banner_h), banner_w, banner_h, 12, stroke=1, fill=1)
+            canvas_obj.restoreState()
+
+        draw_logo_plate = getattr(desktop_main, "draw_pdf_logo_plate", None)
+        if callable(draw_logo_plate):
+            try:
+                draw_logo_plate(
                     canvas_obj,
                     height,
-                    banner_inner_x,
-                    32,
-                    box_size=logo_slot_w,
+                    margin,
+                    50,
+                    box_w=logo_slot_w,
                     box_h=54,
                     padding=4,
-                    draw_border=False,
                 )
             except Exception:
                 pass
 
-        canvas_obj.setFillColor(colors.white)
+        banner_inner_x = banner_x + inner_pad
+        banner_inner_w = banner_w - (inner_pad * 2)
+        metrics_x = banner_x + banner_w - inner_pad - metrics_w
+        title_x = banner_inner_x + section_gap
+        title_w = max(120.0, metrics_x - title_x - section_gap)
+
+        canvas_obj.setFillColor(palette["primary_dark"])
         title_text = str(doc.get("titulo", "Fatura")) or "Fatura"
         subtitle_text = str(doc.get("subtitulo", "Documento comercial")) or "Documento comercial"
         canvas_obj.setFont(fonts["bold"], 19)
         canvas_obj.drawCentredString(title_x + (title_w / 2.0), yinv(50), ntxt(title_text))
         canvas_obj.setFont(fonts["regular"], 9.6)
+        canvas_obj.setFillColor(palette["muted"])
         canvas_obj.drawCentredString(
             title_x + (title_w / 2.0),
             yinv(68),

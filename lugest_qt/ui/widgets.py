@@ -22,19 +22,19 @@ class StatCard(CardFrame):
     def __init__(self, title: str, parent=None) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(3)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(4)
         self.accent = QFrame()
-        self.accent.setFixedHeight(4)
-        self.accent.setStyleSheet("background: #c6d2e0; border-radius: 2px;")
+        self.accent.setFixedHeight(3)
+        self.accent.setStyleSheet("background: #c6d2e0; border-radius: 1px;")
         self.title_label = QLabel(title)
         self.title_label.setProperty("role", "muted")
-        self.title_label.setStyleSheet("font-size: 11px;")
+        self.title_label.setStyleSheet("font-size: 10px; letter-spacing: 0.2px;")
         self.value_label = QLabel("-")
-        self.value_label.setStyleSheet("font-size: 20px; font-weight: 800; color: #0f172a;")
+        self.value_label.setStyleSheet("font-size: 18px; font-weight: 700; color: #0f172a;")
         self.subtitle_label = QLabel("")
         self.subtitle_label.setProperty("role", "muted")
-        self.subtitle_label.setStyleSheet("font-size: 11px;")
+        self.subtitle_label.setStyleSheet("font-size: 10px;")
         self.subtitle_label.setWordWrap(False)
         layout.addWidget(self.accent)
         layout.addWidget(self.title_label)
@@ -51,11 +51,11 @@ class StatCard(CardFrame):
         super().set_tone(tone)
         tone_map = {
             "default": ("#c6d2e0", "#0f172a"),
-            "info": ("#2f6db2", "#12304a"),
-            "success": ("#1f8a4c", "#0f172a"),
-            "warning": ("#c28112", "#0f172a"),
-            "danger": ("#c24136", "#0f172a"),
+            "info": ("#6b8fb3", "#16324b"),
+            "success": ("#4b8f69", "#0f172a"),
+            "warning": ("#b58a3c", "#0f172a"),
+            "danger": ("#b8574d", "#0f172a"),
         }
         accent, value_color = tone_map.get(str(tone or "default"), tone_map["default"])
         self.accent.setStyleSheet(f"background: {accent}; border-radius: 2px;")
-        self.value_label.setStyleSheet(f"font-size: 20px; font-weight: 800; color: {value_color};")
+        self.value_label.setStyleSheet(f"font-size: 18px; font-weight: 700; color: {value_color};")

@@ -1,13 +1,12 @@
 {
   "postos_trabalho": [
+    "Corte Laser",
     "Embalamento",
     "Expedicao",
     "Furo Manual",
     "Lacagem",
     "Laser",
     "Maquina 3030",
-    "Maquina 5030",
-    "Maquina 5040",
     "Maquinacao",
     "Quinagem",
     "Montagem",
@@ -19,6 +18,11 @@
   "operador_posto_map": {},
   "tempos_operacao_planeada_min": {},
   "workcenter_catalog": [
+    {
+      "name": "Corte Laser",
+      "operation": "Corte Laser",
+      "machines": []
+    },
     {
       "name": "Embalamento",
       "operation": "Embalamento",
@@ -43,9 +47,8 @@
       "name": "Laser",
       "operation": "Corte Laser",
       "machines": [
-        "Maquina 3030",
-        "Maquina 5030",
-        "Maquina 5040"
+        "Corte Laser",
+        "Maquina 3030"
       ]
     },
     {

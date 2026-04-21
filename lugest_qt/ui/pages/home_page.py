@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QGridLayout, QHeaderView, QLabel, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QHeaderView, QLabel, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 
 from ..widgets import CardFrame, StatCard
 
@@ -16,7 +16,45 @@ class HomePage(QWidget):
         self.backend = backend
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(14)
+        root.setSpacing(16)
+
+        hero_card = CardFrame()
+        hero_card.set_tone("info")
+        hero_layout = QHBoxLayout(hero_card)
+        hero_layout.setContentsMargins(18, 16, 18, 16)
+        hero_layout.setSpacing(16)
+
+        hero_text = QVBoxLayout()
+        hero_text.setContentsMargins(0, 0, 0, 0)
+        hero_text.setSpacing(4)
+        hero_title = QLabel("Resumo executivo")
+        hero_title.setStyleSheet("font-size: 20px; color: #0f172a;")
+        hero_subtitle = QLabel("Leitura rápida do estado atual do ambiente, do stock e dos movimentos recentes.")
+        hero_subtitle.setProperty("role", "muted")
+        hero_subtitle.setWordWrap(True)
+        self.hero_summary_label = QLabel("A carregar indicadores principais.")
+        self.hero_summary_label.setStyleSheet("color: #17324d; font-size: 12px;")
+        self.hero_summary_label.setWordWrap(True)
+        hero_text.addWidget(hero_title)
+        hero_text.addWidget(hero_subtitle)
+        hero_text.addWidget(self.hero_summary_label)
+        hero_layout.addLayout(hero_text, 1)
+
+        status_wrap = QVBoxLayout()
+        status_wrap.setContentsMargins(0, 0, 0, 0)
+        status_wrap.setSpacing(6)
+        status_label = QLabel("Atualização")
+        status_label.setProperty("role", "muted")
+        self.updated_label = QLabel("Sem leitura carregada.")
+        self.updated_label.setStyleSheet(
+            "padding: 8px 12px; border: 1px solid #cfd8e3; border-radius: 10px; "
+            "background: #ffffff; color: #16324b; font-size: 12px;"
+        )
+        self.updated_label.setWordWrap(True)
+        status_wrap.addWidget(status_label)
+        status_wrap.addWidget(self.updated_label)
+        hero_layout.addLayout(status_wrap)
+        root.addWidget(hero_card)
 
         cards_host = QWidget()
         self.cards_layout = QGridLayout(cards_host)
@@ -27,7 +65,7 @@ class HomePage(QWidget):
         for index in range(4):
             card = StatCard("-")
             self.cards.append(card)
-            self.cards_layout.addWidget(card, 0, index)
+            self.cards_layout.addWidget(card, index // 2, index % 2)
         for card, tone in zip(self.cards, ("info", "success", "warning", "default")):
             card.set_tone(tone)
         root.addWidget(cards_host)
@@ -36,9 +74,9 @@ class HomePage(QWidget):
         log_layout = QVBoxLayout(log_card)
         log_layout.setContentsMargins(16, 14, 16, 14)
         log_layout.setSpacing(10)
-        title = QLabel("Histórico de Stock")
-        title.setStyleSheet("font-size: 18px; font-weight: 800; color: #0f172a;")
-        subtitle = QLabel("Últimos movimentos de matéria-prima e retalhos.")
+        title = QLabel("Atividade recente")
+        title.setStyleSheet("font-size: 18px; color: #0f172a;")
+        subtitle = QLabel("Últimos movimentos de matéria-prima e retalhos, prontos para validação rápida.")
         subtitle.setProperty("role", "muted")
         log_layout.addWidget(title)
         log_layout.addWidget(subtitle)
@@ -58,6 +96,8 @@ class HomePage(QWidget):
         for card, payload in zip(self.cards, counts):
             card.title_label.setText(payload["title"])
             card.set_data(payload["value"], payload["subtitle"])
+        hero_bits = [f"{payload['title']}: {payload['value']}" for payload in counts[:3]]
+        self.hero_summary_label.setText(" | ".join(hero_bits) if hero_bits else "Sem indicadores disponíveis.")
 
         rows = self.backend.stock_log_rows()
         self.log_table.setSortingEnabled(False)

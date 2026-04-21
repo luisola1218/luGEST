@@ -117,7 +117,7 @@ class ProductsPage(QWidget):
         title_wrap.setContentsMargins(0, 0, 0, 0)
         title_wrap.setSpacing(2)
         title = QLabel("Gestao de Produtos")
-        title.setStyleSheet("font-size: 17px; font-weight: 800; color: #0f172a;")
+        title.setStyleSheet("font-size: 17px; color: #0f172a;")
         subtitle = QLabel("Fluxo antigo: lista principal, ficha compacta e movimentos em sub-menu.")
         subtitle.setProperty("role", "muted")
         title_wrap.addWidget(title)
@@ -133,7 +133,7 @@ class ProductsPage(QWidget):
         summary = QHBoxLayout()
         summary.setSpacing(14)
         self.current_product_label = QLabel("Sem produto selecionado")
-        self.current_product_label.setProperty("role", "field_value_strong")
+        self.current_product_label.setProperty("role", "field_value")
         self.price_unit_label = QLabel("0,00 EUR")
         self.price_unit_label.setProperty("role", "field_value")
         self.stock_value_label = QLabel("0,00 EUR")
@@ -160,6 +160,9 @@ class ProductsPage(QWidget):
         self.pdf_btn = QPushButton("Pre-visualizar PDF")
         self.pdf_btn.setProperty("variant", "secondary")
         self.pdf_btn.clicked.connect(self._open_pdf)
+        self.label_btn = QPushButton("Etiqueta")
+        self.label_btn.setProperty("variant", "secondary")
+        self.label_btn.clicked.connect(self._open_label_pdf)
         self.form_mode_btn = QPushButton("Ficha produto")
         self.form_mode_btn.setProperty("variant", "secondary")
         self.form_mode_btn.clicked.connect(self._show_form_page)
@@ -172,9 +175,11 @@ class ProductsPage(QWidget):
             (self.remove_btn, 96),
             (self.consume_btn, 88),
             (self.pdf_btn, 146),
+            (self.label_btn, 92),
             (self.form_mode_btn, 118),
             (self.moves_mode_btn, 108),
         ):
+            button.setStyleSheet("font-weight: 500;")
             button.setMaximumWidth(width)
             actions.addWidget(button)
         actions.addStretch(1)
@@ -187,7 +192,7 @@ class ProductsPage(QWidget):
         table_layout.setContentsMargins(14, 12, 14, 12)
         table_layout.setSpacing(8)
         table_title = QLabel("Produtos")
-        table_title.setStyleSheet("font-size: 17px; font-weight: 800; color: #0f172a;")
+        table_title.setStyleSheet("font-size: 17px; color: #0f172a;")
         self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels(
             ["Codigo", "Descricao", "Categoria", "Tipo", "Qtd", "Alerta", "Preco/Unid.", "Valor Stock", "Atualizado"]
@@ -215,7 +220,7 @@ class ProductsPage(QWidget):
         detail_host_layout.setContentsMargins(14, 12, 14, 12)
         detail_host_layout.setSpacing(8)
         self.detail_mode_label = QLabel("Ficha do produto")
-        self.detail_mode_label.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
+        self.detail_mode_label.setStyleSheet("font-size: 16px; color: #0f172a;")
         detail_host_layout.addWidget(self.detail_mode_label)
         self.detail_stack = QStackedWidget()
         detail_host_layout.addWidget(self.detail_stack)
@@ -531,10 +536,6 @@ class ProductsPage(QWidget):
                 item.setToolTip(str(value))
                 if col_index >= 4:
                     item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
-                if col_index == 0:
-                    font = item.font()
-                    font.setBold(True)
-                    item.setFont(font)
                 self.table.setItem(row_index, col_index, item)
             self._apply_row_colors(row_index, str(row.get("severity", "ok")), str(row.get("band", "even")))
         if self.table.rowCount() > 0:
@@ -612,5 +613,15 @@ class ProductsPage(QWidget):
     def _open_pdf(self) -> None:
         try:
             self.backend.product_open_stock_pdf()
+        except Exception as exc:
+            QMessageBox.critical(self, "Produtos", str(exc))
+
+    def _open_label_pdf(self) -> None:
+        code = self.code_edit.text().strip() or self.current_code
+        if not code:
+            QMessageBox.warning(self, "Produtos", "Seleciona um produto.")
+            return
+        try:
+            self.backend.product_open_label_pdf(code)
         except Exception as exc:
             QMessageBox.critical(self, "Produtos", str(exc))

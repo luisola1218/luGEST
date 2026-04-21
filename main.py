@@ -7849,6 +7849,70 @@ def draw_pdf_logo_box(c, page_h, x, y_top, box_size=34, padding=3, draw_border=T
         c.restoreState()
 
 
+def draw_pdf_logo_plate(
+    c,
+    page_h,
+    x,
+    y_top,
+    box_w=118,
+    box_h=54,
+    *,
+    padding=4,
+    radius=12,
+    fill_color="#FFFFFF",
+    stroke_color="#D7DEE8",
+    line_width=0.9,
+):
+    from reportlab.lib import colors
+
+    box_w = float(box_w)
+    box_h = float(box_h)
+    y = page_h - y_top - box_h
+    c.saveState()
+    try:
+        c.setFillColor(colors.HexColor(str(fill_color or "#FFFFFF")))
+        c.setStrokeColor(colors.HexColor(str(stroke_color or "#D7DEE8")))
+        c.setLineWidth(float(line_width or 0.9))
+        c.roundRect(x, y, box_w, box_h, float(radius or 12), stroke=1, fill=1)
+    finally:
+        c.restoreState()
+    draw_pdf_logo_box(c, page_h, x, y_top, box_size=box_w, box_h=box_h, padding=padding, draw_border=False)
+
+
+def draw_pdf_header_panel(
+    c,
+    page_h,
+    x,
+    y_top,
+    width,
+    height,
+    *,
+    radius=14,
+    fill_color="#FFFFFF",
+    stroke_color="#D7DEE8",
+    line_width=1.0,
+    accent_color="#E8EEF5",
+    accent_height=4,
+):
+    from reportlab.lib import colors
+
+    width = float(width)
+    height = float(height)
+    y = page_h - y_top - height
+    c.saveState()
+    try:
+        c.setFillColor(colors.HexColor(str(fill_color or "#FFFFFF")))
+        c.setStrokeColor(colors.HexColor(str(stroke_color or "#D7DEE8")))
+        c.setLineWidth(float(line_width or 1.0))
+        c.roundRect(x, y, width, height, float(radius or 14), stroke=1, fill=1)
+        if accent_height and accent_color:
+            accent_h = max(1.0, min(float(accent_height), height * 0.16))
+            c.setFillColor(colors.HexColor(str(accent_color)))
+            c.roundRect(x + 1.2, y + height - accent_h - 1.2, max(8.0, width - 2.4), accent_h, max(2.0, float(radius or 14) * 0.45), stroke=0, fill=1)
+    finally:
+        c.restoreState()
+
+
 def apply_window_icon(win):
     if not win:
         return

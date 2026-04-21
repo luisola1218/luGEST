@@ -2018,13 +2018,17 @@ def _render_orc_pdf_modern(self, path, orc):
     c = pdf_canvas.Canvas(path, pagesize=landscape(A4))
     margin = 22
     content_w = width - (2 * margin)
-    header_row_h = 20
-    row_h = 17
-    table_first_top = 198
-    table_next_top = 88
-    footer_top = 446
+    header_row_h = 22
+    row_h = 18
+    first_table_top = 226
+    next_table_top = 98
+    footer_start = 458
     doc_num = str(orc.get("numero", "") or "ORC").strip() or "ORC"
     c.setTitle(f"Orcamento {doc_num}")
+    try:
+        c.setPageCompression(0)
+    except Exception:
+        pass
 
     subtotal = parse_float(orc.get("subtotal", 0), 0)
     iva_perc = parse_float(orc.get("iva_perc", 0), 0)
@@ -2049,20 +2053,20 @@ def _render_orc_pdf_modern(self, path, orc):
             cli = {**cobj}
 
     cols = [
-        ("Linha", 36, "center"),
-        ("Ref. Ext.", 116, "w"),
-        ("Descricao", 170, "w"),
-        ("Material/Cod.", 90, "w"),
-        ("Esp./Un.", 48, "center"),
-        ("Operacoes", 116, "w"),
-        ("Qtd.", 44, "e"),
+        ("Linha", 34, "center"),
+        ("Ref. Ext.", 106, "w"),
+        ("Descricao", 188, "w"),
+        ("Material", 88, "w"),
+        ("Esp./Un.", 46, "center"),
+        ("Operacoes", 118, "w"),
+        ("Qtd.", 42, "e"),
         ("P.Unit.", 62, "e"),
-        ("IVA%", 40, "e"),
-        ("Total", 66, "e"),
+        ("IVA%", 38, "e"),
+        ("Total", 68, "e"),
     ]
     table_w = sum(width for _, width, _ in cols)
-    first_capacity = max(1, int((footer_top - (table_first_top + header_row_h + 6)) // row_h))
-    next_capacity = max(1, int((footer_top - (table_next_top + header_row_h + 6)) // row_h))
+    first_capacity = max(1, int((footer_start - (first_table_top + header_row_h + 8)) // row_h))
+    next_capacity = max(1, int((footer_start - (next_table_top + header_row_h + 8)) // row_h))
 
     def yinv(top_y):
         return height - top_y
@@ -2088,60 +2092,126 @@ def _render_orc_pdf_modern(self, path, orc):
     def fmt_money(value):
         return f"{parse_float(value, 0):.2f} EUR"
 
-    def card(x, top_y, box_w, box_h, title, lines_, accent=False, font_size=8.5):
-        title_fill = palette["primary_soft"] if accent else palette["primary_soft_2"]
+    def draw_shell() -> None:
+        c.saveState()
+        c.setFillColor(palette["primary"])
+        c.roundRect(margin, yinv(64), content_w, 5, 2, stroke=0, fill=1)
+        c.setFillColor(palette["surface_alt"])
+        c.roundRect(margin, yinv(height - (margin * 2)), content_w, height - (margin * 2), 18, stroke=0, fill=1)
+        c.setFillColor(colors.white)
+        c.roundRect(margin + 1, yinv(height - (margin * 2) - 1), content_w - 2, height - (margin * 2) - 2, 18, stroke=0, fill=1)
+        c.setStrokeColor(palette["line"])
+        c.setLineWidth(1)
+        c.roundRect(margin, yinv(height - (margin * 2)), content_w, height - (margin * 2), 18, stroke=1, fill=0)
+        c.restoreState()
+
+    def draw_badge(x, top_y, text, *, fill_color=None, text_color=None, height_box=20, align="left"):
+        label = str(text or "").strip() or "-"
+        box_w = max(64, min(170, 22 + (len(label) * 6.2)))
+        fill = fill_color or palette["primary_soft"]
+        txt_color = text_color or palette["primary_dark"]
+        c.saveState()
+        c.setFillColor(fill)
+        c.roundRect(x if align == "left" else x - box_w, yinv(top_y + height_box), box_w, height_box, 10, stroke=0, fill=1)
+        c.restoreState()
+        c.setFillColor(txt_color)
+        c.setFont(fonts["bold"], 8.2)
+        draw_x = (x + 10) if align == "left" else (x - box_w + 10)
+        c.drawString(draw_x, yinv(top_y + 13.2), ntxt(_orc_pdf_clip_text(label, box_w - 18, fonts["bold"], 8.2)))
+        return box_w
+
+    def metric_card(x, top_y, box_w, label, value, *, box_h=34, accent=False, compact=False):
         c.saveState()
         c.setFillColor(colors.white)
         c.setStrokeColor(palette["line_strong"] if accent else palette["line"])
-        c.setLineWidth(0.9)
-        c.roundRect(x, yinv(top_y + box_h), box_w, box_h, 8, stroke=1, fill=1)
-        c.setFillColor(title_fill)
-        c.roundRect(x, yinv(top_y + 20), box_w, 20, 8, stroke=0, fill=1)
+        c.roundRect(x, yinv(top_y + box_h), box_w, box_h, 10, stroke=1, fill=1)
+        if accent:
+            c.setFillColor(palette["primary_soft"])
+            c.roundRect(x + 1, yinv(top_y + box_h) + box_h - 5, box_w - 2, 4, 8, stroke=0, fill=1)
         c.restoreState()
-        c.setFont(fonts["bold"], 8.7)
+        c.setFillColor(palette["muted"])
+        c.setFont(fonts["regular"], 7.0 if compact else 7.3)
+        c.drawString(x + 8, yinv(top_y + 10), ntxt(label))
         c.setFillColor(palette["primary_dark"])
-        c.drawString(x + 8, yinv(top_y + 13), ntxt(title))
-        yy = top_y + 34
+        c.setFont(fonts["bold"], 10.2 if compact else 10.6)
+        c.drawString(x + 8, yinv(top_y + 23), ntxt(_orc_pdf_clip_text(value, box_w - 16, fonts["bold"], 10.2 if compact else 10.6)))
+
+    def detail_card(x, top_y, box_w, box_h, title, lines_, *, accent=False, font_size=8.4):
+        title_fill = palette["primary_soft"] if accent else palette["surface_alt"]
+        c.saveState()
+        c.setFillColor(colors.white)
+        c.setStrokeColor(palette["line_strong"] if accent else palette["line"])
+        c.setLineWidth(1.0 if accent else 0.9)
+        c.roundRect(x, yinv(top_y + box_h), box_w, box_h, 12, stroke=1, fill=1)
+        c.setFillColor(title_fill)
+        c.roundRect(x + 1, yinv(top_y + 24), box_w - 2, 23, 11, stroke=0, fill=1)
+        c.restoreState()
+        c.setFont(fonts["bold"], 8.8)
+        c.setFillColor(palette["primary_dark"])
+        c.drawString(x + 10, yinv(top_y + 15), ntxt(title))
+        yy = top_y + 37
         for idx_line, line in enumerate(lines_):
-            line_font = fonts["bold"] if idx_line == 0 and accent else fonts["regular"]
-            line_size = font_size + 0.6 if idx_line == 0 and accent else font_size
-            wrapped = _orc_pdf_wrap_text(line, line_font, line_size, box_w - 16, max_lines=2 if idx_line == 0 else 2)
+            line_font = fonts["bold"] if accent and idx_line == 0 else fonts["regular"]
+            line_size = font_size + 0.4 if accent and idx_line == 0 else font_size
+            wrapped = _orc_pdf_wrap_text(line, line_font, line_size, box_w - 20, max_lines=2)
             for item in wrapped:
                 c.setFont(line_font, line_size)
                 c.setFillColor(palette["ink"])
-                c.drawString(x + 8, yinv(yy), ntxt(item))
-                yy += 10
-            if yy > top_y + box_h - 8:
-                break
+                c.drawString(x + 10, yinv(yy), ntxt(item))
+                yy += 10.5
+                if yy > top_y + box_h - 8:
+                    return
 
-    def info_chip(x, top_y, box_w, label, value, box_h=34):
+    def summary_panel(x, top_y, box_w, box_h):
         c.saveState()
         c.setFillColor(colors.white)
-        c.setStrokeColor(palette["line"])
-        c.roundRect(x, yinv(top_y + box_h), box_w, box_h, 8, stroke=1, fill=1)
+        c.setStrokeColor(palette["line_strong"])
+        c.roundRect(x, yinv(top_y + box_h), box_w, box_h, 14, stroke=1, fill=1)
+        c.setFillColor(palette["primary_soft"])
+        c.roundRect(x + 1, yinv(top_y + box_h) + box_h - 7, box_w - 2, 6, 11, stroke=0, fill=1)
         c.restoreState()
-        c.setFont(fonts["regular"], 7.2)
-        c.setFillColor(palette["muted"])
-        c.drawString(x + 7, yinv(top_y + 11), ntxt(label))
-        c.setFont(fonts["bold"], 9.8)
         c.setFillColor(palette["primary_dark"])
-        c.drawString(x + 7, yinv(top_y + 23.5), ntxt(_orc_pdf_clip_text(value, box_w - 14, fonts["bold"], 9.8)))
+        c.setFont(fonts["bold"], 9.6)
+        c.drawString(x + 12, yinv(top_y + 15), ntxt(_orc_pdf_clip_text("Resumo financeiro", box_w - 24, fonts["bold"], 9.6)))
+        c.setFont(fonts["regular"], 7.4)
+        c.drawString(x + 12, yinv(top_y + 28), ntxt(_orc_pdf_clip_text(f"Estado: {estado}", box_w - 24, fonts["regular"], 7.4)))
+        c.drawString(x + 12, yinv(top_y + 39), ntxt(f"Linhas: {len(lines)}"))
+        c.setStrokeColor(colors.Color(1, 1, 1, alpha=0.22))
+        c.line(x + 12, yinv(top_y + 45), x + box_w - 12, yinv(top_y + 45))
+        rows = [
+            ("Subtotal", fmt_money(subtotal)),
+            (f"IVA ({fmt_num(iva_perc)}%)", fmt_money(iva)),
+        ]
+        yy = top_y + 58
+        for label, value in rows:
+            c.setFont(fonts["regular"], 8.5)
+            c.drawString(x + 12, yinv(yy), ntxt(label))
+            c.drawRightString(x + box_w - 12, yinv(yy), ntxt(value))
+            yy += 12
+        c.setStrokeColor(colors.Color(1, 1, 1, alpha=0.22))
+        c.line(x + 12, yinv(top_y + 75), x + box_w - 12, yinv(top_y + 75))
+        c.setFont(fonts["bold"], 9.2)
+        c.drawString(x + 12, yinv(top_y + 87), ntxt("Total"))
+        c.setFont(fonts["bold"], 12.4)
+        c.drawRightString(x + box_w - 12, yinv(top_y + 87), ntxt(fmt_money(total)))
 
     def draw_table_header(top_y):
         c.saveState()
-        c.setFillColor(palette["primary"])
-        c.roundRect(margin, yinv(top_y + header_row_h), table_w, header_row_h, 7, stroke=0, fill=1)
+        c.setFillColor(palette["primary_soft"])
+        c.setStrokeColor(palette["line"])
+        c.setLineWidth(0.8)
+        c.roundRect(margin, yinv(top_y + header_row_h), table_w, header_row_h, 8, stroke=1, fill=1)
         c.restoreState()
-        c.setFillColor(colors.white)
+        c.setFillColor(palette["primary_dark"])
         c.setFont(fonts["bold"], 8.15)
         xx = margin
         for name, width_col, align in cols:
             if align == "e":
-                c.drawRightString(xx + width_col - 7, yinv(top_y + 13), ntxt(name))
+                c.drawRightString(xx + width_col - 8, yinv(top_y + 14.2), ntxt(name))
             elif align == "center":
-                c.drawCentredString(xx + (width_col / 2.0), yinv(top_y + 13), ntxt(name))
+                c.drawCentredString(xx + (width_col / 2.0), yinv(top_y + 14.2), ntxt(name))
             else:
-                c.drawString(xx + 7, yinv(top_y + 13), ntxt(name))
+                c.drawString(xx + 8, yinv(top_y + 14.2), ntxt(name))
             xx += width_col
         return top_y + header_row_h + 6
 
@@ -2151,7 +2221,7 @@ def _render_orc_pdf_modern(self, path, orc):
         c.setFillColor(fill)
         c.setStrokeColor(palette["line"])
         c.setLineWidth(0.45)
-        c.roundRect(margin, yinv(top_y + row_h), table_w, row_h, 5, stroke=1, fill=1)
+        c.roundRect(margin, yinv(top_y + row_h), table_w, row_h, 6, stroke=1, fill=1)
         c.restoreState()
         values = [
             f"{absolute_idx + 1:03d}",
@@ -2172,123 +2242,152 @@ def _render_orc_pdf_modern(self, path, orc):
         for idx_col, ((_, width_col, align), value) in enumerate(zip(cols, values)):
             if idx_col > 0:
                 c.line(xx, yinv(top_y), xx, yinv(top_y + row_h))
-            txt = _orc_pdf_clip_text(value, width_col - 14, fonts["regular"], 8.0)
-            if align == "e":
-                c.drawRightString(xx + width_col - 7, yinv(top_y + 11.3), ntxt(txt))
-            elif align == "center":
-                c.drawCentredString(xx + (width_col / 2.0), yinv(top_y + 11.3), ntxt(txt))
+            txt = _orc_pdf_clip_text(value, width_col - 16, fonts["regular"], 8.0)
+            if idx_col == 1:
+                c.setFont(fonts["bold"], 8.0)
             else:
-                c.drawString(xx + 7, yinv(top_y + 11.3), ntxt(txt))
+                c.setFont(fonts["regular"], 8.0)
+            if align == "e":
+                c.drawRightString(xx + width_col - 8, yinv(top_y + 12.1), ntxt(txt))
+            elif align == "center":
+                c.drawCentredString(xx + (width_col / 2.0), yinv(top_y + 12.1), ntxt(txt))
+            else:
+                c.drawString(xx + 8, yinv(top_y + 12.1), ntxt(txt))
             xx += width_col
 
     def draw_header(page_no, total_pages, first_page):
         if first_page:
-            metric_grid = _orc_pdf_metric_grid_layout(width - margin, 20, 82, cols=3, rows=2, group_w=338, gap=6)
-            c.saveState()
-            c.setFillColor(palette["primary"])
-            c.roundRect(margin, yinv(102), content_w, 82, 12, stroke=0, fill=1)
-            c.restoreState()
-            draw_pdf_logo_box(c, height, margin + 12, 30, box_size=124, box_h=52, padding=4, draw_border=False)
-            c.setFillColor(colors.white)
-            c.setFont(fonts["bold"], 20)
-            c.drawString(margin + 148, yinv(47), ntxt("Orcamento"))
-            c.setFont(fonts["regular"], 9.3)
-            c.drawString(margin + 148, yinv(64), ntxt("Proposta comercial"))
-            info_chip(metric_grid["cols"][0], metric_grid["rows"][0], metric_grid["chip_w"], "Documento", doc_num, box_h=metric_grid["chip_h"])
-            info_chip(metric_grid["cols"][1], metric_grid["rows"][0], metric_grid["chip_w"], "Data", fmt_display_date(orc.get("data", "")), box_h=metric_grid["chip_h"])
-            info_chip(metric_grid["cols"][2], metric_grid["rows"][0], metric_grid["chip_w"], "Estado", estado, box_h=metric_grid["chip_h"])
-            info_chip(metric_grid["cols"][0], metric_grid["rows"][1], metric_grid["chip_w"], "Total", fmt_money(total), box_h=metric_grid["chip_h"])
-            info_chip(metric_grid["cols"][1], metric_grid["rows"][1], metric_grid["chip_w"], "IVA", f"{fmt_num(iva_perc)}%", box_h=metric_grid["chip_h"])
-            info_chip(metric_grid["cols"][2], metric_grid["rows"][1], metric_grid["chip_w"], "Pagina", f"{page_no}/{total_pages}", box_h=metric_grid["chip_h"])
-            card(
+            draw_shell()
+            logo_plate_w = 136
+            logo_plate_gap = 12
+            hero_x = margin + 10 + logo_plate_w + logo_plate_gap
+            hero_w = (content_w - 20) - logo_plate_w - logo_plate_gap
+            draw_pdf_logo_plate(c, height, margin + 10, 32, box_w=logo_plate_w, box_h=58, padding=4)
+            header_panel = globals().get("draw_pdf_header_panel")
+            if callable(header_panel):
+                header_panel(c, height, hero_x, 26, hero_w, 88, radius=16, stroke_color="#D5DDE7", accent_color="#EAF0F6", accent_height=5)
+            else:
+                c.saveState()
+                c.setFillColor(colors.white)
+                c.setStrokeColor(palette["line_strong"])
+                c.setLineWidth(1.0)
+                c.roundRect(hero_x, yinv(114), hero_w, 88, 16, stroke=1, fill=1)
+                c.restoreState()
+            c.setFillColor(palette["muted"])
+            c.setFont(fonts["regular"], 8.8)
+            c.drawString(hero_x + 18, yinv(48), ntxt("Proposta comercial"))
+            c.setFont(fonts["bold"], 23)
+            c.setFillColor(palette["primary_dark"])
+            c.drawString(hero_x + 18, yinv(73), ntxt("Orcamento"))
+            c.setFont(fonts["regular"], 9.1)
+            c.setFillColor(palette["muted"])
+            c.drawString(hero_x + 18, yinv(92), ntxt("Documento preparado para envio ao cliente"))
+            draw_badge(margin + content_w - 20, 34, f"Pagina {page_no}/{total_pages}", fill_color=palette["primary_soft"], text_color=palette["primary_dark"], align="right")
+            draw_badge(margin + content_w - 20, 58, estado, fill_color=palette["surface_alt"], text_color=palette["primary_dark"], align="right")
+            metric_grid = _orc_pdf_metric_grid_layout(width - margin - 8, 126, 64, cols=3, rows=2, group_w=360, gap=8)
+            metric_card(metric_grid["cols"][0], metric_grid["rows"][0], metric_grid["chip_w"], "Documento", doc_num, box_h=metric_grid["chip_h"], compact=True)
+            metric_card(metric_grid["cols"][1], metric_grid["rows"][0], metric_grid["chip_w"], "Data", fmt_display_date(orc.get("data", "")), box_h=metric_grid["chip_h"], compact=True)
+            metric_card(metric_grid["cols"][2], metric_grid["rows"][0], metric_grid["chip_w"], "Executado por", executado, box_h=metric_grid["chip_h"], compact=True)
+            metric_card(metric_grid["cols"][0], metric_grid["rows"][1], metric_grid["chip_w"], "Subtotal", fmt_money(subtotal), box_h=metric_grid["chip_h"], compact=True)
+            metric_card(metric_grid["cols"][1], metric_grid["rows"][1], metric_grid["chip_w"], "IVA", f"{fmt_num(iva_perc)}%", box_h=metric_grid["chip_h"], compact=True)
+            metric_card(metric_grid["cols"][2], metric_grid["rows"][1], metric_grid["chip_w"], "Total", fmt_money(total), box_h=metric_grid["chip_h"], accent=True, compact=True)
+            detail_card(
                 margin,
                 126,
-                320,
-                72,
+                332,
+                86,
                 "Cliente",
                 [
                     str(cli.get("nome", "") or cli.get("empresa", "") or cli.get("codigo", "") or "-").strip(),
                     f"NIF: {str(cli.get('nif', '') or '-').strip()}",
-                    f"Contacto: {str(cli.get('contacto', '') or '-').strip()}  |  Email: {str(cli.get('email', '') or '-').strip()}",
+                    f"Contacto: {str(cli.get('contacto', '') or '-').strip()} | Email: {str(cli.get('email', '') or '-').strip()}",
                     str(cli.get("morada", "") or "-").strip(),
                 ],
                 accent=True,
             )
-            card(
-                margin + 332,
+            detail_card(
+                margin + 344,
                 126,
-                content_w - 332,
-                72,
-                "Dados comerciais",
+                content_w - 344,
+                86,
+                "Contexto comercial",
                 [
-                    f"Executado por: {executado}",
                     f"Nota cliente: {nota_cliente or '-'}",
-                    f"Nota transporte: {nota_transporte or '-'}",
+                    f"Transporte: {nota_transporte or '-'}",
                     f"Encomenda associada: {numero_encomenda or '-'}",
+                    f"Operacoes no orcamento: {', '.join(list(self._extract_orc_operacoes(orc) or [])[:4]) or '-'}",
                 ],
                 font_size=8.2,
             )
-            return draw_table_header(table_first_top)
+            return draw_table_header(first_table_top)
 
-        c.saveState()
-        c.setFillColor(palette["primary_soft"])
-        c.roundRect(margin, yinv(68), content_w, 48, 12, stroke=0, fill=1)
-        c.restoreState()
-        c.setFillColor(palette["primary_dark"])
-        c.setFont(fonts["bold"], 15)
-        c.drawString(margin + 12, yinv(40), ntxt(f"Orcamento {doc_num}"))
-        c.setFont(fonts["regular"], 8.6)
-        c.drawString(margin + 12, yinv(54), ntxt(f"Cliente: {str(cli.get('nome', '') or cli.get('codigo', '') or '-').strip()}"))
-        metric_grid = _orc_pdf_metric_grid_layout(width - margin, 14, 48, cols=2, rows=1, group_w=188, gap=6)
-        info_chip(metric_grid["cols"][0], metric_grid["rows"][0], metric_grid["chip_w"], "Estado", estado, box_h=metric_grid["chip_h"])
-        info_chip(metric_grid["cols"][1], metric_grid["rows"][0], metric_grid["chip_w"], "Pagina", f"{page_no}/{total_pages}", box_h=metric_grid["chip_h"])
-        return draw_table_header(table_next_top)
-
-    def draw_footer(page_no, total_pages):
-        card(
-            margin,
-            452,
-            332,
-            84,
-            "Notas comerciais",
-            notes_lines[:6] or ["Sem notas adicionais para este orcamento."],
-            font_size=7.6,
-        )
-        card(
-            margin + 344,
-            452,
-            228,
-            84,
-            "Condicoes / legenda",
-            list(ORC_CONDICOES_GERAIS[:2]) + list(ORC_LEGENDA_OPERACOES[:3]),
-            font_size=7.1,
-        )
-        card(
-            margin + 584,
-            452,
-            table_w - 584,
-            84,
-            "Resumo",
-            [
-                f"Subtotal: {fmt_money(subtotal)}",
-                f"IVA ({fmt_num(iva_perc)}%): {fmt_money(iva)}",
-                f"Total: {fmt_money(total)}",
-                f"Linhas: {len(lines)}",
-            ],
-            accent=True,
-            font_size=8.1,
-        )
+        draw_shell()
         c.saveState()
         c.setFillColor(palette["surface_alt"])
-        c.roundRect(margin, yinv(566), table_w, 20, 10, stroke=0, fill=1)
+        c.roundRect(margin + 8, yinv(84), content_w - 16, 48, 14, stroke=0, fill=1)
         c.restoreState()
-        c.setFont(fonts["regular"], 7.1)
+        c.setFillColor(palette["primary_dark"])
+        c.setFont(fonts["bold"], 16)
+        c.drawString(margin + 18, yinv(48), ntxt(f"Orcamento {doc_num}"))
+        c.setFont(fonts["regular"], 8.8)
+        c.setFillColor(palette["muted"])
+        c.drawString(margin + 18, yinv(63), ntxt(f"Cliente: {str(cli.get('nome', '') or cli.get('codigo', '') or '-').strip()}"))
+        metric_grid = _orc_pdf_metric_grid_layout(width - margin - 8, 94, 30, cols=3, rows=1, group_w=324, gap=8)
+        metric_card(metric_grid["cols"][0], metric_grid["rows"][0], metric_grid["chip_w"], "Estado", estado, box_h=metric_grid["chip_h"], compact=True)
+        metric_card(metric_grid["cols"][1], metric_grid["rows"][0], metric_grid["chip_w"], "Data", fmt_display_date(orc.get("data", "")), box_h=metric_grid["chip_h"], compact=True)
+        metric_card(metric_grid["cols"][2], metric_grid["rows"][0], metric_grid["chip_w"], "Pagina", f"{page_no}/{total_pages}", box_h=metric_grid["chip_h"], compact=True)
+        return draw_table_header(next_table_top)
+
+    def draw_footer(page_no, total_pages):
+        footer_y = footer_start + 4
+        footer_gap = 10
+        notes_w = 326
+        cond_w = 202
+        legend_w = 104
+        summary_w = max(120, int(table_w - notes_w - cond_w - legend_w - (footer_gap * 3)))
+        notes_x = margin
+        cond_x = notes_x + notes_w + footer_gap
+        legend_x = cond_x + cond_w + footer_gap
+        summary_x = legend_x + legend_w + footer_gap
+        detail_card(
+            notes_x,
+            footer_y,
+            notes_w,
+            92,
+            "Notas comerciais",
+            notes_lines[:6] or ["Sem notas adicionais para este orcamento."],
+            font_size=7.7,
+        )
+        detail_card(
+            cond_x,
+            footer_y,
+            cond_w,
+            92,
+            "Condicoes",
+            list(ORC_CONDICOES_GERAIS[:3]) or ["Sem condicoes registadas."],
+            font_size=7.2,
+        )
+        detail_card(
+            legend_x,
+            footer_y,
+            legend_w,
+            92,
+            "Legenda",
+            list(ORC_LEGENDA_OPERACOES[:4]) or ["-"],
+            font_size=6.9,
+        )
+        summary_panel(summary_x, footer_y, summary_w, 92)
+        c.saveState()
+        c.setFillColor(palette["surface_alt"])
+        c.roundRect(margin, yinv(574), table_w, 18, 9, stroke=0, fill=1)
+        c.restoreState()
+        c.setFont(fonts["regular"], 7.0)
         c.setFillColor(palette["ink"])
         left_text = footer_company[0] if footer_company else ""
         right_text = footer_company[2] if len(footer_company) > 2 else (footer_company[1] if len(footer_company) > 1 else "")
-        c.drawString(margin + 10, yinv(554), ntxt(left_text))
-        c.drawRightString(width - margin - 10, yinv(554), ntxt(right_text))
-        c.drawRightString(width - margin - 10, yinv(565), ntxt(f"Executado por {executado} | Pagina {page_no}/{total_pages}"))
+        c.drawString(margin + 10, yinv(562), ntxt(_orc_pdf_clip_text(left_text, 320, fonts["regular"], 7.0)))
+        c.drawRightString(width - margin - 10, yinv(562), ntxt(_orc_pdf_clip_text(right_text, 260, fonts["regular"], 7.0)))
+        c.drawRightString(width - margin - 10, yinv(574), ntxt(f"Executado por {executado} | Pagina {page_no}/{total_pages}"))
 
     def paginate_items(items):
         if not items:

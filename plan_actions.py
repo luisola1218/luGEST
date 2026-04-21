@@ -941,14 +941,35 @@ def preview_plano_a4(self):
             except Exception:
                 pass
 
+        def draw_logo_plate(x, top_y, w, h):
+            c.saveState()
+            c.setFillColor(colors.white)
+            c.setStrokeColor(colors.HexColor("#d7dee8"))
+            c.setLineWidth(0.9)
+            c.roundRect(x, yinv(top_y + h), w, h, 12, stroke=1, fill=1)
+            c.restoreState()
+            draw_logo(x + 6, top_y + 4, w - 12, h - 8)
+
+        def draw_header_panel(x, top_y, w, h):
+            c.saveState()
+            c.setFillColor(colors.white)
+            c.setStrokeColor(colors.HexColor("#d5dde7"))
+            c.setLineWidth(1.0)
+            c.roundRect(x, yinv(top_y + h), w, h, 14, stroke=1, fill=1)
+            c.setFillColor(colors.HexColor("#eaf0f6"))
+            c.roundRect(x + 1, yinv(top_y + h) + h - 5, w - 2, 4, 10, stroke=0, fill=1)
+            c.restoreState()
+
         margin = 20
+        logo_plate_w = 84
+        logo_gap = 14
         c.setFillColor(colors.HexColor("#f3f7fb"))
         c.rect(0, 0, width, height, stroke=0, fill=1)
         c.setStrokeColorRGB(0.78, 0.80, 0.84)
         c.rect(margin, yinv(height - margin), width - margin * 2, height - margin * 2, stroke=1, fill=0)
-        c.setFillColor(colors.HexColor("#0f2748"))
-        c.roundRect(margin, yinv(62), width - margin * 2, 42, 14, stroke=0, fill=1)
-        draw_logo(margin + 8, margin + 7, 72, 30)
+        banner_x = margin + logo_plate_w + logo_gap
+        draw_header_panel(banner_x, 20, width - margin - banner_x, 42)
+        draw_logo_plate(margin, margin + 5, logo_plate_w, 34)
 
         start_min, end_min, slot, rows, cols, col_w, row_h = self.get_plano_grid_metrics()
         top_margin = 96
@@ -997,18 +1018,18 @@ def preview_plano_a4(self):
         generated_at = datetime.now().strftime("%d/%m/%Y %H:%M")
 
         set_font(True, 14)
-        c.drawString(margin + 82, yinv(margin + 20), "Plano de Produção")
+        c.drawString(margin + logo_plate_w + logo_gap + 12, yinv(margin + 20), "Plano de Produção")
         set_font(False, 9)
         c.drawRightString(width - margin - 4, yinv(margin + 20), f"Semana: {dates[0].strftime('%d/%m/%Y')} - {dates[-1].strftime('%d/%m/%Y')}")
         c.line(margin, yinv(55), width - margin, yinv(55))
-        c.setFillColor(colors.HexColor("#0f2748"))
-        c.roundRect(margin, yinv(62), width - margin * 2, 42, 14, stroke=0, fill=1)
-        draw_logo(margin + 8, margin + 7, 72, 30)
+        banner_x = margin + logo_plate_w + logo_gap
+        draw_header_panel(banner_x, 20, width - margin - banner_x, 42)
+        draw_logo_plate(margin, margin + 5, logo_plate_w, 34)
         set_font(True, 16)
-        c.setFillColor(colors.white)
-        c.drawString(margin + 88, yinv(margin + 19), "Plano de Producao")
+        c.setFillColor(colors.HexColor("#0f2748"))
+        c.drawString(banner_x + 12, yinv(margin + 19), "Plano de Producao")
         set_font(False, 9)
-        c.setFillColor(colors.HexColor("#dbeafe"))
+        c.setFillColor(colors.HexColor("#5b6f86"))
         subtitle = f"Operacao: {operation_label}"
         if resource_label:
             subtitle += f" | Recurso: {resource_label}"
