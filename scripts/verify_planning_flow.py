@@ -21,6 +21,7 @@ def _create_planning_order(
     esp: str,
     ref_ext: str,
     tempo_min: int,
+    resource: str = "",
 ) -> tuple[str, str, str]:
     enc = backend.order_create_or_update(
         {
@@ -43,7 +44,16 @@ def _create_planning_order(
             "guardar_ref": False,
         },
     )
-    backend.order_espessura_set_time(numero, material, esp, tempo_min)
+    if str(resource or "").strip():
+        backend.order_espessura_set_operation_times(
+            numero,
+            material,
+            esp,
+            {"Corte Laser": tempo_min},
+            {"Corte Laser": resource},
+        )
+    else:
+        backend.order_espessura_set_time(numero, material, esp, tempo_min)
     return numero, material, esp
 
 
@@ -78,9 +88,13 @@ def main() -> int:
     created_orders: list[str] = []
     manual_week_start = date(2032, 1, 5)
     auto_week_start = manual_week_start + timedelta(days=7)
+    resource_week_start = auto_week_start + timedelta(days=7)
+    packaging_week_start = resource_week_start + timedelta(days=7)
     try:
         _cleanup_test_week(backend, manual_week_start)
         _cleanup_test_week(backend, auto_week_start)
+        _cleanup_test_week(backend, resource_week_start)
+        _cleanup_test_week(backend, packaging_week_start)
 
         manual_num, manual_mat, manual_esp = _create_planning_order(
             backend,
@@ -174,7 +188,151 @@ def main() -> int:
         if len(placed_by_order[auto_num_b]) != 1 or str(placed_by_order[auto_num_b][0].get("inicio", "") or "").strip() != "14:00":
             raise RuntimeError(f"Segundo bloco nao saltou o almoco: {placed_by_order[auto_num_b]}")
 
-        print("planning-flow-ok", manual_num, auto_num_a, auto_num_b)
+        resource_num, resource_mat, resource_esp = _create_planning_order(
+            backend,
+            client="CL0002",
+            note="VERIFY_PLANNING_RESOURCE_FILTER",
+            delivery="2032-01-24",
+            material="S355JR",
+            esp="6",
+            ref_ext="VERIFY-PLAN-RESOURCE",
+            tempo_min=60,
+            resource="Maquina 3030",
+        )
+        created_orders.append(resource_num)
+        backend.ensure_data().setdefault("plano", []).append(
+            backend._planning_make_block(
+                resource_num,
+                resource_mat,
+                resource_esp,
+                "Corte Laser",
+                resource_week_start.isoformat(),
+                480,
+                60,
+                posto="Laser",
+            )
+        )
+        backend._save(force=True)
+
+        visible_in_resource = [
+            row
+            for row in list(
+                backend.planning_overview_data(
+                    week_start=resource_week_start.isoformat(),
+                    operation="Corte Laser",
+                    resource="Maquina 3030",
+                ).get("active", [])
+                or []
+            )
+            if str(row.get("encomenda", "") or "").strip() == resource_num
+        ]
+        if len(visible_in_resource) != 1:
+            raise RuntimeError(
+                f"Bloco legado sem maquina explicita nao apareceu no recurso correto: {visible_in_resource}"
+            )
+
+        wrong_resource_pending = [
+            row
+            for row in list(backend.planning_pending_rows(operation="Corte Laser", resource="Maquina 3030") or [])
+            if str(row.get("numero", "") or "").strip() == resource_num
+        ]
+        if wrong_resource_pending:
+            raise RuntimeError(
+                f"Backlog por recurso mostrou item ja planeado noutro recurso: {wrong_resource_pending}"
+            )
+
+        resource_blocks = [
+            row
+            for row in list(backend.ensure_data().get("plano", []) or [])
+            if str(row.get("encomenda", "") or "").strip() == resource_num
+        ]
+        if len(resource_blocks) != 1:
+            raise RuntimeError(f"Bloco de teste por recurso inesperado: {resource_blocks}")
+        backend.planning_remove_block(str(resource_blocks[0].get("id", "") or "").strip())
+
+        restored_pending = [
+            row
+            for row in list(backend.planning_pending_rows(operation="Corte Laser", resource="Maquina 3030") or [])
+            if str(row.get("numero", "") or "").strip() == resource_num
+        ]
+        if len(restored_pending) != 1:
+            raise RuntimeError(f"Remover bloco nao devolveu a encomenda ao backlog correto: {restored_pending}")
+
+        pack_num_late, pack_mat_late, pack_esp_late = _create_planning_order(
+            backend,
+            client="CL0002",
+            note="VERIFY_PLANNING_PACK_LATE",
+            delivery="2032-01-31",
+            material="S235JR",
+            esp="5",
+            ref_ext="VERIFY-PLAN-PACK-LATE",
+            tempo_min=30,
+        )
+        pack_num_early, pack_mat_early, pack_esp_early = _create_planning_order(
+            backend,
+            client="CL0002",
+            note="VERIFY_PLANNING_PACK_EARLY",
+            delivery="2032-01-25",
+            material="AISI 304L",
+            esp="3",
+            ref_ext="VERIFY-PLAN-PACK-EARLY",
+            tempo_min=30,
+        )
+        created_orders.extend([pack_num_late, pack_num_early])
+        backend.order_espessura_set_operation_times(
+            pack_num_late,
+            pack_mat_late,
+            pack_esp_late,
+            {"Corte Laser": 30, "Embalamento": 30},
+            {"Corte Laser": "Maquina 3030", "Embalamento": "Embalamento"},
+        )
+        backend.order_espessura_set_operation_times(
+            pack_num_early,
+            pack_mat_early,
+            pack_esp_early,
+            {"Corte Laser": 30, "Embalamento": 30},
+            {"Corte Laser": "Maquina 5030", "Embalamento": "Embalamento"},
+        )
+        pack_dates = [packaging_week_start + timedelta(days=i) for i in range(6)]
+        pack_anchor = backend._planning_slot_datetime(packaging_week_start.isoformat(), 480)
+        pack_result = backend._planning_schedule_followup_jobs(
+            [
+                {
+                    "numero": pack_num_late,
+                    "material": pack_mat_late,
+                    "espessura": pack_esp_late,
+                    "sequence": ["Embalamento"],
+                    "index": 0,
+                    "anchor_dt": pack_anchor,
+                    "resource": "Embalamento",
+                    "data_entrega": "2032-01-31",
+                },
+                {
+                    "numero": pack_num_early,
+                    "material": pack_mat_early,
+                    "espessura": pack_esp_early,
+                    "sequence": ["Embalamento"],
+                    "index": 0,
+                    "anchor_dt": pack_anchor,
+                    "resource": "Embalamento",
+                    "data_entrega": "2032-01-25",
+                },
+            ],
+            pack_dates,
+            initial_cursor_dt=pack_anchor,
+        )
+        pack_blocks = [
+            row
+            for row in list(pack_result.get("placed", []) or [])
+            if str(row.get("operacao", "") or "").strip() == "Embalamento"
+        ]
+        if len(pack_blocks) < 2:
+            raise RuntimeError(f"Fila de embalamento nao gerou blocos suficientes: {pack_blocks}")
+        first_pack = min(pack_blocks, key=lambda row: (str(row.get("data", "") or ""), str(row.get("inicio", "") or "")))
+        if str(first_pack.get("encomenda", "") or "").strip() != pack_num_early:
+            raise RuntimeError(f"Embalamento nao priorizou o prazo de entrega mais cedo: {pack_blocks}")
+
+        print("planning-flow-ok", manual_num, auto_num_a, auto_num_b, resource_num)
         return 0
     finally:
         try:
@@ -183,6 +341,14 @@ def main() -> int:
             pass
         try:
             _cleanup_test_week(backend, auto_week_start)
+        except Exception:
+            pass
+        try:
+            _cleanup_test_week(backend, resource_week_start)
+        except Exception:
+            pass
+        try:
+            _cleanup_test_week(backend, packaging_week_start)
         except Exception:
             pass
         for numero in created_orders:

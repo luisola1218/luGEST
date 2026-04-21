@@ -45,6 +45,30 @@
         "pulse": false,
         "avarias": false
       }
+    },
+    "duarte": {
+      "posto": "Orçamentista",
+      "active": true,
+      "menu_permissions": {
+        "stock_dashboard": true,
+        "materials": true,
+        "products": true,
+        "clients": true,
+        "suppliers": true,
+        "orders": true,
+        "quotes": true,
+        "planning": true,
+        "transportes": true,
+        "material_assistant": true,
+        "operator": true,
+        "opp": true,
+        "shipping": true,
+        "billing": true,
+        "purchase_notes": true,
+        "pulse": true,
+        "avarias": true,
+        "home": true
+      }
     }
   },
   "material_assistant_feedback": {},

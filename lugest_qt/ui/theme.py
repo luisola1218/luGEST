@@ -125,6 +125,13 @@ def apply_theme(app: QApplication, branding: dict) -> None:
         QPushButton[variant="success"]:hover {{
             background: #0b6f56;
         }}
+        QPushButton[variant="warning"] {{
+            background: #f59e0b;
+            color: #ffffff;
+        }}
+        QPushButton[variant="warning"]:hover {{
+            background: #d97706;
+        }}
         QLineEdit[compact="true"], QComboBox[compact="true"], QTextEdit[compact="true"], QPlainTextEdit[compact="true"], QSpinBox[compact="true"], QDoubleSpinBox[compact="true"] {{
             padding: 4px 6px;
             font-size: 11px;

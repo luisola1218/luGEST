@@ -3634,6 +3634,7 @@ class LegacyBackend:
 
     def planning_operation_options(self) -> list[str]:
         values = list(getattr(self.desktop_main, "PLANEAMENTO_OPERACOES_DISPONIVEIS", []) or [])
+        values.extend(str(row.get("operation", row.get("name", "")) or "").strip() for row in list(self._workcenter_catalog(sync_legacy=False) or []))
         if not values:
             values = ["Corte Laser", "Quinagem", "Serralharia", "Maquinacao", "Roscagem", "Lacagem", "Montagem"]
         ordered: list[str] = []
@@ -3675,12 +3676,60 @@ class LegacyBackend:
     def _planning_default_posto_for_operation(self, operation: Any, numero: str = "") -> str:
         op_txt = self._planning_normalize_operation(operation)
         if op_txt == "Corte Laser":
-            posto_txt = self._normalize_workcenter_value(self._order_workcenter(numero))
+            posto_txt = self.workcenter_default_resource(op_txt, preferred=self._order_workcenter(numero))
             return posto_txt or "Corte Laser"
-        return op_txt or "Geral"
+        return self.workcenter_default_resource(op_txt, preferred=op_txt) or op_txt or "Geral"
 
     def _planning_row_operation(self, row: dict[str, Any] | None, default: str = "Corte Laser") -> str:
         return self._planning_normalize_operation((row or {}).get("operacao", ""), default=default)
+
+    def _planning_row_resource(self, row: dict[str, Any] | None, default: str = "") -> str:
+        raw_row = dict(row or {})
+        maquina_txt = self._normalize_workcenter_value(raw_row.get("maquina", ""))
+        if maquina_txt:
+            return maquina_txt
+        op_txt = self._planning_row_operation(raw_row, default="")
+        posto_txt = self._normalize_workcenter_value(raw_row.get("posto", ""))
+        posto_trabalho_txt = self._normalize_workcenter_value(raw_row.get("posto_trabalho", ""))
+        stored_txt = posto_txt or posto_trabalho_txt
+        if stored_txt and op_txt:
+            group_txt = self.workcenter_group_for_resource(stored_txt, op_txt) or self._legacy_workcenter_group_name(stored_txt)
+            if group_txt and stored_txt.lower() == group_txt.lower():
+                inferred = self._order_operation_resource(
+                    str(raw_row.get("encomenda", "") or "").strip(),
+                    str(raw_row.get("material", "") or "").strip(),
+                    str(raw_row.get("espessura", "") or "").strip(),
+                    op_txt,
+                )
+                if inferred:
+                    return inferred
+        if stored_txt:
+            return stored_txt
+        return str(default or "").strip()
+
+    def _planning_apply_resource_to_row(self, row: dict[str, Any], resource: Any, operation: Any = "") -> dict[str, Any]:
+        target = row if isinstance(row, dict) else {}
+        op_txt = self._planning_normalize_operation(operation or target.get("operacao", ""), default="")
+        resource_txt = self._normalize_workcenter_value(resource)
+        if not resource_txt and op_txt:
+            resource_txt = self._planning_default_posto_for_operation(op_txt, str(target.get("encomenda", "") or "").strip())
+        posto_group = ""
+        if resource_txt:
+            posto_group = (
+                self.workcenter_group_for_resource(resource_txt, op_txt)
+                or self._legacy_workcenter_group_name(resource_txt)
+                or resource_txt
+            )
+        if posto_group and resource_txt.lower() != posto_group.lower():
+            target["maquina"] = resource_txt
+            target["posto"] = posto_group
+            target["posto_trabalho"] = posto_group
+        else:
+            target["maquina"] = ""
+            target["posto"] = resource_txt or posto_group
+            target["posto_trabalho"] = resource_txt or posto_group
+        target["posto_grupo"] = posto_group or target.get("posto_grupo", "")
+        return target
 
     def _planning_row_matches_operation(self, row: dict[str, Any] | None, operation: Any) -> bool:
         return self._planning_row_operation(row) == self._planning_normalize_operation(operation)
@@ -3794,6 +3843,397 @@ class LegacyBackend:
             if not self._planning_piece_operation_done(piece, op_txt):
                 return False
         return saw_any
+
+    def _planning_item_operation_sequence(
+        self,
+        numero: str,
+        material: str,
+        espessura: str,
+        start_operation: Any = "",
+    ) -> list[str]:
+        if self._planning_is_montagem_item(material, espessura):
+            return ["Montagem"]
+        enc = self.get_encomenda_by_numero(str(numero or "").strip())
+        esp_obj = self._planning_find_esp_obj(enc, material, espessura)
+        ordered: list[str] = []
+        for op_txt in self._planning_ops_from_esp_obj(esp_obj):
+            if op_txt in ordered:
+                continue
+            if not self._planning_item_has_operation(numero, material, espessura, op_txt):
+                continue
+            ordered.append(op_txt)
+        start_txt = self._planning_normalize_operation(start_operation, default="") if str(start_operation or "").strip() else ""
+        if not start_txt:
+            return ordered
+        if start_txt in ordered:
+            return ordered[ordered.index(start_txt) :]
+        if self._planning_item_has_operation(numero, material, espessura, start_txt):
+            return [start_txt, *ordered]
+        return ordered
+
+    def _planning_slot_datetime(self, day_txt: str, start_min: int) -> datetime | None:
+        try:
+            base_dt = datetime.fromisoformat(str(day_txt or "").strip())
+        except Exception:
+            return None
+        return base_dt.replace(hour=max(0, int(start_min // 60)), minute=max(0, int(start_min % 60)), second=0, microsecond=0)
+
+    def _planning_cursor_from_datetime(self, dates: list[date], anchor_dt: datetime | None) -> tuple[int, int]:
+        start_min, end_min, slot = self._planning_grid_metrics()
+        if not dates or anchor_dt is None:
+            return 0, start_min
+        if anchor_dt.date() < dates[0]:
+            return 0, start_min
+        if anchor_dt.date() > dates[-1]:
+            return len(dates), start_min
+        day_idx = max(0, (anchor_dt.date() - dates[0]).days)
+        cursor = (anchor_dt.hour * 60) + anchor_dt.minute
+        if cursor % slot != 0:
+            cursor = int((cursor + slot - 1) // slot) * slot
+        if cursor < start_min:
+            cursor = start_min
+        if cursor >= end_min:
+            return day_idx + 1, start_min
+        return day_idx, cursor
+
+    def _planning_item_operation_range(
+        self,
+        numero: str,
+        material: str,
+        espessura: str,
+        operation: Any,
+        buckets: tuple[str, ...] = ("plano", "plano_hist"),
+    ) -> tuple[datetime | None, datetime | None]:
+        target = self._planning_item_op_key(numero, material, espessura, operation)
+        op_txt = self._planning_normalize_operation(operation)
+        first_start: datetime | None = None
+        last_end: datetime | None = None
+        for bucket_name in buckets:
+            for row in list(self.ensure_data().get(bucket_name, []) or []):
+                if not isinstance(row, dict):
+                    continue
+                row_key = self._planning_item_op_key(
+                    row.get("encomenda", ""),
+                    row.get("material", ""),
+                    row.get("espessura", ""),
+                    self._planning_row_operation(row),
+                )
+                if row_key != target:
+                    continue
+                start_dt, end_dt = self._planning_block_bounds(row)
+                if start_dt is not None and (first_start is None or start_dt < first_start):
+                    first_start = start_dt
+                if end_dt is not None and (last_end is None or end_dt > last_end):
+                    last_end = end_dt
+        enc = self.get_encomenda_by_numero(str(numero or "").strip())
+        if op_txt == "Corte Laser":
+            esp_obj = self._planning_find_esp_obj(enc, material, espessura)
+            raw_finished = str((esp_obj or {}).get("laser_concluido_em", "") or "").strip()
+            if raw_finished:
+                try:
+                    finished_dt = datetime.fromisoformat(raw_finished)
+                    if first_start is None:
+                        first_start = finished_dt
+                    if last_end is None or finished_dt > last_end:
+                        last_end = finished_dt
+                except Exception:
+                    pass
+        elif op_txt == "Montagem" and isinstance(enc, dict):
+            consumed_marks: list[datetime] = []
+            for item in list(enc.get("montagem_itens", []) or []):
+                raw_consumed = str(item.get("consumed_at", "") or "").strip()
+                if not raw_consumed:
+                    continue
+                try:
+                    consumed_marks.append(datetime.fromisoformat(raw_consumed))
+                except Exception:
+                    continue
+            if consumed_marks:
+                consumed_dt = max(consumed_marks)
+                if first_start is None:
+                    first_start = consumed_dt
+                if last_end is None or consumed_dt > last_end:
+                    last_end = consumed_dt
+        return first_start, last_end
+
+    def _planning_item_operation_status(self, numero: str, material: str, espessura: str, operation: Any) -> dict[str, Any]:
+        total = self._planning_item_total_minutes(numero, material, espessura, operation=operation)
+        planned = min(total, self._planning_planned_minutes(numero, material, espessura, operation=operation)) if total > 0 else 0
+        first_dt, end_dt = self._planning_item_operation_range(numero, material, espessura, operation)
+        resolved = bool(self._planning_item_operation_done(numero, material, espessura, operation))
+        if total > 0 and planned >= total:
+            resolved = True
+        return {
+            "total_min": total,
+            "planned_min": planned,
+            "resolved": resolved,
+            "first_dt": first_dt,
+            "end_dt": end_dt,
+        }
+
+    def _planning_schedule_operation_blocks(
+        self,
+        numero: str,
+        material: str,
+        espessura: str,
+        operation: Any,
+        dates: list[date],
+        *,
+        anchor_dt: datetime | None = None,
+        resource: str = "",
+    ) -> dict[str, Any]:
+        op_txt = self._planning_normalize_operation(operation)
+        start_min, end_min, slot = self._planning_grid_metrics()
+        existing_first, existing_last = self._planning_item_operation_range(numero, material, espessura, op_txt)
+        remaining = self._planning_remaining_minutes(numero, material, espessura, operation=op_txt)
+        resource_txt = (
+            self._normalize_workcenter_value(resource)
+            or self._order_operation_resource(numero, material, espessura, op_txt)
+            or self._planning_default_posto_for_operation(op_txt, numero)
+        )
+        effective_anchor = anchor_dt
+        if existing_last is not None and (effective_anchor is None or existing_last > effective_anchor):
+            effective_anchor = existing_last
+        cursor_day_idx, cursor_min = self._planning_cursor_from_datetime(dates, effective_anchor)
+        if remaining <= 0:
+            return {
+                "placed": [],
+                "exhausted": False,
+                "remaining_min": 0,
+                "first_dt": existing_first,
+                "end_dt": existing_last,
+                "cursor_day_idx": cursor_day_idx,
+                "cursor_min": cursor_min,
+                "resource": resource_txt,
+            }
+        if cursor_day_idx >= len(dates):
+            return {
+                "placed": [],
+                "exhausted": True,
+                "remaining_min": remaining,
+                "first_dt": existing_first,
+                "end_dt": existing_last,
+                "cursor_day_idx": cursor_day_idx,
+                "cursor_min": start_min,
+                "resource": resource_txt,
+            }
+        item_color = self._planning_item_color(numero, material, espessura)
+        placed: list[dict[str, Any]] = []
+        last_end = existing_last
+        first_dt = existing_first
+        cursor_dt_day_idx = cursor_day_idx
+        cursor_dt_min = cursor_min
+        while remaining > 0:
+            next_day_idx, day_txt, segment_start, segment_end = self._planning_next_free_segment(
+                dates,
+                cursor_dt_day_idx,
+                cursor_dt_min,
+                operation=op_txt,
+                resource=resource_txt,
+            )
+            if not day_txt or segment_start is None or segment_end is None:
+                return {
+                    "placed": placed,
+                    "exhausted": True,
+                    "remaining_min": remaining,
+                    "first_dt": first_dt,
+                    "end_dt": last_end,
+                    "cursor_day_idx": next_day_idx,
+                    "cursor_min": cursor_dt_min,
+                    "resource": resource_txt,
+                }
+            free_minutes = max(0, int(segment_end - segment_start))
+            if free_minutes <= 0:
+                return {
+                    "placed": placed,
+                    "exhausted": True,
+                    "remaining_min": remaining,
+                    "first_dt": first_dt,
+                    "end_dt": last_end,
+                    "cursor_day_idx": next_day_idx,
+                    "cursor_min": cursor_dt_min,
+                    "resource": resource_txt,
+                }
+            chunk = min(remaining, free_minutes)
+            if chunk % slot != 0:
+                chunk = max(slot, int(chunk // slot) * slot)
+            block = self._planning_make_block(
+                numero,
+                material,
+                espessura,
+                op_txt,
+                day_txt,
+                segment_start,
+                chunk,
+                color=item_color,
+                posto=resource_txt,
+            )
+            self.ensure_data().setdefault("plano", []).append(block)
+            placed.append(block)
+            start_dt = self._planning_slot_datetime(day_txt, segment_start)
+            end_dt = (start_dt + timedelta(minutes=chunk)) if start_dt is not None else None
+            if start_dt is not None and (first_dt is None or start_dt < first_dt):
+                first_dt = start_dt
+            if end_dt is not None and (last_end is None or end_dt > last_end):
+                last_end = end_dt
+            remaining -= chunk
+            cursor_dt_day_idx = next_day_idx
+            cursor_dt_min = segment_start + chunk
+            if cursor_dt_min >= end_min:
+                cursor_dt_day_idx += 1
+                cursor_dt_min = start_min
+        return {
+            "placed": placed,
+            "exhausted": False,
+            "remaining_min": 0,
+            "first_dt": first_dt,
+            "end_dt": last_end,
+            "cursor_day_idx": cursor_dt_day_idx,
+            "cursor_min": cursor_dt_min,
+            "resource": resource_txt,
+        }
+
+    def _planning_delivery_sort_key(self, value: Any) -> tuple[str, str]:
+        raw = str(value or "").strip()
+        if not raw:
+            return ("9999-99-99", "")
+        try:
+            parsed = datetime.fromisoformat(raw[:10]).date()
+            return (parsed.isoformat(), raw)
+        except Exception:
+            return ("9999-99-99", raw)
+
+    def _planning_schedule_followup_jobs(
+        self,
+        flow_jobs: list[dict[str, Any]],
+        dates: list[date],
+        *,
+        initial_cursor_dt: datetime | None = None,
+    ) -> dict[str, Any]:
+        placed: list[dict[str, Any]] = []
+        pending: list[dict[str, Any]] = []
+        downstream_cursors: dict[tuple[str, str], datetime | None] = {}
+        active_jobs = [dict(job or {}) for job in list(flow_jobs or []) if isinstance(job, dict)]
+
+        def later_dt(left: datetime | None, right: datetime | None) -> datetime | None:
+            if left is None:
+                return right
+            if right is None:
+                return left
+            return right if right > left else left
+
+        while active_jobs:
+            grouped_jobs: dict[tuple[str, str], list[dict[str, Any]]] = {}
+            for job in active_jobs:
+                sequence = [str(op or "").strip() for op in list(job.get("sequence", []) or []) if str(op or "").strip()]
+                index = int(job.get("index", 0) or 0)
+                if index < 0 or index >= len(sequence):
+                    continue
+                op_name = self._planning_normalize_operation(sequence[index])
+                if not op_name:
+                    continue
+                resource_txt = self._normalize_workcenter_value(job.get("resource", ""))
+                if not resource_txt:
+                    resource_txt = self._order_operation_resource(
+                        str(job.get("numero", "") or "").strip(),
+                        str(job.get("material", "") or "").strip(),
+                        str(job.get("espessura", "") or "").strip(),
+                        op_name,
+                    )
+                key = (op_name, resource_txt.lower())
+                payload = dict(job)
+                payload["resource"] = resource_txt
+                payload["sequence"] = sequence
+                grouped_jobs.setdefault(key, []).append(payload)
+
+            next_round: list[dict[str, Any]] = []
+            for key, jobs in grouped_jobs.items():
+                op_name = str(key[0] or "").strip()
+                cursor_dt = later_dt(initial_cursor_dt, downstream_cursors.get(key))
+                remaining_jobs = list(jobs)
+                while remaining_jobs:
+                    ready_jobs = [
+                        job
+                        for job in remaining_jobs
+                        if job.get("anchor_dt") is None or (cursor_dt is not None and job.get("anchor_dt") <= cursor_dt)
+                    ]
+                    if not ready_jobs:
+                        next_anchor = min(
+                            (
+                                job.get("anchor_dt")
+                                for job in remaining_jobs
+                                if isinstance(job.get("anchor_dt"), datetime)
+                            ),
+                            default=None,
+                        )
+                        cursor_dt = later_dt(cursor_dt, next_anchor)
+                        ready_jobs = [
+                            job
+                            for job in remaining_jobs
+                            if job.get("anchor_dt") is None or (cursor_dt is not None and job.get("anchor_dt") <= cursor_dt)
+                        ]
+                    if not ready_jobs:
+                        ready_jobs = list(remaining_jobs)
+                    ready_jobs.sort(
+                        key=lambda job: (
+                            self._planning_delivery_sort_key(job.get("data_entrega", "")),
+                            job.get("anchor_dt") or datetime.max,
+                            str(job.get("numero", "") or "").strip(),
+                            str(job.get("material", "") or "").strip(),
+                            self._parse_float(job.get("espessura", 0), 0),
+                        )
+                    )
+                    job = ready_jobs[0]
+                    remaining_jobs.remove(job)
+                    numero = str(job.get("numero", "") or "").strip()
+                    material = str(job.get("material", "") or "").strip()
+                    espessura = str(job.get("espessura", "") or "").strip()
+                    resource_txt = str(job.get("resource", "") or "").strip()
+                    schedule_anchor = later_dt(job.get("anchor_dt"), cursor_dt)
+                    result = self._planning_schedule_operation_blocks(
+                        numero,
+                        material,
+                        espessura,
+                        op_name,
+                        dates,
+                        anchor_dt=schedule_anchor,
+                        resource=resource_txt,
+                    )
+                    placed.extend(list(result.get("placed", []) or []))
+                    cursor_dt = later_dt(cursor_dt, result.get("end_dt"))
+                    downstream_cursors[key] = later_dt(downstream_cursors.get(key), result.get("end_dt"))
+                    if bool(result.get("exhausted")) and int(result.get("remaining_min", 0) or 0) > 0:
+                        pending.append(
+                            {
+                                "numero": numero,
+                                "material": material,
+                                "espessura": espessura,
+                                "operacao": op_name,
+                                "recurso": str(result.get("resource", "") or resource_txt),
+                                "remaining_min": int(result.get("remaining_min", 0) or 0),
+                            }
+                        )
+                        continue
+                    next_index = int(job.get("index", 0) or 0) + 1
+                    sequence = list(job.get("sequence", []) or [])
+                    if next_index >= len(sequence):
+                        continue
+                    next_op = self._planning_normalize_operation(sequence[next_index])
+                    next_resource = self._order_operation_resource(numero, material, espessura, next_op)
+                    next_round.append(
+                        {
+                            "numero": numero,
+                            "material": material,
+                            "espessura": espessura,
+                            "sequence": sequence,
+                            "index": next_index,
+                            "anchor_dt": result.get("end_dt"),
+                            "resource": next_resource,
+                            "data_entrega": str(job.get("data_entrega", "") or "").strip(),
+                        }
+                    )
+            active_jobs = next_round
+        return {"placed": placed, "pending": pending}
 
     def _operator_group_total_output(self, esp_obj: dict[str, Any] | None) -> float:
         total = 0.0
@@ -4693,7 +5133,7 @@ class LegacyBackend:
         return Path(tempfile.gettempdir()) / f"lugest_{safe_variant}_{safe_enc}_{stamp}.pdf"
 
     def _operator_operation_from_posto(self, posto: str = "") -> str:
-        posto_norm = self.desktop_main.norm_text(posto or "")
+        posto_norm = self.desktop_main.norm_text(self._legacy_workcenter_group_name(posto) or posto or "")
         if "laser" in posto_norm:
             return "Corte Laser"
         if "quin" in posto_norm:
@@ -4732,7 +5172,7 @@ class LegacyBackend:
         for token, fallback in keyword_map:
             if token not in op_norm:
                 continue
-            for posto in self.available_postos():
+            for posto in self.workcenter_group_options(operation=normalized):
                 if token in self.desktop_main.norm_text(posto):
                     return posto
             return fallback
@@ -5549,6 +5989,7 @@ class LegacyBackend:
             esp_rows = []
             for esp in list(mat.get("espessuras", []) or []):
                 op_times = self._planning_operation_times_map(esp)
+                machine_map = self._order_esp_machine_map(esp)
                 planning_ops = [op for op in self._planning_ops_from_esp_obj(esp) if op != "Montagem"]
                 other_ops = [op for op in planning_ops if op != "Corte Laser"]
                 ops_summary = []
@@ -5558,6 +5999,11 @@ class LegacyBackend:
                         ops_summary.append(f"{op_name}: {self._fmt(op_value)} min")
                     else:
                         ops_summary.append(op_name)
+                resource_summary = []
+                for op_name in planning_ops:
+                    resource_txt = str(machine_map.get(op_name, "") or "").strip()
+                    if resource_txt:
+                        resource_summary.append(f"{op_name}: {resource_txt}")
                 esp_row = {
                     "material": str(mat.get("material", "")).strip(),
                     "espessura": str(esp.get("espessura", "")).strip(),
@@ -5566,6 +6012,8 @@ class LegacyBackend:
                     "tempos_operacao": {op: self._fmt(value) for op, value in op_times.items() if str(value or "").strip()},
                     "operacoes_planeamento": planning_ops,
                     "tempo_operacoes_txt": " | ".join(ops_summary) or "-",
+                    "maquinas_operacao": machine_map,
+                    "recursos_operacao_txt": " | ".join(resource_summary) or "-",
                     "pecas": len(list(esp.get("pecas", []) or [])),
                 }
                 materials.append(esp_row)
@@ -7817,7 +8265,7 @@ class LegacyBackend:
         return {
             "materiais": materiais,
             "espessuras": espessuras,
-            "operacoes": list(self.desktop_main.OFF_OPERACOES_DISPONIVEIS),
+            "operacoes": list(dict.fromkeys(list(self.desktop_main.OFF_OPERACOES_DISPONIVEIS) + list(self.planning_operation_options()))),
             "operacao_default": str(self.desktop_main.OFF_OPERACAO_OBRIGATORIA),
         }
 
@@ -7839,7 +8287,8 @@ class LegacyBackend:
             normalized = str(self.desktop_main.normalize_operacao_nome(raw_name) or raw_name or "").strip()
             if normalized and normalized not in ops:
                 ops.append(normalized)
-        ordered = [op_name for op_name in list(self.desktop_main.OFF_OPERACOES_DISPONIVEIS) if op_name in ops]
+        ordered_base = list(dict.fromkeys(list(self.desktop_main.OFF_OPERACOES_DISPONIVEIS) + list(self.planning_operation_options())))
+        ordered = [op_name for op_name in ordered_base if op_name in ops]
         for op_name in ops:
             if op_name not in ordered:
                 ordered.append(op_name)
@@ -8756,7 +9205,7 @@ class LegacyBackend:
             raise ValueError("Espessura obrigatoria.")
         if self._order_find_espessura(enc, material, esp_txt) is not None:
             raise ValueError("Espessura ja existe.")
-        mat.setdefault("espessuras", []).append({"espessura": esp_txt, "tempo_min": "", "tempos_operacao": {}, "estado": "Preparacao", "pecas": []})
+        mat.setdefault("espessuras", []).append({"espessura": esp_txt, "tempo_min": "", "tempos_operacao": {}, "maquinas_operacao": {}, "estado": "Preparacao", "pecas": []})
         self.desktop_main.update_estado_encomenda_por_espessuras(enc)
         self._save(force=True)
         return self.order_detail(numero)
@@ -8805,6 +9254,7 @@ class LegacyBackend:
         material: str,
         espessura: str,
         tempos_operacao: dict[str, Any] | None = None,
+        maquinas_operacao: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
@@ -8813,6 +9263,7 @@ class LegacyBackend:
         if esp is None:
             raise ValueError("Espessura não encontrada.")
         cleaned: dict[str, str] = {}
+        cleaned_resources: dict[str, str] = {}
         for op_name, raw_value in dict(tempos_operacao or {}).items():
             op_txt = self._planning_normalize_operation(op_name)
             if op_txt not in self.planning_operation_options():
@@ -8824,10 +9275,25 @@ class LegacyBackend:
                 except Exception as exc:
                     raise ValueError(f"Tempo inválido em {op_txt} (minutos inteiros).") from exc
                 cleaned[op_txt] = value_txt
+        for op_name, raw_value in dict(maquinas_operacao or {}).items():
+            op_txt = self._planning_normalize_operation(op_name)
+            if op_txt not in cleaned:
+                continue
+            resource_txt = self._normalize_workcenter_value(raw_value)
+            if not resource_txt:
+                continue
+            available_resources = [str(value or "").strip() for value in list(self.workcenter_resource_options(op_txt) or []) if str(value or "").strip()]
+            if available_resources and all(resource_txt.lower() != value.lower() for value in available_resources):
+                raise ValueError(f"O recurso '{resource_txt}' não pertence à operação {op_txt}.")
+            cleaned_resources[op_txt] = resource_txt
+        missing_resource = [op_name for op_name in cleaned if not str(cleaned_resources.get(op_name, "") or "").strip()]
+        if missing_resource:
+            raise ValueError(f"Seleciona o recurso/máquina para: {', '.join(missing_resource)}.")
         esp["tempo_min"] = cleaned.get("Corte Laser", str(esp.get("tempo_min", "") or "").strip())
         if not cleaned.get("Corte Laser"):
             esp["tempo_min"] = ""
         esp["tempos_operacao"] = cleaned
+        esp["maquinas_operacao"] = cleaned_resources
         self.desktop_main.update_estado_encomenda_por_espessuras(enc)
         self._save(force=True)
         return self.order_detail(numero)
@@ -8889,7 +9355,7 @@ class LegacyBackend:
             enc.setdefault("materiais", []).append(mat)
         esp = self._order_find_espessura(enc, material, espessura)
         if esp is None:
-            esp = {"espessura": espessura, "tempo_min": "", "tempos_operacao": {}, "estado": "Preparacao", "pecas": []}
+            esp = {"espessura": espessura, "tempo_min": "", "tempos_operacao": {}, "maquinas_operacao": {}, "estado": "Preparacao", "pecas": []}
             mat.setdefault("espessuras", []).append(esp)
 
         _, old_esp, piece = self._order_find_piece(enc, current_ref, "")
@@ -9555,37 +10021,349 @@ class LegacyBackend:
         return ["Admin", "Producao", "Qualidade", "Planeamento", "Orcamentista", "Operador"]
 
     def quote_workcenter_options(self) -> list[str]:
-        preferred = ["Maquina 3030", "Maquina 5030", "Maquina 5040"]
-        existing = [
-            str(value or "").strip()
-            for value in list(self.ensure_data().get("postos_trabalho", []) or [])
-            if str(value or "").strip()
-        ]
         ordered: list[str] = []
         seen: set[str] = set()
-        for posto in preferred + existing:
-            key = str(posto or "").strip().lower()
+        preferred = list(self.workcenter_machine_options("Corte Laser") or [])
+        for value in preferred:
+            key = str(value or "").strip().lower()
             if not key or key in seen or key == "geral":
                 continue
             seen.add(key)
-            ordered.append(str(posto).strip())
-        return ordered or preferred
+            ordered.append(str(value).strip())
+        for group in self.workcenter_group_options():
+            group_txt = str(group or "").strip()
+            group_key = group_txt.lower()
+            if group_txt and group_key not in seen and group_key != "geral":
+                seen.add(group_key)
+                ordered.append(group_txt)
+            for machine in self.workcenter_machine_options(group_txt):
+                machine_txt = str(machine or "").strip()
+                machine_key = machine_txt.lower()
+                if not machine_txt or machine_key in seen or machine_key == "geral":
+                    continue
+                seen.add(machine_key)
+                ordered.append(machine_txt)
+        return ordered or ["Laser", "Maquina 3030", "Maquina 5030", "Maquina 5040"]
+
+    def _default_workcenter_catalog(self) -> list[dict[str, Any]]:
+        raw_groups = [
+            ("Laser", ["Maquina 3030", "Maquina 5030", "Maquina 5040"]),
+            ("Quinagem", []),
+            ("Serralharia", []),
+            ("Maquinacao", []),
+            ("Roscagem", []),
+            ("Lacagem", []),
+            ("Montagem", []),
+            ("Soldadura", []),
+            ("Embalamento", []),
+            ("Furo Manual", []),
+            ("Expedicao", []),
+        ]
+        return [
+            {
+                "name": str(name),
+                "operation": self._planning_normalize_operation(name, default=str(name)),
+                "machines": [str(machine) for machine in list(machines or []) if str(machine).strip()],
+            }
+            for name, machines in raw_groups
+        ]
+
+    def _workcenter_group_aliases(self, name: str) -> set[str]:
+        raw = str(name or "").strip()
+        norm = self.desktop_main.norm_text(raw)
+        aliases = {raw.lower(), norm}
+        if "laser" in norm:
+            aliases.update({"laser", "corte laser"})
+        if "quin" in norm:
+            aliases.update({"quinagem", "quin"})
+        if "serralh" in norm:
+            aliases.update({"serralharia", "serralh"})
+        if "maquin" in norm:
+            aliases.update({"maquinacao", "maquinação", "maquin"})
+        if "rosc" in norm:
+            aliases.update({"roscagem", "rosc"})
+        if "laca" in norm or "pint" in norm:
+            aliases.update({"lacagem", "pintura"})
+        if "mont" in norm:
+            aliases.update({"montagem", "mont"})
+        if "sold" in norm:
+            aliases.update({"soldadura", "sold"})
+        if "embal" in norm:
+            aliases.update({"embalamento", "embal"})
+        if "furo" in norm:
+            aliases.update({"furo manual", "furo"})
+        if "exped" in norm:
+            aliases.update({"expedicao", "expedição", "shipping"})
+        return {alias for alias in aliases if alias}
+
+    def _legacy_workcenter_group_name(self, value: Any) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        catalog = list(self._workcenter_catalog(sync_legacy=False) or [])
+        raw_lower = raw.lower()
+        raw_norm = self.desktop_main.norm_text(raw)
+        for row in catalog:
+            group_name = str(row.get("name", "") or "").strip()
+            if not group_name:
+                continue
+            if raw_lower == group_name.lower() or raw_norm in self._workcenter_group_aliases(group_name):
+                return group_name
+            for machine in list(row.get("machines", []) or []):
+                machine_txt = str(machine or "").strip()
+                if machine_txt and machine_txt.lower() == raw_lower:
+                    return group_name
+        if raw.replace(" ", "").isdigit() or raw_norm.startswith("maquina "):
+            return "Corte Laser"
+        alias_map = {
+            "laser": "Corte Laser",
+            "quin": "Quinagem",
+            "serralh": "Serralharia",
+            "maquin": "Maquinacao",
+            "rosc": "Roscagem",
+            "laca": "Lacagem",
+            "pint": "Lacagem",
+            "mont": "Montagem",
+            "sold": "Soldadura",
+            "embal": "Embalamento",
+            "furo": "Furo Manual",
+            "exped": "Expedicao",
+        }
+        for token, canonical in alias_map.items():
+            if token in raw_norm:
+                return canonical
+        return raw
+
+    def _workcenter_catalog(self, *, sync_legacy: bool = True) -> list[dict[str, Any]]:
+        data = self.ensure_data()
+        raw_catalog = list(data.get("workcenter_catalog", []) or [])
+        default_catalog = list(self._default_workcenter_catalog() or [])
+        groups_by_name: dict[str, dict[str, Any]] = {}
+
+        def has_meaningful_usage() -> bool:
+            for row in list(data.get("users", []) or []):
+                if any(str(row.get(key, "") or "").strip() for key in ("posto", "posto_trabalho", "work_center", "workcenter")):
+                    return True
+            for row in list(data.get("orcamentos", []) or []):
+                if str(row.get("posto_trabalho", "") or "").strip():
+                    return True
+            for row in list(data.get("encomendas", []) or []):
+                if any(str(row.get(key, "") or "").strip() for key in ("posto_trabalho", "posto", "maquina")):
+                    return True
+                for mat in list(row.get("materiais", []) or []):
+                    for esp in list(mat.get("espessuras", []) or []):
+                        if dict(esp.get("maquinas_operacao", esp.get("recursos_operacao", {})) or {}):
+                            return True
+            for bucket_name in ("plano", "plano_hist"):
+                for row in list(data.get(bucket_name, []) or []):
+                    if any(str(row.get(key, "") or "").strip() for key in ("posto", "posto_trabalho", "maquina")):
+                        return True
+            return False
+
+        suspicious_catalog = False
+        raw_group_names = {str((row or {}).get("name", "") or "").strip().lower() for row in raw_catalog if isinstance(row, dict) and str((row or {}).get("name", "") or "").strip()}
+        for row in raw_catalog:
+            if not isinstance(row, dict):
+                continue
+            group_name = str(row.get("name", "") or "").strip()
+            if group_name.replace(" ", "").isdigit():
+                suspicious_catalog = True
+                break
+            for machine in list(row.get("machines", []) or []):
+                machine_txt = str(machine or "").strip()
+                if machine_txt and machine_txt.lower() in raw_group_names and machine_txt.lower() != group_name.lower():
+                    suspicious_catalog = True
+                    break
+            if suspicious_catalog:
+                break
+        if raw_catalog and suspicious_catalog and not has_meaningful_usage():
+            raw_catalog = []
+            data["workcenter_catalog"] = []
+            data["postos_trabalho"] = []
+
+        def ensure_group(name: str, operation: str = "") -> dict[str, Any]:
+            group_name = str(name or "").strip()
+            if not group_name:
+                group_name = "Sem grupo"
+            key = group_name.lower()
+            row = groups_by_name.get(key)
+            if row is None:
+                row = {
+                    "name": group_name,
+                    "operation": str(operation or "").strip() or self._planning_normalize_operation(group_name, default=group_name),
+                    "machines": [],
+                }
+                groups_by_name[key] = row
+            elif operation and not str(row.get("operation", "") or "").strip():
+                row["operation"] = str(operation).strip()
+            return row
+
+        def add_machine(group_name: str, machine_name: str) -> None:
+            machine_txt = str(machine_name or "").strip()
+            if not machine_txt:
+                return
+            group_row = ensure_group(group_name)
+            existing = {str(value or "").strip().lower() for value in list(group_row.get("machines", []) or []) if str(value or "").strip()}
+            if machine_txt.lower() not in existing and machine_txt.lower() != str(group_row.get("name", "") or "").strip().lower():
+                group_row.setdefault("machines", []).append(machine_txt)
+
+        for default_row in default_catalog:
+            group_row = ensure_group(str(default_row.get("name", "") or "").strip(), str(default_row.get("operation", "") or "").strip())
+            for machine in list(default_row.get("machines", []) or []):
+                add_machine(str(group_row.get("name", "") or "").strip(), str(machine or "").strip())
+
+        for raw_row in raw_catalog:
+            if not isinstance(raw_row, dict):
+                continue
+            group_name = str(raw_row.get("name", "") or "").strip()
+            if not group_name:
+                continue
+            group_row = ensure_group(group_name, str(raw_row.get("operation", "") or "").strip())
+            for machine in list(raw_row.get("machines", []) or []):
+                add_machine(str(group_row.get("name", "") or "").strip(), str(machine or "").strip())
+
+        if sync_legacy:
+            legacy_postos = [str(value or "").strip() for value in list(data.get("postos_trabalho", []) or []) if str(value or "").strip()]
+            for legacy_name in legacy_postos:
+                if legacy_name.lower() == "geral":
+                    continue
+                group_name = self._legacy_workcenter_group_name(legacy_name)
+                if not group_name:
+                    continue
+                normalized_group = str(group_name or "").strip()
+                ensure_group(normalized_group)
+                if legacy_name.lower() != normalized_group.lower():
+                    add_machine(normalized_group, legacy_name)
+
+        cleaned: list[dict[str, Any]] = []
+        for row in sorted(groups_by_name.values(), key=lambda item: str(item.get("name", "") or "").lower()):
+            machines = sorted(
+                {
+                    str(machine or "").strip()
+                    for machine in list(row.get("machines", []) or [])
+                    if str(machine or "").strip()
+                },
+                key=lambda value: value.lower(),
+            )
+            cleaned.append(
+                {
+                    "name": str(row.get("name", "") or "").strip(),
+                    "operation": str(row.get("operation", "") or "").strip()
+                    or self._planning_normalize_operation(row.get("name", ""), default=str(row.get("name", "") or "").strip()),
+                    "machines": machines,
+                }
+            )
+
+        flattened: list[str] = []
+        seen_flat: set[str] = set()
+        for row in cleaned:
+            for value in [str(row.get("name", "") or "").strip(), *[str(machine or "").strip() for machine in list(row.get("machines", []) or [])]]:
+                key = str(value or "").strip().lower()
+                if not key or key == "geral" or key in seen_flat:
+                    continue
+                seen_flat.add(key)
+                flattened.append(str(value).strip())
+        data["workcenter_catalog"] = cleaned
+        data["postos_trabalho"] = flattened
+        return cleaned
+
+    def workcenter_group_options(self, operation: Any = "", include_general: bool = False) -> list[str]:
+        target_operation = self._planning_normalize_operation(operation, default="") if str(operation or "").strip() else ""
+        rows = []
+        for row in list(self._workcenter_catalog() or []):
+            group_name = str(row.get("name", "") or "").strip()
+            if not group_name:
+                continue
+            row_operation = self._planning_normalize_operation(row.get("operation", group_name), default=group_name)
+            if target_operation and row_operation != target_operation:
+                continue
+            rows.append(group_name)
+        rows = sorted(dict.fromkeys(rows), key=lambda value: value.lower())
+        if include_general:
+            return ["Geral"] + rows
+        return rows
+
+    def workcenter_machine_options(self, group: str = "", operation: Any = "") -> list[str]:
+        target_group = str(group or "").strip()
+        target_operation = self._planning_normalize_operation(operation, default="") if str(operation or "").strip() else ""
+        rows: list[str] = []
+        for row in list(self._workcenter_catalog() or []):
+            group_name = str(row.get("name", "") or "").strip()
+            if not group_name:
+                continue
+            row_operation = self._planning_normalize_operation(row.get("operation", group_name), default=group_name)
+            if target_group and group_name.lower() != target_group.lower():
+                continue
+            if target_operation and row_operation != target_operation:
+                continue
+            rows.extend(str(machine or "").strip() for machine in list(row.get("machines", []) or []) if str(machine or "").strip())
+        return sorted(dict.fromkeys(rows), key=lambda value: value.lower())
+
+    def workcenter_resource_options(self, operation: Any = "", include_all: bool = False) -> list[str]:
+        target_operation = self._planning_normalize_operation(operation, default="") if str(operation or "").strip() else ""
+        resources: list[str] = []
+        for row in list(self._workcenter_catalog() or []):
+            group_name = str(row.get("name", "") or "").strip()
+            if not group_name:
+                continue
+            row_operation = self._planning_normalize_operation(row.get("operation", group_name), default=group_name)
+            if target_operation and row_operation != target_operation:
+                continue
+            machines = [str(machine or "").strip() for machine in list(row.get("machines", []) or []) if str(machine or "").strip()]
+            if machines:
+                resources.extend(machines)
+            else:
+                resources.append(group_name)
+        ordered = sorted(dict.fromkeys(resources), key=lambda value: value.lower())
+        if include_all:
+            return ["Todos"] + ordered
+        return ordered
+
+    def workcenter_group_for_resource(self, resource: Any, operation: Any = "") -> str:
+        resource_txt = self._normalize_workcenter_value(resource)
+        if not resource_txt:
+            return ""
+        for row in list(self._workcenter_catalog() or []):
+            group_name = str(row.get("name", "") or "").strip()
+            if not group_name:
+                continue
+            row_operation = self._planning_normalize_operation(row.get("operation", group_name), default=group_name)
+            if str(operation or "").strip() and row_operation != self._planning_normalize_operation(operation):
+                continue
+            if resource_txt.lower() == group_name.lower():
+                return group_name
+            for machine in list(row.get("machines", []) or []):
+                machine_txt = str(machine or "").strip()
+                if machine_txt and resource_txt.lower() == machine_txt.lower():
+                    return group_name
+        return self._legacy_workcenter_group_name(resource_txt)
+
+    def workcenter_default_resource(self, operation: Any = "", preferred: Any = "") -> str:
+        preferred_txt = self._normalize_workcenter_value(preferred)
+        options = list(self.workcenter_resource_options(operation) or [])
+        if preferred_txt and any(preferred_txt.lower() == str(value or "").strip().lower() for value in options):
+            return preferred_txt
+        return str(options[0] if options else "").strip()
 
     def _normalize_workcenter_value(self, value: Any) -> str:
         raw = str(value or "").strip()
         if not raw:
             return ""
-        for posto in self.quote_workcenter_options():
-            if raw.lower() == str(posto or "").strip().lower():
-                return str(posto or "").strip()
+        catalog = list(self._workcenter_catalog() or [])
+        for row in catalog:
+            group_name = str(row.get("name", "") or "").strip()
+            if group_name and raw.lower() == group_name.lower():
+                return group_name
+            for machine in list(row.get("machines", []) or []):
+                machine_txt = str(machine or "").strip()
+                if machine_txt and raw.lower() == machine_txt.lower():
+                    return machine_txt
+            if group_name and self.desktop_main.norm_text(raw) in self._workcenter_group_aliases(group_name):
+                return group_name
         return raw
 
     def available_postos(self) -> list[str]:
-        data = self.ensure_data()
-        postos = [str(value or "").strip() for value in list(data.get("postos_trabalho", []) or []) if str(value or "").strip()]
-        if not postos:
-            postos = ["Laser 1", "Quinagem 1", "Roscagem 1", "Soldadura 1", "Embalamento 1"]
-        postos = ["Geral"] + self.quote_workcenter_options() + postos
+        postos = ["Geral"] + self.quote_workcenter_options()
         seen: set[str] = set()
         ordered: list[str] = []
         for posto in postos:
@@ -9595,6 +10373,465 @@ class LegacyBackend:
             seen.add(key)
             ordered.append(posto)
         return ordered
+
+    def operator_posto_options(self) -> list[str]:
+        return self.workcenter_group_options(include_general=True)
+
+    def _workcenter_usage_counts(
+        self,
+        workcenter: str,
+        *,
+        data: dict[str, Any] | None = None,
+        profiles: dict[str, Any] | None = None,
+    ) -> dict[str, int]:
+        name = str(workcenter or "").strip()
+        if not name:
+            return {"users": 0, "quotes": 0, "orders": 0, "planning": 0, "operator_map": 0, "total": 0}
+        data = data if isinstance(data, dict) else self.ensure_data()
+        profiles = profiles if isinstance(profiles, dict) else self._user_profiles()
+        norm = self._normalize_workcenter_value(name).lower()
+        tracked_names = {norm}
+        group_name = self._legacy_workcenter_group_name(name)
+        if group_name and group_name.lower() == norm:
+            tracked_names.update(str(machine or "").strip().lower() for machine in self.workcenter_machine_options(group_name))
+        users = 0
+        for user in list(data.get("users", []) or []):
+            username = str(user.get("username", "") or "").strip().lower()
+            profile = dict(profiles.get(username, {}) or {})
+            posto = str(profile.get("posto", "") or user.get("posto", "") or "").strip()
+            if self._normalize_workcenter_value(posto).lower() in tracked_names:
+                users += 1
+        quotes = sum(
+            1
+            for row in list(data.get("orcamentos", []) or [])
+            if self._normalize_workcenter_value(str(row.get("posto_trabalho", "") or "")).lower() in tracked_names
+        )
+        orders = sum(
+            1
+            for row in list(data.get("encomendas", []) or [])
+            if self._normalize_workcenter_value(
+                str(row.get("posto_trabalho", row.get("posto", row.get("maquina", ""))) or "")
+            ).lower()
+            in tracked_names
+        )
+        for row in list(data.get("encomendas", []) or []):
+            if not isinstance(row, dict):
+                continue
+            for mat in list(row.get("materiais", []) or []):
+                for esp in list(mat.get("espessuras", []) or []):
+                    for raw_resource in dict(esp.get("maquinas_operacao", esp.get("recursos_operacao", {})) or {}).values():
+                        if self._normalize_workcenter_value(str(raw_resource or "")).lower() in tracked_names:
+                            orders += 1
+                            break
+        planning = 0
+        for bucket_name in ("plano", "plano_hist"):
+            for row in list(data.get(bucket_name, []) or []):
+                posto = str(row.get("maquina", row.get("posto", row.get("posto_trabalho", ""))) or "").strip()
+                if self._normalize_workcenter_value(posto).lower() in tracked_names:
+                    planning += 1
+        operator_map = 0
+        for value in dict(data.get("operador_posto_map", {}) or {}).values():
+            if self._normalize_workcenter_value(str(value or "")).lower() in tracked_names:
+                operator_map += 1
+        total = users + quotes + orders + planning + operator_map
+        return {
+            "users": users,
+            "quotes": quotes,
+            "orders": orders,
+            "planning": planning,
+            "operator_map": operator_map,
+            "total": total,
+        }
+
+    def workcenter_rows(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        data = self.ensure_data()
+        for row in list(self._workcenter_catalog() or []):
+            group_name = str(row.get("name", "") or "").strip()
+            if not group_name:
+                continue
+            usage = self._workcenter_usage_counts(group_name, data=data)
+            rows.append(
+                {
+                    "entry_type": "group",
+                    "name": group_name,
+                    "group": group_name,
+                    "operation": self._planning_normalize_operation(row.get("operation", group_name), default=group_name),
+                    "kind": "Posto",
+                    "protected": group_name == "Geral",
+                    "machine_count": len(list(row.get("machines", []) or [])),
+                    "users": usage["users"],
+                    "quotes": usage["quotes"],
+                    "orders": usage["orders"],
+                    "planning": usage["planning"],
+                    "operator_map": usage["operator_map"],
+                    "usage_total": usage["total"],
+                }
+            )
+            for machine_name in list(row.get("machines", []) or []):
+                machine_txt = str(machine_name or "").strip()
+                if not machine_txt:
+                    continue
+                machine_usage = self._workcenter_usage_counts(machine_txt, data=data)
+                rows.append(
+                    {
+                        "entry_type": "machine",
+                        "name": machine_txt,
+                        "group": group_name,
+                        "operation": self._planning_normalize_operation(row.get("operation", group_name), default=group_name),
+                        "kind": "Maquina",
+                        "protected": False,
+                        "machine_count": 0,
+                        "users": machine_usage["users"],
+                        "quotes": machine_usage["quotes"],
+                        "orders": machine_usage["orders"],
+                        "planning": machine_usage["planning"],
+                        "operator_map": machine_usage["operator_map"],
+                        "usage_total": machine_usage["total"],
+                    }
+                )
+        return rows
+
+    def _replace_removed_resource_references(
+        self,
+        target_name: str,
+        *,
+        fallback_resource: str = "",
+        operation: Any = "",
+        remove_active_planning: bool = False,
+    ) -> dict[str, int]:
+        data = self.ensure_data()
+        profiles = self._user_profiles()
+        target_txt = self._normalize_workcenter_value(target_name)
+        fallback_txt = self._normalize_workcenter_value(fallback_resource)
+        fallback_group = self.workcenter_group_for_resource(fallback_txt, operation) if fallback_txt else ""
+        target_key = target_txt.lower()
+        stats = {"profiles": 0, "users": 0, "quotes": 0, "orders": 0, "maps": 0, "planning_removed": 0, "planning_updated": 0, "history_updated": 0}
+        if not target_key:
+            return stats
+
+        def match(value: Any) -> bool:
+            return self._normalize_workcenter_value(value).lower() == target_key
+
+        replacement_for_order = fallback_txt or fallback_group
+        replacement_for_history = fallback_txt or fallback_group
+
+        for username, profile in list(profiles.items()):
+            if match(profile.get("posto", "")):
+                profile["posto"] = replacement_for_order
+                profiles[username] = profile
+                stats["profiles"] += 1
+        for user in list(data.get("users", []) or []):
+            if match(user.get("posto", "")):
+                user["posto"] = replacement_for_order
+                stats["users"] += 1
+        for row in list(data.get("orcamentos", []) or []):
+            if match(row.get("posto_trabalho", "")):
+                row["posto_trabalho"] = replacement_for_order
+                stats["quotes"] += 1
+        for row in list(data.get("encomendas", []) or []):
+            changed_order = False
+            for key in ("posto_trabalho", "posto", "maquina"):
+                if match(row.get(key, "")):
+                    row[key] = replacement_for_order
+                    changed_order = True
+            for mat in list(row.get("materiais", []) or []):
+                for esp in list(mat.get("espessuras", []) or []):
+                    machine_map = dict(esp.get("maquinas_operacao", esp.get("recursos_operacao", {})) or {})
+                    changed_map = False
+                    for op_name, raw_value in list(machine_map.items()):
+                        if not match(raw_value):
+                            continue
+                        repl = fallback_txt or self.workcenter_default_resource(op_name, preferred=fallback_group)
+                        if repl:
+                            machine_map[op_name] = repl
+                        else:
+                            machine_map.pop(op_name, None)
+                        changed_map = True
+                    if changed_map:
+                        esp["maquinas_operacao"] = machine_map
+                        changed_order = True
+                        stats["maps"] += 1
+            if changed_order:
+                stats["orders"] += 1
+
+        active_rows = []
+        for row in list(data.get("plano", []) or []):
+            if match(self._planning_row_resource(row)):
+                if remove_active_planning:
+                    stats["planning_removed"] += 1
+                    continue
+                self._planning_apply_resource_to_row(row, replacement_for_order, row.get("operacao", operation))
+                stats["planning_updated"] += 1
+            active_rows.append(row)
+        data["plano"] = active_rows
+
+        for row in list(data.get("plano_hist", []) or []):
+            if not match(self._planning_row_resource(row)):
+                continue
+            self._planning_apply_resource_to_row(row, replacement_for_history, row.get("operacao", operation))
+            stats["history_updated"] += 1
+
+        posto_map = dict(data.get("operador_posto_map", {}) or {})
+        for username, posto in list(posto_map.items()):
+            if match(posto):
+                posto_map[username] = replacement_for_order
+        if posto_map:
+            data["operador_posto_map"] = posto_map
+        self._save_user_profiles(profiles)
+        return stats
+
+    def save_workcenter_group(self, name: str, operation: Any = "", current_name: str = "") -> dict[str, Any]:
+        data = self.ensure_data()
+        profiles = self._user_profiles()
+        new_name = str(name or "").strip()
+        current_txt = str(current_name or "").strip()
+        if not new_name:
+            raise ValueError("Nome do posto obrigatório.")
+        if new_name.lower() == "geral":
+            raise ValueError("O posto 'Geral' já existe no sistema e não pode ser redefinido.")
+        new_operation = self._planning_normalize_operation(operation or new_name, default=new_name)
+        catalog = list(self._workcenter_catalog() or [])
+        group_names = {str(row.get("name", "") or "").strip().lower() for row in catalog if str(row.get("name", "") or "").strip()}
+        machine_names = {
+            str(machine or "").strip().lower()
+            for row in catalog
+            for machine in list(row.get("machines", []) or [])
+            if str(machine or "").strip()
+        }
+        current_key = current_txt.lower()
+        if not current_txt:
+            if new_name.lower() in group_names or new_name.lower() in machine_names:
+                raise ValueError("Já existe um posto de trabalho com esse nome.")
+            catalog.append({"name": new_name, "operation": new_operation, "machines": []})
+            data["workcenter_catalog"] = catalog
+            self._workcenter_catalog()
+            self._save(force=True)
+            return next(
+                (
+                    row
+                    for row in self.workcenter_rows()
+                    if str(row.get("entry_type", "") or "") == "group"
+                    and str(row.get("name", "") or "").strip().lower() == new_name.lower()
+                ),
+                {"name": new_name, "entry_type": "group"},
+            )
+        current_group = next((row for row in catalog if str(row.get("name", "") or "").strip().lower() == current_key), None)
+        if current_group is None:
+            raise ValueError("Só é possível editar postos existentes.")
+        if new_name.lower() != current_key and (new_name.lower() in group_names or new_name.lower() in machine_names):
+            raise ValueError("Já existe um posto de trabalho com esse nome.")
+        current_group["name"] = new_name
+        current_group["operation"] = new_operation
+        for username, profile in list(profiles.items()):
+            if self._normalize_workcenter_value(str(profile.get("posto", "") or "")).lower() == current_key:
+                profile["posto"] = new_name
+                profiles[username] = profile
+        for user in list(data.get("users", []) or []):
+            if self._normalize_workcenter_value(str(user.get("posto", "") or "")).lower() == current_key:
+                user["posto"] = new_name
+        for row in list(data.get("orcamentos", []) or []):
+            if self._normalize_workcenter_value(str(row.get("posto_trabalho", "") or "")).lower() == current_key:
+                row["posto_trabalho"] = new_name
+        for row in list(data.get("encomendas", []) or []):
+            for key in ("posto_trabalho", "posto", "maquina"):
+                if self._normalize_workcenter_value(str(row.get(key, "") or "")).lower() == current_key:
+                    row[key] = new_name
+            for mat in list(row.get("materiais", []) or []):
+                for esp in list(mat.get("espessuras", []) or []):
+                    machine_map = dict(esp.get("maquinas_operacao", esp.get("recursos_operacao", {})) or {})
+                    changed_map = False
+                    for op_name, raw_value in list(machine_map.items()):
+                        if self._normalize_workcenter_value(str(raw_value or "")).lower() == current_key:
+                            machine_map[op_name] = new_name
+                            changed_map = True
+                    if changed_map:
+                        esp["maquinas_operacao"] = machine_map
+        for bucket_name in ("plano", "plano_hist"):
+            for row in list(data.get(bucket_name, []) or []):
+                for key in ("posto", "posto_trabalho", "maquina"):
+                    if self._normalize_workcenter_value(str(row.get(key, "") or "")).lower() == current_key:
+                        row[key] = new_name
+        posto_map = dict(data.get("operador_posto_map", {}) or {})
+        for username, posto in list(posto_map.items()):
+            if self._normalize_workcenter_value(str(posto or "")).lower() == current_key:
+                posto_map[username] = new_name
+        if posto_map:
+            data["operador_posto_map"] = posto_map
+        data["workcenter_catalog"] = catalog
+        self._workcenter_catalog()
+        self._save_user_profiles(profiles)
+        self._save(force=True)
+        return next(
+            (
+                row
+                for row in self.workcenter_rows()
+                if str(row.get("entry_type", "") or "") == "group"
+                and str(row.get("name", "") or "").strip().lower() == new_name.lower()
+            ),
+            {"name": new_name, "entry_type": "group"},
+        )
+
+    def remove_workcenter_group(self, name: str) -> None:
+        data = self.ensure_data()
+        target = str(name or "").strip()
+        if not target:
+            raise ValueError("Posto de trabalho inválido.")
+        catalog = list(self._workcenter_catalog() or [])
+        current_group = next((row for row in catalog if str(row.get("name", "") or "").strip().lower() == target.lower()), None)
+        if current_group is None:
+            raise ValueError("Posto de trabalho não encontrado.")
+        if list(current_group.get("machines", []) or []):
+            raise ValueError("Remove primeiro as máquinas associadas a este posto.")
+        usage = self._workcenter_usage_counts(target, data=data)
+        if usage["total"] > 0:
+            raise ValueError(
+                "Não é possível remover este posto porque ainda está em uso "
+                f"(utilizadores: {usage['users']}, orçamentos: {usage['quotes']}, encomendas: {usage['orders']}, planeamento: {usage['planning']})."
+            )
+        data["workcenter_catalog"] = [row for row in catalog if str(row.get("name", "") or "").strip().lower() != target.lower()]
+        self._workcenter_catalog()
+        self._save(force=True)
+
+    def save_workcenter_machine(self, group_name: str, machine_name: str, current_name: str = "") -> dict[str, Any]:
+        data = self.ensure_data()
+        profiles = self._user_profiles()
+        parent_group = str(group_name or "").strip()
+        new_name = str(machine_name or "").strip()
+        current_txt = str(current_name or "").strip()
+        if not parent_group:
+            raise ValueError("Seleciona o posto de trabalho da máquina.")
+        if not new_name:
+            raise ValueError("Nome da máquina obrigatório.")
+        catalog = list(self._workcenter_catalog() or [])
+        group_row = next((row for row in catalog if str(row.get("name", "") or "").strip().lower() == parent_group.lower()), None)
+        if group_row is None:
+            raise ValueError("Posto de trabalho não encontrado.")
+        all_group_names = {str(row.get("name", "") or "").strip().lower() for row in catalog if str(row.get("name", "") or "").strip()}
+        all_machine_names = {
+            str(machine or "").strip().lower()
+            for row in catalog
+            for machine in list(row.get("machines", []) or [])
+            if str(machine or "").strip()
+        }
+        current_key = current_txt.lower()
+        if not current_txt:
+            if new_name.lower() in all_group_names or new_name.lower() in all_machine_names:
+                raise ValueError("Já existe um posto ou máquina com esse nome.")
+            group_row.setdefault("machines", []).append(new_name)
+            group_row["machines"] = sorted(dict.fromkeys(str(value).strip() for value in list(group_row.get("machines", []) or []) if str(value).strip()), key=lambda value: value.lower())
+            data["workcenter_catalog"] = catalog
+            self._workcenter_catalog()
+            self._save(force=True)
+            return next(
+                (
+                    row
+                    for row in self.workcenter_rows()
+                    if str(row.get("entry_type", "") or "") == "machine"
+                    and str(row.get("name", "") or "").strip().lower() == new_name.lower()
+                ),
+                {"name": new_name, "entry_type": "machine", "group": parent_group},
+            )
+        machine_owner = next(
+            (
+                row
+                for row in catalog
+                if any(str(machine or "").strip().lower() == current_key for machine in list(row.get("machines", []) or []))
+            ),
+            None,
+        )
+        if machine_owner is None:
+            raise ValueError("Máquina não encontrada.")
+        if new_name.lower() != current_key and (new_name.lower() in all_group_names or new_name.lower() in all_machine_names):
+            raise ValueError("Já existe um posto ou máquina com esse nome.")
+        machine_owner["machines"] = [
+            new_name if str(machine or "").strip().lower() == current_key else str(machine or "").strip()
+            for machine in list(machine_owner.get("machines", []) or [])
+            if str(machine or "").strip()
+        ]
+        machine_owner["machines"] = sorted(dict.fromkeys(machine_owner["machines"]), key=lambda value: value.lower())
+        if machine_owner is not group_row:
+            machine_owner["machines"] = [value for value in list(machine_owner.get("machines", []) or []) if str(value or "").strip().lower() != new_name.lower()]
+            group_row.setdefault("machines", []).append(new_name)
+            group_row["machines"] = sorted(dict.fromkeys(str(value).strip() for value in list(group_row.get("machines", []) or []) if str(value).strip()), key=lambda value: value.lower())
+        for username, profile in list(profiles.items()):
+            if self._normalize_workcenter_value(str(profile.get("posto", "") or "")).lower() == current_key:
+                profile["posto"] = new_name
+                profiles[username] = profile
+        for user in list(data.get("users", []) or []):
+            if self._normalize_workcenter_value(str(user.get("posto", "") or "")).lower() == current_key:
+                user["posto"] = new_name
+        for row in list(data.get("orcamentos", []) or []):
+            if self._normalize_workcenter_value(str(row.get("posto_trabalho", "") or "")).lower() == current_key:
+                row["posto_trabalho"] = new_name
+        for row in list(data.get("encomendas", []) or []):
+            for key in ("posto_trabalho", "posto", "maquina"):
+                if self._normalize_workcenter_value(str(row.get(key, "") or "")).lower() == current_key:
+                    row[key] = new_name
+            for mat in list(row.get("materiais", []) or []):
+                for esp in list(mat.get("espessuras", []) or []):
+                    machine_map = dict(esp.get("maquinas_operacao", esp.get("recursos_operacao", {})) or {})
+                    changed_map = False
+                    for op_name, raw_value in list(machine_map.items()):
+                        if self._normalize_workcenter_value(str(raw_value or "")).lower() == current_key:
+                            machine_map[op_name] = new_name
+                            changed_map = True
+                    if changed_map:
+                        esp["maquinas_operacao"] = machine_map
+        for bucket_name in ("plano", "plano_hist"):
+            for row in list(data.get(bucket_name, []) or []):
+                for key in ("posto", "posto_trabalho", "maquina"):
+                    if self._normalize_workcenter_value(str(row.get(key, "") or "")).lower() == current_key:
+                        row[key] = new_name
+        posto_map = dict(data.get("operador_posto_map", {}) or {})
+        for username, posto in list(posto_map.items()):
+            if self._normalize_workcenter_value(str(posto or "")).lower() == current_key:
+                posto_map[username] = new_name
+        if posto_map:
+            data["operador_posto_map"] = posto_map
+        data["workcenter_catalog"] = catalog
+        self._workcenter_catalog()
+        self._save_user_profiles(profiles)
+        self._save(force=True)
+        return next(
+            (
+                row
+                for row in self.workcenter_rows()
+                if str(row.get("entry_type", "") or "") == "machine"
+                and str(row.get("name", "") or "").strip().lower() == new_name.lower()
+            ),
+            {"name": new_name, "entry_type": "machine", "group": parent_group},
+        )
+
+    def remove_workcenter_machine(self, machine_name: str) -> None:
+        data = self.ensure_data()
+        target = str(machine_name or "").strip()
+        if not target:
+            raise ValueError("Máquina inválida.")
+        catalog = list(self._workcenter_catalog() or [])
+        owner_row = next(
+            (
+                row
+                for row in catalog
+                if any(str(machine or "").strip().lower() == target.lower() for machine in list(row.get("machines", []) or []))
+            ),
+            None,
+        )
+        if owner_row is None:
+            raise ValueError("Máquina não encontrada.")
+        owner_row["machines"] = [value for value in list(owner_row.get("machines", []) or []) if str(value or "").strip().lower() != target.lower()]
+        replacement = self.workcenter_default_resource(owner_row.get("operation", owner_row.get("name", "")), preferred=owner_row.get("name", ""))
+        if str(replacement or "").strip().lower() == target.lower():
+            replacement = str(owner_row.get("name", "") or "").strip()
+        self._replace_removed_resource_references(
+            target,
+            fallback_resource=replacement,
+            operation=owner_row.get("operation", owner_row.get("name", "")),
+            remove_active_planning=True,
+        )
+        data["workcenter_catalog"] = catalog
+        self._workcenter_catalog()
+        self._save(force=True)
 
     def _order_workcenter(self, enc_or_numero: dict[str, Any] | str | None = None) -> str:
         enc: dict[str, Any] | None
@@ -9609,6 +10846,38 @@ class LegacyBackend:
             if value:
                 return self._normalize_workcenter_value(value)
         return ""
+
+    def _order_esp_machine_map(self, esp_obj: dict[str, Any] | None) -> dict[str, str]:
+        if not isinstance(esp_obj, dict):
+            return {}
+        raw_map = dict(esp_obj.get("maquinas_operacao", esp_obj.get("recursos_operacao", {})) or {})
+        cleaned: dict[str, str] = {}
+        for raw_op, raw_resource in raw_map.items():
+            op_txt = self._planning_normalize_operation(raw_op, default="")
+            resource_txt = self._normalize_workcenter_value(raw_resource)
+            if not op_txt or not resource_txt:
+                continue
+            cleaned[op_txt] = resource_txt
+        return cleaned
+
+    def _order_operation_resource(
+        self,
+        enc_or_numero: dict[str, Any] | str | None,
+        material: str = "",
+        espessura: str = "",
+        operation: Any = "",
+    ) -> str:
+        op_txt = self._planning_normalize_operation(operation, default="") if str(operation or "").strip() else ""
+        enc = enc_or_numero if isinstance(enc_or_numero, dict) else self.get_encomenda_by_numero(str(enc_or_numero or "").strip())
+        if not isinstance(enc, dict):
+            return ""
+        esp_obj = self._order_find_espessura(enc, material, espessura) if str(material or "").strip() and str(espessura or "").strip() else None
+        machine_map = self._order_esp_machine_map(esp_obj)
+        if op_txt and machine_map.get(op_txt):
+            return str(machine_map.get(op_txt) or "").strip()
+        if op_txt:
+            return self.workcenter_default_resource(op_txt, preferred=self._order_workcenter(enc))
+        return self._order_workcenter(enc)
 
     def user_rows(self) -> list[dict[str, Any]]:
         profiles = self._user_profiles()
@@ -13770,6 +15039,26 @@ class LegacyBackend:
         for line in list(note.get("linhas", []) or []):
             qtd = self._parse_float(line.get("qtd", 0), 0)
             qtd_ent = self._parse_float(line.get("qtd_entregue", qtd if line.get("entregue") else 0), 0)
+            origem = str(line.get("origem", "Produto") or "Produto").strip()
+            product = None
+            if not self.desktop_main.origem_is_materia(origem):
+                ref = str(line.get("ref", "") or "").strip()
+                if ref:
+                    product = next(
+                        (
+                            row
+                            for row in list(self.ensure_data().get("produtos", []) or [])
+                            if str(row.get("codigo", "") or "").strip() == ref
+                        ),
+                        None,
+                    )
+            peso_unid = round(
+                self._parse_float(
+                    line.get("peso_unid", (product or {}).get("peso_unid", 0)),
+                    0,
+                ),
+                4,
+            )
             if qtd_ent <= 0:
                 entrega = "PENDENTE"
             elif qtd_ent < max(0.0, qtd - 1e-9):
@@ -13781,7 +15070,7 @@ class LegacyBackend:
                     "ref": str(line.get("ref", "") or "").strip(),
                     "descricao": str(line.get("descricao", "") or "").strip(),
                     "fornecedor_linha": str(line.get("fornecedor_linha", "") or "").strip(),
-                    "origem": str(line.get("origem", "Produto") or "Produto").strip(),
+                    "origem": origem,
                     "qtd": round(qtd, 4),
                     "unid": str(line.get("unid", "") or "").strip(),
                     "preco": round(self._parse_float(line.get("preco", 0), 0), 4),
@@ -13799,11 +15088,23 @@ class LegacyBackend:
                     "kg_m": round(self._parse_float(line.get("kg_m", 0), 0), 4),
                     "localizacao": str(line.get("localizacao", "") or "").strip(),
                     "lote_fornecedor": str(line.get("lote_fornecedor", "") or "").strip(),
-                    "peso_unid": round(self._parse_float(line.get("peso_unid", 0), 0), 4),
+                    "peso_unid": peso_unid,
+                    "peso_total": round(peso_unid * qtd, 4) if peso_unid > 0 and qtd > 0 else 0.0,
                     "p_compra": round(self._parse_float(line.get("p_compra", 0), 0), 6),
                     "formato": str(line.get("formato", "") or "").strip(),
                     "secao_tipo": str(line.get("secao_tipo", "") or "").strip(),
                     "material_familia": str(line.get("material_familia", "") or "").strip(),
+                    "categoria": str(line.get("categoria", (product or {}).get("categoria", "")) or "").strip(),
+                    "tipo": str(line.get("tipo", (product or {}).get("tipo", "")) or "").strip(),
+                    "dimensoes": str(line.get("dimensoes", (product or {}).get("dimensoes", "")) or "").strip(),
+                    "metros_unidade": round(
+                        self._parse_float(
+                            line.get("metros_unidade", (product or {}).get("metros_unidade", 0)),
+                            0,
+                        ),
+                        4,
+                    ),
+                    "price_basis": str(line.get("price_basis", (product or {}).get("price_basis", "")) or "").strip(),
                     "_material_manual": bool(line.get("_material_manual")),
                     "_material_pending_create": bool(line.get("_material_pending_create")),
                 }
@@ -14032,6 +15333,28 @@ class LegacyBackend:
                         "_material_manual": bool(payload.get("_material_manual", True)),
                     }
                 )
+        else:
+            product = next(
+                (
+                    row
+                    for row in list(self.ensure_data().get("produtos", []) or [])
+                    if str(row.get("codigo", "") or "").strip() == ref
+                ),
+                None,
+            )
+            line.update(
+                {
+                    "categoria": str(payload.get("categoria", (product or {}).get("categoria", "")) or "").strip(),
+                    "tipo": str(payload.get("tipo", (product or {}).get("tipo", "")) or "").strip(),
+                    "dimensoes": str(payload.get("dimensoes", (product or {}).get("dimensoes", "")) or "").strip(),
+                    "peso_unid": self._parse_float(payload.get("peso_unid", (product or {}).get("peso_unid", 0)), 0),
+                    "metros_unidade": self._parse_float(
+                        payload.get("metros_unidade", (product or {}).get("metros_unidade", 0)),
+                        0,
+                    ),
+                    "price_basis": str(payload.get("price_basis", (product or {}).get("price_basis", "")) or "").strip(),
+                }
+            )
         return line
 
     def ne_save(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -16023,11 +17346,12 @@ class LegacyBackend:
             mats.setdefault(material, {"material": material, "estado": "Preparacao", "espessuras": {}})
             mats[material]["espessuras"].setdefault(
                 espessura,
-                {"espessura": espessura, "tempo_min": 0.0, "tempos_operacao": {}, "estado": "Preparacao", "pecas": []},
+                {"espessura": espessura, "tempo_min": 0.0, "tempos_operacao": {}, "maquinas_operacao": {}, "estado": "Preparacao", "pecas": []},
             )
             planning_ops = [op for op in self._planning_ops_from_ops_value(line.get("operacao", "")) if op != "Montagem"]
             esp_bucket = mats[material]["espessuras"][espessura]
             tempos_operacao = esp_bucket.setdefault("tempos_operacao", {})
+            maquinas_operacao = esp_bucket.setdefault("maquinas_operacao", {})
             detailed_op_times = {
                 str(self.desktop_main.normalize_operacao_nome(op_name) or op_name or "").strip(): self._parse_float(raw_value, 0)
                 for op_name, raw_value in dict(line.get("tempos_operacao", {}) or {}).items()
@@ -16041,14 +17365,20 @@ class LegacyBackend:
                     tempos_operacao[op_name] = round(float(tempos_operacao.get(op_name, 0) or 0) + total_time, 2)
                     if op_name == "Corte Laser":
                         esp_bucket["tempo_min"] = round(float(esp_bucket.get("tempo_min", 0) or 0) + total_time, 2)
+                        if not str(maquinas_operacao.get(op_name, "") or "").strip():
+                            maquinas_operacao[op_name] = self.workcenter_default_resource(op_name, preferred=enc.get("posto_trabalho", ""))
             elif len(planning_ops) == 1:
                 op_name = planning_ops[0]
                 tempos_operacao[op_name] = round(float(tempos_operacao.get(op_name, 0) or 0) + (tempo_peca * max(qtd_line, 0.0)), 2)
                 if op_name == "Corte Laser":
                     esp_bucket["tempo_min"] = round(float(esp_bucket.get("tempo_min", 0) or 0) + (tempo_peca * max(qtd_line, 0.0)), 2)
+                if not str(maquinas_operacao.get(op_name, "") or "").strip():
+                    maquinas_operacao[op_name] = self.workcenter_default_resource(op_name, preferred=enc.get("posto_trabalho", ""))
             elif "Corte Laser" in planning_ops:
                 tempos_operacao["Corte Laser"] = round(float(tempos_operacao.get("Corte Laser", 0) or 0) + (tempo_peca * max(qtd_line, 0.0)), 2)
                 esp_bucket["tempo_min"] = round(float(esp_bucket.get("tempo_min", 0) or 0) + (tempo_peca * max(qtd_line, 0.0)), 2)
+                if not str(maquinas_operacao.get("Corte Laser", "") or "").strip():
+                    maquinas_operacao["Corte Laser"] = self.workcenter_default_resource("Corte Laser", preferred=enc.get("posto_trabalho", ""))
             raw_ref_interna = str(line.get("ref_interna", "") or "").strip()
             if raw_ref_interna and raw_ref_interna not in used_refs:
                 ref_interna = raw_ref_interna
@@ -16203,18 +17533,23 @@ class LegacyBackend:
         start_min: int,
         end_min: int,
         operation: Any = "Corte Laser",
+        resource: str = "",
         ignore_id: str = "",
     ) -> bool:
         if self._planning_interval_blocked(start_min, end_min, day_txt):
             return False
         ignore = str(ignore_id or "").strip()
         op_txt = self._planning_normalize_operation(operation)
+        resource_txt = self._normalize_workcenter_value(resource)
         for row in list(self.ensure_data().get("plano", []) or []):
             if str(row.get("data", "") or "").strip() != day_txt:
                 continue
             if ignore and str(row.get("id", "") or "").strip() == ignore:
                 continue
             if self._planning_row_operation(row) != op_txt:
+                continue
+            row_resource = self._planning_row_resource(row)
+            if resource_txt and row_resource.lower() != resource_txt.lower():
                 continue
             try:
                 other_start = self.desktop_main.time_to_minutes(str(row.get("inicio", "") or "").strip())
@@ -16272,6 +17607,66 @@ class LegacyBackend:
                     return esp_obj
         return None
 
+    def _planning_item_piece_qty(self, numero: str, material: str, espessura: str) -> float:
+        enc = self.get_encomenda_by_numero(str(numero or "").strip())
+        esp_obj = self._planning_find_esp_obj(enc, material, espessura)
+        if not isinstance(esp_obj, dict):
+            return 0.0
+        total = 0.0
+        for piece in list(esp_obj.get("pecas", []) or []):
+            total += max(
+                0.0,
+                self._parse_float(piece.get("quantidade_pedida", piece.get("qtd", piece.get("quantidade", 0))), 0),
+            )
+        return round(total, 4)
+
+    def _planning_operation_plan_candidates(self, operation: Any) -> list[str]:
+        op_txt = self._planning_normalize_operation(operation, default="")
+        norm = self.desktop_main.norm_text(op_txt)
+        candidates: list[str] = []
+
+        def add(value: Any) -> None:
+            key = str(value or "").strip().lower()
+            if key and key not in candidates:
+                candidates.append(key)
+
+        add(norm)
+        add(self.desktop_main.norm_text(operation or ""))
+        if "laser" in norm:
+            add("laser")
+        if "quin" in norm:
+            add("quinagem")
+        if "sold" in norm or "serralh" in norm:
+            add("soldadura")
+        if "rosc" in norm:
+            add("roscagem")
+        if "embal" in norm or "exped" in norm:
+            add("embalamento")
+        if "laca" in norm or "pint" in norm:
+            add("lacagem")
+        if "maquin" in norm:
+            add("maquinacao")
+        if "mont" in norm:
+            add("montagem")
+        return candidates
+
+    def _planning_default_operation_minutes_per_piece(self, operation: Any) -> float:
+        raw_map = dict(self.ensure_data().get("tempos_operacao_planeada_min", {}) or {})
+        normalized_map = {
+            self.desktop_main.norm_text(key): self._parse_float(value, 0)
+            for key, value in raw_map.items()
+            if str(key or "").strip()
+        }
+        for candidate in self._planning_operation_plan_candidates(operation):
+            if candidate in raw_map:
+                value = self._parse_float(raw_map.get(candidate, 0), 0)
+                if value > 0:
+                    return value
+            value = self._parse_float(normalized_map.get(candidate, 0), 0)
+            if value > 0:
+                return value
+        return 0.0
+
     def _planning_item_total_minutes(self, numero: str, material: str, espessura: str, operation: Any = "Corte Laser") -> int:
         op_txt = self._planning_normalize_operation(operation)
         enc = self.get_encomenda_by_numero(str(numero or "").strip())
@@ -16284,7 +17679,14 @@ class LegacyBackend:
             return self._planning_round_duration(total)
         esp_obj = self._planning_find_esp_obj(enc, material, espessura)
         time_map = self._planning_operation_times_map(esp_obj)
-        return self._planning_round_duration(time_map.get(op_txt, 0))
+        direct_total = self._parse_float(time_map.get(op_txt, 0), 0)
+        if direct_total > 0:
+            return self._planning_round_duration(direct_total)
+        default_per_piece = self._planning_default_operation_minutes_per_piece(op_txt)
+        piece_qty = self._planning_item_piece_qty(numero, material, espessura)
+        if default_per_piece > 0 and piece_qty > 0:
+            return self._planning_round_duration(default_per_piece * piece_qty)
+        return 0
 
     def _planning_planned_minutes(
         self,
@@ -16341,15 +17743,37 @@ class LegacyBackend:
 
     def _planning_item_color(self, numero: str, material: str, espessura: str) -> str:
         target = self._planning_item_key(numero, material, espessura)
-        palette = list(getattr(self.desktop_main, "PLANO_CORES", ["#fbecee"])) or ["#fbecee"]
+        legacy_palette = {"#fbecee", "#fde2e4", "#fff0f2", "#fce8ea", "#ffe6e9", "#f7dfe3"}
+        palette = [
+            "#93c5fd",
+            "#86efac",
+            "#fcd34d",
+            "#fca5a5",
+            "#c4b5fd",
+            "#67e8f9",
+            "#f9a8d4",
+            "#fdba74",
+            "#bef264",
+            "#a5b4fc",
+            "#fca5a5",
+            "#99f6e4",
+        ]
         for row in list(self.ensure_data().get("plano", []) or []):
             row_key = self._planning_item_key(row.get("encomenda", ""), row.get("material", ""), row.get("espessura", ""))
             if row_key != target:
                 continue
             color = str(row.get("color", "") or "").strip()
-            if color:
+            if color and color.lower() not in legacy_palette:
                 return color
-        return str(palette[len(self.ensure_data().get("plano", [])) % len(palette)] or "#fbecee")
+        key = "|".join(
+            [
+                str(numero or "").strip().upper(),
+                str(material or "").strip().upper(),
+                str(espessura or "").strip().upper(),
+            ]
+        )
+        index = sum(ord(ch) for ch in key) % len(palette)
+        return str(palette[index] or "#93c5fd")
 
     def _planning_montagem_obs(self, enc: dict[str, Any]) -> str:
         resumo = str(self.desktop_main.encomenda_montagem_resumo(enc) or "Montagem final").strip()
@@ -16367,6 +17791,9 @@ class LegacyBackend:
         dates: list[date],
         cur_day_idx: int,
         cur_min: int,
+        *,
+        operation: Any = "Corte Laser",
+        resource: str = "",
     ) -> tuple[int, str | None, int | None, int | None]:
         start_min, end_min, slot = self._planning_grid_metrics()
         day_idx = max(0, int(cur_day_idx or 0))
@@ -16379,12 +17806,12 @@ class LegacyBackend:
             if local_cursor % slot != 0:
                 local_cursor = int((local_cursor + slot - 1) // slot) * slot
             while local_cursor + slot <= end_min:
-                if not self._planning_is_free(day_txt, local_cursor, local_cursor + slot):
+                if not self._planning_is_free(day_txt, local_cursor, local_cursor + slot, operation=operation, resource=resource):
                     local_cursor += slot
                     continue
                 segment_start = local_cursor
                 segment_end = local_cursor + slot
-                while segment_end + slot <= end_min and self._planning_is_free(day_txt, segment_end, segment_end + slot):
+                while segment_end + slot <= end_min and self._planning_is_free(day_txt, segment_end, segment_end + slot, operation=operation, resource=resource):
                     segment_end += slot
                 return day_idx, day_txt, segment_start, segment_end
             day_idx += 1
@@ -16451,10 +17878,12 @@ class LegacyBackend:
         filter_text: str = "",
         state_filter: str = "Pendentes",
         operation: Any = "Corte Laser",
+        resource: str = "",
     ) -> list[dict[str, Any]]:
         query = str(filter_text or "").strip().lower()
         state_norm = self.desktop_main.norm_text(state_filter or "Pendentes")
         op_txt = self._planning_normalize_operation(operation)
+        resource_txt = self._normalize_workcenter_value(resource)
         planned_minutes: dict[tuple[str, str, str, str], int] = {}
         for row in list(self.ensure_data().get("plano", []) or []):
             if not isinstance(row, dict):
@@ -16499,6 +17928,9 @@ class LegacyBackend:
                 if state_norm != "concluidas" and tempo_restante <= 0:
                     continue
                 shortages = self._order_montagem_shortages(enc)
+                assigned_resource = self._order_operation_resource(enc, mat_name, esp, op_txt)
+                if resource_txt and assigned_resource.lower() != resource_txt.lower():
+                    continue
                 row = {
                     "numero": str(enc.get("numero", "") or "").strip(),
                     "cliente": " - ".join([x for x in [client_code, client_name] if x]).strip(" -"),
@@ -16518,6 +17950,8 @@ class LegacyBackend:
                     "data_entrega": str(enc.get("data_entrega", "") or "").strip(),
                     "chapa": "-",
                     "obs": self._planning_montagem_obs(enc),
+                    "recurso": assigned_resource,
+                    "posto_trabalho": assigned_resource,
                 }
                 if query and not any(query in str(value).lower() for value in row.values()):
                     continue
@@ -16540,6 +17974,9 @@ class LegacyBackend:
                     tempo_restante = max(0, tempo_total - tempo_planeado)
                     if state_norm != "concluidas" and tempo_restante <= 0:
                         continue
+                    assigned_resource = self._order_operation_resource(enc, mat_name, esp, op_txt)
+                    if resource_txt and assigned_resource.lower() != resource_txt.lower():
+                        continue
                     row = {
                         "numero": str(enc.get("numero", "") or "").strip(),
                         "cliente": " - ".join([x for x in [client_code, client_name] if x]).strip(" -"),
@@ -16555,6 +17992,8 @@ class LegacyBackend:
                         "operation_done": operation_done,
                         "data_entrega": str(enc.get("data_entrega", "") or "").strip(),
                         "chapa": self._order_reserved_sheet(str(enc.get("numero", "") or "").strip(), mat_name, esp),
+                        "recurso": assigned_resource,
+                        "posto_trabalho": assigned_resource,
                     }
                     if query and not any(query in str(value).lower() for value in row.values()):
                         continue
@@ -16568,6 +18007,95 @@ class LegacyBackend:
             )
         )
         return rows
+
+    def planning_overview_data(
+        self,
+        week_start: str | date | None = None,
+        operation: Any = "Corte Laser",
+        resource: str = "",
+    ) -> dict[str, Any]:
+        week_start_dt = self._planning_week_start(week_start)
+        week_dates = [week_start_dt + timedelta(days=i) for i in range(6)]
+        week_end_dt = week_dates[-1]
+        month_token = f"{datetime.now().year}-{datetime.now().month:02d}"
+        op_txt = self._planning_normalize_operation(operation)
+        resource_txt = self._normalize_workcenter_value(resource)
+        active: list[dict[str, Any]] = []
+        history: list[dict[str, Any]] = []
+        total_active_minutes = 0.0
+        week_active_minutes = 0.0
+
+        def build_row(row: dict[str, Any], *, history_mode: bool = False) -> dict[str, Any]:
+            color_txt = str(row.get("color", "") or "").strip()
+            if color_txt.lower() in {"#fbecee", "#fde2e4", "#fff0f2", "#fce8ea", "#ffe6e9", "#f7dfe3"}:
+                color_txt = ""
+            payload = {
+                "id": str(row.get("id", "") or "").strip(),
+                "encomenda": str(row.get("encomenda", "") or "").strip(),
+                "data": str(row.get("data", "") or "").strip(),
+                "inicio": str(row.get("inicio", "") or "").strip(),
+                "duracao_min": round(max(0.0, self._parse_float(row.get("duracao_min", 0), 0)), 1),
+                "material": str(row.get("material", "") or "-").strip() or "-",
+                "espessura": str(row.get("espessura", "") or "-").strip() or "-",
+                "operacao": op_txt,
+                "chapa": str(row.get("chapa", "") or "-").strip() or "-",
+                "posto_trabalho": self._planning_row_resource(row),
+                "maquina": self._planning_row_resource(row),
+                "color": color_txt or self._planning_item_color(row.get("encomenda", ""), row.get("material", ""), row.get("espessura", "")),
+            }
+            if history_mode:
+                payload["tempo_real_min"] = round(max(0.0, self._parse_float(row.get("tempo_real_min", 0), 0)), 1)
+                payload["estado_final"] = str(row.get("estado_final", "") or "-").strip() or "-"
+            return payload
+
+        for row in list(self.ensure_data().get("plano", []) or []):
+            if not isinstance(row, dict):
+                continue
+            if self._planning_row_operation(row) != op_txt:
+                continue
+            row_resource = self._planning_row_resource(row)
+            if resource_txt and row_resource.lower() != resource_txt.lower():
+                continue
+            payload = build_row(row, history_mode=False)
+            total_active_minutes += float(payload.get("duracao_min", 0) or 0)
+            try:
+                row_date = date.fromisoformat(str(payload.get("data", "") or "").strip())
+            except Exception:
+                row_date = None
+            if row_date is not None and week_start_dt <= row_date <= week_end_dt:
+                active.append(payload)
+                week_active_minutes += float(payload.get("duracao_min", 0) or 0)
+
+        for row in list(self.ensure_data().get("plano_hist", []) or []):
+            if not isinstance(row, dict):
+                continue
+            if self._planning_row_operation(row) != op_txt:
+                continue
+            row_resource = self._planning_row_resource(row)
+            if resource_txt and row_resource.lower() != resource_txt.lower():
+                continue
+            history.append(build_row(row, history_mode=True))
+
+        active.sort(key=lambda row: (row.get("data", ""), row.get("inicio", ""), row.get("encomenda", "")))
+        history.sort(key=lambda row: (row.get("data", ""), row.get("inicio", ""), row.get("encomenda", "")), reverse=True)
+        month_hist = [row for row in history if str(row.get("data", "") or "").startswith(month_token)]
+        return {
+            "summary": {
+                "blocos_ativos": len(active),
+                "historico_mes": len(month_hist),
+                "min_ativos": round(week_active_minutes, 1),
+                "min_ativos_total": round(total_active_minutes, 1),
+                "min_historico_mes": round(sum(max(0.0, self._parse_float(row.get("duracao_min", 0), 0)) for row in month_hist), 1),
+                "week_start": week_start_dt.isoformat(),
+                "week_end": week_end_dt.isoformat(),
+                "week_label": f"{week_start_dt.strftime('%d/%m')} - {week_end_dt.strftime('%d/%m')}",
+                "operacao": op_txt,
+                "recurso": resource_txt,
+            },
+            "week_dates": [day.isoformat() for day in week_dates],
+            "active": active[:160],
+            "history": history[:220],
+        }
 
     def planning_blocked_windows(self) -> list[dict[str, Any]]:
         rows = []
@@ -16630,10 +18158,12 @@ class LegacyBackend:
     ) -> dict[str, Any]:
         op_txt = self._planning_normalize_operation(operation)
         color_txt = str(color or "").strip() or self._planning_item_color(numero, material, espessura)
-        posto_txt = str(posto or "").strip() or self._planning_default_posto_for_operation(op_txt, numero)
-        if op_txt == "Corte Laser":
-            posto_txt = self._normalize_workcenter_value(posto_txt or self._order_workcenter(numero)) or self._planning_default_posto_for_operation(op_txt, numero)
-        return {
+        posto_txt = (
+            self._normalize_workcenter_value(posto)
+            or self._order_operation_resource(numero, material, espessura, op_txt)
+            or self._planning_default_posto_for_operation(op_txt, numero)
+        )
+        block = {
             "id": f"PL{int(datetime.now().timestamp())}{len(self.ensure_data().get('plano', []))}",
             "encomenda": numero,
             "material": material,
@@ -16645,8 +18175,8 @@ class LegacyBackend:
             "color": color_txt,
             "chapa": self._order_reserved_sheet(numero, material, espessura),
             "planeamento_item": "|".join(self._planning_item_op_key(numero, material, espessura, op_txt)),
-            "posto": posto_txt,
         }
+        return self._planning_apply_resource_to_row(block, posto_txt, op_txt)
 
     def planning_place_block(
         self,
@@ -16682,6 +18212,7 @@ class LegacyBackend:
             raise ValueError("Hora inv?lida para planeamento.") from exc
         start_day, end_day, slot = self._planning_grid_metrics()
         duration = self._planning_round_duration(pending.get("tempo_min", 0))
+        resource_txt = self._normalize_workcenter_value(pending.get("recurso", pending.get("posto_trabalho", "")))
         if duration <= 0:
             raise ValueError("Tempo inv?lido para o bloco.")
         if start_min < start_day or start_min + duration > end_day:
@@ -16689,7 +18220,7 @@ class LegacyBackend:
         if start_min % slot != 0:
             raise ValueError("O inicio deve respeitar blocos de 30 minutos.")
         self._planning_assert_not_past(day_txt, start_min)
-        if not self._planning_is_free(day_txt, start_min, start_min + duration, operation=op_txt):
+        if not self._planning_is_free(day_txt, start_min, start_min + duration, operation=op_txt, resource=resource_txt):
             raise ValueError("Posi??o ocupada ou bloqueada no planeamento.")
         block = self._planning_make_block(
             numero,
@@ -16700,6 +18231,7 @@ class LegacyBackend:
             start_min,
             duration,
             color=self._planning_item_color(numero, material, espessura),
+            posto=resource_txt,
         )
         self.ensure_data().setdefault("plano", []).append(block)
         self._save(force=True)
@@ -16727,6 +18259,7 @@ class LegacyBackend:
             numero = str(row.get("numero", "") or "").strip()
             material = str(row.get("material", "") or "").strip()
             espessura = str(row.get("espessura", "") or "").strip()
+            resource_txt = self._normalize_workcenter_value(row.get("recurso", row.get("posto_trabalho", "")))
             if self._planning_is_duplicate(numero, material, espessura, operation=op_txt):
                 continue
             duration = self._planning_round_duration(row.get("tempo_min", 0))
@@ -16735,7 +18268,13 @@ class LegacyBackend:
             remaining = duration
             item_color = self._planning_item_color(numero, material, espessura)
             while remaining > 0:
-                next_day_idx, day_txt, segment_start, segment_end = self._planning_next_free_segment(dates, cur_day_idx, cur_min)
+                next_day_idx, day_txt, segment_start, segment_end = self._planning_next_free_segment(
+                    dates,
+                    cur_day_idx,
+                    cur_min,
+                    operation=op_txt,
+                    resource=resource_txt,
+                )
                 if not day_txt or segment_start is None or segment_end is None:
                     if not placed:
                         raise ValueError("Sem espa?o livre na semana para auto planeamento.")
@@ -16748,7 +18287,7 @@ class LegacyBackend:
                 chunk = min(remaining, free_minutes)
                 if chunk % slot != 0:
                     chunk = max(slot, int(chunk // slot) * slot)
-                block = self._planning_make_block(numero, material, espessura, op_txt, day_txt, segment_start, chunk, color=item_color)
+                block = self._planning_make_block(numero, material, espessura, op_txt, day_txt, segment_start, chunk, color=item_color, posto=resource_txt)
                 self.ensure_data().setdefault("plano", []).append(block)
                 placed.append(block)
                 remaining -= chunk
@@ -16761,6 +18300,122 @@ class LegacyBackend:
                 break
         self._save(force=True)
         return placed
+
+    def planning_auto_plan_full_flow(
+        self,
+        ordered_rows: list[dict[str, Any]],
+        week_start: str | date | None = None,
+        operation: Any = "Corte Laser",
+    ) -> dict[str, Any]:
+        week_start_dt = self._planning_week_start(week_start)
+        dates = [week_start_dt + timedelta(days=i) for i in range(6)]
+        start_min, _end_min, _slot = self._planning_grid_metrics()
+        main_day_idx, main_min = self._planning_initial_cursor(week_start_dt)
+        base_day_idx, base_min = main_day_idx, main_min
+        if main_day_idx >= len(dates):
+            raise ValueError("A semana selecionada já ficou para trás ou não tem mais tempo útil disponível.")
+        op_txt = self._planning_normalize_operation(operation)
+        placed: list[dict[str, Any]] = []
+        pending: list[dict[str, Any]] = []
+        downstream_jobs: list[dict[str, Any]] = []
+
+        def later_dt(left: datetime | None, right: datetime | None) -> datetime | None:
+            if left is None:
+                return right
+            if right is None:
+                return left
+            return right if right > left else left
+
+        for raw in list(ordered_rows or []):
+            row = dict(raw or {})
+            numero = str(row.get("numero", "") or "").strip()
+            material = str(row.get("material", "") or "").strip()
+            espessura = str(row.get("espessura", "") or "").strip()
+            if not numero or not material or not espessura:
+                continue
+            if not self._planning_item_has_operation(numero, material, espessura, op_txt):
+                continue
+            if main_day_idx >= len(dates):
+                pending.append(
+                    {
+                        "numero": numero,
+                        "material": material,
+                        "espessura": espessura,
+                        "operacao": op_txt,
+                        "recurso": self._order_operation_resource(numero, material, espessura, op_txt),
+                        "remaining_min": self._planning_remaining_minutes(numero, material, espessura, operation=op_txt),
+                    }
+                )
+                break
+            main_anchor_dt = None
+            if 0 <= main_day_idx < len(dates):
+                main_anchor_dt = self._planning_slot_datetime(dates[main_day_idx].isoformat(), main_min)
+            current_resource = self._normalize_workcenter_value(row.get("recurso", row.get("posto_trabalho", "")))
+            current_result = self._planning_schedule_operation_blocks(
+                numero,
+                material,
+                espessura,
+                op_txt,
+                dates,
+                anchor_dt=main_anchor_dt,
+                resource=current_resource,
+            )
+            placed.extend(list(current_result.get("placed", []) or []))
+            main_day_idx = int(current_result.get("cursor_day_idx", main_day_idx) or 0)
+            main_min = int(current_result.get("cursor_min", start_min) or start_min)
+            if bool(current_result.get("exhausted")) and int(current_result.get("remaining_min", 0) or 0) > 0:
+                pending.append(
+                    {
+                        "numero": numero,
+                        "material": material,
+                        "espessura": espessura,
+                        "operacao": op_txt,
+                        "recurso": str(current_result.get("resource", "") or current_resource),
+                        "remaining_min": int(current_result.get("remaining_min", 0) or 0),
+                    }
+                )
+                break
+
+            chain_anchor = current_result.get("end_dt")
+            sequence = self._planning_item_operation_sequence(numero, material, espessura, start_operation=op_txt)
+            if op_txt in sequence:
+                next_ops = sequence[sequence.index(op_txt) + 1 :]
+            else:
+                next_ops = sequence
+            filtered_next_ops = [
+                next_op
+                for next_op in next_ops
+                if self._planning_item_has_operation(numero, material, espessura, next_op)
+            ]
+            if filtered_next_ops:
+                first_next_op = filtered_next_ops[0]
+                downstream_jobs.append(
+                    {
+                        "numero": numero,
+                        "material": material,
+                        "espessura": espessura,
+                        "sequence": filtered_next_ops,
+                        "index": 0,
+                        "anchor_dt": chain_anchor,
+                        "resource": self._order_operation_resource(numero, material, espessura, first_next_op),
+                        "data_entrega": str(row.get("data_entrega", "") or "").strip(),
+                    }
+                )
+
+        initial_cursor_dt = None
+        if 0 <= base_day_idx < len(dates):
+            initial_cursor_dt = self._planning_slot_datetime(dates[base_day_idx].isoformat(), base_min)
+        downstream_result = self._planning_schedule_followup_jobs(
+            downstream_jobs,
+            dates,
+            initial_cursor_dt=initial_cursor_dt,
+        )
+        placed.extend(list(downstream_result.get("placed", []) or []))
+        pending.extend(list(downstream_result.get("pending", []) or []))
+
+        if placed:
+            self._save(force=True)
+        return {"placed": placed, "pending": pending}
 
     def _planning_block_bounds(self, row: dict[str, Any]) -> tuple[datetime | None, datetime | None]:
         raw_date = str(row.get("data", "") or "").strip()
@@ -16782,12 +18437,10 @@ class LegacyBackend:
             if isinstance(row, dict)
         }
         active_blocks = [dict(row) for row in list(self.ensure_data().get("plano", []) or []) if isinstance(row, dict)]
-        active_blocks = [row for row in active_blocks if self._planning_row_matches_operation(row, "Corte Laser")]
-        active_blocks.sort(key=lambda row: (str(row.get("data", "") or ""), str(row.get("inicio", "") or ""), str(row.get("encomenda", "") or "")))
-        blocks_by_key: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+        blocks_by_item: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
         for block in active_blocks:
             key = self._planning_item_key(block.get("encomenda", ""), block.get("material", ""), block.get("espessura", ""))
-            blocks_by_key.setdefault(key, []).append(block)
+            blocks_by_item.setdefault(key, []).append(block)
 
         rows: list[dict[str, Any]] = []
         for enc in list(self.ensure_data().get("encomendas", []) or []):
@@ -16800,12 +18453,13 @@ class LegacyBackend:
             resolved_groups = 0
             partial_groups = 0
             planned_groups = 0
+            completed_groups = 0
             block_count = 0
             total_minutes = 0
             planned_minutes = 0
             first_start: datetime | None = None
             last_end: datetime | None = None
-            completion_marks: list[datetime] = []
+            last_item_desc = ""
             materials: list[str] = []
 
             for mat in list(enc.get("materiais", []) or []):
@@ -16815,46 +18469,59 @@ class LegacyBackend:
                     if not self._planning_item_has_laser(numero, mat_name, esp):
                         continue
                     laser_groups += 1
-                    total = self._planning_item_total_minutes(numero, mat_name, esp)
-                    total_minutes += total
+                    sequence = self._planning_item_operation_sequence(numero, mat_name, esp, start_operation="Corte Laser")
+                    if not sequence:
+                        sequence = ["Corte Laser"]
+                    item_total = 0
+                    item_planned = 0
+                    item_first: datetime | None = None
+                    item_end: datetime | None = None
+                    item_has_activity = False
+                    item_resolved = True
+                    item_completed = True
                     key = self._planning_item_key(numero, mat_name, esp)
-                    blocks = list(blocks_by_key.get(key, []) or [])
-                    planned = min(total, sum(self._planning_round_duration(block.get("duracao_min", 0)) for block in blocks))
-                    planned_minutes += planned
-                    if blocks:
+                    blocks = list(blocks_by_item.get(key, []) or [])
+                    block_count += len(blocks)
+                    for op_name in sequence:
+                        if not self._planning_item_has_operation(numero, mat_name, esp, op_name):
+                            continue
+                        status = self._planning_item_operation_status(numero, mat_name, esp, op_name)
+                        item_total += int(status.get("total_min", 0) or 0)
+                        item_planned += int(status.get("planned_min", 0) or 0)
+                        op_first = status.get("first_dt")
+                        op_end = status.get("end_dt")
+                        if op_first is not None and (item_first is None or op_first < item_first):
+                            item_first = op_first
+                        if op_end is not None and (item_end is None or op_end > item_end):
+                            item_end = op_end
+                        if bool(status.get("resolved")) or int(status.get("planned_min", 0) or 0) > 0:
+                            item_has_activity = True
+                        if not bool(status.get("resolved")):
+                            item_resolved = False
+                        if not self._planning_item_operation_done(numero, mat_name, esp, op_name):
+                            item_completed = False
+                    total_minutes += item_total
+                    planned_minutes += item_planned
+                    if item_first is not None and (first_start is None or item_first < first_start):
+                        first_start = item_first
+                    if item_end is not None and (last_end is None or item_end > last_end):
+                        last_end = item_end
+                        last_item_desc = f"{mat_name} {esp}mm".strip()
+                    if item_has_activity:
                         planned_groups += 1
-                        block_count += len(blocks)
                         materials.append(f"{mat_name} {esp}mm")
-                    for block in blocks:
-                        start_dt, end_dt = self._planning_block_bounds(block)
-                        if start_dt is not None and (first_start is None or start_dt < first_start):
-                            first_start = start_dt
-                        if end_dt is not None and (last_end is None or end_dt > last_end):
-                            last_end = end_dt
-                    item_ctx = {"encomenda": numero, "material": mat_name, "espessura": esp}
-                    laser_done = bool(self.plan_actions._laser_done_for_item(self, item_ctx))
-                    if laser_done:
+                    if item_completed:
+                        completed_groups += 1
+                    elif item_resolved:
                         resolved_groups += 1
-                        raw_finished = str(esp_obj.get("laser_concluido_em", "") or "").strip()
-                        if raw_finished:
-                            try:
-                                completion_marks.append(datetime.fromisoformat(raw_finished))
-                            except Exception:
-                                pass
-                    elif planned >= total and total > 0:
-                        resolved_groups += 1
-                    elif planned > 0:
+                    elif item_has_activity:
                         partial_groups += 1
 
             if laser_groups <= 0:
                 continue
-            if completion_marks:
-                latest_completion = max(completion_marks)
-                if last_end is None or latest_completion > last_end:
-                    last_end = latest_completion
-            if resolved_groups >= laser_groups and planned_groups <= 0 and completion_marks:
-                status = "Laser concluído"
-            elif resolved_groups >= laser_groups and laser_groups > 0:
+            if completed_groups >= laser_groups and laser_groups > 0:
+                status = "Fluxo concluído"
+            elif (completed_groups + resolved_groups) >= laser_groups and laser_groups > 0:
                 status = "Planeado completo"
             elif partial_groups > 0 or planned_groups > 0:
                 status = "Planeado parcial"
@@ -16867,7 +18534,7 @@ class LegacyBackend:
                     "cliente": " - ".join([part for part in [client_code, client_name] if part]).strip(" -"),
                     "data_entrega": str(enc.get("data_entrega", "") or "").strip(),
                     "grupos_total": laser_groups,
-                    "grupos_resolvidos": resolved_groups,
+                    "grupos_resolvidos": completed_groups + resolved_groups,
                     "grupos_planeados": planned_groups,
                     "grupos_parciais": partial_groups,
                     "planeado_min": planned_minutes,
@@ -16877,7 +18544,8 @@ class LegacyBackend:
                     "fim_dt": last_end,
                     "inicio_txt": first_start.strftime("%d/%m/%Y %H:%M") if first_start is not None else "-",
                     "fim_txt": last_end.strftime("%d/%m/%Y %H:%M") if last_end is not None else "-",
-                    "grupos_txt": f"{resolved_groups}/{laser_groups}",
+                    "ultimo_item_txt": last_item_desc or "-",
+                    "grupos_txt": f"{completed_groups + resolved_groups}/{laser_groups}",
                     "planeado_txt": f"{planned_minutes:.0f}/{total_minutes:.0f} min" if total_minutes > 0 else "-",
                     "estado": status,
                     "materiais_txt": ", ".join(materials[:4]) + ("..." if len(materials) > 4 else ""),
@@ -16885,7 +18553,9 @@ class LegacyBackend:
             )
         rows.sort(
             key=lambda row: (
-                0 if row.get("estado") == "Planeado completo" else (1 if row.get("estado") == "Planeado parcial" else 2),
+                0
+                if row.get("estado") == "Fluxo concluído"
+                else (1 if row.get("estado") == "Planeado completo" else (2 if row.get("estado") == "Planeado parcial" else 3)),
                 row.get("fim_dt") or datetime.max,
                 row.get("data_entrega") or "9999-99-99",
                 row.get("numero") or "",
@@ -16903,7 +18573,7 @@ class LegacyBackend:
             path = Path(output_path)
         else:
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            path = Path(tempfile.gettempdir()) / f"lugest_prazos_laser_{stamp}.pdf"
+            path = Path(tempfile.gettempdir()) / f"lugest_prazos_fluxo_{stamp}.pdf"
         palette = self._operator_label_palette()
         branding = self.branding_settings()
         width, height = landscape(A4)
@@ -16935,12 +18605,12 @@ class LegacyBackend:
             c.roundRect(margin, height - margin - 58, width - margin * 2, 58, 18, stroke=0, fill=1)
             c.setFillColor(colors.white)
             set_font(True, 18)
-            c.drawString(margin + 16, height - margin - 23, "Prazos Laser")
+            c.drawString(margin + 16, height - margin - 23, "Prazo Final do Fluxo")
             set_font(False, 9)
             c.drawString(
                 margin + 16,
                 height - margin - 39,
-                "Previsão de conclusão do corte laser por encomenda, baseada apenas no planeamento atual.",
+                "Previsão de conclusão global da encomenda, considerando laser e operações seguintes com base no planeamento atual.",
             )
             generated = datetime.now().strftime("%d/%m/%Y %H:%M")
             c.drawRightString(width - margin - 16, height - margin - 23, generated)
@@ -16950,12 +18620,12 @@ class LegacyBackend:
 
         def draw_summary(y: float) -> float:
             total = len(rows)
-            complete = sum(1 for row in rows if str(row.get("estado", "") or "") == "Planeado completo")
+            complete = sum(1 for row in rows if str(row.get("estado", "") or "") in {"Planeado completo", "Fluxo concluído"})
             partial = sum(1 for row in rows if str(row.get("estado", "") or "") == "Planeado parcial")
             pending = sum(1 for row in rows if str(row.get("estado", "") or "") == "Por planear")
             boxes = [
                 ("Encomendas", str(total), palette["primary"]),
-                ("Completas", str(complete), palette["success"]),
+                ("Fluxo fechado", str(complete), palette["success"]),
                 ("Parciais", str(partial), palette["warning"]),
                 ("Por planear", str(pending), palette["ink"]),
             ]
@@ -16993,7 +18663,7 @@ class LegacyBackend:
             ("Entrega", 0.11),
             ("Grupos", 0.08),
             ("Planeado", 0.13),
-            ("Fim laser", 0.18),
+            ("Fim fluxo", 0.18),
             ("Estado", 0.12),
         ]
 
@@ -17015,7 +18685,7 @@ class LegacyBackend:
                     fill_color = palette["primary_soft_2"]
                 elif state == "Planeado parcial":
                     fill_color = colors.HexColor("#FFF8EB")
-                elif state == "Laser concluído":
+                elif state == "Fluxo concluído":
                     fill_color = colors.HexColor("#ECFDF3")
                 c.setFillColor(fill_color)
                 c.setStrokeColor(palette["line"])
@@ -17043,17 +18713,305 @@ class LegacyBackend:
             c.roundRect(margin, y - 60, width - margin * 2, 52, 16, stroke=1, fill=1)
             c.setFillColor(palette["ink"])
             set_font(True, 12)
-            c.drawString(margin + 14, y - 26, "Sem encomendas de laser planeadas neste momento.")
+            c.drawString(margin + 14, y - 26, "Sem encomendas com fluxo planeado neste momento.")
 
         c.setFillColor(palette["muted"])
         set_font(False, 8)
-        c.drawString(margin, 28, "Planeamento atual do corte laser. Os postos seguintes serão integrados numa fase posterior.")
+        c.drawString(margin, 28, "Prazo final calculado a partir do planeamento atual e do histórico concluído por operação.")
         c.drawRightString(width - margin, 28, f"LUGEST | {datetime.now().strftime('%d/%m/%Y %H:%M')}")
         c.save()
         return path
 
     def planning_open_laser_deadlines_pdf(self) -> Path:
         path = self.planning_render_laser_deadlines_pdf()
+        os.startfile(str(path))
+        return path
+
+    def _planning_order_flow_rows(self, numero: str) -> list[dict[str, Any]]:
+        numero_txt = str(numero or "").strip()
+        rows: list[dict[str, Any]] = []
+        operation_index = {name: idx for idx, name in enumerate(self.planning_operation_options())}
+        for bucket_name, source_label in (("plano", "Ativo"), ("plano_hist", "Histórico")):
+            for row in list(self.ensure_data().get(bucket_name, []) or []):
+                if not isinstance(row, dict):
+                    continue
+                if str(row.get("encomenda", "") or "").strip() != numero_txt:
+                    continue
+                start_dt, end_dt = self._planning_block_bounds(row)
+                duration = self._planning_round_duration(row.get("duracao_min", 0))
+                rows.append(
+                    {
+                        "id": str(row.get("id", "") or "").strip(),
+                        "operacao": self._planning_row_operation(row),
+                        "recurso": self._planning_row_resource(row),
+                        "material": str(row.get("material", "") or "").strip() or "-",
+                        "espessura": str(row.get("espessura", "") or "").strip() or "-",
+                        "data": str(row.get("data", "") or "").strip(),
+                        "inicio": str(row.get("inicio", "") or "").strip(),
+                        "fim": end_dt.strftime("%H:%M") if end_dt is not None else "-",
+                        "duracao_min": duration,
+                        "chapa": str(row.get("chapa", "") or "").strip() or "-",
+                        "source": source_label,
+                        "start_dt": start_dt,
+                        "end_dt": end_dt,
+                        "color": str(row.get("color", "") or "").strip() or "#dbeafe",
+                    }
+                )
+        rows.sort(
+            key=lambda row: (
+                row.get("start_dt") or datetime.max,
+                operation_index.get(str(row.get("operacao", "") or ""), 999),
+                str(row.get("material", "") or ""),
+                str(row.get("espessura", "") or ""),
+                str(row.get("source", "") or ""),
+            )
+        )
+        return rows
+
+    def planning_render_order_detail_pdf(
+        self,
+        numero: str,
+        output_path: str = "",
+        *,
+        focus_material: str = "",
+        focus_espessura: str = "",
+    ) -> Path:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.pdfgen import canvas as pdf_canvas
+
+        detail = self.order_detail(numero)
+        flow_rows = self._planning_order_flow_rows(numero)
+        if output_path:
+            path = Path(output_path)
+        else:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            path = Path(tempfile.gettempdir()) / f"lugest_fluxo_encomenda_{str(numero or '').strip()}_{stamp}.pdf"
+        palette = self._operator_label_palette()
+        branding = self.branding_settings()
+        width, height = landscape(A4)
+        margin = 28
+        c = pdf_canvas.Canvas(str(path), pagesize=landscape(A4))
+
+        font_regular = "Helvetica"
+        font_bold = "Helvetica-Bold"
+        for name, file_name in (("SegoeUI", "segoeui.ttf"), ("SegoeUI-Bold", "segoeuib.ttf")):
+            font_path = Path(r"C:\Windows\Fonts") / file_name
+            if font_path.exists():
+                try:
+                    from reportlab.pdfbase import pdfmetrics
+                    from reportlab.pdfbase.ttfonts import TTFont
+
+                    pdfmetrics.registerFont(TTFont(name, str(font_path)))
+                    if "Bold" in name:
+                        font_bold = name
+                    else:
+                        font_regular = name
+                except Exception:
+                    pass
+
+        focus_mat = str(focus_material or "").strip()
+        focus_esp = str(focus_espessura or "").strip()
+        focus_label = " | ".join(part for part in [focus_mat, (f"{focus_esp} mm" if focus_esp else "")] if part)
+        active_count = sum(1 for row in flow_rows if str(row.get("source", "") or "") == "Ativo")
+        history_count = sum(1 for row in flow_rows if str(row.get("source", "") or "") == "Histórico")
+        total_minutes = sum(int(row.get("duracao_min", 0) or 0) for row in flow_rows)
+        unique_ops = sorted({str(row.get("operacao", "") or "").strip() for row in flow_rows if str(row.get("operacao", "") or "").strip()})
+        first_start = next((row.get("start_dt") for row in flow_rows if row.get("start_dt") is not None), None)
+        last_end = None
+        for row in flow_rows:
+            end_dt = row.get("end_dt")
+            if end_dt is not None and (last_end is None or end_dt > last_end):
+                last_end = end_dt
+        materials_rows = list(detail.get("materials", []) or [])
+
+        def set_font(bold: bool, size: float) -> None:
+            c.setFont(font_bold if bold else font_regular, size)
+
+        def draw_header() -> float:
+            c.setFillColor(palette["primary"])
+            c.roundRect(margin, height - margin - 64, width - margin * 2, 64, 18, stroke=0, fill=1)
+            c.setFillColor(colors.white)
+            set_font(True, 17)
+            c.drawString(margin + 16, height - margin - 24, f"Fluxo de Planeamento - Encomenda {detail.get('numero', '-')}")
+            set_font(False, 9)
+            subtitle = "Resumo completo do planeamento da encomenda, com materiais, operações, recursos e blocos."
+            if focus_label:
+                subtitle += f" Foco: {focus_label}."
+            c.drawString(margin + 16, height - margin - 42, subtitle)
+            company = str(branding.get("company_name", "") or "luGEST").strip() or "luGEST"
+            c.drawRightString(width - margin - 16, height - margin - 24, company)
+            c.drawRightString(width - margin - 16, height - margin - 42, datetime.now().strftime("%d/%m/%Y %H:%M"))
+            return height - margin - 82
+
+        def ensure_page(y: float, needed: float) -> float:
+            if y - needed >= 46:
+                return y
+            c.showPage()
+            return draw_header()
+
+        def draw_summary(y: float) -> float:
+            summary_boxes = [
+                ("Cliente", " - ".join([part for part in [detail.get("cliente", ""), detail.get("cliente_nome", "")] if part]).strip(" -") or "-", palette["primary"]),
+                ("Entrega", str(detail.get("data_entrega", "") or "-"), palette["ink"]),
+                ("Estado", str(detail.get("estado", "") or "-"), palette["success"] if flow_rows else palette["warning"]),
+                ("Blocos", f"{active_count} ativos | {history_count} hist.", palette["warning"]),
+            ]
+            box_w = (width - margin * 2 - 18) / 4
+            x = margin
+            for label, value, tone in summary_boxes:
+                c.setFillColor(colors.white)
+                c.setStrokeColor(palette["line"])
+                c.roundRect(x, y - 48, box_w, 44, 14, stroke=1, fill=1)
+                c.setFillColor(tone)
+                set_font(True, 8.5)
+                c.drawString(x + 10, y - 17, label)
+                c.setFillColor(palette["ink"])
+                set_font(False, 9)
+                c.drawString(x + 10, y - 33, _pdf_clip_text(value, box_w - 18, font_regular, 9))
+                x += box_w + 6
+            meta_parts = [
+                f"Operações: {', '.join(unique_ops) if unique_ops else '-'}",
+                f"Total planeado: {total_minutes:.0f} min",
+                f"Início: {first_start.strftime('%d/%m/%Y %H:%M') if first_start is not None else '-'}",
+                f"Fim: {last_end.strftime('%d/%m/%Y %H:%M') if last_end is not None else '-'}",
+            ]
+            c.setFillColor(palette["muted"])
+            set_font(False, 8.5)
+            c.drawString(margin + 2, y - 60, " | ".join(meta_parts))
+            return y - 74
+
+        def draw_table_header(y: float, columns: list[tuple[str, float]]) -> tuple[float, list[float], float]:
+            total_w = width - margin * 2 - 18
+            c.setFillColor(palette["primary_dark"])
+            c.roundRect(margin, y - 22, width - margin * 2, 20, 10, stroke=0, fill=1)
+            c.setFillColor(colors.white)
+            set_font(True, 8.2)
+            x_positions: list[float] = []
+            cursor = margin + 8
+            for label, ratio in columns:
+                x_positions.append(cursor)
+                c.drawString(cursor + 3, y - 14, label)
+                cursor += total_w * ratio
+            return y - 26, x_positions, total_w
+
+        y = draw_header()
+        y = draw_summary(y)
+
+        flow_columns = [
+            ("Data", 0.12),
+            ("Início", 0.08),
+            ("Fim", 0.08),
+            ("Operação", 0.14),
+            ("Recurso", 0.16),
+            ("Material", 0.16),
+            ("Esp.", 0.07),
+            ("Dur.", 0.07),
+            ("Origem", 0.10),
+        ]
+        row_h = 18
+        y = ensure_page(y, 52)
+        set_font(True, 11)
+        c.setFillColor(palette["ink"])
+        c.drawString(margin, y - 4, "Blocos de planeamento")
+        y -= 8
+        y, x_positions, total_w = draw_table_header(y, flow_columns)
+        if flow_rows:
+            for row_index, row in enumerate(flow_rows):
+                if y - (row_h + 12) < 46:
+                    y = draw_header()
+                    y, x_positions, total_w = draw_table_header(y - 8, flow_columns)
+                fill_color = colors.white if row_index % 2 == 0 else palette["surface_alt"]
+                if focus_mat and focus_esp:
+                    if str(row.get("material", "") or "").strip() == focus_mat and str(row.get("espessura", "") or "").strip() == focus_esp:
+                        fill_color = colors.HexColor("#ECFDF3")
+                c.setFillColor(fill_color)
+                c.setStrokeColor(palette["line"])
+                c.roundRect(margin, y - row_h + 2, width - margin * 2, row_h - 2, 8, stroke=1, fill=1)
+                values = [
+                    str(row.get("data", "") or "-"),
+                    str(row.get("inicio", "") or "-"),
+                    str(row.get("fim", "") or "-"),
+                    str(row.get("operacao", "") or "-"),
+                    _pdf_clip_text(row.get("recurso", "-"), total_w * flow_columns[4][1] - 10, font_regular, 8),
+                    _pdf_clip_text(row.get("material", "-"), total_w * flow_columns[5][1] - 10, font_regular, 8),
+                    str(row.get("espessura", "") or "-"),
+                    f"{float(row.get('duracao_min', 0) or 0):.0f}",
+                    str(row.get("source", "") or "-"),
+                ]
+                c.setFillColor(palette["ink"])
+                set_font(False, 8)
+                for idx, value in enumerate(values):
+                    c.drawString(x_positions[idx] + 3, y - 10, value)
+                y -= row_h
+        else:
+            c.setFillColor(colors.white)
+            c.setStrokeColor(palette["line"])
+            c.roundRect(margin, y - 30, width - margin * 2, 24, 10, stroke=1, fill=1)
+            c.setFillColor(palette["ink"])
+            set_font(False, 9)
+            c.drawString(margin + 10, y - 15, "Ainda não existem blocos de planeamento registados para esta encomenda.")
+            y -= 34
+
+        y -= 8
+        material_columns = [
+            ("Material", 0.17),
+            ("Esp.", 0.08),
+            ("Operações", 0.24),
+            ("Recursos", 0.30),
+            ("Tempos", 0.21),
+        ]
+        y = ensure_page(y, 60)
+        set_font(True, 11)
+        c.setFillColor(palette["ink"])
+        c.drawString(margin, y - 4, "Materiais e operações")
+        y -= 8
+        y, x_positions, total_w = draw_table_header(y, material_columns)
+        for row_index, row in enumerate(materials_rows):
+            if y - (row_h + 12) < 46:
+                y = draw_header()
+                y, x_positions, total_w = draw_table_header(y - 8, material_columns)
+            highlight = focus_mat and focus_esp and str(row.get("material", "") or "").strip() == focus_mat and str(row.get("espessura", "") or "").strip() == focus_esp
+            fill_color = colors.HexColor("#FEF3C7") if highlight else (colors.white if row_index % 2 == 0 else palette["surface_alt"])
+            c.setFillColor(fill_color)
+            c.setStrokeColor(palette["line"])
+            c.roundRect(margin, y - row_h + 2, width - margin * 2, row_h - 2, 8, stroke=1, fill=1)
+            values = [
+                _pdf_clip_text(row.get("material", "-"), total_w * material_columns[0][1] - 10, font_regular, 8),
+                str(row.get("espessura", "") or "-"),
+                _pdf_clip_text(" + ".join(list(row.get("operacoes_planeamento", []) or [])) or "-", total_w * material_columns[2][1] - 10, font_regular, 8),
+                _pdf_clip_text(row.get("recursos_operacao_txt", "-"), total_w * material_columns[3][1] - 10, font_regular, 8),
+                _pdf_clip_text(row.get("tempo_operacoes_txt", "-"), total_w * material_columns[4][1] - 10, font_regular, 8),
+            ]
+            c.setFillColor(palette["ink"])
+            set_font(False, 8)
+            for idx, value in enumerate(values):
+                c.drawString(x_positions[idx] + 3, y - 10, value)
+            y -= row_h
+
+        c.setFillColor(palette["muted"])
+        set_font(False, 8)
+        footer_txt = (
+            f"Posto principal: {detail.get('posto_trabalho', '-') or '-'} | "
+            f"Observações: {detail.get('observacoes', '-') or '-'}"
+        )
+        c.drawString(margin, 28, _pdf_clip_text(footer_txt, width - (margin * 2) - 110, font_regular, 8))
+        c.drawRightString(width - margin, 28, f"LUGEST | {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+        c.save()
+        return path
+
+    def planning_open_order_detail_pdf(
+        self,
+        numero: str,
+        *,
+        focus_material: str = "",
+        focus_espessura: str = "",
+    ) -> Path:
+        path = self.planning_render_order_detail_pdf(
+            numero,
+            focus_material=focus_material,
+            focus_espessura=focus_espessura,
+        )
         os.startfile(str(path))
         return path
 
@@ -17078,6 +19036,7 @@ class LegacyBackend:
             new_start,
             new_start + duration,
             operation=self._planning_row_operation(target),
+            resource=self._planning_row_resource(target),
             ignore_id=str(target.get("id", "") or ""),
         ):
             raise ValueError("Posi??o ocupada ou bloqueada no planeamento.")
@@ -17111,6 +19070,7 @@ class LegacyBackend:
             new_start,
             new_start + duration,
             operation=self._planning_row_operation(target),
+            resource=self._planning_row_resource(target),
             ignore_id=str(target.get("id", "") or ""),
         ):
             raise ValueError("Posição ocupada ou bloqueada no planeamento.")
@@ -17126,20 +19086,43 @@ class LegacyBackend:
 
     def planning_remove_block(self, block_id: str) -> None:
         block_txt = str(block_id or "").strip()
-        before = len(list(self.ensure_data().get("plano", []) or []))
-        self.ensure_data()["plano"] = [row for row in list(self.ensure_data().get("plano", []) or []) if str(row.get("id", "") or "").strip() != block_txt]
-        if len(self.ensure_data()["plano"]) == before:
+        target = next(
+            (row for row in list(self.ensure_data().get("plano", []) or []) if str(row.get("id", "") or "").strip() == block_txt),
+            None,
+        )
+        if target is None:
             raise ValueError("Bloco de planeamento n?o encontrado.")
+        numero = str(target.get("encomenda", "") or "").strip()
+        material = str(target.get("material", "") or "").strip()
+        espessura = str(target.get("espessura", "") or "").strip()
+        current_operation = self._planning_row_operation(target)
+        cascade_ops = self._planning_item_operation_sequence(numero, material, espessura, start_operation=current_operation)
+        if current_operation not in cascade_ops:
+            cascade_ops = [current_operation, *list(cascade_ops or [])]
+        cascade_ops = [self._planning_normalize_operation(op_name) for op_name in cascade_ops if str(op_name or "").strip()]
+        cascade_set = {op_name for op_name in cascade_ops if op_name}
+        target_item_key = self._planning_item_key(numero, material, espessura)
+        self.ensure_data()["plano"] = [
+            row
+            for row in list(self.ensure_data().get("plano", []) or [])
+            if (
+                self._planning_item_key(row.get("encomenda", ""), row.get("material", ""), row.get("espessura", "")) != target_item_key
+                or self._planning_row_operation(row) not in cascade_set
+            )
+        ]
         self._save(force=True)
 
-    def planning_open_pdf(self, week_start: str | date | None = None, operation: Any = "Corte Laser") -> Path:
+    def planning_open_pdf(self, week_start: str | date | None = None, operation: Any = "Corte Laser", resource: str = "") -> Path:
         week_start_dt = self._planning_week_start(week_start)
         op_txt = self._planning_normalize_operation(operation)
+        resource_txt = self._normalize_workcenter_value(resource)
         filtered_data = dict(self.ensure_data())
         filtered_data["plano"] = [
             dict(row)
             for row in list(self.ensure_data().get("plano", []) or [])
-            if isinstance(row, dict) and self._planning_row_matches_operation(row, op_txt)
+            if isinstance(row, dict)
+            and self._planning_row_matches_operation(row, op_txt)
+            and (not resource_txt or self._planning_row_resource(row).lower() == resource_txt.lower())
         ]
         ctx = SimpleNamespace(
             data=filtered_data,
@@ -17147,6 +19130,7 @@ class LegacyBackend:
             p_inicio=_ValueHolder("08:00"),
             p_fim=_ValueHolder("18:00"),
             planning_operation_label=op_txt,
+            planning_resource_label=resource_txt,
         )
         ctx.get_plano_grid_metrics = lambda: (480, 1080, 30, 20, 6, 0, 0)
         ctx.plano_intervalo_bloqueado = lambda start_min, end_min: self._planning_interval_blocked(start_min, end_min)

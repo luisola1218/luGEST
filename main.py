@@ -576,6 +576,11 @@ DEFAULT_DATA = {
     "plano_hist": [],
     "op_eventos": [],
     "op_paragens": [],
+    "postos_trabalho": [],
+    "operador_posto_map": {},
+    "tempos_operacao_planeada_min": {},
+    "workcenter_catalog": [],
+    "plano_bloqueios": [],
 }
 
 USE_MYSQL_STORAGE = True
@@ -1756,6 +1761,7 @@ def _mysql_sync_relational_schema(cur, data):
                 espessura VARCHAR(20) NOT NULL,
                 tempo_min DECIMAL(10,2) NULL,
                 tempos_operacao_json LONGTEXT NULL,
+                maquinas_operacao_json LONGTEXT NULL,
                 estado VARCHAR(50) NULL,
                 inicio_producao DATETIME NULL,
                 fim_producao DATETIME NULL,
@@ -2257,6 +2263,7 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "encomenda_espessuras", "espessura", "VARCHAR(20) NOT NULL")
         _mysql_ensure_column(cur, "encomenda_espessuras", "tempo_min", "DECIMAL(10,2) NULL")
         _mysql_ensure_column(cur, "encomenda_espessuras", "tempos_operacao_json", "LONGTEXT NULL")
+        _mysql_ensure_column(cur, "encomenda_espessuras", "maquinas_operacao_json", "LONGTEXT NULL")
         _mysql_ensure_column(cur, "encomenda_espessuras", "estado", "VARCHAR(50) NULL")
         _mysql_ensure_column(cur, "encomenda_espessuras", "inicio_producao", "DATETIME NULL")
         _mysql_ensure_column(cur, "encomenda_espessuras", "fim_producao", "DATETIME NULL")
@@ -3117,9 +3124,9 @@ def _mysql_sync_relational_schema(cur, data):
                         cur.execute(
                             """
                             INSERT INTO encomenda_espessuras (
-                                encomenda_numero, material, espessura, tempo_min, tempos_operacao_json, estado,
+                                encomenda_numero, material, espessura, tempo_min, tempos_operacao_json, maquinas_operacao_json, estado,
                                 inicio_producao, fim_producao, tempo_producao_min, lote_baixa
-                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
                                 enc_num,
@@ -3127,6 +3134,7 @@ def _mysql_sync_relational_schema(cur, data):
                                 esp,
                                 _to_num(esp_obj.get("tempo_min")),
                                 json.dumps(dict(esp_obj.get("tempos_operacao", {}) or {}), ensure_ascii=False),
+                                json.dumps(dict(esp_obj.get("maquinas_operacao", esp_obj.get("recursos_operacao", {})) or {}), ensure_ascii=False),
                                 _clip(esp_obj.get("estado"), 50),
                                 _to_mysql_datetime(esp_obj.get("inicio_producao")),
                                 _to_mysql_datetime(esp_obj.get("fim_producao")),
@@ -4406,6 +4414,7 @@ def _mysql_load_relational_data():
                 if not enc_num or not mat or not esp:
                     continue
                 tempos_operacao = {}
+                maquinas_operacao = {}
                 raw_tempos_operacao = r.get("tempos_operacao_json")
                 if raw_tempos_operacao:
                     try:
@@ -4420,9 +4429,24 @@ def _mysql_load_relational_data():
                             op_raw = str(op_value if op_value is not None else "").strip()
                             if op_raw:
                                 tempos_operacao[op_txt] = op_raw
+                raw_maquinas_operacao = r.get("maquinas_operacao_json")
+                if raw_maquinas_operacao:
+                    try:
+                        parsed_maquinas = json.loads(str(raw_maquinas_operacao))
+                    except Exception:
+                        parsed_maquinas = {}
+                    if isinstance(parsed_maquinas, dict):
+                        for op_name, resource_value in parsed_maquinas.items():
+                            op_txt = normalize_planeamento_operacao(op_name)
+                            if not op_txt:
+                                continue
+                            resource_txt = str(resource_value if resource_value is not None else "").strip()
+                            if resource_txt:
+                                maquinas_operacao[op_txt] = resource_txt
                 esp_meta_map.setdefault(enc_num, {})[(mat, esp)] = {
                     "tempo_min": _to_num(r.get("tempo_min")),
                     "tempos_operacao": tempos_operacao,
+                    "maquinas_operacao": maquinas_operacao,
                     "estado": str(r.get("estado", "") or "Preparacao"),
                     "inicio_producao": _db_to_iso(r.get("inicio_producao")),
                     "fim_producao": _db_to_iso(r.get("fim_producao")),
@@ -4569,6 +4593,7 @@ def _mysql_load_relational_data():
                     if meta.get("tempo_min") is not None:
                         slot["tempo_min"] = meta.get("tempo_min")
                     slot["tempos_operacao"] = dict(meta.get("tempos_operacao", {}) or slot.get("tempos_operacao", {}))
+                    slot["maquinas_operacao"] = dict(meta.get("maquinas_operacao", {}) or slot.get("maquinas_operacao", slot.get("recursos_operacao", {})))
                     slot["estado"] = meta.get("estado") or slot.get("estado", "Preparacao")
                     slot["inicio_producao"] = meta.get("inicio_producao", slot.get("inicio_producao", ""))
                     slot["fim_producao"] = meta.get("fim_producao", slot.get("fim_producao", ""))
@@ -5138,6 +5163,10 @@ def _mysql_load_relational_data():
                         }
                     )
 
+        _apply_runtime_state_payload(
+            data,
+            _app_config_load_json(RUNTIME_STATE_CONFIG_KEY, RUNTIME_STATE_CONFIG_FILE, conn=conn),
+        )
         _rebuild_runtime_sequences(data)
         return data
     finally:
@@ -5164,6 +5193,12 @@ def _mysql_save_relational_data(data, conn=None):
                 # NOTE: despite the name, this routine syncs both schema and data snapshot.
                 # It must run on every save to persist changes.
                 _mysql_sync_relational_schema(cur, data)
+                _app_config_save_json(
+                    RUNTIME_STATE_CONFIG_KEY,
+                    RUNTIME_STATE_CONFIG_FILE,
+                    _runtime_state_payload(data),
+                    conn=active_conn,
+                )
                 _MYSQL_SCHEMA_SYNCED = True
             active_conn.commit()
             return
@@ -6069,19 +6104,31 @@ SUPPLIER_SEQ_CONFIG_FILE = "lugest_supplier_seq.json"
 SUPPLIER_SEQ_CONFIG_KEY = "supplier_sequence"
 TRANSPORT_SEQ_CONFIG_FILE = "lugest_transport_seq.json"
 TRANSPORT_SEQ_CONFIG_KEY = "transport_sequence"
+RUNTIME_STATE_CONFIG_FILE = "lugest_runtime_state.json"
+RUNTIME_STATE_CONFIG_KEY = "runtime_state"
+RUNTIME_STATE_CONFIG_DEFAULTS = {
+    "postos_trabalho": [],
+    "operador_posto_map": {},
+    "tempos_operacao_planeada_min": {},
+    "workcenter_catalog": [],
+    "plano_bloqueios": [],
+}
 
 
 def _app_config_json_path(filename):
     return os.path.join(BASE_DIR, str(filename or "").strip())
 
 
-def _app_config_load_json(config_key, filename):
+def _app_config_load_json(config_key, filename, conn=None):
     payload = {}
-    conn = None
+    active_conn = conn
+    own_conn = False
     try:
         if USE_MYSQL_STORAGE and MYSQL_AVAILABLE:
-            conn = _mysql_connect()
-            with conn.cursor() as cur:
+            if active_conn is None:
+                active_conn = _mysql_connect()
+                own_conn = True
+            with active_conn.cursor() as cur:
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS app_config (
@@ -6104,8 +6151,8 @@ def _app_config_load_json(config_key, filename):
         payload = {}
     finally:
         try:
-            if conn:
-                conn.close()
+            if own_conn and active_conn:
+                active_conn.close()
         except Exception:
             pass
     if payload:
@@ -6121,7 +6168,7 @@ def _app_config_load_json(config_key, filename):
     return {}
 
 
-def _app_config_save_json(config_key, filename, payload):
+def _app_config_save_json(config_key, filename, payload, conn=None):
     clean = dict(payload or {})
     try:
         path = _app_config_json_path(filename)
@@ -6129,11 +6176,14 @@ def _app_config_save_json(config_key, filename, payload):
             handle.write(json.dumps(clean, ensure_ascii=False, indent=2))
     except Exception:
         pass
-    conn = None
+    active_conn = conn
+    own_conn = False
     try:
         if USE_MYSQL_STORAGE and MYSQL_AVAILABLE:
-            conn = _mysql_connect()
-            with conn.cursor() as cur:
+            if active_conn is None:
+                active_conn = _mysql_connect()
+                own_conn = True
+            with active_conn.cursor() as cur:
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS app_config (
@@ -6151,14 +6201,49 @@ def _app_config_save_json(config_key, filename, payload):
                     """,
                     (str(config_key or "").strip(), json.dumps(clean, ensure_ascii=False)),
                 )
-            conn.commit()
+            if own_conn:
+                active_conn.commit()
     finally:
         try:
-            if conn:
-                conn.close()
+            if own_conn and active_conn:
+                active_conn.close()
         except Exception:
             pass
     return dict(clean)
+
+
+def _runtime_state_payload(data):
+    payload = {}
+    source = dict(data or {})
+    for key, default in RUNTIME_STATE_CONFIG_DEFAULTS.items():
+        value = copy.deepcopy(source.get(key, default))
+        if isinstance(default, list):
+            payload[key] = value if isinstance(value, list) else copy.deepcopy(default)
+        elif isinstance(default, dict):
+            payload[key] = value if isinstance(value, dict) else copy.deepcopy(default)
+        else:
+            payload[key] = copy.deepcopy(default)
+    try:
+        return json.loads(json.dumps(payload, ensure_ascii=False))
+    except Exception:
+        clean = {}
+        for key, default in RUNTIME_STATE_CONFIG_DEFAULTS.items():
+            clean[key] = copy.deepcopy(default)
+        return clean
+
+
+def _apply_runtime_state_payload(data, payload):
+    if not isinstance(data, dict):
+        return
+    source = dict(payload or {}) if isinstance(payload, dict) else {}
+    for key, default in RUNTIME_STATE_CONFIG_DEFAULTS.items():
+        value = source.get(key, copy.deepcopy(default))
+        if isinstance(default, list):
+            data[key] = copy.deepcopy(value) if isinstance(value, list) else copy.deepcopy(default)
+        elif isinstance(default, dict):
+            data[key] = copy.deepcopy(value) if isinstance(value, dict) else copy.deepcopy(default)
+        else:
+            data[key] = copy.deepcopy(default)
 
 
 def _extract_fornecedor_seq(value):
@@ -6677,6 +6762,7 @@ def load_data():
     data.setdefault("fornecedores", [])
     data.setdefault("produtos_mov", [])
     data.setdefault("plano_hist", [])
+    _apply_runtime_state_payload(data, data)
     normalized_orcamentos = []
     for o in data.get("orcamentos", []):
         if not isinstance(o, dict):

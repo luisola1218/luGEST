@@ -4425,17 +4425,46 @@ def _render_ne_pdf_modern(self, path, ne):
     doc_num = str(ne.get("numero", "") or "NE").strip() or "NE"
     c.setTitle(f"Nota de Encomenda {doc_num}")
 
-    cols = [
-        ("Ref.", 68, "w"),
-        ("Designacao", 171, "w"),
-        ("Qtd.", 38, "e"),
-        ("Un.", 30, "center"),
-        ("Preco", 58, "e"),
-        ("Desc%", 36, "e"),
-        ("IVA%", 34, "e"),
-        ("Total", 64, "e"),
-        ("Estado", 48, "center"),
-    ]
+    lines = list(ne.get("linhas", []) or [])
+
+    def _line_weight_unit(line):
+        return max(0.0, parse_float(line.get("peso_unid", 0), 0))
+
+    def _line_weight_total(line):
+        weight_unit = _line_weight_unit(line)
+        qty_value = max(0.0, parse_float(line.get("qtd", 0), 0))
+        if weight_unit <= 0 or qty_value <= 0:
+            return 0.0
+        return round(weight_unit * qty_value, 4)
+
+    show_weight_cols = any(_line_weight_unit(line) > 0 for line in lines)
+    cols = (
+        [
+            ("Ref.", 56, "w"),
+            ("Designacao", 131, "w"),
+            ("Qtd.", 34, "e"),
+            ("Un.", 26, "center"),
+            ("Peso un.", 42, "e"),
+            ("Peso tot.", 46, "e"),
+            ("Preco", 52, "e"),
+            ("Desc%", 32, "e"),
+            ("IVA%", 30, "e"),
+            ("Total", 54, "e"),
+            ("Estado", 44, "center"),
+        ]
+        if show_weight_cols
+        else [
+            ("Ref.", 68, "w"),
+            ("Designacao", 171, "w"),
+            ("Qtd.", 38, "e"),
+            ("Un.", 30, "center"),
+            ("Preco", 58, "e"),
+            ("Desc%", 36, "e"),
+            ("IVA%", 34, "e"),
+            ("Total", 64, "e"),
+            ("Estado", 48, "center"),
+        ]
+    )
     table_w = sum(width for _, width, _ in cols)
     first_capacity = max(1, int((footer_top - (table_first_top + header_row_h + 6)) // row_h))
     next_capacity = max(1, int((footer_top - (table_next_top + header_row_h + 6)) // row_h))
@@ -4443,7 +4472,8 @@ def _render_ne_pdf_modern(self, path, ne):
     subtotal = 0.0
     iva = 0.0
     total = 0.0
-    for line in list(ne.get("linhas", []) or []):
+    total_weight = 0.0
+    for line in lines:
         qtd_l = parse_float(line.get("qtd", 0), 0)
         preco_l = parse_float(line.get("preco", 0), 0)
         desc_l = max(0.0, min(100.0, parse_float(line.get("desconto", 0), 0)))
@@ -4456,6 +4486,7 @@ def _render_ne_pdf_modern(self, path, ne):
         subtotal += base_l
         iva += iva_amt
         total += total_l
+        total_weight += _line_weight_total(line)
 
     forn_obj = None
     forn_id = str(ne.get("fornecedor_id", "") or "").strip()
@@ -4488,7 +4519,6 @@ def _render_ne_pdf_modern(self, path, ne):
     entrega_prevista = str(ne.get("data_entrega", "") or "").strip()
     estado_doc = str(ne.get("estado", "") or "Em edicao").strip() or "Em edicao"
     docs = list(reversed(list(ne.get("entregas", []) or [])[-4:]))
-    lines = list(ne.get("linhas", []) or [])
     footer_company = list(get_empresa_rodape_lines() or [])
 
     def yinv(top_y):
@@ -4595,12 +4625,29 @@ def _render_ne_pdf_modern(self, path, ne):
             str(line.get("descricao", "") or "").strip() or "-",
             fmt_num(line.get("qtd", 0)),
             str(line.get("unid", "UN") or "UN").strip(),
-            fmt_num(line.get("preco", 0)),
-            fmt_num(line.get("desconto", 0)),
-            fmt_num(line.get("iva", 23)),
-            fmt_num(line.get("total", 0)),
-            delivery_status(line),
         ]
+        if show_weight_cols:
+            values.extend(
+                [
+                    fmt_num(_line_weight_unit(line)) if _line_weight_unit(line) > 0 else "",
+                    fmt_num(_line_weight_total(line)) if _line_weight_total(line) > 0 else "",
+                    fmt_num(line.get("preco", 0)),
+                    fmt_num(line.get("desconto", 0)),
+                    fmt_num(line.get("iva", 23)),
+                    fmt_num(line.get("total", 0)),
+                    delivery_status(line),
+                ]
+            )
+        else:
+            values.extend(
+                [
+                    fmt_num(line.get("preco", 0)),
+                    fmt_num(line.get("desconto", 0)),
+                    fmt_num(line.get("iva", 23)),
+                    fmt_num(line.get("total", 0)),
+                    delivery_status(line),
+                ]
+            )
         xx = m
         c.setFont(fonts["regular"], 8.1)
         c.setFillColor(palette["ink"])
@@ -4764,12 +4811,21 @@ def _render_ne_pdf_modern(self, path, ne):
             table_w - 344,
             72,
             "Resumo",
-            [
-                f"Subtotal: {fmt_money(subtotal)}",
-                f"IVA: {fmt_money(iva)}",
-                f"Total: {fmt_money(total)}",
-                f"Linhas: {len(lines)}",
-            ],
+            (
+                [
+                    f"Subtotal: {fmt_money(subtotal)}",
+                    f"IVA: {fmt_money(iva)}",
+                    f"Total: {fmt_money(total)}",
+                    f"Linhas: {len(lines)} | Peso total: {fmt_num(total_weight)} kg",
+                ]
+                if total_weight > 0
+                else [
+                    f"Subtotal: {fmt_money(subtotal)}",
+                    f"IVA: {fmt_money(iva)}",
+                    f"Total: {fmt_money(total)}",
+                    f"Linhas: {len(lines)}",
+                ]
+            ),
             accent=True,
         )
         c.saveState()
@@ -5082,19 +5138,6 @@ def _render_ne_cotacao_pdf_modern(self, path, ne):
     observacoes = str(ne.get("obs", "") or "").strip()
     data_doc = datetime.now().strftime("%d/%m/%Y")
 
-    cols = [
-        ("Referencia", 78, "w"),
-        ("Descricao", 195, "w"),
-        ("Qtd.", 42, "e"),
-        ("Un.", 34, "center"),
-        ("Entrega", 68, "center"),
-        ("Preco Unit.", 62, "e"),
-        ("Total", 70, "e"),
-    ]
-    table_w = sum(width for _, width, _ in cols)
-    first_capacity = max(1, int((footer_top - (table_first_top + header_row_h + 6)) // row_h))
-    next_capacity = max(1, int((footer_top - (table_next_top + header_row_h + 6)) // row_h))
-
     def yinv(top_y):
         return h - top_y
 
@@ -5115,6 +5158,45 @@ def _render_ne_cotacao_pdf_modern(self, path, ne):
             if len(raw) >= 10 and raw[4] == "-" and raw[7] == "-":
                 return f"{raw[8:10]}/{raw[5:7]}/{raw[:4]}"
             return raw[:10]
+
+    def _line_weight_unit(line):
+        return max(0.0, parse_float(line.get("peso_unid", 0), 0))
+
+    def _line_weight_total(line):
+        weight_unit = _line_weight_unit(line)
+        qty_value = max(0.0, parse_float(line.get("qtd", 0), 0))
+        if weight_unit <= 0 or qty_value <= 0:
+            return 0.0
+        return round(weight_unit * qty_value, 4)
+
+    show_weight_cols = any(_line_weight_unit(line) > 0 for line in linhas)
+    cols = (
+        [
+            ("Referencia", 64, "w"),
+            ("Descricao", 143, "w"),
+            ("Qtd.", 34, "e"),
+            ("Un.", 28, "center"),
+            ("Peso un.", 42, "e"),
+            ("Peso tot.", 46, "e"),
+            ("Entrega", 66, "center"),
+            ("Preco Unit.", 62, "e"),
+            ("Total", 64, "e"),
+        ]
+        if show_weight_cols
+        else [
+            ("Referencia", 78, "w"),
+            ("Descricao", 195, "w"),
+            ("Qtd.", 42, "e"),
+            ("Un.", 34, "center"),
+            ("Entrega", 68, "center"),
+            ("Preco Unit.", 62, "e"),
+            ("Total", 70, "e"),
+        ]
+    )
+    table_w = sum(width for _, width, _ in cols)
+    first_capacity = max(1, int((footer_top - (table_first_top + header_row_h + 6)) // row_h))
+    next_capacity = max(1, int((footer_top - (table_next_top + header_row_h + 6)) // row_h))
+    total_weight = round(sum(_line_weight_total(line) for line in linhas), 4)
 
     def card(x, top_y, box_w, box_h, title, lines):
         c.saveState()
@@ -5185,10 +5267,19 @@ def _render_ne_cotacao_pdf_modern(self, path, ne):
             str(line.get("descricao", "") or "").strip() or "-",
             fmt_num(line.get("qtd", 0)),
             str(line.get("unid", "UN") or "UN").strip(),
-            fmt_display_date(entrega),
-            "",
-            "",
         ]
+        if show_weight_cols:
+            values.extend(
+                [
+                    fmt_num(_line_weight_unit(line)) if _line_weight_unit(line) > 0 else "",
+                    fmt_num(_line_weight_total(line)) if _line_weight_total(line) > 0 else "",
+                    fmt_display_date(entrega),
+                    "",
+                    "",
+                ]
+            )
+        else:
+            values.extend([fmt_display_date(entrega), "", ""])
         xx = m
         c.setFont(fonts["regular"], 8.3)
         c.setFillColor(palette["ink"])
@@ -5314,7 +5405,10 @@ def _render_ne_cotacao_pdf_modern(self, path, ne):
         c.drawString(m + 10, yinv(805), ntxt(footer_left))
         c.drawString(m + 10, yinv(816), ntxt(footer_mid))
         c.drawString(m + 10, yinv(827), ntxt(footer_right))
-        c.drawRightString(w - m - 10, yinv(805), ntxt(f"Total de linhas: {len(linhas)}"))
+        top_right = f"Total de linhas: {len(linhas)}"
+        if total_weight > 0:
+            top_right += f" | Peso total: {fmt_num(total_weight)} kg"
+        c.drawRightString(w - m - 10, yinv(805), ntxt(top_right))
         c.drawRightString(w - m - 10, yinv(816), ntxt(f"Documento: {doc_num}"))
         c.drawRightString(w - m - 10, yinv(827), ntxt(f"Pagina {page_no}/{total_pages}"))
 

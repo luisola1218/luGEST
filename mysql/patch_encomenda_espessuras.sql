@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS encomenda_espessuras (
     material VARCHAR(100) NOT NULL,
     espessura VARCHAR(20) NOT NULL,
     tempo_min DECIMAL(10,2),
+    tempos_operacao_json LONGTEXT,
+    maquinas_operacao_json LONGTEXT,
     estado VARCHAR(50),
     inicio_producao DATETIME,
     fim_producao DATETIME,
@@ -28,6 +30,40 @@ SET @sql := IF(
     @fk_exists > 0,
     'SELECT 1',
     'ALTER TABLE encomenda_espessuras ADD CONSTRAINT fk_enc_esp_encomenda FOREIGN KEY (encomenda_numero) REFERENCES encomendas(numero) ON DELETE CASCADE'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col_tempos_exists := (
+    SELECT COUNT(*)
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'encomenda_espessuras'
+      AND COLUMN_NAME = 'tempos_operacao_json'
+);
+
+SET @sql := IF(
+    @col_tempos_exists > 0,
+    'SELECT 1',
+    'ALTER TABLE encomenda_espessuras ADD COLUMN tempos_operacao_json LONGTEXT NULL'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col_maquinas_exists := (
+    SELECT COUNT(*)
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'encomenda_espessuras'
+      AND COLUMN_NAME = 'maquinas_operacao_json'
+);
+
+SET @sql := IF(
+    @col_maquinas_exists > 0,
+    'SELECT 1',
+    'ALTER TABLE encomenda_espessuras ADD COLUMN maquinas_operacao_json LONGTEXT NULL'
 );
 PREPARE stmt FROM @sql;
 EXECUTE stmt;

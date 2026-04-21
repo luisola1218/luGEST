@@ -1,0 +1,87 @@
+{
+  "postos_trabalho": [
+    "Embalamento",
+    "Expedicao",
+    "Furo Manual",
+    "Lacagem",
+    "Laser",
+    "Maquina 3030",
+    "Maquina 5030",
+    "Maquina 5040",
+    "Maquinacao",
+    "Quinagem",
+    "Montagem",
+    "1320",
+    "Roscagem",
+    "Serralharia",
+    "Soldadura"
+  ],
+  "operador_posto_map": {},
+  "tempos_operacao_planeada_min": {},
+  "workcenter_catalog": [
+    {
+      "name": "Embalamento",
+      "operation": "Embalamento",
+      "machines": []
+    },
+    {
+      "name": "Expedicao",
+      "operation": "Expedicao",
+      "machines": []
+    },
+    {
+      "name": "Furo Manual",
+      "operation": "Furo Manual",
+      "machines": []
+    },
+    {
+      "name": "Lacagem",
+      "operation": "Lacagem",
+      "machines": []
+    },
+    {
+      "name": "Laser",
+      "operation": "Corte Laser",
+      "machines": [
+        "Maquina 3030",
+        "Maquina 5030",
+        "Maquina 5040"
+      ]
+    },
+    {
+      "name": "Maquinacao",
+      "operation": "Maquinacao",
+      "machines": [
+        "Quinagem"
+      ]
+    },
+    {
+      "name": "Montagem",
+      "operation": "Montagem",
+      "machines": []
+    },
+    {
+      "name": "Quinagem",
+      "operation": "Quinagem",
+      "machines": [
+        "1320"
+      ]
+    },
+    {
+      "name": "Roscagem",
+      "operation": "Roscagem",
+      "machines": []
+    },
+    {
+      "name": "Serralharia",
+      "operation": "Serralharia",
+      "machines": []
+    },
+    {
+      "name": "Soldadura",
+      "operation": "Serralharia",
+      "machines": []
+    }
+  ],
+  "plano_bloqueios": []
+}

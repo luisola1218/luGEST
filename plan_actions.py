@@ -893,6 +893,7 @@ def preview_plano_a4(self):
     path = os.path.join(tempfile.gettempdir(), "lugest_plano.pdf")
 
     def render_pdf(out_path):
+        from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4, landscape
         from reportlab.pdfgen import canvas as pdf_canvas
         from reportlab.pdfbase import pdfmetrics
@@ -941,12 +942,16 @@ def preview_plano_a4(self):
                 pass
 
         margin = 20
+        c.setFillColor(colors.HexColor("#f3f7fb"))
+        c.rect(0, 0, width, height, stroke=0, fill=1)
         c.setStrokeColorRGB(0.78, 0.80, 0.84)
         c.rect(margin, yinv(height - margin), width - margin * 2, height - margin * 2, stroke=1, fill=0)
-        draw_logo(margin + 4, margin + 6, 70, 32)
+        c.setFillColor(colors.HexColor("#0f2748"))
+        c.roundRect(margin, yinv(62), width - margin * 2, 42, 14, stroke=0, fill=1)
+        draw_logo(margin + 8, margin + 7, 72, 30)
 
         start_min, end_min, slot, rows, cols, col_w, row_h = self.get_plano_grid_metrics()
-        top_margin = 60
+        top_margin = 96
         time_w = 66
         footer_box_h = 60
         grid_w = width - (margin * 2) - time_w
@@ -955,12 +960,86 @@ def preview_plano_a4(self):
         row_h = max(18, grid_h // (rows + 1))
         dias = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab"]
         dates = [self.p_week_start + timedelta(days=i) for i in range(cols)]
+        operation_label = str(getattr(self, "planning_operation_label", "") or "Produção").strip()
+        visible_items = []
+        visible_resources = set()
+        for item in self.data.get("plano", []):
+            try:
+                d = datetime.strptime(item["data"], "%Y-%m-%d").date()
+            except Exception:
+                continue
+            if d < dates[0] or d > dates[-1]:
+                continue
+            visible_items.append(item)
+            resource_txt = str(item.get("maquina", item.get("posto_trabalho", item.get("posto", ""))) or "").strip()
+            if resource_txt:
+                visible_resources.add(resource_txt.lower())
+        visible_orders = {
+            str(item.get("encomenda", "") or "").strip()
+            for item in visible_items
+            if str(item.get("encomenda", "") or "").strip()
+        }
+        resource_label = str(getattr(self, "planning_resource_label", "") or "").strip()
+        visible_resource_names = sorted(
+            {
+                str(item.get("maquina", item.get("posto_trabalho", item.get("posto", ""))) or "").strip()
+                for item in visible_items
+                if str(item.get("maquina", item.get("posto_trabalho", item.get("posto", ""))) or "").strip()
+            },
+            key=lambda value: value.lower(),
+        )
+        if visible_resource_names:
+            resource_summary = ", ".join(visible_resource_names[:3])
+            if len(visible_resource_names) > 3:
+                resource_summary += f" +{len(visible_resource_names) - 3}"
+        else:
+            resource_summary = "Sem recurso atribuido"
+        generated_at = datetime.now().strftime("%d/%m/%Y %H:%M")
 
         set_font(True, 14)
         c.drawString(margin + 82, yinv(margin + 20), "Plano de Produção")
         set_font(False, 9)
         c.drawRightString(width - margin - 4, yinv(margin + 20), f"Semana: {dates[0].strftime('%d/%m/%Y')} - {dates[-1].strftime('%d/%m/%Y')}")
         c.line(margin, yinv(55), width - margin, yinv(55))
+        c.setFillColor(colors.HexColor("#0f2748"))
+        c.roundRect(margin, yinv(62), width - margin * 2, 42, 14, stroke=0, fill=1)
+        draw_logo(margin + 8, margin + 7, 72, 30)
+        set_font(True, 16)
+        c.setFillColor(colors.white)
+        c.drawString(margin + 88, yinv(margin + 19), "Plano de Producao")
+        set_font(False, 9)
+        c.setFillColor(colors.HexColor("#dbeafe"))
+        subtitle = f"Operacao: {operation_label}"
+        if resource_label:
+            subtitle += f" | Recurso: {resource_label}"
+        c.drawString(margin + 88, yinv(margin + 34), subtitle)
+        c.drawRightString(width - margin - 10, yinv(margin + 19), f"Semana {dates[0].strftime('%d/%m/%Y')} - {dates[-1].strftime('%d/%m/%Y')}")
+        c.drawRightString(width - margin - 10, yinv(margin + 34), f"Emitido em {generated_at}")
+
+        stat_specs = [
+            ("Ordens", str(len(visible_orders)), "#eff6ff", "#1d4ed8"),
+            ("Blocos", str(len(visible_items)), "#ecfeff", "#0f766e"),
+            ("Recursos", str(len(visible_resource_names)), "#fff7ed", "#c2410c"),
+        ]
+        stat_w = 108
+        stat_h = 24
+        stat_gap = 8
+        stat_y = 70
+        stat_x = margin + 12
+        for label_txt, value_txt, fill_hex, accent_hex in stat_specs:
+            c.setFillColor(colors.HexColor(fill_hex))
+            c.setStrokeColor(colors.HexColor("#cbd5e1"))
+            c.roundRect(stat_x, yinv(stat_y + stat_h), stat_w, stat_h, 8, stroke=1, fill=1)
+            c.setFillColor(colors.HexColor(accent_hex))
+            set_font(True, 11)
+            c.drawString(stat_x + 8, yinv(stat_y + 10), value_txt)
+            c.setFillColor(colors.HexColor("#475569"))
+            set_font(False, 7.5)
+            c.drawString(stat_x + 32, yinv(stat_y + 10), label_txt)
+            stat_x += stat_w + stat_gap
+        c.setFillColor(colors.HexColor("#475569"))
+        set_font(False, 8)
+        c.drawRightString(width - margin - 10, yinv(78), f"Recursos visiveis: {resource_summary}")
 
         set_font(True, 8)
         for cidx in range(cols):
@@ -1021,6 +1100,14 @@ def preview_plano_a4(self):
             out.append(cur)
             return out
 
+        def _compact_label(text, limit=18):
+            txt = str(text or "").strip()
+            if len(txt) <= limit:
+                return txt
+            if limit <= 4:
+                return txt[:limit]
+            return f"{txt[:limit-3].rstrip()}..."
+
         def _fit_block_lines(lines, box_w, box_h):
             raw_specs = []
             for line in list(lines or []):
@@ -1034,10 +1121,10 @@ def preview_plano_a4(self):
                     raw_specs.append({"text": text, "role": role})
             if not raw_specs:
                 raw_specs = [{"text": "-", "role": "body"}]
-            for size in (9.8, 8.8, 7.8, 7.0, 6.2, 5.8):
+            for size in (9.2, 8.4, 7.6, 6.8, 6.2, 5.6, 5.0, 4.6):
                 wrapped = []
-                line_h = size + 1.25
-                max_lines = max(1, int((box_h - 6) // line_h))
+                line_h = size + 0.9
+                max_lines = max(1, int((box_h - 4) // line_h))
                 for spec in raw_specs:
                     role = str(spec.get("role", "body") or "body")
                     font_used = font_bold if role in ("title", "time") else font_regular
@@ -1045,9 +1132,9 @@ def preview_plano_a4(self):
                         wrapped.append({"text": part, "role": role})
                 if len(wrapped) <= max_lines:
                     return wrapped, size
-            size = 5.8
-            line_h = size + 1.15
-            max_lines = max(1, int((box_h - 6) // line_h))
+            size = 4.6
+            line_h = size + 0.9
+            max_lines = max(1, int((box_h - 4) // line_h))
             wrapped = []
             for spec in raw_specs:
                 role = str(spec.get("role", "body") or "body")
@@ -1067,7 +1154,7 @@ def preview_plano_a4(self):
 
         def draw_block_text(cx, cy, lines, box_w, box_h):
             wrapped, size = _fit_block_lines(lines, box_w, box_h)
-            line_h = size + 1.25
+            line_h = size + 1.0
             total_h = len(wrapped) * line_h
             start_y = cy - (total_h / 2) + (line_h / 2)
             for i, item_line in enumerate(wrapped):
@@ -1126,31 +1213,65 @@ def preview_plano_a4(self):
             enc_obj = enc_map.get(enc_num, {}) if enc_num else {}
             cliente = str(enc_obj.get("cliente", "") or "").strip()
             tempo_txt = f"{dur} min"
+            recurso = str(item.get("maquina", item.get("posto_trabalho", item.get("posto", ""))) or "").strip()
+            recurso_txt = _compact_label(recurso.replace("Maquina ", "M ").replace("Máquina ", "M "), 18)
             linhas = [{"text": enc_num or "-", "role": "title"}]
             if cliente:
                 linhas.append({"text": f"Cliente: {cliente}", "role": "body"})
             mat = str(item.get("material", "") or "").strip()
             esp = str(item.get("espessura", "") or "").strip()
-            mat_esp = " | ".join(x for x in [mat, f"{esp}mm" if esp else ""] if x).strip()
+            mat_esp = " | ".join(x for x in [_compact_label(mat, 20), f"{esp}mm" if esp else ""] if x).strip()
+            nota_cliente = _compact_label(enc_obj.get("nota_cliente", ""), 18)
+            if recurso_txt:
+                linhas.append({"text": recurso_txt, "role": "body"})
             if mat_esp:
                 linhas.append({"text": mat_esp, "role": "body"})
+            if nota_cliente and bloco_h >= (row_h * 2.2):
+                linhas.append({"text": f"OC: {nota_cliente}", "role": "body"})
             fim = minutes_to_time(start + dur)
             linhas.append({"text": f"{item.get('inicio','')} - {fim}", "role": "body"})
             linhas.append({"text": tempo_txt, "role": "time"})
             chapa = str(item.get("chapa", "") or "").strip()
             if chapa and chapa != "-" and bloco_h >= (row_h * 2):
                 linhas.append({"text": f"Chapa: {chapa}", "role": "body"})
-            if bloco_h <= (row_h * 1.2):
-                compact = [{"text": enc_num or "-", "role": "title"}]
-                compact.append({"text": tempo_txt, "role": "time"})
-                if mat_esp and bloco_h > (row_h * 0.9):
-                    compact.append({"text": mat_esp, "role": "body"})
-                linhas = compact
+            if bloco_h <= (row_h * 1.15):
+                compact_txt = " | ".join(
+                    part
+                    for part in (
+                        _compact_label(enc_num, 16) or "-",
+                        _compact_label(recurso_txt or mat_esp, 12),
+                        tempo_txt,
+                    )
+                    if part
+                )
+                linhas = [{"text": compact_txt, "role": "title"}]
             elif bloco_h <= (row_h * 1.9):
                 compact = [{"text": enc_num or "-", "role": "title"}]
+                if recurso_txt:
+                    compact.append({"text": recurso_txt, "role": "body"})
                 if mat_esp:
                     compact.append({"text": mat_esp, "role": "body"})
                 compact.append({"text": f"{item.get('inicio','')} - {fim} | {tempo_txt}", "role": "time"})
+                linhas = compact
+            elif bloco_h <= (row_h * 2.6):
+                compact = [{"text": enc_num or "-", "role": "title"}]
+                if recurso_txt:
+                    compact.append({"text": recurso_txt, "role": "body"})
+                if mat_esp:
+                    compact.append({"text": mat_esp, "role": "body"})
+                compact.append({"text": f"{item.get('inicio','')} - {fim}", "role": "body"})
+                compact.append({"text": tempo_txt, "role": "time"})
+                linhas = compact
+            elif bloco_h <= (row_h * 3.3):
+                compact = [{"text": enc_num or "-", "role": "title"}]
+                if cliente:
+                    compact.append({"text": f"Cli: {cliente}", "role": "body"})
+                if recurso_txt:
+                    compact.append({"text": recurso_txt, "role": "body"})
+                if mat_esp:
+                    compact.append({"text": mat_esp, "role": "body"})
+                compact.append({"text": f"{item.get('inicio','')} - {fim}", "role": "body"})
+                compact.append({"text": tempo_txt, "role": "time"})
                 linhas = compact
             draw_block_text(x0 + col_w / 2, y0 + (y1 - y0) / 2, linhas, col_w - 10, (y1 - y0) - 6)
 
@@ -1159,16 +1280,25 @@ def preview_plano_a4(self):
         # Caixa de Observações / Data / Operador para assinatura
         box_h = footer_box_h
         box_y = height - margin - box_h
-        c.setStrokeColorRGB(0.6, 0.65, 0.7)
-        c.rect(margin, yinv(box_y + box_h), width - margin * 2, box_h, stroke=1, fill=0)
-        c.setStrokeColorRGB(0, 0, 0)
-        set_font(True, 8)
-        c.drawString(margin + 6, yinv(box_y + 14), "Observacoes:")
+        c.setFillColor(colors.white)
+        c.setStrokeColor(colors.HexColor("#94a3b8"))
+        c.roundRect(margin, yinv(box_y + box_h), width - margin * 2, box_h, 12, stroke=1, fill=1)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        set_font(True, 8.5)
+        c.drawString(margin + 8, yinv(box_y + 14), "Observacoes e validacao de turno")
+        c.setStrokeColor(colors.HexColor("#334155"))
+        c.line(margin + 8, yinv(box_y + 34), width - margin - 220, yinv(box_y + 34))
         set_font(False, 8)
-        c.line(margin + 6, yinv(box_y + 34), width - margin - 6, yinv(box_y + 34))
+        c.setFillColor(colors.HexColor("#475569"))
+        c.drawString(margin + 8, yinv(box_y + 48), f"Operacao: {operation_label}")
+        if resource_label:
+            c.drawString(margin + 160, yinv(box_y + 48), f"Recurso: {resource_label}")
+        c.drawRightString(width - margin - 12, yinv(box_y + 16), "Planeamento industrial sincronizado")
+        c.drawRightString(width - margin - 12, yinv(box_y + 30), f"Ordens {len(visible_orders)} | Blocos {len(visible_items)}")
+        c.setStrokeColor(colors.HexColor("#0f172a"))
         set_font(True, 8)
-        c.drawString(margin + 6, yinv(box_y + 52), "Data:")
-        c.drawString(margin + 180, yinv(box_y + 52), "Operador:")
+        c.drawString(margin + 8, yinv(box_y + 58), "Data:")
+        c.drawString(margin + 180, yinv(box_y + 58), "Operador:")
         c.save()
 
     try:

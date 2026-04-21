@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from functools import partial
+import sys
 import time
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QProcess, Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -58,6 +59,7 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self.backend = backend
         self.runtime_service = runtime_service
+        self._logout_in_progress = False
         self.pages: dict[str, QWidget] = {}
         self.nav_buttons: dict[str, QToolButton] = {}
         self._trial_block_dialog_open = False
@@ -147,6 +149,10 @@ class MainWindow(QMainWindow):
         refresh_btn = QPushButton("Atualizar")
         refresh_btn.clicked.connect(lambda: self.refresh_current_page(force=True, background=False))
         right_col.addWidget(refresh_btn)
+        logout_btn = QPushButton("Logout")
+        logout_btn.setProperty("variant", "secondary")
+        logout_btn.clicked.connect(self._logout)
+        right_col.addWidget(logout_btn)
         shell_layout.addLayout(right_col)
         root.addWidget(shell)
 
@@ -488,6 +494,37 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Aviso MySQL", f"Falha ao fechar a aplicacao em seguranca:\n{exc}")
             event.ignore()
 
+    def _logout(self) -> None:
+        if self._logout_in_progress:
+            return
+        if QMessageBox.question(self, "Logout", "Terminar a sessão atual e voltar ao login?") != QMessageBox.Yes:
+            return
+        self._logout_in_progress = True
+        try:
+            self.auto_refresh.stop()
+            self.save_monitor.stop()
+            if not self._finalize_save_pipeline(context="antes de terminar a sessao", timeout_sec=15.0, interactive=True):
+                self.auto_refresh.start()
+                self.save_monitor.start()
+                self._logout_in_progress = False
+                return
+            stopper = getattr(self.backend, "stop_async_save_worker", None)
+            if callable(stopper):
+                stopper(timeout_sec=1.0)
+            self.backend.user = {}
+            if getattr(sys, "frozen", False):
+                started = QProcess.startDetached(sys.executable, sys.argv[1:])
+            else:
+                started = QProcess.startDetached(sys.executable, list(sys.argv))
+            if not started:
+                raise RuntimeError("Não foi possível reabrir o ecrã de login.")
+            self.close()
+        except Exception as exc:
+            self.auto_refresh.start()
+            self.save_monitor.start()
+            self._logout_in_progress = False
+            QMessageBox.warning(self, "Logout", str(exc))
+
     def _open_admin_extras(self) -> None:
         user = dict(self.backend.user or {})
         if str(user.get("role", "") or "").strip().lower() != "admin":
@@ -520,6 +557,9 @@ class MainWindow(QMainWindow):
         company_btn = QPushButton("Empresa / PDFs")
         company_btn.setProperty("variant", "secondary")
         tools_row.addWidget(company_btn)
+        workcenters_btn = QPushButton("Postos Trabalho")
+        workcenters_btn.setProperty("variant", "secondary")
+        tools_row.addWidget(workcenters_btn)
         trial_manage_allowed = bool(getattr(self.backend, "is_owner_session", lambda: False)())
         trial_btn = None
         if trial_manage_allowed:
@@ -580,6 +620,15 @@ class MainWindow(QMainWindow):
         password_user_edit = QLineEdit()
         password_user_edit.setEchoMode(QLineEdit.Password)
         password_user_edit.setPlaceholderText("Obrigatoria para novo utilizador")
+        password_toggle = QPushButton("Mostrar")
+        password_toggle.setProperty("variant", "secondary")
+        password_toggle.setCheckable(True)
+        password_row = QWidget()
+        password_row_layout = QHBoxLayout(password_row)
+        password_row_layout.setContentsMargins(0, 0, 0, 0)
+        password_row_layout.setSpacing(8)
+        password_row_layout.addWidget(password_user_edit, 1)
+        password_row_layout.addWidget(password_toggle, 0)
         role_combo = QComboBox()
         role_combo.addItems(list(getattr(self.backend, "available_roles", lambda: ["Admin", "Producao", "Qualidade", "Planeamento", "Orcamentista", "Operador"])() or []))
         posto_combo = QComboBox()
@@ -590,7 +639,7 @@ class MainWindow(QMainWindow):
                 posto_combo.addItem(str(posto))
         active_box = QCheckBox("Utilizador ativo")
         user_form.addRow("Utilizador", username_edit)
-        user_form.addRow("Password", password_user_edit)
+        user_form.addRow("Password", password_row)
         user_form.addRow("Role", role_combo)
         user_form.addRow("Posto", posto_combo)
         user_form.addRow("", active_box)
@@ -599,6 +648,32 @@ class MainWindow(QMainWindow):
         password_note.setProperty("role", "muted")
         password_note.setWordWrap(True)
         form_host_layout.addWidget(password_note)
+        session_passwords: dict[str, str] = {}
+        current_session_user = str((self.backend.user or {}).get("username", "") or "").strip().lower()
+        current_session_password = str((self.backend.user or {}).get("_session_password", "") or "").strip()
+        if current_session_user and current_session_password:
+            session_passwords[current_session_user] = current_session_password
+        password_preview_edit = QLineEdit()
+        password_preview_edit.setReadOnly(True)
+        password_preview_edit.setEchoMode(QLineEdit.Password)
+        password_preview_edit.setPlaceholderText("Só aparece aqui a última password definida nesta sessão.")
+        preview_toggle = QPushButton("Ver")
+        preview_toggle.setProperty("variant", "secondary")
+        preview_toggle.setCheckable(True)
+        preview_row = QWidget()
+        preview_row_layout = QHBoxLayout(preview_row)
+        preview_row_layout.setContentsMargins(0, 0, 0, 0)
+        preview_row_layout.setSpacing(8)
+        preview_row_layout.addWidget(password_preview_edit, 1)
+        preview_row_layout.addWidget(preview_toggle, 0)
+        preview_note = QLabel(
+            "As passwords existentes não podem ser reveladas depois de gravadas, porque ficam guardadas em hash. "
+            "Aqui só aparece a última password que definiste nesta sessão de administração."
+        )
+        preview_note.setProperty("role", "muted")
+        preview_note.setWordWrap(True)
+        form_host_layout.addWidget(preview_row)
+        form_host_layout.addWidget(preview_note)
 
         perms_label = QLabel("Menus permitidos")
         perms_label.setStyleSheet("font-size: 14px; font-weight: 700; color: #0f172a;")
@@ -634,6 +709,42 @@ class MainWindow(QMainWindow):
         layout.addWidget(users_host, 1)
 
         current_username = {"value": ""}
+
+        def sync_password_echo() -> None:
+            visible = bool(password_toggle.isChecked())
+            password_user_edit.setEchoMode(QLineEdit.Normal if visible else QLineEdit.Password)
+            password_toggle.setText("Ocultar" if visible else "Mostrar")
+
+        def sync_preview_echo() -> None:
+            visible = bool(preview_toggle.isChecked())
+            password_preview_edit.setEchoMode(QLineEdit.Normal if visible else QLineEdit.Password)
+            preview_toggle.setText("Ocultar" if visible else "Ver")
+
+        def update_password_preview(username: str = "") -> None:
+            user_key = str(username or "").strip().lower()
+            preview_value = str(session_passwords.get(user_key, "") or "")
+            password_preview_edit.setText(preview_value)
+            preview_toggle.setEnabled(bool(preview_value))
+            if not preview_value:
+                preview_toggle.setChecked(False)
+            sync_preview_echo()
+
+        def refresh_posto_options(selected_text: str = "") -> None:
+            current_text = str(selected_text or posto_combo.currentText() or "").strip()
+            posto_combo.blockSignals(True)
+            posto_combo.clear()
+            posto_combo.addItem("")
+            for posto in list(getattr(self.backend, "available_postos", lambda: ["Geral"])() or []):
+                value = str(posto or "").strip()
+                if value and posto_combo.findText(value) < 0:
+                    posto_combo.addItem(value)
+            if current_text:
+                if posto_combo.findText(current_text) < 0:
+                    posto_combo.addItem(current_text)
+                posto_combo.setCurrentText(current_text)
+            else:
+                posto_combo.setCurrentIndex(0)
+            posto_combo.blockSignals(False)
 
         def open_company_dialog() -> None:
             getter_brand = getattr(self.backend, "branding_settings", None)
@@ -972,21 +1083,452 @@ class MainWindow(QMainWindow):
             refresh_trial_status(sync_inputs=True)
             trial_dialog.exec()
 
+        def open_workcenters_dialog() -> None:
+            getter_rows = getattr(self.backend, "workcenter_rows", None)
+            group_options_getter = getattr(self.backend, "workcenter_group_options", None)
+            operation_options_getter = getattr(self.backend, "planning_operation_options", None)
+            save_group = getattr(self.backend, "save_workcenter_group", None)
+            remove_group = getattr(self.backend, "remove_workcenter_group", None)
+            save_machine = getattr(self.backend, "save_workcenter_machine", None)
+            remove_machine = getattr(self.backend, "remove_workcenter_machine", None)
+            if (
+                not callable(getter_rows)
+                or not callable(group_options_getter)
+                or not callable(operation_options_getter)
+                or not callable(save_group)
+                or not callable(remove_group)
+                or not callable(save_machine)
+                or not callable(remove_machine)
+            ):
+                QMessageBox.warning(dialog, "Postos de Trabalho", "Gestao de postos indisponivel.")
+                return
+
+            wc_dialog = QDialog(dialog)
+            wc_dialog.setWindowTitle("Postos de Trabalho")
+            wc_dialog.setMinimumSize(1120, 620)
+            wc_layout = QVBoxLayout(wc_dialog)
+            wc_layout.setContentsMargins(14, 14, 14, 14)
+            wc_layout.setSpacing(12)
+
+            intro = QLabel(
+                "Organiza a estrutura da empresa por posto de trabalho e por maquina/recurso. "
+                "Exemplo: posto 'Corte Laser' com maquinas 'Maquina 3030', 'Maquina 5030' e 'Maquina 5040'."
+            )
+            intro.setWordWrap(True)
+            wc_layout.addWidget(intro)
+
+            host = QWidget()
+            host_layout = QHBoxLayout(host)
+            host_layout.setContentsMargins(0, 0, 0, 0)
+            host_layout.setSpacing(12)
+
+            workcenters_table = QTableWidget(0, 8)
+            workcenters_table.setHorizontalHeaderLabels(["Tipo", "Nome", "Grupo", "Operacao", "Utiliz.", "Orc.", "Enc.", "Plan."])
+            workcenters_table.verticalHeader().setVisible(False)
+            workcenters_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+            workcenters_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+            workcenters_table.setSelectionMode(QAbstractItemView.SingleSelection)
+            workcenters_table.setAlternatingRowColors(True)
+            workcenters_table.setWordWrap(False)
+            workcenters_table.horizontalHeader().setStretchLastSection(False)
+            workcenters_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+            workcenters_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+            workcenters_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+            workcenters_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+            for column in range(4, 8):
+                workcenters_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeToContents)
+            host_layout.addWidget(workcenters_table, 6)
+
+            side = QWidget()
+            side_layout = QVBoxLayout(side)
+            side_layout.setContentsMargins(0, 0, 0, 0)
+            side_layout.setSpacing(10)
+
+            side_title = QLabel("Gestao da estrutura")
+            side_title.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
+            side_layout.addWidget(side_title)
+
+            side_note = QLabel(
+                "Primeiro defines o posto principal. Depois, se fizer sentido, adicionas as maquinas ou bancadas que trabalham dentro desse posto."
+            )
+            side_note.setProperty("role", "muted")
+            side_note.setWordWrap(True)
+            side_layout.addWidget(side_note)
+
+            group_header = QLabel("Posto de trabalho")
+            group_header.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+            side_layout.addWidget(group_header)
+
+            group_form = QFormLayout()
+            group_form.setHorizontalSpacing(12)
+            group_form.setVerticalSpacing(8)
+            group_name_edit = QLineEdit()
+            group_name_edit.setPlaceholderText("Ex.: Corte Laser, Quinagem, Serralharia")
+            group_operation_combo = QComboBox()
+            for op_name in list(operation_options_getter() or []):
+                group_operation_combo.addItem(str(op_name))
+            group_form.addRow("Nome do posto", group_name_edit)
+            group_form.addRow("Operacao base", group_operation_combo)
+            side_layout.addLayout(group_form)
+
+            group_usage_label = QLabel("Novo posto sem utilizacao.")
+            group_usage_label.setWordWrap(True)
+            group_usage_label.setStyleSheet(
+                """
+                QLabel {
+                    border-radius: 14px;
+                    padding: 10px 12px;
+                    background: #eef5fc;
+                    border: 1px solid #cdd9ea;
+                    color: #36506d;
+                    font-weight: 600;
+                }
+                """
+            )
+            side_layout.addWidget(group_usage_label)
+
+            group_note = QLabel(
+                "Um posto pode existir sozinho. Se precisares de detalhe operacional, adicionas depois as maquinas ou bancadas por baixo."
+            )
+            group_note.setProperty("role", "muted")
+            group_note.setWordWrap(True)
+            side_layout.addWidget(group_note)
+
+            group_actions = QHBoxLayout()
+            group_actions.setSpacing(8)
+            new_group_btn = QPushButton("Novo posto")
+            new_group_btn.setProperty("variant", "secondary")
+            save_group_btn = QPushButton("Guardar posto")
+            remove_group_btn = QPushButton("Remover posto")
+            remove_group_btn.setProperty("variant", "danger")
+            group_actions.addWidget(new_group_btn)
+            group_actions.addWidget(save_group_btn)
+            group_actions.addWidget(remove_group_btn)
+            side_layout.addLayout(group_actions)
+
+            machine_header = QLabel("Maquina / recurso")
+            machine_header.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a; margin-top: 8px;")
+            side_layout.addWidget(machine_header)
+
+            machine_form = QFormLayout()
+            machine_form.setHorizontalSpacing(12)
+            machine_form.setVerticalSpacing(8)
+            machine_group_combo = QComboBox()
+            machine_name_edit = QLineEdit()
+            machine_name_edit.setPlaceholderText("Ex.: Maquina 3030, Bancada 1, Serra 2")
+            machine_form.addRow("Posto pai", machine_group_combo)
+            machine_form.addRow("Nome da maquina", machine_name_edit)
+            side_layout.addLayout(machine_form)
+
+            machine_usage_label = QLabel("Nova maquina sem utilizacao.")
+            machine_usage_label.setWordWrap(True)
+            machine_usage_label.setStyleSheet(
+                """
+                QLabel {
+                    border-radius: 14px;
+                    padding: 10px 12px;
+                    background: #f8fafc;
+                    border: 1px solid #d7e2ef;
+                    color: #475467;
+                    font-weight: 600;
+                }
+                """
+            )
+            side_layout.addWidget(machine_usage_label)
+
+            machine_note = QLabel(
+                "A maquina fica ligada ao posto principal. Isto permite ter varias maquinas a trabalhar dentro do mesmo posto."
+            )
+            machine_note.setProperty("role", "muted")
+            machine_note.setWordWrap(True)
+            side_layout.addWidget(machine_note)
+
+            machine_actions = QHBoxLayout()
+            machine_actions.setSpacing(8)
+            new_machine_btn = QPushButton("Nova maquina")
+            new_machine_btn.setProperty("variant", "secondary")
+            save_machine_btn = QPushButton("Guardar maquina")
+            remove_machine_btn = QPushButton("Remover maquina")
+            remove_machine_btn.setProperty("variant", "danger")
+            machine_actions.addWidget(new_machine_btn)
+            machine_actions.addWidget(save_machine_btn)
+            machine_actions.addWidget(remove_machine_btn)
+            side_layout.addLayout(machine_actions)
+            side_layout.addStretch(1)
+            host_layout.addWidget(side, 4)
+
+            wc_layout.addWidget(host, 1)
+
+            wc_buttons = QDialogButtonBox(QDialogButtonBox.Close)
+            wc_buttons.button(QDialogButtonBox.Close).setText("Fechar")
+            wc_buttons.rejected.connect(wc_dialog.reject)
+            wc_layout.addWidget(wc_buttons)
+
+            current_group = {"value": ""}
+            current_machine = {"value": ""}
+
+            def describe_usage(row: dict | None = None, empty_text: str = "Sem utilizacao.") -> str:
+                if not isinstance(row, dict) or not str(row.get("name", "") or "").strip():
+                    return empty_text
+                return (
+                    f"Em uso por {int(row.get('users', 0) or 0)} utilizador(es), "
+                    f"{int(row.get('quotes', 0) or 0)} orçamento(s), "
+                    f"{int(row.get('orders', 0) or 0)} encomenda(s) e "
+                    f"{int(row.get('planning', 0) or 0)} registo(s) de planeamento."
+                )
+
+            def refresh_group_options(selected_group: str = "") -> None:
+                target = str(selected_group or machine_group_combo.currentText() or "").strip()
+                options = list(group_options_getter() or [])
+                machine_group_combo.blockSignals(True)
+                machine_group_combo.clear()
+                for group_name in options:
+                    machine_group_combo.addItem(str(group_name))
+                if target:
+                    machine_group_combo.setCurrentText(target)
+                elif options:
+                    machine_group_combo.setCurrentIndex(0)
+                machine_group_combo.blockSignals(False)
+
+            def clear_group_form() -> None:
+                current_group["value"] = ""
+                group_name_edit.setText("")
+                if group_operation_combo.count() > 0:
+                    group_operation_combo.setCurrentIndex(0)
+                group_usage_label.setText(describe_usage(None, "Novo posto sem utilizacao."))
+
+            def clear_machine_form() -> None:
+                current_machine["value"] = ""
+                machine_name_edit.setText("")
+                machine_usage_label.setText(describe_usage(None, "Nova maquina sem utilizacao."))
+
+            def clear_workcenter_form() -> None:
+                clear_group_form()
+                clear_machine_form()
+                workcenters_table.clearSelection()
+
+            def selected_workcenter_row() -> dict:
+                current_item = workcenters_table.currentItem()
+                if current_item is None:
+                    return {}
+                payload = dict(
+                    (
+                        workcenters_table.item(current_item.row(), 0).data(Qt.UserRole)
+                        if workcenters_table.item(current_item.row(), 0) is not None
+                        else {}
+                    )
+                    or {}
+                )
+                row_name = str(payload.get("name", "") or "").strip().lower()
+                row_type = str(payload.get("entry_type", "") or "").strip()
+                return next(
+                    (
+                        row
+                        for row in list(getter_rows() or [])
+                        if str(row.get("entry_type", "") or "").strip() == row_type
+                        and str(row.get("name", "") or "").strip().lower() == row_name
+                    ),
+                    {},
+                )
+
+            def load_workcenter_form(row: dict) -> None:
+                entry_type = str(row.get("entry_type", "") or "").strip()
+                if entry_type == "group":
+                    current_group["value"] = str(row.get("name", "") or "").strip()
+                    group_name_edit.setText(current_group["value"])
+                    group_operation_combo.setCurrentText(str(row.get("operation", "") or "").strip())
+                    group_usage_label.setText(describe_usage(row, "Novo posto sem utilizacao."))
+                    machine_group_combo.setCurrentText(current_group["value"])
+                    clear_machine_form()
+                    return
+                current_machine["value"] = str(row.get("name", "") or "").strip()
+                machine_name_edit.setText(current_machine["value"])
+                machine_group_combo.setCurrentText(str(row.get("group", "") or "").strip())
+                machine_usage_label.setText(describe_usage(row, "Nova maquina sem utilizacao."))
+                parent_group = str(row.get("group", "") or "").strip()
+                current_group["value"] = parent_group
+                group_name_edit.setText(parent_group)
+                group_operation_combo.setCurrentText(str(row.get("operation", "") or "").strip())
+                parent_row = next(
+                    (
+                        candidate
+                        for candidate in list(getter_rows() or [])
+                        if str(candidate.get("entry_type", "") or "").strip() == "group"
+                        and str(candidate.get("name", "") or "").strip().lower() == parent_group.lower()
+                    ),
+                    {},
+                )
+                group_usage_label.setText(describe_usage(parent_row, "Novo posto sem utilizacao."))
+
+            def refresh_workcenters(select_name: str = "", select_type: str = "") -> None:
+                rows = list(getter_rows() or [])
+                refresh_group_options(machine_group_combo.currentText().strip())
+                workcenters_table.setRowCount(len(rows))
+                target_row = -1
+                for row_index, row in enumerate(rows):
+                    values = [
+                        str(row.get("kind", "") or "").strip() or "-",
+                        str(row.get("name", "") or "").strip(),
+                        str(row.get("group", "") or "").strip() or "-",
+                        str(row.get("operation", "") or "").strip() or "-",
+                        str(int(row.get("users", 0) or 0)),
+                        str(int(row.get("quotes", 0) or 0)),
+                        str(int(row.get("orders", 0) or 0)),
+                        str(int(row.get("planning", 0) or 0)),
+                    ]
+                    for col_index, value in enumerate(values):
+                        item = QTableWidgetItem(value)
+                        if col_index == 0:
+                            item.setData(
+                                Qt.UserRole,
+                                {
+                                    "name": str(row.get("name", "") or "").strip(),
+                                    "entry_type": str(row.get("entry_type", "") or "").strip(),
+                                },
+                            )
+                        workcenters_table.setItem(row_index, col_index, item)
+                    if (
+                        select_name
+                        and str(row.get("name", "") or "").strip().lower() == select_name.lower()
+                        and (not select_type or str(row.get("entry_type", "") or "").strip() == select_type)
+                    ):
+                        target_row = row_index
+                if target_row >= 0:
+                    workcenters_table.selectRow(target_row)
+                elif rows:
+                    workcenters_table.selectRow(0)
+                else:
+                    clear_workcenter_form()
+
+            def on_workcenter_selected() -> None:
+                row = selected_workcenter_row()
+                if row:
+                    load_workcenter_form(row)
+
+            def on_save_group() -> None:
+                group_name = group_name_edit.text().strip()
+                if not group_name:
+                    QMessageBox.warning(wc_dialog, "Postos de Trabalho", "Indica o nome do posto.")
+                    return
+                try:
+                    result = save_group(
+                        name=group_name,
+                        operation=group_operation_combo.currentText().strip(),
+                        current_name=current_group["value"],
+                    )
+                except Exception as exc:
+                    QMessageBox.critical(wc_dialog, "Postos de Trabalho", str(exc))
+                    return
+                saved_name = str(result.get("name", "") or group_name).strip()
+                refresh_posto_options(posto_combo.currentText().strip())
+                refresh_users(current_username["value"])
+                refresh_workcenters(saved_name, "group")
+                QMessageBox.information(wc_dialog, "Postos de Trabalho", "Posto guardado com sucesso.")
+
+            def on_remove_group() -> None:
+                row = selected_workcenter_row()
+                target_name = str(row.get("name", "") or current_group["value"] or "").strip()
+                if str(row.get("entry_type", "") or "").strip() == "machine":
+                    target_name = current_group["value"]
+                if not target_name:
+                    QMessageBox.warning(wc_dialog, "Postos de Trabalho", "Seleciona um posto de trabalho.")
+                    return
+                if QMessageBox.question(
+                    wc_dialog,
+                    "Remover posto",
+                    f"Remover o posto '{target_name}'?",
+                ) != QMessageBox.Yes:
+                    return
+                try:
+                    remove_group(target_name)
+                except Exception as exc:
+                    QMessageBox.critical(wc_dialog, "Postos de Trabalho", str(exc))
+                    return
+                refresh_posto_options(posto_combo.currentText().strip())
+                refresh_users(current_username["value"])
+                refresh_workcenters("")
+                clear_workcenter_form()
+                QMessageBox.information(wc_dialog, "Postos de Trabalho", "Posto removido com sucesso.")
+
+            def on_save_machine() -> None:
+                machine_name = machine_name_edit.text().strip()
+                parent_group = machine_group_combo.currentText().strip() or current_group["value"]
+                if not parent_group:
+                    QMessageBox.warning(wc_dialog, "Postos de Trabalho", "Seleciona primeiro o posto pai da maquina.")
+                    return
+                if not machine_name:
+                    QMessageBox.warning(wc_dialog, "Postos de Trabalho", "Indica o nome da maquina.")
+                    return
+                try:
+                    result = save_machine(
+                        group_name=parent_group,
+                        machine_name=machine_name,
+                        current_name=current_machine["value"],
+                    )
+                except Exception as exc:
+                    QMessageBox.critical(wc_dialog, "Postos de Trabalho", str(exc))
+                    return
+                saved_name = str(result.get("name", "") or machine_name).strip()
+                refresh_posto_options(posto_combo.currentText().strip())
+                refresh_users(current_username["value"])
+                refresh_workcenters(saved_name, "machine")
+                QMessageBox.information(wc_dialog, "Postos de Trabalho", "Maquina guardada com sucesso.")
+
+            def on_remove_machine() -> None:
+                row = selected_workcenter_row()
+                target_name = str(row.get("name", "") or current_machine["value"] or "").strip()
+                if str(row.get("entry_type", "") or "").strip() == "group":
+                    target_name = current_machine["value"]
+                if not target_name:
+                    QMessageBox.warning(wc_dialog, "Postos de Trabalho", "Seleciona uma maquina.")
+                    return
+                if QMessageBox.question(
+                    wc_dialog,
+                    "Remover maquina",
+                    f"Remover a maquina '{target_name}'?",
+                ) != QMessageBox.Yes:
+                    return
+                try:
+                    remove_machine(target_name)
+                except Exception as exc:
+                    QMessageBox.critical(wc_dialog, "Postos de Trabalho", str(exc))
+                    return
+                refresh_posto_options(posto_combo.currentText().strip())
+                refresh_users(current_username["value"])
+                refresh_workcenters("")
+                clear_machine_form()
+                QMessageBox.information(wc_dialog, "Postos de Trabalho", "Maquina removida com sucesso.")
+
+            workcenters_table.itemSelectionChanged.connect(on_workcenter_selected)
+            new_group_btn.clicked.connect(clear_group_form)
+            new_machine_btn.clicked.connect(clear_machine_form)
+            save_group_btn.clicked.connect(on_save_group)
+            remove_group_btn.clicked.connect(on_remove_group)
+            save_machine_btn.clicked.connect(on_save_machine)
+            remove_machine_btn.clicked.connect(on_remove_machine)
+            refresh_workcenters("")
+            wc_dialog.exec()
+
         def clear_user_form() -> None:
             current_username["value"] = ""
             username_edit.setText("")
             password_user_edit.setText("")
+            password_toggle.setChecked(False)
+            sync_password_echo()
             password_user_edit.setPlaceholderText("Obrigatoria para novo utilizador")
             role_combo.setCurrentText("Operador" if role_combo.findText("Operador") >= 0 else role_combo.currentText())
             posto_combo.setCurrentText("")
             active_box.setChecked(True)
             for key, check in permission_checks.items():
                 check.setChecked(key == "home")
+            update_password_preview("")
 
         def load_user_form(row: dict) -> None:
             current_username["value"] = str(row.get("username", "") or "").strip()
             username_edit.setText(current_username["value"])
             password_user_edit.setText("")
+            password_toggle.setChecked(False)
+            sync_password_echo()
             password_user_edit.setPlaceholderText(
                 "Deixa vazio para manter a password atual"
                 if bool(row.get("password_set", False))
@@ -1002,6 +1544,7 @@ class MainWindow(QMainWindow):
             else:
                 for check in permission_checks.values():
                     check.setChecked(True)
+            update_password_preview(current_username["value"])
 
         def refresh_users(select_username: str = "") -> None:
             rows = list(getattr(self.backend, "user_rows", lambda: [])() or [])
@@ -1045,9 +1588,10 @@ class MainWindow(QMainWindow):
             perms = {key: check.isChecked() for key, check in permission_checks.items()}
             if not any(perms.values()):
                 perms["home"] = True
+            raw_password = password_user_edit.text().strip()
             payload = {
                 "username": username_edit.text().strip(),
-                "password": password_user_edit.text().strip(),
+                "password": raw_password,
                 "role": role_combo.currentText().strip(),
                 "posto": posto_combo.currentText().strip(),
                 "active": active_box.isChecked(),
@@ -1059,7 +1603,10 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(dialog, "Utilizadores", str(exc))
                 return
             current_username["value"] = str(result.get("username", "") or "").strip()
+            if raw_password:
+                session_passwords[current_username["value"].lower()] = raw_password
             refresh_users(current_username["value"])
+            update_password_preview(current_username["value"])
             current_user = dict(self.backend.user or {})
             if str(current_user.get("username", "") or "").strip().lower() == current_username["value"].lower():
                 self.user_chip.setText(f"{self.backend.user.get('username', '-')} | {self.backend.user.get('role', '-')}")
@@ -1083,11 +1630,17 @@ class MainWindow(QMainWindow):
 
         users_table.itemSelectionChanged.connect(on_user_selected)
         company_btn.clicked.connect(open_company_dialog)
+        workcenters_btn.clicked.connect(open_workcenters_dialog)
         if trial_btn is not None:
             trial_btn.clicked.connect(open_trial_dialog)
+        password_toggle.toggled.connect(sync_password_echo)
+        preview_toggle.toggled.connect(sync_preview_echo)
         new_user_btn.clicked.connect(clear_user_form)
         save_user_btn.clicked.connect(on_save_user)
         remove_user_btn.clicked.connect(on_remove_user)
+        sync_password_echo()
+        sync_preview_echo()
+        refresh_posto_options("")
         refresh_users("")
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)

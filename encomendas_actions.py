@@ -441,6 +441,7 @@ def _open_encomenda_header_dialog(self, enc=None):
         "id": "",
         "numero": "",
         "cliente": "",
+        "posto_trabalho": "",
         "nota_cliente": "",
         "data_criacao": now_iso(),
         "data_entrega": "",
@@ -507,6 +508,13 @@ def _open_encomenda_header_dialog(self, enc=None):
     ).pack(side="right", padx=12, pady=8)
 
     cli_var = StringVar(value=str(working.get("cliente", "") or ""))
+    posto_options = [str(v).strip() for v in list(self.data.get("postos_trabalho", []) or ["Geral"]) if str(v).strip()]
+    if not posto_options:
+        posto_options = ["Geral"]
+    posto_current = str(working.get("posto_trabalho", "") or working.get("posto", "") or working.get("maquina", "") or "").strip()
+    if posto_current and posto_current not in posto_options:
+        posto_options.append(posto_current)
+    posto_var = StringVar(value=posto_current or posto_options[0])
     nota_var = StringVar(value=str(working.get("nota_cliente", "") or ""))
     entrega_var = StringVar(value=str(working.get("data_entrega", "") or ""))
     tempo_var = StringVar(value=str(working.get("tempo_estimado", 0) or 0))
@@ -531,6 +539,8 @@ def _open_encomenda_header_dialog(self, enc=None):
 
     ctk.CTkLabel(top, text="Tempo (h)").grid(row=0, column=5, padx=8, pady=6, sticky="w")
     ctk.CTkEntry(top, textvariable=tempo_var, width=90).grid(row=0, column=6, padx=8, pady=6, sticky="w")
+    ctk.CTkLabel(top, text="Posto").grid(row=0, column=7, padx=8, pady=6, sticky="w")
+    ctk.CTkComboBox(top, variable=posto_var, values=posto_options, width=160).grid(row=0, column=8, padx=8, pady=6, sticky="w")
 
     ctk.CTkLabel(top, text="Nota cliente").grid(row=1, column=0, padx=8, pady=6, sticky="w")
     ctk.CTkEntry(top, textvariable=nota_var, width=420).grid(row=1, column=1, columnspan=3, padx=8, pady=6, sticky="we")
@@ -538,7 +548,7 @@ def _open_encomenda_header_dialog(self, enc=None):
     ctk.CTkLabel(top, text="Observações").grid(row=1, column=4, padx=8, pady=6, sticky="w")
     ctk.CTkEntry(top, textvariable=obs_var, width=320).grid(row=1, column=5, columnspan=2, padx=8, pady=6, sticky="we")
 
-    ctk.CTkCheckBox(top, text="Cativar MP", variable=cativar_var).grid(row=0, column=7, padx=10, pady=6, sticky="w")
+    ctk.CTkCheckBox(top, text="Cativar MP", variable=cativar_var).grid(row=1, column=7, columnspan=2, padx=10, pady=6, sticky="w")
 
     cativ_info = ctk.CTkFrame(win, fg_color="white", corner_radius=10, border_width=1, border_color="#d8dee8")
     cativ_info.pack(fill="x", padx=12, pady=(0, 8))
@@ -1312,6 +1322,7 @@ def _open_encomenda_header_dialog(self, enc=None):
                 return
 
         alvo["cliente"] = cliente
+        alvo["posto_trabalho"] = (posto_var.get() or "").strip()
         alvo["nota_cliente"] = (nota_var.get() or "").strip()
         alvo["data_entrega"] = (entrega_var.get() or "").strip()
         alvo["tempo_estimado"] = tempo

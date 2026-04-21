@@ -405,6 +405,17 @@ class PlanningGridTable(QTableWidget):
         self._drag_start_pos = None
         super().mouseReleaseEvent(event)
 
+    def mouseDoubleClickEvent(self, event):  # type: ignore[override]
+        if event.button() == Qt.LeftButton:
+            item = self.itemAt(event.position().toPoint())
+            payload = dict(item.data(Qt.UserRole) or {}) if item is not None else {}
+            if payload and str(payload.get("drag_type", "") or "").strip() == "planned_block":
+                handled = bool(getattr(self.page_ref, "_open_block_flow_pdf_from_payload", lambda *_args, **_kwargs: False)(payload))
+                if handled:
+                    event.accept()
+                    return
+        super().mouseDoubleClickEvent(event)
+
     def dragEnterEvent(self, event):  # type: ignore[override]
         if event.mimeData().hasFormat("application/x-lugest-planning-item"):
             event.acceptProposedAction()
@@ -1658,7 +1669,6 @@ class OperatorPage(QWidget):
         self.operator_combo.currentTextChanged.connect(self._sync_operator_assignment)
         self.posto_combo = QComboBox()
         self.posto_combo.setEditable(True)
-        self.posto_combo.addItems(["Geral", "Laser", "Quinagem", "Roscagem", "Embalamento", "Montagem", "Soldadura"])
         self.posto_combo.setCurrentText("Geral")
         self.posto_combo.currentTextChanged.connect(self._update_piece_context)
         self.operation_combo = QComboBox()
@@ -1864,6 +1874,19 @@ class OperatorPage(QWidget):
                 self.ui_options = dict(getter() or {})
             except Exception:
                 self.ui_options = {}
+        posto_options_getter = getattr(self.backend, "operator_posto_options", None)
+        if callable(posto_options_getter):
+            try:
+                posto_options = list(posto_options_getter() or ["Geral"])
+            except Exception:
+                posto_options = ["Geral"]
+        else:
+            posto_options = ["Geral", "Corte Laser", "Quinagem", "Roscagem", "Embalamento", "Montagem", "Soldadura"]
+        self._set_combo_items(
+            self.posto_combo,
+            posto_options,
+            preferred=self._current_posto(),
+        )
         self._set_combo_items(
             self.operator_combo,
             self.backend.operator_names(),
@@ -3250,7 +3273,14 @@ class _OperatorLabelsDialog(QDialog):
         filters_layout.addWidget(QLabel("Posto de origem"), 0, 0)
         self.source_posto_combo = QComboBox()
         self.source_posto_combo.setProperty("compact", "true")
-        self.source_posto_combo.addItems(list(self.backend.available_postos() or ["Geral"]))
+        posto_source_getter = getattr(self.backend, "operator_posto_options", None)
+        if callable(posto_source_getter):
+            try:
+                self.source_posto_combo.addItems(list(posto_source_getter() or ["Geral"]))
+            except Exception:
+                self.source_posto_combo.addItems(["Geral"])
+        else:
+            self.source_posto_combo.addItems(list(self.backend.available_postos() or ["Geral"]))
         self.source_posto_combo.setCurrentText(str(current_posto or "").strip() or "Geral")
         self.source_posto_combo.currentTextChanged.connect(self._reload_rows)
         filters_layout.addWidget(self.source_posto_combo, 1, 0)
@@ -4099,6 +4129,16 @@ class PlanningPage(QWidget):
     page_subtitle = "Semana operacional em grelha, com blocos coloridos e backlog real."
     uses_backend_reload = True
 
+    @staticmethod
+    def _operation_display_name(operation: str) -> str:
+        mapping = {
+            "Corte Laser": "Laser",
+            "Maquinacao": "Maquinação",
+            "Expedicao": "Expedição",
+        }
+        raw = str(operation or "").strip()
+        return mapping.get(raw, raw)
+
     def __init__(self, runtime_service, backend=None, parent=None) -> None:
         super().__init__(parent)
         self.runtime_service = runtime_service
@@ -4111,9 +4151,11 @@ class PlanningPage(QWidget):
         self.current_time_slots: list[str] = []
         self.current_blocked_windows: list[dict] = []
         self.current_operation = "Corte Laser"
+        self.current_resource = ""
+        self.selected_block_id = ""
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(14)
+        root.setSpacing(10)
 
         top_card = CardFrame()
         top_card.set_tone("info")
@@ -4126,6 +4168,10 @@ class PlanningPage(QWidget):
         week_row.setSpacing(6)
         self.week_label = QLabel("-")
         self.week_label.setStyleSheet("font-size: 15px; font-weight: 900; color: #0f172a;")
+        self.period_meta = QLabel("Periodo -")
+        self.period_meta.setProperty("role", "muted")
+        self.period_meta.setStyleSheet("font-size: 11px;")
+        self.period_meta.setMinimumHeight(18)
         week_row.addWidget(self.week_label, 1)
         self.prev_week_btn = QPushButton("Semana -")
         self.prev_week_btn.setProperty("variant", "secondary")
@@ -4139,8 +4185,10 @@ class PlanningPage(QWidget):
         self.refresh_btn = QPushButton("Atualizar")
         self.refresh_btn.setProperty("variant", "secondary")
         self.refresh_btn.clicked.connect(self.refresh)
-        self.auto_plan_btn = QPushButton("Auto planear")
+        self.auto_plan_btn = QPushButton("Auto operação")
         self.auto_plan_btn.clicked.connect(self._auto_plan)
+        self.auto_flow_btn = QPushButton("Auto fluxo")
+        self.auto_flow_btn.clicked.connect(self._auto_plan_full_flow)
         self.clear_week_btn = QPushButton("Limpar semana")
         self.clear_week_btn.setProperty("variant", "secondary")
         self.clear_week_btn.clicked.connect(self._clear_week)
@@ -4165,13 +4213,22 @@ class PlanningPage(QWidget):
         self.view_history_btn = QPushButton("Histórico")
         self.view_history_btn.setProperty("variant", "secondary")
         self.view_history_btn.clicked.connect(self._show_history_dialog)
-        self.laser_deadline_btn = QPushButton("Prazo laser")
+        self.laser_deadline_btn = QPushButton("Prazo final")
         self.laser_deadline_btn.setProperty("variant", "secondary")
         self.laser_deadline_btn.clicked.connect(self._show_laser_deadlines_dialog)
+        self.deadline_email_btn = QPushButton("Enviar Prazo")
+        self.deadline_email_btn.setProperty("variant", "warning")
+        self.deadline_email_btn.setStyleSheet(
+            "QPushButton {background: #f4c542; color: #0f172a; border: 1px solid #caa12b; "
+            "border-radius: 10px; padding: 8px 14px; font-weight: 800;}"
+            "QPushButton:hover {background: #ffd65a;}"
+            "QPushButton:disabled {background: #f5e9b4; color: #7c6a2b;}"
+        )
+        self.deadline_email_btn.clicked.connect(self._send_selected_deadline_email)
         self.blocked_btn = QPushButton("Bloqueios")
         self.blocked_btn.setProperty("variant", "secondary")
         self.blocked_btn.clicked.connect(self._show_blocked_windows_dialog)
-        self.pdf_btn = QPushButton("PDF")
+        self.pdf_btn = QPushButton("Plano PDF")
         self.pdf_btn.clicked.connect(self._open_pdf)
         for button in (
             self.prev_week_btn,
@@ -4179,6 +4236,7 @@ class PlanningPage(QWidget):
             self.current_week_btn,
             self.refresh_btn,
             self.auto_plan_btn,
+            self.auto_flow_btn,
             self.clear_week_btn,
             self.move_earlier_btn,
             self.move_later_btn,
@@ -4188,6 +4246,7 @@ class PlanningPage(QWidget):
             self.view_blocks_btn,
             self.view_history_btn,
             self.laser_deadline_btn,
+            self.deadline_email_btn,
             self.blocked_btn,
             self.pdf_btn,
         ):
@@ -4209,29 +4268,34 @@ class PlanningPage(QWidget):
         if not operation_options:
             operation_options = ["Corte Laser", "Quinagem", "Serralharia", "Maquinacao", "Roscagem", "Lacagem", "Montagem"]
         for op_name in operation_options:
-            button = QPushButton(str(op_name))
+            button = QPushButton(self._operation_display_name(str(op_name)))
             button.setCheckable(True)
             button.setProperty("compact", "true")
             button.setMinimumHeight(24)
             button.clicked.connect(lambda checked=False, value=op_name: self._set_operation(value))
             self.operation_buttons[str(op_name)] = button
             operations_row.addWidget(button)
+        resource_label = QLabel("Recurso")
+        resource_label.setProperty("role", "muted")
+        resource_label.setMinimumHeight(18)
+        operations_row.addWidget(resource_label)
+        self.resource_combo = QComboBox()
+        self.resource_combo.setMinimumHeight(24)
+        self.resource_combo.setProperty("compact", "true")
+        self.resource_combo.currentTextChanged.connect(lambda _value: self._set_resource(self.resource_combo.currentText().strip()))
+        operations_row.addWidget(self.resource_combo)
         operations_row.addStretch(1)
+        self.status_meta = QLabel("Blocos 0 | Backlog 0")
+        self.status_meta.setProperty("role", "muted")
+        self.status_meta.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.status_meta.setStyleSheet("font-size: 11px;")
+        self.status_meta.setMinimumHeight(18)
         top_layout.addWidget(operations_host)
         meta_host = QWidget()
         meta_host.setMinimumHeight(22)
         meta_row = QHBoxLayout(meta_host)
         meta_row.setContentsMargins(0, 0, 0, 0)
         meta_row.setSpacing(10)
-        self.period_meta = QLabel("Periodo -")
-        self.period_meta.setProperty("role", "muted")
-        self.period_meta.setStyleSheet("font-size: 11px;")
-        self.period_meta.setMinimumHeight(18)
-        self.status_meta = QLabel("Blocos 0 | Backlog 0")
-        self.status_meta.setProperty("role", "muted")
-        self.status_meta.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.status_meta.setStyleSheet("font-size: 11px;")
-        self.status_meta.setMinimumHeight(18)
         meta_row.addWidget(self.period_meta, 1)
         meta_row.addWidget(self.status_meta, 0)
         top_layout.addWidget(meta_host)
@@ -4279,6 +4343,7 @@ class PlanningPage(QWidget):
         self.backlog_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.backlog_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.backlog_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
+        self.backlog_table.itemSelectionChanged.connect(self._sync_planning_actions)
         backlog_layout.addWidget(self.backlog_title)
         backlog_layout.addWidget(self.backlog_table)
         main_split.addWidget(backlog_card)
@@ -4299,6 +4364,8 @@ class PlanningPage(QWidget):
         self.grid.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.grid.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.grid.setStyleSheet("font-size: 9px;")
+        self.grid.setToolTip("Arrasta os blocos para reajustar. Duplo clique num bloco abre o PDF do fluxo da encomenda.")
+        self.grid.itemClicked.connect(self._handle_grid_item_clicked)
         grid_layout.addWidget(self.grid_title)
         grid_layout.addWidget(self.grid)
         grid_card.setMaximumHeight(620)
@@ -4312,8 +4379,8 @@ class PlanningPage(QWidget):
         active_layout.setContentsMargins(16, 14, 16, 14)
         self.active_title = QLabel("Blocos da semana")
         self.active_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
-        self.active_table = QTableWidget(0, 7)
-        self.active_table.setHorizontalHeaderLabels(["Dia", "Inicio", "Duracao", "Encomenda", "Material", "Esp.", "Chapa"])
+        self.active_table = QTableWidget(0, 8)
+        self.active_table.setHorizontalHeaderLabels(["Dia", "Inicio", "Duracao", "Encomenda", "Material", "Esp.", "Recurso", "Chapa"])
         self.active_table.verticalHeader().setVisible(False)
         self.active_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.active_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -4322,7 +4389,9 @@ class PlanningPage(QWidget):
         self.active_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.active_table.setStyleSheet("font-size: 11px;")
         self.active_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.active_table.setToolTip("Duplo clique abre o PDF do fluxo completo da encomenda.")
         self.active_table.itemSelectionChanged.connect(self._sync_planning_actions)
+        self.active_table.itemDoubleClicked.connect(lambda *_args: self._open_selected_block_flow_pdf())
         active_layout.addWidget(self.active_title)
         active_layout.addWidget(self.active_table)
         self.history_card = CardFrame(self)
@@ -4331,8 +4400,8 @@ class PlanningPage(QWidget):
         history_layout.setContentsMargins(16, 14, 16, 14)
         self.history_title = QLabel("Histórico de planeamento")
         self.history_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
-        self.history_table = QTableWidget(0, 7)
-        self.history_table.setHorizontalHeaderLabels(["Data", "Inicio", "Encomenda", "Material", "Esp.", "Planeado", "Real / Estado"])
+        self.history_table = QTableWidget(0, 8)
+        self.history_table.setHorizontalHeaderLabels(["Data", "Inicio", "Encomenda", "Material", "Esp.", "Recurso", "Planeado", "Real / Estado"])
         self.history_table.verticalHeader().setVisible(False)
         self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.history_table.verticalHeader().setDefaultSectionSize(20)
@@ -4349,15 +4418,24 @@ class PlanningPage(QWidget):
         self._sync_planning_actions()
 
     def refresh(self) -> None:
+        self._refresh_resource_options()
         self._apply_operation_labels()
-        data = self.runtime_service.planning_overview(
-            week_start=self.week_start.isoformat(),
-            operation=self.current_operation,
-        )
+        if self.backend is not None and hasattr(self.backend, "planning_overview_data"):
+            data = self.backend.planning_overview_data(
+                week_start=self.week_start.isoformat(),
+                operation=self.current_operation,
+                resource=self.current_resource,
+            )
+        else:
+            data = self.runtime_service.planning_overview(
+                week_start=self.week_start.isoformat(),
+                operation=self.current_operation,
+            )
         summary = data.get("summary", {})
         self.current_week_dates = list(data.get("week_dates", []) or [])
         self.current_blocked_windows = list(self.backend.planning_blocked_windows() if self.backend is not None else [])
-        self.week_label.setText(f"Semana {summary.get('week_label', '-')} | {self.current_operation}")
+        resource_suffix = f" | {self.current_resource}" if str(self.current_resource or "").strip() else ""
+        self.week_label.setText(f"Semana {summary.get('week_label', '-')} | {self._operation_display_name(self.current_operation)}{resource_suffix}")
         self._fill_grid(data)
         QTimer.singleShot(0, self._fit_planning_grid)
         self.current_active = list(data.get("active", []) or [])
@@ -4372,6 +4450,7 @@ class PlanningPage(QWidget):
                     r.get("encomenda", "-"),
                     r.get("material", "-"),
                     r.get("espessura", "-"),
+                    r.get("maquina", r.get("posto_trabalho", "-")),
                     r.get("chapa", "-"),
                 ]
                 for r in self.current_active
@@ -4380,8 +4459,9 @@ class PlanningPage(QWidget):
         )
         for row_index, row in enumerate(self.current_active):
             self._paint_row_with_block_color(self.active_table, row_index, str(row.get("color", "") or "#dbeafe"))
+        self._restore_active_block_selection()
         if self.backend is not None:
-            self.current_pending = list(self.backend.planning_pending_rows(operation=self.current_operation))
+            self.current_pending = list(self.backend.planning_pending_rows(operation=self.current_operation, resource=self.current_resource))
             _fill_table(
                 self.backlog_table,
                 [
@@ -4391,7 +4471,7 @@ class PlanningPage(QWidget):
                         r.get("material", "-"),
                         r.get("espessura", "-"),
                         f"{r.get('tempo_min', 0):.1f}",
-                        r.get("obs", "-"),
+                        " | ".join([part for part in [str(r.get("recurso", "") or "").strip(), str(r.get("obs", "") or "").strip()] if part]) or "-",
                     ]
                     for r in self.current_pending
                 ],
@@ -4427,7 +4507,7 @@ class PlanningPage(QWidget):
         self.status_meta.setText(f"Blocos visiveis {summary.get('blocos_ativos', 0)} | Encomendas por encaixar {backlog_count}")
         self.cards[0].set_data(summary.get("blocos_ativos", 0), f"Ativos total {summary.get('min_ativos_total', 0):.0f} min")
         self.cards[1].set_data(backlog_count, "Pendentes por planear")
-        self.cards[2].set_data(f"{summary.get('min_ativos', 0):.0f} min", f"Carga {self.current_operation}")
+        self.cards[2].set_data(f"{summary.get('min_ativos', 0):.0f} min", f"Carga {self._operation_display_name(self.current_operation)}{resource_suffix}")
         self.cards[3].set_data(summary.get("historico_mes", 0), f"{summary.get('min_historico_mes', 0):.0f} min fechados")
         _fill_table(
             self.history_table,
@@ -4438,6 +4518,7 @@ class PlanningPage(QWidget):
                     r.get("encomenda", "-"),
                     r.get("material", "-"),
                     r.get("espessura", "-"),
+                    r.get("maquina", r.get("posto_trabalho", "-")),
                     f"{r.get('duracao_min', 0):.1f}",
                     f"{r.get('tempo_real_min', 0):.1f} / {r.get('estado_final', '-')}",
                 ]
@@ -4455,19 +4536,62 @@ class PlanningPage(QWidget):
             self._apply_operation_labels()
             return
         self.current_operation = selected
+        self.current_resource = ""
+        self._refresh_resource_options()
+        selected_resource = self.resource_combo.currentText().strip()
+        self.current_resource = "" if selected_resource.lower() == "todos" else selected_resource
         self.refresh()
+
+    def _set_resource(self, resource: str) -> None:
+        selected = str(resource or "").strip()
+        if selected.lower() == "todos":
+            selected = ""
+        if selected == self.current_resource:
+            return
+        self.current_resource = selected
+        self.refresh()
+
+    def _refresh_resource_options(self) -> None:
+        if self.backend is None or not hasattr(self.backend, "workcenter_resource_options"):
+            return
+        current_value = str(self.current_resource or self.resource_combo.currentText() or "").strip()
+        options = [
+            str(value or "").strip()
+            for value in list(self.backend.workcenter_resource_options(self.current_operation, include_all=True) or [])
+            if str(value or "").strip()
+        ]
+        self.resource_combo.blockSignals(True)
+        self.resource_combo.clear()
+        for value in options:
+            self.resource_combo.addItem(value)
+        if not current_value and any(str(value).strip().lower() == "todos" for value in options):
+            self.resource_combo.setCurrentText("Todos")
+            self.current_resource = ""
+        elif current_value and any(current_value.lower() == value.lower() for value in options):
+            self.resource_combo.setCurrentText(current_value)
+            self.current_resource = current_value
+        elif options:
+            self.resource_combo.setCurrentIndex(0)
+            selected = self.resource_combo.currentText().strip()
+            self.current_resource = "" if selected.lower() == "todos" else selected
+        else:
+            self.current_resource = ""
+        self.resource_combo.setEnabled(bool(options))
+        self.resource_combo.blockSignals(False)
 
     def _apply_operation_labels(self) -> None:
         current = str(self.current_operation or "Corte Laser").strip() or "Corte Laser"
+        resource_suffix = f" | {self.current_resource}" if str(self.current_resource or "").strip() else ""
+        current_label = self._operation_display_name(current)
         for op_name, button in self.operation_buttons.items():
             button.setChecked(op_name == current)
             button.setProperty("variant", "primary" if op_name == current else "secondary")
             button.style().unpolish(button)
             button.style().polish(button)
-        self.backlog_title.setText(f"Pendentes - {current}")
-        self.grid_title.setText(f"Quadro semanal - {current}")
-        self.active_title.setText(f"Blocos - {current}")
-        self.history_title.setText(f"Historico - {current}")
+        self.backlog_title.setText(f"Pendentes - {current_label}{resource_suffix}")
+        self.grid_title.setText(f"Quadro semanal - {current_label}{resource_suffix}")
+        self.active_title.setText(f"Blocos - {current_label}{resource_suffix}")
+        self.history_title.setText(f"Historico - {current_label}{resource_suffix}")
 
     def _grid_metrics(self) -> tuple[int, int, int]:
         if self.backend is not None:
@@ -4556,7 +4680,10 @@ class PlanningPage(QWidget):
             span = min(span, len(times) - row)
             color_hex = str(block.get("color") or block.get("source_color") or "#cbd5e1")
             material_txt = _elide_middle(str(block.get("material", "-") or "-"), 18)
+            resource_txt = str(block.get("maquina", block.get("posto_trabalho", "")) or "").strip()
             text = f"{block.get('encomenda', '-')}\n{material_txt} | {block.get('espessura', '-')}mm"
+            if resource_txt:
+                text += f"\n{resource_txt}"
             item = QTableWidgetItem(text)
             item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
             item.setBackground(QBrush(QColor(color_hex)))
@@ -4577,6 +4704,7 @@ class PlanningPage(QWidget):
                 f"Encomenda: {block.get('encomenda', '-')}\n"
                 f"Material: {block.get('material', '-')}\n"
                 f"Espessura: {block.get('espessura', '-')} mm\n"
+                f"Recurso: {resource_txt or '-'}\n"
                 f"Duracao: {duration:.0f} min"
             )
             self.grid.setItem(row, col, item)
@@ -4638,13 +4766,344 @@ class PlanningPage(QWidget):
     def _selected_active_row(self) -> dict:
         current = self.active_table.currentItem()
         if current is None or current.row() >= len(self.current_active):
-            return {}
+            block_id = str(self.selected_block_id or "").strip()
+            if not block_id:
+                return {}
+            return next((row for row in self.current_active if str(row.get("id", "") or "").strip() == block_id), {})
         return self.current_active[current.row()]
+
+    def _restore_active_block_selection(self) -> None:
+        block_id = str(self.selected_block_id or "").strip()
+        if not block_id:
+            return
+        self._select_active_block_by_id(block_id)
+
+    def _select_active_block_by_id(self, block_id: str) -> bool:
+        block_txt = str(block_id or "").strip()
+        if not block_txt:
+            return False
+        for row_index, row in enumerate(self.current_active):
+            if str(row.get("id", "") or "").strip() != block_txt:
+                continue
+            self.selected_block_id = block_txt
+            self.active_table.selectRow(row_index)
+            item = self.active_table.item(row_index, 0)
+            if item is not None:
+                self.active_table.setCurrentItem(item)
+                self.active_table.scrollToItem(item)
+            self._sync_planning_actions()
+            return True
+        return False
+
+    def _handle_grid_item_clicked(self, item: QTableWidgetItem | None) -> None:
+        payload = dict(item.data(Qt.UserRole) or {}) if item is not None else {}
+        if str(payload.get("drag_type", "") or "").strip() != "planned_block":
+            return
+        block_id = str(payload.get("block_id", "") or "").strip()
+        if not block_id:
+            return
+        self.selected_block_id = block_id
+        self._select_active_block_by_id(block_id)
+
+    def _selected_backlog_row(self) -> dict:
+        current = self.backlog_table.currentItem()
+        if current is None:
+            return {}
+        item = self.backlog_table.item(current.row(), 0)
+        if item is None:
+            return {}
+        return dict(item.data(Qt.UserRole) or {})
+
+    def _selected_planning_order_number(self) -> str:
+        active = self._selected_active_row()
+        if active:
+            return str(active.get("encomenda", "") or "").strip()
+        backlog = self._selected_backlog_row()
+        return str(backlog.get("numero", "") or "").strip()
+
+    def _planning_deadline_email_context(self, numero: str) -> dict[str, object]:
+        if self.backend is None:
+            raise ValueError("Backend de planeamento indisponível.")
+        numero_txt = str(numero or "").strip()
+        if not numero_txt:
+            raise ValueError("Seleciona uma encomenda no planeamento.")
+        data = dict(self.backend.ensure_data() or {})
+        enc = next(
+            (
+                row
+                for row in list(data.get("encomendas", []) or [])
+                if isinstance(row, dict) and str(row.get("numero", "") or "").strip() == numero_txt
+            ),
+            None,
+        )
+        if not isinstance(enc, dict):
+            raise ValueError("Encomenda não encontrada.")
+        client_code = str(enc.get("cliente", "") or "").strip()
+        client = next(
+            (
+                row
+                for row in list(data.get("clientes", []) or [])
+                if isinstance(row, dict) and str(row.get("codigo", "") or "").strip() == client_code
+            ),
+            {},
+        )
+        deadline_row = next(
+            (
+                row
+                for row in list(self.backend.planning_laser_deadline_rows() or [])
+                if str(row.get("numero", "") or "").strip() == numero_txt
+            ),
+            {},
+        )
+        estimated_dt = deadline_row.get("fim_dt")
+        if estimated_dt is None:
+            raise ValueError("A encomenda ainda não tem prazo estimado calculado no planeamento.")
+        flow_rows_getter = getattr(self.backend, "_planning_order_flow_rows", None)
+        flow_rows = list(flow_rows_getter(numero_txt) or []) if callable(flow_rows_getter) else []
+        resources = []
+        for row in flow_rows:
+            resource_txt = str(row.get("recurso", "") or "").strip()
+            if resource_txt and resource_txt.lower() not in [value.lower() for value in resources]:
+                resources.append(resource_txt)
+        branding = dict(self.backend.branding_settings() or {})
+        company = str(branding.get("company_name", "") or "luGEST").strip() or "luGEST"
+        return {
+            "numero": numero_txt,
+            "nota_cliente": str(enc.get("nota_cliente", "") or "").strip(),
+            "client_code": client_code,
+            "client_name": str(client.get("nome", "") or "").strip(),
+            "client_email": str(client.get("email", "") or "").strip(),
+            "data_entrega": str(enc.get("data_entrega", "") or "").strip(),
+            "estimated_dt": estimated_dt,
+            "estimated_date": estimated_dt.strftime("%Y-%m-%d"),
+            "estimated_moment": estimated_dt.strftime("%d/%m/%Y %H:%M"),
+            "grupos_txt": str(deadline_row.get("grupos_txt", "") or "-").strip() or "-",
+            "planeado_txt": str(deadline_row.get("planeado_txt", "") or "-").strip() or "-",
+            "estado": str(deadline_row.get("estado", "") or "-").strip() or "-",
+            "last_item_txt": str(deadline_row.get("ultimo_item_txt", "") or "-").strip() or "-",
+            "materiais_txt": str(deadline_row.get("materiais_txt", "") or "-").strip() or "-",
+            "resources_txt": " | ".join(resources) if resources else "-",
+            "observacoes": str(enc.get("Observacoes", "") or enc.get("Observações", "") or "").strip(),
+            "company": company,
+        }
+
+    def _planning_deadline_email_subject(self, ctx: dict[str, object]) -> str:
+        ref_txt = str(ctx.get("nota_cliente", "") or "").strip() or str(ctx.get("numero", "") or "").strip()
+        return f"Prazo entrega {ref_txt}".strip()
+
+    def _planning_deadline_email_body(self, ctx: dict[str, object]) -> str:
+        lines = [
+            "Boa tarde / Bonsoir / Good afternoon,",
+            "",
+            "Serve o presente para informar o prazo final previsto da encomenda, calculado pela última espessura/peça a concluir no planeamento.",
+            "Par la présente nous vous informons du délai final prévu de la commande, calculé selon le dernier article du flux.",
+            "I send this email to inform you of the final estimated due date for the order, based on the last item to finish in planning.",
+            "",
+            f"Encomenda / Commande / Order: {ctx.get('numero', '-')}",
+            f"Num. Cliente / Numéro de Client / Client number: {ctx.get('client_code', '-')}",
+            f"Nome cli. / Nom du Client / Client name: {ctx.get('client_name', '-')}",
+            f"Prazo / Délais / Deadline: {ctx.get('estimated_date', '-')}",
+            f"Enc. Cliente / Commande du Client / Client order: {ctx.get('nota_cliente', '-') or '-'}",
+            f"Planeamento / Planification / Planning: {ctx.get('planeado_txt', '-')}",
+            f"Estado / Statut / Status: {ctx.get('estado', '-')}",
+            f"Último item do fluxo / Dernier article / Final item: {ctx.get('last_item_txt', '-')}",
+            f"Máquinas / Machines / Resources: {ctx.get('resources_txt', '-')}",
+            f"Materiais / Matières / Materials: {ctx.get('materiais_txt', '-')}",
+        ]
+        if str(ctx.get("observacoes", "") or "").strip():
+            lines.append(f"Obs: {ctx.get('observacoes', '')}")
+        lines.extend(
+            [
+                "",
+                "Cumprimentos,",
+                str(ctx.get("company", "") or "luGEST"),
+            ]
+        )
+        return "\n".join(lines)
+
+    def _planning_deadline_email_html_body(self, ctx: dict[str, object], *, logo_cid: str = "") -> str:
+        company = str(ctx.get("company", "") or "luGEST")
+        logo_html = (
+            f'<img src="cid:{html.escape(logo_cid)}" alt="{html.escape(company)}" style="height:46px; display:block;">'
+            if logo_cid
+            else f'<div style="font-size:22px; font-weight:900; color:#0f172a;">{html.escape(company)}</div>'
+        )
+        rows = [
+            ("Encomenda / Commande / Order", str(ctx.get("numero", "") or "-")),
+            ("Cliente / Client", str(ctx.get("client_name", "") or "-")),
+            ("Num. Cliente / Client number", str(ctx.get("client_code", "") or "-")),
+            ("Prazo estimado / Deadline", str(ctx.get("estimated_date", "") or "-")),
+            ("Enc. Cliente / Client order", str(ctx.get("nota_cliente", "") or "-") or "-"),
+            ("Planeamento / Planning", str(ctx.get("planeado_txt", "") or "-")),
+            ("Estado / Status", str(ctx.get("estado", "") or "-")),
+            ("Último item / Final item", str(ctx.get("last_item_txt", "") or "-")),
+            ("Máquinas / Resources", str(ctx.get("resources_txt", "") or "-")),
+            ("Materiais / Materials", str(ctx.get("materiais_txt", "") or "-")),
+        ]
+        if str(ctx.get("observacoes", "") or "").strip():
+            rows.append(("Observações / Notes", str(ctx.get("observacoes", "") or "").strip()))
+        table_rows = "".join(
+            "<tr>"
+            f"<td style=\"padding:12px 16px; border-top:1px solid #e2e8f0; font-size:14px; color:#475569; width:42%;\">{html.escape(label)}</td>"
+            f"<td style=\"padding:12px 16px; border-top:1px solid #e2e8f0; font-size:14px; color:#0f172a; font-weight:700;\">{html.escape(value)}</td>"
+            "</tr>"
+            for label, value in rows
+        )
+        return (
+            "<html><body style=\"margin:0; padding:24px; background:#e2e8f0; font-family:'Segoe UI',Arial,sans-serif; color:#0f172a;\">"
+            "<div style=\"max-width:900px; margin:0 auto; background:#ffffff; border-radius:24px; overflow:hidden; box-shadow:0 24px 50px rgba(15,23,42,0.12);\">"
+            "<div style=\"padding:28px 34px; background:linear-gradient(135deg, #0f172a 0%, #1d4ed8 100%);\">"
+            "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">"
+            "<tr>"
+            f"<td>{logo_html}</td>"
+            f"<td style=\"text-align:right; color:#e2e8f0; font-size:13px; font-weight:700;\">Prazo estimado de entrega<br>{html.escape(str(ctx.get('estimated_moment', '') or '-'))}</td>"
+            "</tr>"
+            "</table>"
+            "</div>"
+            "<div style=\"padding:34px 36px 28px 36px;\">"
+            "<p style=\"margin:0 0 16px 0; font-size:22px; font-weight:800; color:#0f172a;\">Boa tarde / Bonsoir / Good afternoon,</p>"
+            "<p style=\"margin:0 0 14px 0; font-size:15px; line-height:1.7; color:#334155;\">Serve o presente para informar o prazo final previsto da encomenda, calculado pela última espessura/peça a concluir no planeamento.</p>"
+            "<p style=\"margin:0 0 14px 0; font-size:15px; line-height:1.7; color:#334155;\">Par la présente nous vous informons du délai final prévu de la commande, calculé selon le dernier article du flux.</p>"
+            "<p style=\"margin:0 0 22px 0; font-size:15px; line-height:1.7; color:#334155;\">I send this email to inform you of the final estimated due date for the order, based on the last item to finish in planning.</p>"
+            "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse; border:1px solid #e2e8f0; border-radius:16px; overflow:hidden;\">"
+            "<tr style=\"background:#1f2937; color:#ffffff; font-size:12px; font-weight:800; text-transform:uppercase;\">"
+            "<td style=\"padding:12px 16px;\">Campo</td>"
+            "<td style=\"padding:12px 16px;\">Valor</td>"
+            "</tr>"
+            f"{table_rows}"
+            "</table>"
+            "<p style=\"margin:24px 0 0 0; font-size:15px; line-height:1.7; color:#334155;\">Ficamos ao dispor para qualquer esclarecimento.</p>"
+            "</div>"
+            f"<div style=\"padding:16px 36px; background:#f8fafc; border-top:1px solid #e2e8f0; font-size:12px; color:#94a3b8; text-align:center;\">© {datetime.now().year} {html.escape(company)}</div>"
+            "</div>"
+            "</body></html>"
+        )
+
+    def _open_planning_deadline_email_draft(self, numero: str) -> None:
+        if self.backend is None:
+            return
+        ctx = self._planning_deadline_email_context(numero)
+        recipient = str(ctx.get("client_email", "") or "").strip()
+        if not recipient:
+            raise ValueError("O cliente desta encomenda não tem email definido.")
+
+        safe_number = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(numero or "").strip())[:48] or "prazo"
+        attachment_path: Path | None = Path(tempfile.gettempdir()) / f"Prazo_Entrega_{safe_number}.pdf"
+        attachment_issue = ""
+        try:
+            self.backend.planning_render_order_detail_pdf(str(numero or "").strip(), output_path=attachment_path)
+        except Exception as exc:
+            attachment_issue = str(exc)
+            attachment_path = None
+
+        logo_path = getattr(self.backend, "logo_path", None)
+        logo_file = Path(logo_path) if isinstance(logo_path, Path) and logo_path.exists() else None
+        logo_cid = "lugest-planning-deadline-logo" if logo_file is not None else ""
+        subject = self._planning_deadline_email_subject(ctx)
+        body_plain = self._planning_deadline_email_body(ctx)
+        body_html = self._planning_deadline_email_html_body(ctx, logo_cid=logo_cid)
+
+        env = os.environ.copy()
+        env["LUGEST_MAIL_TO"] = recipient
+        env["LUGEST_MAIL_SUBJECT"] = subject
+        env["LUGEST_MAIL_BODY"] = body_html
+        env["LUGEST_MAIL_ATTACHMENT"] = str(attachment_path) if attachment_path is not None else ""
+        env["LUGEST_MAIL_LOGO"] = str(logo_file) if logo_file is not None else ""
+        env["LUGEST_MAIL_LOGO_CID"] = logo_cid
+        powershell_script = (
+            "$ErrorActionPreference='Stop'; "
+            "$outlook = New-Object -ComObject Outlook.Application; "
+            "$mail = $outlook.CreateItem(0); "
+            "$mail.To = $env:LUGEST_MAIL_TO; "
+            "$mail.Subject = $env:LUGEST_MAIL_SUBJECT; "
+            "if ($env:LUGEST_MAIL_LOGO -and (Test-Path $env:LUGEST_MAIL_LOGO)) "
+            "{ "
+            "  $logo = $mail.Attachments.Add($env:LUGEST_MAIL_LOGO); "
+            "  $logo.PropertyAccessor.SetProperty('http://schemas.microsoft.com/mapi/proptag/0x3712001F', $env:LUGEST_MAIL_LOGO_CID); "
+            "  $logo.PropertyAccessor.SetProperty('http://schemas.microsoft.com/mapi/proptag/0x7FFE000B', $true) "
+            "}; "
+            "if ($env:LUGEST_MAIL_ATTACHMENT -and (Test-Path $env:LUGEST_MAIL_ATTACHMENT)) "
+            "{ $null = $mail.Attachments.Add($env:LUGEST_MAIL_ATTACHMENT) }; "
+            "$mail.HTMLBody = $env:LUGEST_MAIL_BODY; "
+            "$mail.Display()"
+        )
+        try:
+            subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    powershell_script,
+                ],
+                check=True,
+                env=env,
+                timeout=30,
+            )
+        except Exception:
+            mailto = (
+                f"mailto:{quote(recipient)}"
+                f"?subject={quote(subject)}"
+                f"&body={quote(body_plain)}"
+            )
+            os.startfile(mailto)
+            fallback_message = "Outlook indisponível. Foi aberto o cliente de email por defeito."
+            if attachment_issue:
+                fallback_message += f"\n\nTambém não foi possível gerar o PDF em anexo:\n{attachment_issue}"
+            else:
+                fallback_message += "\n\nNota: o anexo PDF terá de ser adicionado manualmente neste modo."
+            QMessageBox.information(self, "Planeamento", fallback_message)
+            return
+        if attachment_issue:
+            QMessageBox.information(
+                self,
+                "Planeamento",
+                f"O email foi preparado no Outlook, mas o PDF não foi anexado automaticamente:\n{attachment_issue}",
+            )
+
+    def _send_selected_deadline_email(self) -> None:
+        numero = self._selected_planning_order_number()
+        if not numero:
+            QMessageBox.warning(self, "Planeamento", "Seleciona primeiro uma encomenda ou um bloco do planeamento.")
+            return
+        try:
+            self._open_planning_deadline_email_draft(numero)
+        except Exception as exc:
+            QMessageBox.critical(self, "Planeamento", str(exc))
+
+    def _open_block_flow_pdf_from_payload(self, payload: dict) -> bool:
+        if self.backend is None:
+            return False
+        numero = str((payload or {}).get("encomenda", "") or "").strip()
+        if not numero:
+            return False
+        try:
+            self.backend.planning_open_order_detail_pdf(
+                numero,
+                focus_material=str((payload or {}).get("material", "") or "").strip(),
+                focus_espessura=str((payload or {}).get("espessura", "") or "").strip(),
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Planeamento", str(exc))
+        return True
+
+    def _open_selected_block_flow_pdf(self) -> None:
+        block = self._selected_active_row()
+        if not block:
+            QMessageBox.warning(self, "Planeamento", "Seleciona um bloco da semana.")
+            return
+        self._open_block_flow_pdf_from_payload(block)
 
     def _sync_planning_actions(self) -> None:
         has_backend = self.backend is not None
-        has_block = bool(self._selected_active_row())
+        active_row = self._selected_active_row()
+        if active_row:
+            self.selected_block_id = str(active_row.get("id", "") or "").strip()
+        has_block = bool(active_row)
+        has_order = bool(self._selected_planning_order_number())
         self.auto_plan_btn.setEnabled(has_backend and bool(self.current_pending))
+        self.auto_flow_btn.setEnabled(has_backend and bool(self.current_pending))
         self.clear_week_btn.setEnabled(has_backend and bool(self.current_active))
         self.remove_block_btn.setEnabled(has_backend and has_block)
         self.move_earlier_btn.setEnabled(has_backend and has_block)
@@ -4657,6 +5116,8 @@ class PlanningPage(QWidget):
         is_laser = self.current_operation == "Corte Laser"
         self.laser_deadline_btn.setEnabled(has_backend and is_laser)
         self.laser_deadline_btn.setVisible(is_laser)
+        self.deadline_email_btn.setEnabled(has_backend and is_laser and has_order)
+        self.deadline_email_btn.setVisible(is_laser)
 
     def _plan_order_dialog(self, rows: list[dict]) -> list[dict] | None:
         dialog = QDialog(self)
@@ -4673,7 +5134,10 @@ class PlanningPage(QWidget):
         right.setDefaultDropAction(Qt.MoveAction)
         label_map: dict[str, dict] = {}
         for row in rows:
+            resource_txt = str(row.get("recurso", "") or "").strip()
             label = f"{row.get('numero', '-')} | {row.get('material', '-')} | {row.get('espessura', '-')} | {row.get('tempo_min', 0):.0f} min"
+            if resource_txt:
+                label += f" | {resource_txt}"
             label_map[label] = row
             left.addItem(label)
         buttons = QVBoxLayout()
@@ -4788,8 +5252,8 @@ class PlanningPage(QWidget):
 
     def _show_active_blocks_dialog(self) -> None:
         self._show_table_dialog(
-            f"Blocos da semana - {self.current_operation}",
-            ["Dia", "Inicio", "Duracao", "Encomenda", "Material", "Esp.", "Chapa"],
+            f"Blocos da semana - {self._operation_display_name(self.current_operation)}",
+            ["Dia", "Inicio", "Duracao", "Encomenda", "Material", "Esp.", "Recurso", "Chapa"],
             [
                 [
                     self._fmt_day(r.get("data", "-")),
@@ -4798,6 +5262,7 @@ class PlanningPage(QWidget):
                     r.get("encomenda", "-"),
                     r.get("material", "-"),
                     r.get("espessura", "-"),
+                    r.get("maquina", r.get("posto_trabalho", "-")),
                     r.get("chapa", "-"),
                 ]
                 for r in self.current_active
@@ -4807,8 +5272,8 @@ class PlanningPage(QWidget):
 
     def _show_history_dialog(self) -> None:
         self._show_table_dialog(
-            f"Histórico de planeamento - {self.current_operation}",
-            ["Data", "Inicio", "Encomenda", "Material", "Esp.", "Planeado", "Real / Estado"],
+            f"Histórico de planeamento - {self._operation_display_name(self.current_operation)}",
+            ["Data", "Inicio", "Encomenda", "Material", "Esp.", "Recurso", "Planeado", "Real / Estado"],
             [
                 [
                     self._fmt_day(r.get("data", "-")),
@@ -4816,6 +5281,7 @@ class PlanningPage(QWidget):
                     r.get("encomenda", "-"),
                     r.get("material", "-"),
                     r.get("espessura", "-"),
+                    r.get("maquina", r.get("posto_trabalho", "-")),
                     f"{r.get('duracao_min', 0):.1f}",
                     f"{r.get('tempo_real_min', 0):.1f} / {r.get('estado_final', '-')}",
                 ]
@@ -4829,18 +5295,18 @@ class PlanningPage(QWidget):
             return
         rows = list(self.backend.planning_laser_deadline_rows())
         dialog = QDialog(self)
-        dialog.setWindowTitle("Prazos Laser")
+        dialog.setWindowTitle("Prazo Final")
         dialog.resize(1180, 560)
         layout = QVBoxLayout(dialog)
         info = QLabel(
-            "Prazo previsto de conclusão do corte laser por encomenda, com base nos blocos atualmente planeados. "
-            "Se uma encomenda estiver parcial, o prazo final ainda não está totalmente fechado."
+            "Prazo previsto de conclusão global por encomenda, a contar com o corte laser e os postos seguintes já planeados. "
+            "Se a encomenda estiver parcial, o fim apresentado ainda não representa o fluxo completo fechado."
         )
         info.setWordWrap(True)
         info.setProperty("role", "muted")
         layout.addWidget(info)
         table = QTableWidget(0, 7)
-        table.setHorizontalHeaderLabels(["Encomenda", "Cliente", "Entrega", "Grupos", "Planeado", "Fim laser", "Estado"])
+        table.setHorizontalHeaderLabels(["Encomenda", "Cliente", "Entrega", "Grupos", "Planeado", "Fim fluxo", "Estado"])
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -4862,10 +5328,10 @@ class PlanningPage(QWidget):
             align_center_from=2,
         )
         tone_map = {
+            "Fluxo concluído": "Concluida",
             "Planeado completo": "Concluida",
             "Planeado parcial": "Incompleta",
             "Por planear": "Pendente",
-            "Laser concluído": "Concluida",
         }
         for idx, row in enumerate(rows):
             _paint_table_row(table, idx, tone_map.get(str(row.get("estado", "") or ""), "Pendente"))
@@ -4875,36 +5341,62 @@ class PlanningPage(QWidget):
         layout.addWidget(table, 1)
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
+        send_btn = QPushButton("Enviar Prazo")
+        send_btn.setProperty("variant", "warning")
+        send_btn.setStyleSheet(
+            "QPushButton {background: #f4c542; color: #0f172a; border: 1px solid #caa12b; "
+            "border-radius: 10px; padding: 8px 14px; font-weight: 800;}"
+            "QPushButton:hover {background: #ffd65a;}"
+            "QPushButton:disabled {background: #f5e9b4; color: #7c6a2b;}"
+        )
         preview_btn = QPushButton("Abrir PDF")
         preview_btn.setProperty("variant", "secondary")
         save_btn = QPushButton("Guardar PDF")
         save_btn.setProperty("variant", "secondary")
         close_btn = QPushButton("Fechar")
         close_btn.clicked.connect(dialog.reject)
+        btn_row.addWidget(send_btn)
         btn_row.addWidget(preview_btn)
         btn_row.addWidget(save_btn)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
 
+        def selected_deadline_numero() -> str:
+            current = table.currentItem()
+            if current is None or current.row() >= len(rows):
+                return ""
+            return str(rows[current.row()].get("numero", "") or "").strip()
+
+        def send_email() -> None:
+            numero = selected_deadline_numero()
+            if not numero:
+                QMessageBox.warning(dialog, "Prazo Final", "Seleciona uma encomenda para enviar o prazo.")
+                return
+            try:
+                self._open_planning_deadline_email_draft(numero)
+            except Exception as exc:
+                QMessageBox.critical(dialog, "Prazo Final", str(exc))
+
         def open_pdf() -> None:
             try:
                 path = self.backend.planning_open_laser_deadlines_pdf()
             except Exception as exc:
-                QMessageBox.critical(dialog, "Prazos Laser", str(exc))
+                QMessageBox.critical(dialog, "Prazo Final", str(exc))
                 return
-            QMessageBox.information(dialog, "Prazos Laser", f"PDF aberto:\n{path}")
+            QMessageBox.information(dialog, "Prazo Final", f"PDF aberto:\n{path}")
 
         def save_pdf() -> None:
-            path, _ = QFileDialog.getSaveFileName(dialog, "Guardar PDF", "prazos_laser_planeamento.pdf", "PDF (*.pdf)")
+            path, _ = QFileDialog.getSaveFileName(dialog, "Guardar PDF", "prazos_fluxo_planeamento.pdf", "PDF (*.pdf)")
             if not path:
                 return
             try:
                 self.backend.planning_render_laser_deadlines_pdf(path)
             except Exception as exc:
-                QMessageBox.critical(dialog, "Prazos Laser", str(exc))
+                QMessageBox.critical(dialog, "Prazo Final", str(exc))
                 return
-            QMessageBox.information(dialog, "Prazos Laser", f"PDF guardado em:\n{path}")
+            QMessageBox.information(dialog, "Prazo Final", f"PDF guardado em:\n{path}")
 
+        send_btn.clicked.connect(send_email)
         preview_btn.clicked.connect(open_pdf)
         save_btn.clicked.connect(save_pdf)
         dialog.exec()
@@ -5078,7 +5570,14 @@ class PlanningPage(QWidget):
             in selected_keys
         ]
         if not placed:
-            QMessageBox.warning(self, "Planeamento", "Não havia espaço livre na semana para encaixar novos blocos.")
+            if not remaining:
+                QMessageBox.warning(
+                    self,
+                    "Planeamento",
+                    "Os itens escolhidos já não estavam pendentes neste recurso. A lista foi atualizada para refletir o planeamento real.",
+                )
+            else:
+                QMessageBox.warning(self, "Planeamento", "Não havia espaço livre na semana para encaixar novos blocos.")
             return
         if remaining:
             pending_txt = ", ".join(
@@ -5094,6 +5593,66 @@ class PlanningPage(QWidget):
             )
             return
         QMessageBox.information(self, "Planeamento", f"{len(placed)} bloco(s) planeado(s) na semana.")
+
+    def _auto_plan_full_flow(self) -> None:
+        if self.backend is None:
+            QMessageBox.information(self, "Planeamento", "Auto planeamento indisponivel sem backend configurado.")
+            return
+        ordered = self._plan_order_dialog(self.current_pending)
+        if ordered is None:
+            return
+        if not ordered:
+            QMessageBox.warning(self, "Planeamento", "Seleciona pelo menos um item para planear.")
+            return
+        try:
+            result = self.backend.planning_auto_plan_full_flow(ordered, self.week_start, operation=self.current_operation)
+        except Exception as exc:
+            QMessageBox.critical(self, "Auto fluxo", str(exc))
+            return
+        placed = list((result or {}).get("placed", []) or [])
+        pending = list((result or {}).get("pending", []) or [])
+        self.refresh()
+        if not placed:
+            still_pending = {
+                (
+                    str(row.get("numero", "") or "").strip(),
+                    str(row.get("material", "") or "").strip(),
+                    str(row.get("espessura", "") or "").strip(),
+                )
+                for row in self.current_pending
+            }
+            selected_pending = any(
+                (
+                    str(row.get("numero", "") or "").strip(),
+                    str(row.get("material", "") or "").strip(),
+                    str(row.get("espessura", "") or "").strip(),
+                )
+                in still_pending
+                for row in ordered
+            )
+            if not selected_pending:
+                QMessageBox.warning(
+                    self,
+                    "Planeamento",
+                    "Os itens escolhidos já não estavam pendentes neste recurso. A lista foi atualizada para refletir o planeamento real.",
+                )
+            else:
+                QMessageBox.warning(self, "Planeamento", "Não havia espaço livre na semana para encaixar novos blocos.")
+            return
+        if pending:
+            pending_txt = ", ".join(
+                f"{row.get('numero', '-')} {row.get('operacao', '-')} {float(row.get('remaining_min', 0) or 0):.0f} min"
+                for row in pending[:3]
+            )
+            if len(pending) > 3:
+                pending_txt += "..."
+            QMessageBox.information(
+                self,
+                "Planeamento",
+                f"{len(placed)} bloco(s) planeado(s) no fluxo. Ficou continuação pendente para: {pending_txt}",
+            )
+            return
+        QMessageBox.information(self, "Planeamento", f"{len(placed)} bloco(s) planeado(s) no fluxo completo.")
 
     def _clear_week(self) -> None:
         if self.backend is None:
@@ -5138,12 +5697,13 @@ class PlanningPage(QWidget):
         except Exception as exc:
             QMessageBox.critical(self, "Planeamento", str(exc))
             return
+        self.selected_block_id = ""
         self.refresh()
 
     def _open_pdf(self) -> None:
         try:
             if self.backend is not None:
-                path = self.backend.planning_open_pdf(self.week_start, operation=self.current_operation)
+                path = self.backend.planning_open_pdf(self.week_start, operation=self.current_operation, resource=self.current_resource)
             else:
                 path = self.runtime_service.planning_pdf(week_start=self.week_start.isoformat(), operation=self.current_operation)
         except Exception as exc:
@@ -7972,8 +8532,26 @@ class PurchaseNotesPage(QWidget):
         line_actions.addStretch(1)
         lines_layout.addLayout(line_actions)
 
-        self.lines_table = QTableWidget(0, 13)
-        self.lines_table.setHorizontalHeaderLabels(["Código", "Material", "Esp.", "Descrição", "Origem", "Fornecedor", "Qtd", "Unid.", "P.Unit.", "Desc.%", "IVA%", "Total", "Entrega"])
+        self.lines_table = QTableWidget(0, 15)
+        self.lines_table.setHorizontalHeaderLabels(
+            [
+                "Código",
+                "Material",
+                "Esp.",
+                "Descrição",
+                "Origem",
+                "Fornecedor",
+                "Qtd",
+                "Unid.",
+                "Peso unit.",
+                "Peso tot.",
+                "P.Unit.",
+                "Desc.%",
+                "IVA%",
+                "Total",
+                "Entrega",
+            ]
+        )
         self.lines_table.verticalHeader().setVisible(False)
         self.lines_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.lines_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -7989,11 +8567,13 @@ class PurchaseNotesPage(QWidget):
                 (5, "stretch", 0),
                 (6, "fixed", 72),
                 (7, "fixed", 62),
-                (8, "fixed", 96),
-                (9, "fixed", 74),
-                (10, "fixed", 68),
-                (11, "fixed", 102),
-                (12, "fixed", 118),
+                (8, "fixed", 88),
+                (9, "fixed", 88),
+                (10, "fixed", 94),
+                (11, "fixed", 72),
+                (12, "fixed", 66),
+                (13, "fixed", 102),
+                (14, "fixed", 118),
             ],
         )
         self.lines_table.setStyleSheet(
@@ -8118,6 +8698,19 @@ class PurchaseNotesPage(QWidget):
         if supplier and not self.contact_edit.text().strip():
             self.contact_edit.setText(str(supplier.get("contacto", "") or "").strip())
 
+    def _line_weight_unit(self, row: dict[str, Any]) -> float:
+        return max(0.0, float(row.get("peso_unid", 0) or 0))
+
+    def _line_weight_total(self, row: dict[str, Any]) -> float:
+        weight_unit = self._line_weight_unit(row)
+        quantity = max(0.0, float(row.get("qtd", 0) or 0))
+        if weight_unit <= 0 or quantity <= 0:
+            return 0.0
+        return round(weight_unit * quantity, 4)
+
+    def _weight_text(self, value: float) -> str:
+        return f"{value:.3f}" if value > 0 else ""
+
     def _render_lines(self) -> None:
         total = 0.0
         materials_total = 0.0
@@ -8157,6 +8750,8 @@ class PurchaseNotesPage(QWidget):
                     row.get("fornecedor_linha", "-"),
                     f"{float(row.get('qtd', 0) or 0):.2f}",
                     row.get("unid", "-"),
+                    self._weight_text(self._line_weight_unit(row)),
+                    self._weight_text(self._line_weight_total(row)),
                     f"{float(row.get('preco', 0) or 0):.4f}",
                     f"{float(row.get('desconto', 0) or 0):.2f}",
                     f"{float(row.get('iva', 0) or 0):.2f}",
@@ -8183,6 +8778,8 @@ class PurchaseNotesPage(QWidget):
             esp_item = self.lines_table.item(row_index, 2)
             desc_item = self.lines_table.item(row_index, 3)
             supplier_item = self.lines_table.item(row_index, 5)
+            weight_unit_item = self.lines_table.item(row_index, 8)
+            weight_total_item = self.lines_table.item(row_index, 9)
             if code_item is not None:
                 code_item.setToolTip(_line_code(row))
             if material_item is not None:
@@ -8193,6 +8790,14 @@ class PurchaseNotesPage(QWidget):
                 desc_item.setToolTip(str(row.get("descricao", "") or "").strip())
             if supplier_item is not None:
                 supplier_item.setToolTip(str(row.get("fornecedor_linha", "") or "").strip())
+            if weight_unit_item is not None:
+                weight_unit_item.setToolTip(
+                    f"{self._line_weight_unit(row):.3f} kg" if self._line_weight_unit(row) > 0 else "Sem peso associado"
+                )
+            if weight_total_item is not None:
+                weight_total_item.setToolTip(
+                    f"{self._line_weight_total(row):.3f} kg" if self._line_weight_total(row) > 0 else "Sem peso total calculado"
+                )
         self.total_label.setText(_fmt_eur(total))
         self.total_materials_label.setText(_fmt_eur(materials_total))
         self.total_products_label.setText(_fmt_eur(products_total))
@@ -8913,8 +9518,10 @@ class PurchaseNotesPage(QWidget):
             meta_layout.setColumnStretch(col, 1)
         layout.addWidget(meta_card)
 
-        table = QTableWidget(len(self.line_rows), 8)
-        table.setHorizontalHeaderLabels(["Ref", "Material", "Esp.", "Descrição", "Pendente", "Receber", "Lote", "Localização"])
+        table = QTableWidget(len(self.line_rows), 10)
+        table.setHorizontalHeaderLabels(
+            ["Ref", "Material", "Esp.", "Descrição", "Peso unit.", "Peso tot.", "Pendente", "Receber", "Lote", "Localização"]
+        )
         table.verticalHeader().setVisible(False)
         table.setSelectionMode(QTableWidget.NoSelection)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -8931,12 +9538,16 @@ class PurchaseNotesPage(QWidget):
         header.setSectionResizeMode(5, QHeaderView.Fixed)
         header.setSectionResizeMode(6, QHeaderView.Fixed)
         header.setSectionResizeMode(7, QHeaderView.Fixed)
-        table.setColumnWidth(0, 108)
-        table.setColumnWidth(2, 68)
-        table.setColumnWidth(4, 88)
-        table.setColumnWidth(5, 94)
-        table.setColumnWidth(6, 136)
-        table.setColumnWidth(7, 176)
+        header.setSectionResizeMode(8, QHeaderView.Fixed)
+        header.setSectionResizeMode(9, QHeaderView.Fixed)
+        table.setColumnWidth(0, 102)
+        table.setColumnWidth(2, 62)
+        table.setColumnWidth(4, 82)
+        table.setColumnWidth(5, 82)
+        table.setColumnWidth(6, 82)
+        table.setColumnWidth(7, 92)
+        table.setColumnWidth(8, 130)
+        table.setColumnWidth(9, 170)
         table.setMinimumHeight(max(220, min(380, _table_visible_height(table, min(len(self.line_rows), 7), extra=12))))
         qty_inputs: list[QDoubleSpinBox] = []
         lote_inputs: list[QLineEdit] = []
@@ -8974,9 +9585,19 @@ class PurchaseNotesPage(QWidget):
             desc_item = QTableWidgetItem(_elide_middle(desc, 52))
             desc_item.setToolTip(desc)
             table.setItem(row_index, 3, desc_item)
+            weight_unit = self._line_weight_unit(row)
+            weight_total = round(weight_unit * pending, 4) if weight_unit > 0 and pending > 0 else 0.0
+            weight_unit_item = QTableWidgetItem(self._weight_text(weight_unit))
+            weight_unit_item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
+            weight_unit_item.setToolTip(f"{weight_unit:.3f} kg" if weight_unit > 0 else "Sem peso associado")
+            table.setItem(row_index, 4, weight_unit_item)
+            weight_total_item = QTableWidgetItem(self._weight_text(weight_total))
+            weight_total_item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
+            weight_total_item.setToolTip(f"{weight_total:.3f} kg" if weight_total > 0 else "Sem peso total calculado")
+            table.setItem(row_index, 5, weight_total_item)
             pending_item = QTableWidgetItem(f"{pending:.2f}")
             pending_item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
-            table.setItem(row_index, 4, pending_item)
+            table.setItem(row_index, 6, pending_item)
             qty_spin = QDoubleSpinBox()
             qty_spin.setRange(0.0, pending)
             qty_spin.setDecimals(2)
@@ -8985,14 +9606,14 @@ class PurchaseNotesPage(QWidget):
             qty_spin.setMinimumHeight(30)
             qty_spin.setAlignment(Qt.AlignCenter)
             qty_inputs.append(qty_spin)
-            table.setCellWidget(row_index, 5, qty_spin)
+            table.setCellWidget(row_index, 7, qty_spin)
             is_material_line = self.backend.desktop_main.origem_is_materia(row.get("origem", ""))
             lote_edit = QLineEdit("")
             lote_edit.setMinimumHeight(30)
             lote_edit.setPlaceholderText("Escrever apenas se necessário")
             lote_edit.setEnabled(is_material_line)
             lote_inputs.append(lote_edit)
-            table.setCellWidget(row_index, 6, lote_edit)
+            table.setCellWidget(row_index, 8, lote_edit)
             local_combo = QComboBox()
             local_combo.setEditable(True)
             local_combo.setInsertPolicy(QComboBox.NoInsert)
@@ -9007,7 +9628,7 @@ class PurchaseNotesPage(QWidget):
             if local_combo.lineEdit() is not None:
                 local_combo.lineEdit().setPlaceholderText("Selecionar / escrever")
             local_inputs.append(local_combo)
-            table.setCellWidget(row_index, 7, local_combo)
+            table.setCellWidget(row_index, 9, local_combo)
         lines_card = CardFrame()
         lines_layout = QVBoxLayout(lines_card)
         lines_layout.setContentsMargins(14, 12, 14, 12)
@@ -11944,8 +12565,8 @@ class OrdersPage(QWidget):
         esp_layout.setSpacing(8)
         esp_title = QLabel("Espessuras")
         esp_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
-        self.esp_table = QTableWidget(0, 4)
-        self.esp_table.setHorizontalHeaderLabels(["Espessura", "Laser", "Outras ops", "Estado"])
+        self.esp_table = QTableWidget(0, 5)
+        self.esp_table.setHorizontalHeaderLabels(["Espessura", "Laser", "Outras ops", "Recurso", "Estado"])
         self.esp_table.verticalHeader().setVisible(False)
         self.esp_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.esp_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -11955,8 +12576,9 @@ class OrdersPage(QWidget):
             [
                 (0, "fixed", 88),
                 (1, "fixed", 76),
-                (2, "stretch", 186),
-                (3, "fixed", 126),
+                (2, "stretch", 150),
+                (3, "stretch", 180),
+                (4, "fixed", 126),
             ],
         )
         self.esp_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -12344,6 +12966,7 @@ class OrdersPage(QWidget):
                     row.get("espessura", "-"),
                     row.get("tempo_min", "0"),
                     row.get("tempo_operacoes_txt", "-"),
+                    row.get("recursos_operacao_txt", "-"),
                     row.get("estado", "-"),
                 ]
                 for row in self.esp_rows
@@ -12360,7 +12983,7 @@ class OrdersPage(QWidget):
         header = self.esp_table.horizontalHeader()
         header.resizeSection(0, 96)
         header.resizeSection(1, 76)
-        header.resizeSection(3, 100)
+        header.resizeSection(4, 100)
         if self.esp_table.rowCount() > 0:
             self.esp_table.selectRow(0)
             self._on_esp_selected()
@@ -13045,7 +13668,7 @@ class OrdersPage(QWidget):
         dialog.setMinimumWidth(430)
         layout = QVBoxLayout(dialog)
         intro = QLabel(
-            "Define só as operações desta espessura. O planeamento por operação usa estes minutos automaticamente."
+            "Define os minutos e o recurso real de cada operação. A encomenda guarda essa associação e o planeamento usa-a automaticamente."
         )
         intro.setWordWrap(True)
         intro.setProperty("role", "muted")
@@ -13066,6 +13689,8 @@ class OrdersPage(QWidget):
             seen_ops.add(op_name)
             ordered_ops.append(op_name)
         editors: dict[str, QDoubleSpinBox] = {}
+        resource_editors: dict[str, QComboBox] = {}
+        current_resources = dict(esp_row.get("maquinas_operacao", {}) or {})
         for op_name in ordered_ops:
             spin = QDoubleSpinBox()
             spin.setRange(0, 100000)
@@ -13079,7 +13704,21 @@ class OrdersPage(QWidget):
                 spin.setValue(0)
             spin.setSuffix(" min")
             editors[op_name] = spin
-            form.addRow(f"{op_name}", spin)
+            resource_combo = QComboBox()
+            resource_combo.setEditable(False)
+            for value in list(self.backend.workcenter_resource_options(op_name) or []):
+                resource_combo.addItem(str(value))
+            preferred_resource = str(current_resources.get(op_name, "") or "").strip()
+            if preferred_resource:
+                resource_combo.setCurrentText(preferred_resource)
+            row_host = QWidget()
+            row_layout = QHBoxLayout(row_host)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            row_layout.addWidget(spin, 1)
+            row_layout.addWidget(resource_combo, 1)
+            resource_editors[op_name] = resource_combo
+            form.addRow(f"{op_name}", row_host)
         layout.addLayout(form)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dialog.accept)
@@ -13089,11 +13728,13 @@ class OrdersPage(QWidget):
             return
         try:
             payload = {}
+            payload_resources = {}
             for op_name, spin in editors.items():
                 minutes = int(spin.value())
                 if minutes > 0:
                     payload[op_name] = str(minutes)
-            self.backend.order_espessura_set_operation_times(numero, material, espessura, payload)
+                    payload_resources[op_name] = resource_editors[op_name].currentText().strip()
+            self.backend.order_espessura_set_operation_times(numero, material, espessura, payload, payload_resources)
         except Exception as exc:
             QMessageBox.critical(self, "Encomendas", str(exc))
             return
