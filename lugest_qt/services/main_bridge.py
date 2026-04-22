@@ -2416,6 +2416,86 @@ class LegacyBackend:
         )
         return rows
 
+    def material_price_rows(self, formato_filter: str = "") -> list[dict[str, Any]]:
+        filtro = str(formato_filter or "").strip().lower()
+        rows: list[dict[str, Any]] = []
+        for material in list(self.ensure_data().get("materiais", []) or []):
+            if not isinstance(material, dict):
+                continue
+            preview = dict(self.material_price_preview(material) or {})
+            formato = str(preview.get("formato", material.get("formato", "")) or "").strip()
+            if filtro and formato.lower() != filtro:
+                continue
+            price_kg = 0.0
+            kg_m = float(preview.get("kg_m", material.get("kg_m", 0)) or 0.0)
+            base_price = float(material.get("p_compra", 0) or 0.0)
+            if formato == "Tubo":
+                price_kg = round(base_price / kg_m, 4) if kg_m > 0 else 0.0
+            else:
+                price_kg = round(base_price, 4)
+            rows.append(
+                {
+                    "id": str(material.get("id", "") or "").strip(),
+                    "formato": formato,
+                    "material": str(material.get("material", "") or "").strip(),
+                    "secao_tipo": str(preview.get("secao_tipo", material.get("secao_tipo", "")) or "").strip(),
+                    "dimension_label": str(preview.get("dimension_label", "") or "").strip(),
+                    "espessura": str(preview.get("espessura", material.get("espessura", "")) or "").strip(),
+                    "kg_m": round(kg_m, 4),
+                    "peso_unid": round(float(preview.get("peso_unid", material.get("peso_unid", 0)) or 0.0), 4),
+                    "p_compra": round(base_price, 4),
+                    "price_kg": price_kg,
+                    "preco_unid": round(float(preview.get("preco_unid", material.get("preco_unid", 0)) or 0.0), 4),
+                    "base_label": str(preview.get("base_label", "EUR/kg") or "EUR/kg").strip(),
+                    "quantidade": round(float(material.get("quantidade", 0) or 0.0), 2),
+                }
+            )
+        rows.sort(key=lambda item: (item.get("formato", ""), item.get("material", ""), item.get("dimension_label", ""), item.get("id", "")))
+        return rows
+
+    def material_default_price_kg(self, formato: str = "", material_name: str = "") -> float:
+        formato_txt = str(formato or "").strip().lower()
+        material_txt = str(material_name or "").strip().lower()
+        rows = list(self.material_price_rows(formato_filter=formato) or [])
+        exact = [row for row in rows if material_txt and material_txt in str(row.get("material", "") or "").strip().lower()]
+        source = exact or rows
+        values = [float(row.get("price_kg", 0) or 0.0) for row in source if float(row.get("price_kg", 0) or 0.0) > 0]
+        if not values:
+            return 0.0
+        return round(sum(values) / len(values), 4)
+
+    def material_update_price_kg(self, material_id: str, price_kg: Any) -> dict[str, Any]:
+        record = self.material_by_id(material_id)
+        if record is None:
+            raise ValueError("Material não encontrado.")
+        price_kg_value = round(self._parse_float(price_kg, 0), 4)
+        if price_kg_value <= 0:
+            raise ValueError("Preço/kg inválido.")
+        preview = dict(self.material_price_preview(record) or {})
+        formato = str(preview.get("formato", record.get("formato", "")) or "").strip() or self.desktop_main.detect_materia_formato(record)
+        kg_m = float(preview.get("kg_m", record.get("kg_m", 0)) or 0.0)
+        if str(formato).strip().lower() == "tubo":
+            base_value = round(price_kg_value * kg_m, 4) if kg_m > 0 else 0.0
+        else:
+            base_value = price_kg_value
+        if base_value <= 0:
+            raise ValueError("Não foi possível calcular o preço base do material.")
+        data = self.ensure_data()
+        record["p_compra"] = base_value
+        record["preco_unid"] = float(self.materia_actions._materia_preco_unid_record(record))
+        record["atualizado_em"] = self.desktop_main.now_iso()
+        self.desktop_main.log_stock(data, "PRECO", f"{record.get('id')} base={base_value} price_kg={price_kg_value}")
+        self._sync_ne_from_materia()
+        self._save(force=True)
+        updated_preview = dict(self.material_price_preview(record) or {})
+        return {
+            "id": str(record.get("id", "") or "").strip(),
+            "p_compra": round(float(record.get("p_compra", 0) or 0.0), 4),
+            "price_kg": round(price_kg_value, 4),
+            "preco_unid": round(float(updated_preview.get("preco_unid", record.get("preco_unid", 0)) or 0.0), 4),
+            "base_label": str(updated_preview.get("base_label", "EUR/kg") or "EUR/kg").strip(),
+        }
+
     def laser_sheet_stock_candidates(self, material: str, espessura: str, *, include_reserved: bool = False) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for index, row in enumerate(self.material_candidates(material, espessura, include_reserved=include_reserved)):
@@ -9930,11 +10010,8 @@ class LegacyBackend:
                 item["consumed_by"] = actor
                 changed = True
             else:
-                item["qtd_consumida"] = round(plan, 2)
-                item["estado"] = "Concluido"
-                item["consumed_at"] = now_txt
-                item["consumed_by"] = actor
-                changed = True
+                # Componentes de conjunto sem produto nao consomem stock nem fecham aqui.
+                continue
         if not changed:
             raise ValueError("Nao existem consumos pendentes de montagem.")
         self.desktop_main.update_estado_encomenda_por_espessuras(enc)
@@ -16707,6 +16784,32 @@ class LegacyBackend:
             "tempo_peca_min": round(self._parse_float(payload.get("tempo_peca_min", payload.get("tempo_pecas_min", 0)), 0), 2),
             "preco_unit": round(self._parse_float(payload.get("preco_unit", 0), 0), 4),
             "desenho": str(payload.get("desenho", "") or "").strip(),
+            "calc_mode": str(payload.get("calc_mode", "") or "").strip(),
+            "descricao_base": str(payload.get("descricao_base", "") or "").strip(),
+            "weight_total": round(self._parse_float(payload.get("weight_total", 0), 0), 3),
+            "total_cost": round(self._parse_float(payload.get("total_cost", 0), 0), 2),
+            "quantity_units": round(self._parse_float(payload.get("quantity_units", quantity), quantity), 2),
+            "price_per_kg": round(self._parse_float(payload.get("price_per_kg", 0), 0), 4),
+            "price_base_value": round(self._parse_float(payload.get("price_base_value", 0), 0), 4),
+            "price_markup_pct": round(self._parse_float(payload.get("price_markup_pct", 0), 0), 2),
+            "stock_metric_value": round(self._parse_float(payload.get("stock_metric_value", 0), 0), 4),
+            "meters_per_unit": round(self._parse_float(payload.get("meters_per_unit", 0), 0), 3),
+            "kg_per_m": round(self._parse_float(payload.get("kg_per_m", 0), 0), 4),
+            "length_mm": round(self._parse_float(payload.get("length_mm", 0), 0), 1),
+            "width_mm": round(self._parse_float(payload.get("width_mm", 0), 0), 1),
+            "thickness_mm": round(self._parse_float(payload.get("thickness_mm", 0), 0), 2),
+            "density": round(self._parse_float(payload.get("density", 0), 0), 1),
+            "diameter_mm": round(self._parse_float(payload.get("diameter_mm", 0), 0), 1),
+            "manual_unit_price": round(self._parse_float(payload.get("manual_unit_price", 0), 0), 4),
+            "profile_section": str(payload.get("profile_section", "") or "").strip(),
+            "profile_size": str(payload.get("profile_size", "") or "").strip(),
+            "tube_section": str(payload.get("tube_section", "") or "").strip(),
+            "quality": str(payload.get("quality", "") or "").strip(),
+            "stock_material_id": str(payload.get("stock_material_id", "") or "").strip(),
+            "hint": str(payload.get("hint", "") or "").strip(),
+            "price_base_label": str(payload.get("price_base_label", "") or "").strip(),
+            "material_family": str(payload.get("material_family", "") or "").strip(),
+            "material_subtype": str(payload.get("material_subtype", "") or "").strip(),
         }
         if item_type == self.desktop_main.ORC_LINE_TYPE_PIECE:
             if not item["descricao"]:
@@ -16751,6 +16854,8 @@ class LegacyBackend:
                 "codigo": str(model.get("codigo", "") or "").strip(),
                 "descricao": str(model.get("descricao", "") or "").strip(),
                 "ativo": bool(model.get("ativo", True)),
+                "template": bool(model.get("template", False)),
+                "origem": str(model.get("origem", "") or "").strip(),
                 "itens": len(items),
                 "pecas": sum(1 for item in items if self.desktop_main.orc_line_is_piece(item)),
                 "produtos": sum(1 for item in items if self.desktop_main.orc_line_is_product(item)),
@@ -16782,6 +16887,10 @@ class LegacyBackend:
             "descricao": str(model.get("descricao", "") or "").strip(),
             "notas": str(model.get("notas", "") or "").strip(),
             "ativo": bool(model.get("ativo", True)),
+            "template": bool(model.get("template", False)),
+            "origem": str(model.get("origem", "") or "").strip(),
+            "created_at": str(model.get("created_at", "") or "").strip(),
+            "updated_at": str(model.get("updated_at", "") or "").strip(),
             "itens": items,
         }
 
@@ -16799,6 +16908,8 @@ class LegacyBackend:
             "descricao": descricao,
             "notas": str(payload.get("notas", "") or "").strip(),
             "ativo": bool(payload.get("ativo", True)),
+            "template": bool(payload.get("template", False)),
+            "origem": str(payload.get("origem", "") or "").strip(),
             "created_at": str(payload.get("created_at", "") or "").strip() or self.desktop_main.now_iso(),
             "updated_at": self.desktop_main.now_iso(),
             "itens": [{**item, "linha_ordem": index} for index, item in enumerate(items, start=1)],
@@ -16830,6 +16941,147 @@ class LegacyBackend:
 
     def assembly_model_expand(self, codigo: str, quantity: Any = 1) -> list[dict[str, Any]]:
         detail = self.assembly_model_detail(codigo)
+        multiplier = round(self._parse_float(quantity, 0), 2)
+        if multiplier <= 0:
+            raise ValueError("Quantidade do conjunto invalida.")
+        group_uuid = self.desktop_main.uuid.uuid4().hex[:12].upper()
+        rows: list[dict[str, Any]] = []
+        for item in list(detail.get("itens", []) or []):
+            line = {
+                "tipo_item": self.desktop_main.normalize_orc_line_type(item.get("tipo_item")),
+                "ref_interna": "",
+                "ref_externa": str(item.get("ref_externa", "") or "").strip(),
+                "descricao": str(item.get("descricao", "") or "").strip(),
+                "material": str(item.get("material", "") or "").strip(),
+                "material_family": str(item.get("material_family", "") or "").strip(),
+                "material_subtype": str(item.get("material_subtype", "") or "").strip(),
+                "espessura": str(item.get("espessura", "") or "").strip(),
+                "operacao": str(item.get("operacao", "") or "").strip(),
+                "produto_codigo": str(item.get("produto_codigo", "") or "").strip(),
+                "produto_unid": str(item.get("produto_unid", "") or "").strip(),
+                "conjunto_codigo": str(detail.get("codigo", "") or "").strip(),
+                "conjunto_nome": str(detail.get("descricao", "") or "").strip(),
+                "grupo_uuid": group_uuid,
+                "qtd_base": round(self._parse_float(item.get("qtd", 0), 0), 2),
+                "tempo_peca_min": round(self._parse_float(item.get("tempo_peca_min", 0), 0), 2),
+                "qtd": round(self._parse_float(item.get("qtd", 0), 0) * multiplier, 2),
+                "preco_unit": round(self._parse_float(item.get("preco_unit", 0), 0), 4),
+                "desenho": str(item.get("desenho", "") or "").strip(),
+                "stock_material_id": str(item.get("stock_material_id", "") or "").strip(),
+            }
+            if self.desktop_main.orc_line_is_product(line) and not line["ref_externa"]:
+                line["ref_externa"] = line["produto_codigo"]
+            rows.append(line)
+        return rows
+
+    def conjunto_rows(self, filter_text: str = "") -> list[dict[str, Any]]:
+        query = str(filter_text or "").strip().lower()
+        rows: list[dict[str, Any]] = []
+        for model in list(self.ensure_data().get("conjuntos", []) or []):
+            if not isinstance(model, dict):
+                continue
+            items = list(model.get("itens", []) or [])
+            row = {
+                "codigo": str(model.get("codigo", "") or "").strip(),
+                "descricao": str(model.get("descricao", "") or "").strip(),
+                "ativo": bool(model.get("ativo", True)),
+                "template": bool(model.get("template", False)),
+                "origem": str(model.get("origem", "") or "").strip(),
+                "itens": len(items),
+                "pecas": sum(1 for item in items if self.desktop_main.orc_line_is_piece(item)),
+                "produtos": sum(1 for item in items if self.desktop_main.orc_line_is_product(item)),
+                "servicos": sum(1 for item in items if self.desktop_main.orc_line_is_service(item)),
+                "total_custo": round(self._parse_float(model.get("total_custo", 0), 0), 2),
+                "total_final": round(self._parse_float(model.get("total_final", 0), 0), 2),
+                "margem_perc": round(self._parse_float(model.get("margem_perc", 0), 0), 2),
+                "notas": str(model.get("notas", "") or "").strip(),
+                "created_at": str(model.get("created_at", "") or "").strip(),
+                "updated_at": str(model.get("updated_at", "") or "").strip(),
+            }
+            if query and not any(query in str(value).lower() for value in row.values()):
+                continue
+            rows.append(row)
+        rows.sort(key=lambda item: (item.get("codigo", ""), item.get("descricao", "")))
+        return rows
+
+    def conjunto_detail(self, codigo: str) -> dict[str, Any]:
+        code = str(codigo or "").strip()
+        model = next(
+            (
+                row
+                for row in list(self.ensure_data().get("conjuntos", []) or [])
+                if str(row.get("codigo", "") or "").strip() == code
+            ),
+            None,
+        )
+        if model is None:
+            raise ValueError("Conjunto nao encontrado.")
+        items = [self._normalize_assembly_model_item(dict(item or {})) for item in list(model.get("itens", []) or [])]
+        return {
+            "codigo": str(model.get("codigo", "") or "").strip(),
+            "descricao": str(model.get("descricao", "") or "").strip(),
+            "notas": str(model.get("notas", "") or "").strip(),
+            "ativo": bool(model.get("ativo", True)),
+            "template": bool(model.get("template", False)),
+            "origem": str(model.get("origem", "") or "").strip(),
+            "margem_perc": round(self._parse_float(model.get("margem_perc", 0), 0), 2),
+            "total_custo": round(self._parse_float(model.get("total_custo", 0), 0), 2),
+            "total_final": round(self._parse_float(model.get("total_final", 0), 0), 2),
+            "created_at": str(model.get("created_at", "") or "").strip(),
+            "updated_at": str(model.get("updated_at", "") or "").strip(),
+            "itens": items,
+        }
+
+    def conjunto_save(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = self.ensure_data()
+        code = str(payload.get("codigo", "") or "").strip() or self._next_assembly_model_code().replace("CJM-", "CJ-")
+        descricao = str(payload.get("descricao", "") or "").strip()
+        if not descricao:
+            raise ValueError("Descricao obrigatoria no conjunto.")
+        items = [self._normalize_assembly_model_item(dict(row or {})) for row in list(payload.get("itens", []) or [])]
+        if not items:
+            raise ValueError("O conjunto precisa de pelo menos um item.")
+        model = {
+            "codigo": code,
+            "descricao": descricao,
+            "notas": str(payload.get("notas", "") or "").strip(),
+            "ativo": bool(payload.get("ativo", True)),
+            "template": bool(payload.get("template", False)),
+            "origem": str(payload.get("origem", "") or "").strip(),
+            "margem_perc": round(self._parse_float(payload.get("margem_perc", 0), 0), 2),
+            "total_custo": round(self._parse_float(payload.get("total_custo", 0), 0), 2),
+            "total_final": round(self._parse_float(payload.get("total_final", 0), 0), 2),
+            "created_at": str(payload.get("created_at", "") or "").strip() or self.desktop_main.now_iso(),
+            "updated_at": self.desktop_main.now_iso(),
+            "itens": [{**item, "linha_ordem": index} for index, item in enumerate(items, start=1)],
+        }
+        existing = next(
+            (
+                row
+                for row in list(data.get("conjuntos", []) or [])
+                if str(row.get("codigo", "") or "").strip() == code
+            ),
+            None,
+        )
+        if existing is None:
+            data.setdefault("conjuntos", []).append(model)
+        else:
+            model["created_at"] = str(existing.get("created_at", "") or "").strip() or model["created_at"]
+            existing.update(model)
+        self._save(force=True)
+        return self.conjunto_detail(code)
+
+    def conjunto_remove(self, codigo: str) -> None:
+        code = str(codigo or "").strip()
+        rows = list(self.ensure_data().get("conjuntos", []) or [])
+        filtered = [row for row in rows if str(row.get("codigo", "") or "").strip() != code]
+        if len(filtered) == len(rows):
+            raise ValueError("Conjunto nao encontrado.")
+        self.ensure_data()["conjuntos"] = filtered
+        self._save(force=True)
+
+    def conjunto_expand(self, codigo: str, quantity: Any = 1) -> list[dict[str, Any]]:
+        detail = self.conjunto_detail(codigo)
         multiplier = round(self._parse_float(quantity, 0), 2)
         if multiplier <= 0:
             raise ValueError("Quantidade do conjunto invalida.")
@@ -16889,6 +17141,13 @@ class LegacyBackend:
             "qtd": round(self._parse_float(payload.get("qtd", 0), 0), 2),
             "preco_unit": round(self._parse_float(payload.get("preco_unit", 0), 0), 4),
             "desenho": str(payload.get("desenho", "") or "").strip(),
+            "price_per_kg": round(self._parse_float(payload.get("price_per_kg", 0), 0), 4),
+            "price_base_value": round(self._parse_float(payload.get("price_base_value", 0), 0), 4),
+            "price_markup_pct": round(self._parse_float(payload.get("price_markup_pct", 0), 0), 2),
+            "stock_metric_value": round(self._parse_float(payload.get("stock_metric_value", 0), 0), 4),
+            "price_base_label": str(payload.get("price_base_label", "") or "").strip(),
+            "kg_per_m": round(self._parse_float(payload.get("kg_per_m", 0), 0), 4),
+            "stock_material_id": str(payload.get("stock_material_id", "") or "").strip(),
             "laser_base_active": bool(payload.get("laser_base_active", False)),
             "laser_base_tempo_unit": round(self._parse_float(payload.get("laser_base_tempo_unit", payload.get("tempo_peca_min", payload.get("tempo_pecas_min", 0))), 0), 4),
             "laser_base_preco_unit": round(self._parse_float(payload.get("laser_base_preco_unit", payload.get("preco_unit", 0)), 0), 4),
@@ -17534,6 +17793,55 @@ class LegacyBackend:
         os.startfile(str(target))
         return target
 
+    def _quote_line_is_production_ready(self, line: dict[str, Any] | None = None) -> bool:
+        row = dict(line or {})
+        if self.desktop_main.normalize_orc_line_type(row.get("tipo_item")) != self.desktop_main.ORC_LINE_TYPE_PIECE:
+            return False
+        drawing_path = str(row.get("desenho", "") or "").strip()
+        if not drawing_path:
+            return False
+        ops = [
+            str(self.desktop_main.normalize_operacao_nome(op) or op or "").strip()
+            for op in self._planning_ops_from_ops_value(row.get("operacao", ""))
+        ]
+        ops = [op for op in ops if op and op != "Montagem"]
+        if not ops:
+            return False
+        detail_ready = bool(
+            list(row.get("operacoes_detalhe", []) or [])
+            or dict(row.get("tempos_operacao", {}) or {})
+            or dict(row.get("custos_operacao", {}) or {})
+        )
+        return bool(detail_ready or ops)
+
+    def _quote_line_production_route(self, line: dict[str, Any] | None = None) -> str:
+        row = dict(line or {})
+        line_type = self.desktop_main.normalize_orc_line_type(row.get("tipo_item"))
+        if line_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT:
+            return "montagem"
+        if line_type == self.desktop_main.ORC_LINE_TYPE_SERVICE:
+            return "montagem"
+        if not self._quote_line_is_production_ready(row):
+            return "conjunto"
+        ops = [str(self.desktop_main.normalize_operacao_nome(op) or op or "").strip() for op in self._planning_ops_from_ops_value(row.get("operacao", ""))]
+        ops = [op for op in ops if op]
+        subtype_norm = self.desktop_main.norm_text(str(row.get("material_subtype", "") or row.get("calc_mode", "") or "").strip())
+        material_norm = self.desktop_main.norm_text(str(row.get("material", "") or "").strip())
+        drawing_path = str(row.get("desenho", "") or "").strip()
+        if "Corte Laser" in ops and drawing_path:
+            return "laser"
+        if any(token in subtype_norm for token in ("tubo", "cantoneira", "perfil", "barra", "ferronervurado", "chapa")):
+            return "serralharia"
+        if any(token in material_norm for token in ("tubo", "cantoneira", "perfil", "barra", "ferro nervurado")):
+            return "serralharia"
+        if "Serralharia" in ops:
+            return "serralharia"
+        if "Corte Laser" in ops:
+            return "laser"
+        if "Montagem" in ops:
+            return "montagem"
+        return "conjunto"
+
     def orc_convert_to_order(self, numero: str, nota_cliente: str = "") -> dict[str, Any]:
         data = self.ensure_data()
         numero = str(numero or "").strip()
@@ -17621,10 +17929,11 @@ class LegacyBackend:
         montagem_items: list[dict[str, Any]] = []
         for line in list(orc.get("linhas", []) or []):
             line_type = self.desktop_main.normalize_orc_line_type(line.get("tipo_item"))
+            production_route = self._quote_line_production_route(line)
             qtd_line = float(line.get("qtd", 0) or 0)
             tempo_peca = float(line.get("tempo_peca_min", line.get("tempo_pecas_min", 0)) or 0)
             total_time += tempo_peca * max(qtd_line, 0.0)
-            if line_type != self.desktop_main.ORC_LINE_TYPE_PIECE:
+            if production_route in {"montagem", "conjunto"}:
                 montagem_items.append(
                     {
                         "linha_ordem": len(montagem_items) + 1,
@@ -17638,8 +17947,12 @@ class LegacyBackend:
                         "conjunto_codigo": str(line.get("conjunto_codigo", "") or "").strip(),
                         "conjunto_nome": str(line.get("conjunto_nome", "") or "").strip(),
                         "grupo_uuid": str(line.get("grupo_uuid", "") or "").strip(),
-                        "estado": "Pendente",
-                        "obs": str(line.get("operacao", "") or "").strip(),
+                        "estado": "Pendente" if production_route == "montagem" else "Componente",
+                        "obs": (
+                            str(line.get("operacao", "") or production_route).strip()
+                            if production_route == "montagem"
+                            else "Conjunto sem desenho/operacoes tecnicas. Nao segue para operador."
+                        ),
                         "created_at": self.desktop_main.now_iso(),
                         "consumed_at": "",
                         "consumed_by": "",
@@ -17656,6 +17969,13 @@ class LegacyBackend:
                 {"espessura": espessura, "tempo_min": 0.0, "tempos_operacao": {}, "maquinas_operacao": {}, "estado": "Preparacao", "pecas": []},
             )
             planning_ops = [op for op in self._planning_ops_from_ops_value(line.get("operacao", "")) if op != "Montagem"]
+            if production_route == "serralharia":
+                planning_ops = [op for op in planning_ops if op != "Corte Laser"]
+                if "Serralharia" not in planning_ops:
+                    planning_ops.insert(0, "Serralharia")
+            elif production_route == "laser":
+                if "Corte Laser" not in planning_ops:
+                    planning_ops.insert(0, "Corte Laser")
             esp_bucket = mats[material]["espessuras"][espessura]
             tempos_operacao = esp_bucket.setdefault("tempos_operacao", {})
             maquinas_operacao = esp_bucket.setdefault("maquinas_operacao", {})

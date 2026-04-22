@@ -1,16 +1,16 @@
 {
   "postos_trabalho": [
-    "Corte Laser",
     "Embalamento",
     "Expedicao",
     "Furo Manual",
     "Lacagem",
     "Laser",
     "Maquina 3030",
+    "Maquina 5030",
+    "Maquina 5040",
     "Maquinacao",
-    "Quinagem",
     "Montagem",
-    "1320",
+    "Quinagem",
     "Roscagem",
     "Serralharia",
     "Soldadura"
@@ -18,11 +18,6 @@
   "operador_posto_map": {},
   "tempos_operacao_planeada_min": {},
   "workcenter_catalog": [
-    {
-      "name": "Corte Laser",
-      "operation": "Corte Laser",
-      "machines": []
-    },
     {
       "name": "Embalamento",
       "operation": "Embalamento",
@@ -47,16 +42,15 @@
       "name": "Laser",
       "operation": "Corte Laser",
       "machines": [
-        "Corte Laser",
-        "Maquina 3030"
+        "Maquina 3030",
+        "Maquina 5030",
+        "Maquina 5040"
       ]
     },
     {
       "name": "Maquinacao",
       "operation": "Maquinacao",
-      "machines": [
-        "Quinagem"
-      ]
+      "machines": []
     },
     {
       "name": "Montagem",
@@ -66,9 +60,7 @@
     {
       "name": "Quinagem",
       "operation": "Quinagem",
-      "machines": [
-        "1320"
-      ]
+      "machines": []
     },
     {
       "name": "Roscagem",

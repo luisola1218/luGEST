@@ -2000,8 +2000,53 @@ def _mysql_sync_relational_schema(cur, data):
                 descricao VARCHAR(150) NOT NULL,
                 notas TEXT NULL,
                 ativo BOOLEAN NULL,
+                template BOOLEAN NULL,
+                origem VARCHAR(80) NULL,
                 created_at DATETIME NULL,
                 updated_at DATETIME NULL
+            )
+            """
+        )
+    if "conjuntos" not in tables:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS conjuntos (
+                codigo VARCHAR(40) PRIMARY KEY,
+                descricao VARCHAR(150) NOT NULL,
+                notas TEXT NULL,
+                ativo BOOLEAN NULL,
+                template BOOLEAN NULL,
+                origem VARCHAR(80) NULL,
+                margem_perc DECIMAL(10,2) NULL,
+                total_custo DECIMAL(12,2) NULL,
+                total_final DECIMAL(12,2) NULL,
+                created_at DATETIME NULL,
+                updated_at DATETIME NULL
+            )
+            """
+        )
+    if "conjuntos_itens" not in tables:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS conjuntos_itens (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                conjunto_codigo VARCHAR(40) NOT NULL,
+                linha_ordem INT NULL,
+                tipo_item VARCHAR(30) NULL,
+                ref_externa VARCHAR(100) NULL,
+                descricao TEXT NULL,
+                material VARCHAR(100) NULL,
+                espessura VARCHAR(20) NULL,
+                operacao VARCHAR(150) NULL,
+                produto_codigo VARCHAR(20) NULL,
+                produto_unid VARCHAR(20) NULL,
+                qtd DECIMAL(10,2) NULL,
+                tempo_peca_min DECIMAL(10,2) NULL,
+                preco_unit DECIMAL(10,4) NULL,
+                desenho_path VARCHAR(512) NULL,
+                meta_json LONGTEXT NULL,
+                INDEX idx_conjuntos_codigo_ord (conjunto_codigo, linha_ordem),
+                FOREIGN KEY (conjunto_codigo) REFERENCES conjuntos(codigo) ON DELETE CASCADE
             )
             """
         )
@@ -2024,6 +2069,7 @@ def _mysql_sync_relational_schema(cur, data):
                 tempo_peca_min DECIMAL(10,2) NULL,
                 preco_unit DECIMAL(10,4) NULL,
                 desenho_path VARCHAR(512) NULL,
+                meta_json LONGTEXT NULL,
                 INDEX idx_conjuntos_itens_codigo_ord (conjunto_codigo, linha_ordem),
                 FOREIGN KEY (conjunto_codigo) REFERENCES conjuntos_modelo(codigo) ON DELETE CASCADE
             )
@@ -2448,8 +2494,37 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "conjuntos_modelo", "descricao", "VARCHAR(150) NOT NULL")
         _mysql_ensure_column(cur, "conjuntos_modelo", "notas", "TEXT NULL")
         _mysql_ensure_column(cur, "conjuntos_modelo", "ativo", "BOOLEAN NULL")
+        _mysql_ensure_column(cur, "conjuntos_modelo", "template", "BOOLEAN NULL")
+        _mysql_ensure_column(cur, "conjuntos_modelo", "origem", "VARCHAR(80) NULL")
         _mysql_ensure_column(cur, "conjuntos_modelo", "created_at", "DATETIME NULL")
         _mysql_ensure_column(cur, "conjuntos_modelo", "updated_at", "DATETIME NULL")
+    if "conjuntos" in tables:
+        _mysql_ensure_column(cur, "conjuntos", "descricao", "VARCHAR(150) NOT NULL")
+        _mysql_ensure_column(cur, "conjuntos", "notas", "TEXT NULL")
+        _mysql_ensure_column(cur, "conjuntos", "ativo", "BOOLEAN NULL")
+        _mysql_ensure_column(cur, "conjuntos", "template", "BOOLEAN NULL")
+        _mysql_ensure_column(cur, "conjuntos", "origem", "VARCHAR(80) NULL")
+        _mysql_ensure_column(cur, "conjuntos", "margem_perc", "DECIMAL(10,2) NULL")
+        _mysql_ensure_column(cur, "conjuntos", "total_custo", "DECIMAL(12,2) NULL")
+        _mysql_ensure_column(cur, "conjuntos", "total_final", "DECIMAL(12,2) NULL")
+        _mysql_ensure_column(cur, "conjuntos", "created_at", "DATETIME NULL")
+        _mysql_ensure_column(cur, "conjuntos", "updated_at", "DATETIME NULL")
+    if "conjuntos_itens" in tables:
+        _mysql_ensure_column(cur, "conjuntos_itens", "linha_ordem", "INT NULL")
+        _mysql_ensure_column(cur, "conjuntos_itens", "tipo_item", "VARCHAR(30) NULL")
+        _mysql_ensure_column(cur, "conjuntos_itens", "ref_externa", "VARCHAR(100) NULL")
+        _mysql_ensure_column(cur, "conjuntos_itens", "descricao", "TEXT NULL")
+        _mysql_ensure_column(cur, "conjuntos_itens", "material", "VARCHAR(100) NULL")
+        _mysql_ensure_column(cur, "conjuntos_itens", "espessura", "VARCHAR(20) NULL")
+        _mysql_ensure_column(cur, "conjuntos_itens", "operacao", "VARCHAR(150) NULL")
+        _mysql_ensure_column(cur, "conjuntos_itens", "produto_codigo", "VARCHAR(20) NULL")
+        _mysql_ensure_column(cur, "conjuntos_itens", "produto_unid", "VARCHAR(20) NULL")
+        _mysql_ensure_column(cur, "conjuntos_itens", "qtd", "DECIMAL(10,2) NULL")
+        _mysql_ensure_column(cur, "conjuntos_itens", "tempo_peca_min", "DECIMAL(10,2) NULL")
+        _mysql_ensure_column(cur, "conjuntos_itens", "preco_unit", "DECIMAL(10,4) NULL")
+        _mysql_ensure_column(cur, "conjuntos_itens", "desenho_path", "VARCHAR(512) NULL")
+        _mysql_ensure_column(cur, "conjuntos_itens", "meta_json", "LONGTEXT NULL")
+        _mysql_ensure_index(cur, "conjuntos_itens", "idx_conjuntos_codigo_ord", "`conjunto_codigo`, `linha_ordem`")
     if "conjuntos_modelo_itens" in tables:
         _mysql_ensure_column(cur, "conjuntos_modelo_itens", "linha_ordem", "INT NULL")
         _mysql_ensure_column(cur, "conjuntos_modelo_itens", "tipo_item", "VARCHAR(30) NULL")
@@ -2464,6 +2539,7 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "conjuntos_modelo_itens", "tempo_peca_min", "DECIMAL(10,2) NULL")
         _mysql_ensure_column(cur, "conjuntos_modelo_itens", "preco_unit", "DECIMAL(10,4) NULL")
         _mysql_ensure_column(cur, "conjuntos_modelo_itens", "desenho_path", "VARCHAR(512) NULL")
+        _mysql_ensure_column(cur, "conjuntos_modelo_itens", "meta_json", "LONGTEXT NULL")
         _mysql_ensure_index(cur, "conjuntos_modelo_itens", "idx_conjuntos_itens_codigo_ord", "`conjunto_codigo`, `linha_ordem`")
     if "encomenda_montagem_itens" in tables:
         _mysql_ensure_column(cur, "encomenda_montagem_itens", "linha_ordem", "INT NULL")
@@ -2650,6 +2726,8 @@ def _mysql_sync_relational_schema(cur, data):
         "conjuntos_modelo",
         "encomenda_montagem_itens",
         "orcamento_linhas",
+        "conjuntos_modelo_itens",
+        "conjuntos_itens",
         "plano_hist",
         "plano",
         "transportes_paragens",
@@ -2667,6 +2745,8 @@ def _mysql_sync_relational_schema(cur, data):
         "orcamentos",
         "encomendas",
         "notas_encomenda",
+        "conjuntos_modelo",
+        "conjuntos",
         "produtos",
         "materiais",
         "fornecedores",
@@ -2876,23 +2956,27 @@ def _mysql_sync_relational_schema(cur, data):
             )
 
     if "conjuntos_modelo" in tables:
+        seen_modelos = set()
         for model in data.get("conjuntos_modelo", []):
             if not isinstance(model, dict):
                 continue
             codigo = _clip(model.get("codigo"), 40)
-            if not codigo:
+            if not codigo or codigo in seen_modelos:
                 continue
+            seen_modelos.add(codigo)
             cur.execute(
                 """
                 INSERT INTO conjuntos_modelo (
-                    codigo, descricao, notas, ativo, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s)
+                    codigo, descricao, notas, ativo, template, origem, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     codigo,
                     _clip(model.get("descricao"), 150) or codigo,
                     model.get("notas"),
                     1 if _to_bool(model.get("ativo", True)) else 0,
+                    1 if _to_bool(model.get("template", False)) else 0,
+                    _clip(model.get("origem"), 80),
                     _to_mysql_datetime(model.get("created_at") or now_iso()),
                     _to_mysql_datetime(model.get("updated_at") or now_iso()),
                 ),
@@ -2905,8 +2989,8 @@ def _mysql_sync_relational_schema(cur, data):
                         """
                         INSERT INTO conjuntos_modelo_itens (
                             conjunto_codigo, linha_ordem, tipo_item, ref_externa, descricao, material, espessura,
-                            operacao, produto_codigo, produto_unid, qtd, tempo_peca_min, preco_unit, desenho_path
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            operacao, produto_codigo, produto_unid, qtd, tempo_peca_min, preco_unit, desenho_path, meta_json
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             codigo,
@@ -2923,6 +3007,134 @@ def _mysql_sync_relational_schema(cur, data):
                             _to_num(item.get("tempo_peca_min", item.get("tempo_pecas_min"))),
                             _to_num(item.get("preco_unit")),
                             _clip(item.get("desenho"), 512),
+                            json.dumps(
+                                {
+                                    key: item.get(key)
+                                    for key in (
+                                        "calc_mode",
+                                        "descricao_base",
+                                        "weight_total",
+                                        "total_cost",
+                                        "quantity_units",
+                                        "price_per_kg",
+                                        "price_base_value",
+                                        "price_markup_pct",
+                                        "stock_metric_value",
+                                        "meters_per_unit",
+                                        "kg_per_m",
+                                        "length_mm",
+                                        "width_mm",
+                                        "thickness_mm",
+                                        "density",
+                                        "diameter_mm",
+                                        "manual_unit_price",
+                                        "profile_section",
+                                        "profile_size",
+                                        "tube_section",
+                                        "quality",
+                                        "stock_material_id",
+                                        "hint",
+                                        "price_base_label",
+                                        "material_family",
+                                        "material_subtype",
+                                    )
+                                    if item.get(key) not in (None, "", [], {})
+                                },
+                                ensure_ascii=False,
+                            ),
+                        ),
+                    )
+
+    if "conjuntos" in tables:
+        seen_conjuntos = set()
+        for model in data.get("conjuntos", []):
+            if not isinstance(model, dict):
+                continue
+            codigo = _clip(model.get("codigo"), 40)
+            if not codigo or codigo in seen_conjuntos:
+                continue
+            seen_conjuntos.add(codigo)
+            cur.execute(
+                """
+                INSERT INTO conjuntos (
+                    codigo, descricao, notas, ativo, template, origem, margem_perc, total_custo, total_final, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    codigo,
+                    _clip(model.get("descricao"), 150) or codigo,
+                    model.get("notas"),
+                    1 if _to_bool(model.get("ativo", True)) else 0,
+                    1 if _to_bool(model.get("template", False)) else 0,
+                    _clip(model.get("origem"), 80),
+                    _to_num(model.get("margem_perc")),
+                    _to_num(model.get("total_custo")),
+                    _to_num(model.get("total_final")),
+                    _to_mysql_datetime(model.get("created_at") or now_iso()),
+                    _to_mysql_datetime(model.get("updated_at") or now_iso()),
+                ),
+            )
+            if "conjuntos_itens" in tables:
+                for index, item in enumerate(list(model.get("itens", []) or []), start=1):
+                    if not isinstance(item, dict):
+                        continue
+                    cur.execute(
+                        """
+                        INSERT INTO conjuntos_itens (
+                            conjunto_codigo, linha_ordem, tipo_item, ref_externa, descricao, material, espessura,
+                            operacao, produto_codigo, produto_unid, qtd, tempo_peca_min, preco_unit, desenho_path, meta_json
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            codigo,
+                            int(_to_num(item.get("linha_ordem")) or index),
+                            _clip(normalize_orc_line_type(item.get("tipo_item")), 30),
+                            _clip(item.get("ref_externa"), 100),
+                            item.get("descricao"),
+                            _clip(item.get("material"), 100),
+                            _clip(item.get("espessura"), 20),
+                            _clip(item.get("operacao"), 150),
+                            _clip(item.get("produto_codigo"), 20),
+                            _clip(item.get("produto_unid"), 20),
+                            _to_num(item.get("qtd")),
+                            _to_num(item.get("tempo_peca_min", item.get("tempo_pecas_min"))),
+                            _to_num(item.get("preco_unit")),
+                            _clip(item.get("desenho"), 512),
+                            json.dumps(
+                                {
+                                    key: item.get(key)
+                                    for key in (
+                                        "calc_mode",
+                                        "descricao_base",
+                                        "weight_total",
+                                        "total_cost",
+                                        "quantity_units",
+                                        "price_per_kg",
+                                        "price_base_value",
+                                        "price_markup_pct",
+                                        "stock_metric_value",
+                                        "meters_per_unit",
+                                        "kg_per_m",
+                                        "length_mm",
+                                        "width_mm",
+                                        "thickness_mm",
+                                        "density",
+                                        "diameter_mm",
+                                        "manual_unit_price",
+                                        "profile_section",
+                                        "profile_size",
+                                        "tube_section",
+                                        "quality",
+                                        "stock_material_id",
+                                        "hint",
+                                        "price_base_label",
+                                        "material_family",
+                                        "material_subtype",
+                                    )
+                                    if item.get(key) not in (None, "", [], {})
+                                },
+                                ensure_ascii=False,
+                            ),
                         ),
                     )
 
@@ -4150,6 +4362,8 @@ def _mysql_load_relational_data():
                     "descricao": str(row.get("descricao", "") or "").strip() or codigo,
                     "notas": str(row.get("notas", "") or "").strip(),
                     "ativo": bool(row.get("ativo")) if row.get("ativo") is not None else True,
+                    "template": bool(row.get("template")) if row.get("template") is not None else False,
+                    "origem": str(row.get("origem", "") or "").strip(),
                     "created_at": _db_to_iso(row.get("created_at")),
                     "updated_at": _db_to_iso(row.get("updated_at")),
                     "itens": [],
@@ -4158,6 +4372,15 @@ def _mysql_load_relational_data():
                 codigo = str(row.get("conjunto_codigo", "") or "").strip()
                 if not codigo:
                     continue
+                meta_payload = {}
+                try:
+                    raw_meta_json = row.get("meta_json")
+                    if raw_meta_json:
+                        parsed_meta = json.loads(raw_meta_json)
+                        if isinstance(parsed_meta, dict):
+                            meta_payload = parsed_meta
+                except Exception:
+                    meta_payload = {}
                 modelos_map.setdefault(
                     codigo,
                     {
@@ -4165,6 +4388,8 @@ def _mysql_load_relational_data():
                         "descricao": codigo,
                         "notas": "",
                         "ativo": True,
+                        "template": False,
+                        "origem": "",
                         "created_at": "",
                         "updated_at": "",
                         "itens": [],
@@ -4185,10 +4410,81 @@ def _mysql_load_relational_data():
                         "tempo_peca_min": _to_num(row.get("tempo_peca_min")) or 0.0,
                         "preco_unit": _to_num(row.get("preco_unit")) or 0.0,
                         "desenho": str(row.get("desenho_path", "") or ""),
+                        **dict(meta_payload or {}),
                     }
                 )
             if modelos_map:
                 data["conjuntos_modelo"] = list(modelos_map.values())
+
+            conjuntos_map = {}
+            for row in fetch_all("conjuntos", "codigo"):
+                codigo = str(row.get("codigo", "") or "").strip()
+                if not codigo:
+                    continue
+                conjuntos_map[codigo] = {
+                    "codigo": codigo,
+                    "descricao": str(row.get("descricao", "") or "").strip() or codigo,
+                    "notas": str(row.get("notas", "") or "").strip(),
+                    "ativo": bool(row.get("ativo")) if row.get("ativo") is not None else True,
+                    "template": bool(row.get("template")) if row.get("template") is not None else False,
+                    "origem": str(row.get("origem", "") or "").strip(),
+                    "margem_perc": _to_num(row.get("margem_perc")) or 0.0,
+                    "total_custo": _to_num(row.get("total_custo")) or 0.0,
+                    "total_final": _to_num(row.get("total_final")) or 0.0,
+                    "created_at": _db_to_iso(row.get("created_at")),
+                    "updated_at": _db_to_iso(row.get("updated_at")),
+                    "itens": [],
+                }
+            for row in fetch_all("conjuntos_itens", "conjunto_codigo, linha_ordem, id"):
+                codigo = str(row.get("conjunto_codigo", "") or "").strip()
+                if not codigo:
+                    continue
+                meta_payload = {}
+                try:
+                    raw_meta_json = row.get("meta_json")
+                    if raw_meta_json:
+                        parsed_meta = json.loads(raw_meta_json)
+                        if isinstance(parsed_meta, dict):
+                            meta_payload = parsed_meta
+                except Exception:
+                    meta_payload = {}
+                conjuntos_map.setdefault(
+                    codigo,
+                    {
+                        "codigo": codigo,
+                        "descricao": codigo,
+                        "notas": "",
+                        "ativo": True,
+                        "template": False,
+                        "origem": "",
+                        "margem_perc": 0.0,
+                        "total_custo": 0.0,
+                        "total_final": 0.0,
+                        "created_at": "",
+                        "updated_at": "",
+                        "itens": [],
+                    },
+                )
+                conjuntos_map[codigo]["itens"].append(
+                    {
+                        "linha_ordem": int(_to_num(row.get("linha_ordem")) or len(conjuntos_map[codigo]["itens"]) + 1),
+                        "tipo_item": normalize_orc_line_type(row.get("tipo_item")),
+                        "ref_externa": str(row.get("ref_externa", "") or ""),
+                        "descricao": str(row.get("descricao", "") or ""),
+                        "material": str(row.get("material", "") or ""),
+                        "espessura": str(row.get("espessura", "") or ""),
+                        "operacao": str(row.get("operacao", "") or ""),
+                        "produto_codigo": str(row.get("produto_codigo", "") or ""),
+                        "produto_unid": str(row.get("produto_unid", "") or ""),
+                        "qtd": _to_num(row.get("qtd")) or 0.0,
+                        "tempo_peca_min": _to_num(row.get("tempo_peca_min")) or 0.0,
+                        "preco_unit": _to_num(row.get("preco_unit")) or 0.0,
+                        "desenho": str(row.get("desenho_path", "") or ""),
+                        **dict(meta_payload or {}),
+                    }
+                )
+            if conjuntos_map:
+                data["conjuntos"] = list(conjuntos_map.values())
 
             orc_linhas_map = {}
             for l in fetch_all("orcamento_linhas", "id"):
@@ -4229,6 +4525,15 @@ def _mysql_load_relational_data():
                             quote_cost_snapshot = parsed_snapshot
                 except Exception:
                     quote_cost_snapshot = {}
+                meta_payload = {}
+                try:
+                    raw_meta_json = l.get("meta_json")
+                    if raw_meta_json:
+                        parsed_meta = json.loads(raw_meta_json)
+                        if isinstance(parsed_meta, dict):
+                            meta_payload = parsed_meta
+                except Exception:
+                    meta_payload = {}
                 orc_linhas_map.setdefault(num, []).append(
                     {
                         "ref_interna": str(l.get("ref_interna", "") or ""),
@@ -4256,6 +4561,7 @@ def _mysql_load_relational_data():
                         "tempos_operacao": dict(tempos_operacao or {}),
                         "custos_operacao": dict(custos_operacao or {}),
                         "quote_cost_snapshot": dict(quote_cost_snapshot or {}),
+                        **dict(meta_payload or {}),
                     }
                 )
 
@@ -5950,6 +6256,7 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
                         quote_cost_snapshot_json LONGTEXT NULL,
                         total DECIMAL(12,2),
                         desenho_path VARCHAR(512),
+                        meta_json LONGTEXT NULL,
                         tipo_item VARCHAR(30) NULL,
                         produto_codigo VARCHAR(20) NULL,
                         produto_unid VARCHAR(20) NULL,
@@ -5969,6 +6276,7 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
                 _mysql_ensure_column(cur, "orcamento_linhas", "conjunto_nome", "VARCHAR(150) NULL")
                 _mysql_ensure_column(cur, "orcamento_linhas", "grupo_uuid", "VARCHAR(60) NULL")
                 _mysql_ensure_column(cur, "orcamento_linhas", "qtd_base", "DECIMAL(10,2) NULL")
+                _mysql_ensure_column(cur, "orcamento_linhas", "meta_json", "LONGTEXT NULL")
                 _mysql_runtime_schema_mark("orcamento_upsert_schema")
 
             cliente_cod = _extract_cliente_codigo(orc.get("cliente"), data)
@@ -6043,9 +6351,9 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
                     INSERT INTO orcamento_linhas (
                         orcamento_numero, ref_interna, ref_externa, descricao, material, espessura, operacao,
                         of_codigo, qtd, preco_unit, tempo_peca_min, operacoes_json, tempos_operacao_json,
-                        custos_operacao_json, quote_cost_snapshot_json, total, desenho_path, tipo_item,
+                        custos_operacao_json, quote_cost_snapshot_json, total, desenho_path, meta_json, tipo_item,
                         produto_codigo, produto_unid, conjunto_codigo, conjunto_nome, grupo_uuid, qtd_base
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         num,
@@ -6072,6 +6380,40 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
                         json.dumps(dict(l.get("quote_cost_snapshot", {}) or {}), ensure_ascii=False),
                         _to_num(l.get("total")),
                         _clip(l.get("desenho"), 512),
+                        json.dumps(
+                            {
+                                key: l.get(key)
+                                for key in (
+                                    "stock_material_id",
+                                    "price_per_kg",
+                                    "price_base_value",
+                                    "price_markup_pct",
+                                    "stock_metric_value",
+                                    "kg_per_m",
+                                    "meters_per_unit",
+                                    "weight_total",
+                                    "quantity_units",
+                                    "calc_mode",
+                                    "descricao_base",
+                                    "length_mm",
+                                    "width_mm",
+                                    "thickness_mm",
+                                    "density",
+                                    "diameter_mm",
+                                    "manual_unit_price",
+                                    "profile_section",
+                                    "profile_size",
+                                    "tube_section",
+                                    "quality",
+                                    "hint",
+                                    "price_base_label",
+                                    "material_family",
+                                    "material_subtype",
+                                )
+                                if l.get(key) not in (None, "", [], {})
+                            },
+                            ensure_ascii=False,
+                        ),
                         _clip(normalize_orc_line_type(l.get("tipo_item")), 30),
                         _clip(l.get("produto_codigo"), 20),
                         _clip(l.get("produto_unid"), 20),
@@ -6746,6 +7088,7 @@ def load_data():
     data.setdefault("orc_seq", 1)
     data.setdefault("orc_refs", {})
     data.setdefault("conjuntos_modelo", [])
+    data.setdefault("conjuntos", [])
     data.setdefault("of_seq", 1)
     data.setdefault("opp_seq", 1)
     data.setdefault("orcamentistas", ["Orçamentista 1"])

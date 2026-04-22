@@ -2021,7 +2021,7 @@ def _render_orc_pdf_modern(self, path, orc):
     header_row_h = 22
     row_h = 18
     first_table_top = 226
-    next_table_top = 98
+    next_table_top = 132
     footer_start = 458
     doc_num = str(orc.get("numero", "") or "ORC").strip() or "ORC"
     c.setTitle(f"Orcamento {doc_num}")
