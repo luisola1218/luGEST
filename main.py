@@ -174,8 +174,12 @@ def _load_env_file(path, override=False):
 
 def _resolve_primary_env_file():
     candidates = [os.path.join(BASE_DIR, "lugest.env")]
+    base_parent = os.path.dirname(os.path.abspath(BASE_DIR))
+    if base_parent and os.path.normcase(os.path.abspath(base_parent)) != os.path.normcase(os.path.abspath(BASE_DIR)):
+        candidates.append(os.path.join(base_parent, "lugest.env"))
     cwd_candidate = os.path.join(os.getcwd(), "lugest.env")
-    if os.path.normcase(os.path.abspath(cwd_candidate)) != os.path.normcase(os.path.abspath(candidates[0])):
+    normalized = {os.path.normcase(os.path.abspath(path)) for path in candidates if path}
+    if os.path.normcase(os.path.abspath(cwd_candidate)) not in normalized:
         candidates.append(cwd_candidate)
     for candidate in candidates:
         if candidate and os.path.exists(candidate):
@@ -517,7 +521,7 @@ PROD_CATEGORIAS = [
     "Gases",
     "Outros",
 ]
-MATERIA_FORMATOS = ["Chapa", "Tubo", "Perfil"]
+MATERIA_FORMATOS = ["Chapa", "Tubo", "Perfil", "Cantoneira", "Barra"]
 PROD_SUBCATS = [
     "Carbono",
     "Inox",
@@ -7994,9 +7998,14 @@ def _resolve_branding_path(p):
         return ""
     if os.path.isabs(txt):
         return txt
-    p1 = os.path.join(BASE_DIR, txt)
-    if os.path.exists(p1):
-        return p1
+    candidates = [os.path.join(BASE_DIR, txt)]
+    base_parent = os.path.dirname(os.path.abspath(BASE_DIR))
+    if base_parent and os.path.normcase(os.path.abspath(base_parent)) != os.path.normcase(os.path.abspath(BASE_DIR)):
+        candidates.append(os.path.join(base_parent, txt))
+    candidates.append(os.path.join(os.getcwd(), txt))
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
     return txt
 
 
@@ -8047,6 +8056,7 @@ def get_branding_config():
     cfg = _mysql_read_branding_payload()
     cfg_candidates = [
         os.path.join(BASE_DIR, BRANDING_FILE),
+        os.path.join(os.path.dirname(os.path.abspath(BASE_DIR)), BRANDING_FILE),
         BRANDING_FILE,
     ]
     if not isinstance(cfg, dict) or not cfg:
@@ -9010,8 +9020,13 @@ def detect_materia_formato(m):
     if fmt:
         return fmt
     mat_txt = norm_text((m or {}).get("material", ""))
+    secao_txt = norm_text((m or {}).get("secao_tipo", (m or {}).get("tipo_secao", "")))
+    if "cantoneira" in mat_txt or secao_txt in {"abas_iguais", "abas_desiguais"}:
+        return "Cantoneira"
     if "tubo" in mat_txt:
         return "Tubo"
+    if "barra" in mat_txt or secao_txt == "chata":
+        return "Barra"
     if any(k in mat_txt for k in ("perfil", "viga", "ipe", "upn")):
         return "Perfil"
     metros = parse_float((m or {}).get("metros", 0), 0)
@@ -9027,7 +9042,7 @@ def materia_preco_unitario(m):
     formato = detect_materia_formato(m)
     if formato == "Tubo":
         return parse_float((m or {}).get("metros", 0), 0) * compra
-    if formato in ("Chapa", "Perfil"):
+    if formato in ("Chapa", "Perfil", "Cantoneira", "Barra"):
         return parse_float((m or {}).get("peso_unid", 0), 0) * compra
     return compra
 

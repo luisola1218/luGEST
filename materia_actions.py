@@ -174,7 +174,7 @@ def _materia_preco_unid_record(m):
     compra = float(parse_float((m or {}).get("p_compra", 0), 0))
     if formato == "Tubo":
         return float(parse_float((m or {}).get("metros", 0), 0)) * compra
-    if formato in ("Chapa", "Perfil"):
+    if formato in ("Chapa", "Perfil", "Cantoneira", "Barra"):
         return float(parse_float((m or {}).get("peso_unid", 0), 0)) * compra
     return compra
 

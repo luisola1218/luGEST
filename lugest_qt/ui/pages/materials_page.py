@@ -189,7 +189,7 @@ class _WeightCalculatorDialog(QDialog):
         layout.setSpacing(12)
 
         self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["Chapa", "Tubo", "Perfil"])
+        self.mode_combo.addItems(["Chapa", "Tubo", "Perfil", "Cantoneira", "Barra"])
         self.mode_combo.setCurrentText(str(defaults.get("formato", "Chapa") or "Chapa"))
         top_form = QFormLayout()
         top_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
@@ -330,17 +330,60 @@ class _WeightCalculatorDialog(QDialog):
         self._add_row("profile_total", "Peso total", self.profile_weight_label)
         self._toggle_profile_manual(False)
 
+        self.angle_leg_a_spin = self._new_dim_spin()
+        self.angle_leg_b_spin = self._new_dim_spin()
+        self.angle_thickness_spin = self._new_dim_spin()
+        self.angle_length_m_spin = self._new_dim_spin(decimals=3, max_value=1000.0)
+        self.angle_density_spin = self._new_dim_spin(decimals=3, max_value=20.0)
+        self.angle_density_spin.setValue(float(defaults.get("densidade", 7.85) or 7.85))
+        self.angle_length_m_spin.setValue(float(defaults.get("metros", 0) or 0) or 6.0)
+        self.angle_leg_a_spin.setValue(float(defaults.get("comprimento", 0) or 0))
+        self.angle_leg_b_spin.setValue(float(defaults.get("largura", 0) or 0) or float(defaults.get("comprimento", 0) or 0))
+        self.angle_thickness_spin.setValue(float(defaults.get("espessura", 0) or 0))
+        self.angle_kgm_label = self._new_value_label("0,000 kg/m")
+        self.angle_weight_label = self._new_value_label("0,000 kg", strong=True)
+        self._add_row("angle_leg_a", "Aba A (mm)", self.angle_leg_a_spin)
+        self._add_row("angle_leg_b", "Aba B (mm)", self.angle_leg_b_spin)
+        self._add_row("angle_thickness", "Espessura (mm)", self.angle_thickness_spin)
+        self._add_row("angle_length", "Comprimento barra (m)", self.angle_length_m_spin)
+        self._add_row("angle_density", "Densidade (g/cm3)", self.angle_density_spin)
+        self._add_row("angle_kgm", "Peso por metro", self.angle_kgm_label)
+        self._add_row("angle_total", "Peso total", self.angle_weight_label)
+
+        self.bar_side_a_spin = self._new_dim_spin()
+        self.bar_side_b_spin = self._new_dim_spin()
+        self.bar_length_m_spin = self._new_dim_spin(decimals=3, max_value=1000.0)
+        self.bar_density_spin = self._new_dim_spin(decimals=3, max_value=20.0)
+        self.bar_density_spin.setValue(float(defaults.get("densidade", 7.85) or 7.85))
+        self.bar_length_m_spin.setValue(float(defaults.get("metros", 0) or 0) or 6.0)
+        self.bar_side_a_spin.setValue(float(defaults.get("comprimento", 0) or 0))
+        self.bar_side_b_spin.setValue(float(defaults.get("largura", 0) or defaults.get("espessura", 0) or 0))
+        self.bar_kgm_label = self._new_value_label("0,000 kg/m")
+        self.bar_weight_label = self._new_value_label("0,000 kg", strong=True)
+        self._add_row("bar_side_a", "Lado A (mm)", self.bar_side_a_spin)
+        self._add_row("bar_side_b", "Lado B (mm)", self.bar_side_b_spin)
+        self._add_row("bar_length", "Comprimento barra (m)", self.bar_length_m_spin)
+        self._add_row("bar_density", "Densidade (g/cm3)", self.bar_density_spin)
+        self._add_row("bar_kgm", "Peso por metro", self.bar_kgm_label)
+        self._add_row("bar_total", "Peso total", self.bar_weight_label)
+
     def _apply_mode(self, mode: str) -> None:
         mode = str(mode or "Chapa").strip()
         show_sheet = mode == "Chapa"
         show_tube = mode == "Tubo"
         show_profile = mode == "Perfil"
+        show_angle = mode == "Cantoneira"
+        show_bar = mode == "Barra"
         for key in ("sheet_length", "sheet_width", "sheet_thickness", "sheet_density", "sheet_weight", "sheet_area"):
             self._set_row_visible(key, show_sheet)
         for key in ("tube_shape", "tube_length", "tube_thickness", "tube_density", "tube_section", "tube_kgm", "tube_total"):
             self._set_row_visible(key, show_tube)
         for key in ("profile_series", "profile_size", "profile_length", "profile_kgm", "profile_manual", "profile_weight_m", "profile_total"):
             self._set_row_visible(key, show_profile)
+        for key in ("angle_leg_a", "angle_leg_b", "angle_thickness", "angle_length", "angle_density", "angle_kgm", "angle_total"):
+            self._set_row_visible(key, show_angle)
+        for key in ("bar_side_a", "bar_side_b", "bar_length", "bar_density", "bar_kgm", "bar_total"):
+            self._set_row_visible(key, show_bar)
         self._apply_tube_shape(self.tube_shape_combo.currentText())
         self._recalc()
 
@@ -410,6 +453,31 @@ class _WeightCalculatorDialog(QDialog):
             self.profile_weight_label.setText(f"{total:,.3f} kg".replace(",", "X").replace(".", ",").replace("X", "."))
             self.summary_hint.setText("Perfil por tabela standard: kg/m da série escolhida × comprimento da barra.")
             return
+        if mode == "Cantoneira":
+            a_mm = float(self.angle_leg_a_spin.value() or 0)
+            b_mm = float(self.angle_leg_b_spin.value() or 0)
+            thickness = float(self.angle_thickness_spin.value() or 0)
+            density = float(self.angle_density_spin.value() or 0)
+            length_m = float(self.angle_length_m_spin.value() or 0)
+            area_mm2 = max(0.0, thickness * ((a_mm + b_mm) - thickness))
+            kg_m = area_mm2 * density / 1000.0
+            total = kg_m * length_m
+            self.angle_kgm_label.setText(f"{kg_m:,.3f} kg/m".replace(",", "X").replace(".", ",").replace("X", "."))
+            self.angle_weight_label.setText(f"{total:,.3f} kg".replace(",", "X").replace(".", ",").replace("X", "."))
+            self.summary_hint.setText("Cantoneira: área aproximada t × (a + b - t) × densidade × comprimento.")
+            return
+        if mode == "Barra":
+            side_a = float(self.bar_side_a_spin.value() or 0)
+            side_b = float(self.bar_side_b_spin.value() or 0)
+            density = float(self.bar_density_spin.value() or 0)
+            length_m = float(self.bar_length_m_spin.value() or 0)
+            area_mm2 = max(0.0, side_a * side_b)
+            kg_m = area_mm2 * density / 1000.0
+            total = kg_m * length_m
+            self.bar_kgm_label.setText(f"{kg_m:,.3f} kg/m".replace(",", "X").replace(".", ",").replace("X", "."))
+            self.bar_weight_label.setText(f"{total:,.3f} kg".replace(",", "X").replace(".", ",").replace("X", "."))
+            self.summary_hint.setText("Barra maciça: lado A × lado B × densidade × comprimento.")
+            return
         length = float(self.length_spin.value() or 0)
         width = float(self.width_spin.value() or 0)
         thickness = float(self.thickness_spin.value() or 0)
@@ -441,6 +509,21 @@ class _WeightCalculatorDialog(QDialog):
         if mode == "Perfil":
             length_m = float(self.profile_length_m_spin.value() or 0)
             kg_m = float(self.profile_kgm_spin.value() or 0)
+            return {"mode": mode, "peso_unid": round(kg_m * length_m, 4), "metros": round(length_m, 4), "kg_m": round(kg_m, 4)}
+        if mode == "Cantoneira":
+            a_mm = float(self.angle_leg_a_spin.value() or 0)
+            b_mm = float(self.angle_leg_b_spin.value() or 0)
+            thickness = float(self.angle_thickness_spin.value() or 0)
+            density = float(self.angle_density_spin.value() or 0)
+            length_m = float(self.angle_length_m_spin.value() or 0)
+            kg_m = max(0.0, thickness * ((a_mm + b_mm) - thickness)) * density / 1000.0
+            return {"mode": mode, "peso_unid": round(kg_m * length_m, 4), "metros": round(length_m, 4), "kg_m": round(kg_m, 4)}
+        if mode == "Barra":
+            side_a = float(self.bar_side_a_spin.value() or 0)
+            side_b = float(self.bar_side_b_spin.value() or 0)
+            density = float(self.bar_density_spin.value() or 0)
+            length_m = float(self.bar_length_m_spin.value() or 0)
+            kg_m = max(0.0, side_a * side_b) * density / 1000.0
             return {"mode": mode, "peso_unid": round(kg_m * length_m, 4), "metros": round(length_m, 4), "kg_m": round(kg_m, 4)}
         length = float(self.length_spin.value() or 0)
         width = float(self.width_spin.value() or 0)
@@ -794,24 +877,42 @@ class _MaterialEditorDialog(QDialog):
         secao_tipo = str(preview.get("secao_tipo", "") or "").strip()
         tube_round = formato == "Tubo" and secao_tipo == "redondo"
         profile_catalog = formato == "Perfil" and bool(preview.get("usa_catalogo"))
-        espessura_required = formato in {"Chapa", "Tubo"}
+        espessura_required = formato in {"Chapa", "Tubo", "Cantoneira"}
         esp_label = self._field_labels.get("Espessura")
         if esp_label is not None:
             esp_label.setText("Espessura" if espessura_required else "Espessura (opc.)")
         secao_label = self._field_labels.get("Tipo secção")
         if secao_label is not None:
-            secao_label.setText("Tipo tubo" if formato == "Tubo" else ("Tipo perfil / série" if formato == "Perfil" else "Tipo secção"))
+            if formato == "Tubo":
+                secao_label.setText("Tipo tubo")
+            elif formato == "Perfil":
+                secao_label.setText("Tipo perfil / série")
+            elif formato == "Cantoneira":
+                secao_label.setText("Tipo cantoneira")
+            elif formato == "Barra":
+                secao_label.setText("Tipo barra")
+            else:
+                secao_label.setText("Tipo secção")
         comp_label = self._field_labels.get("Comprimento")
         if comp_label is not None:
             if formato == "Chapa":
                 comp_label.setText("Comprimento (mm)")
             elif formato == "Tubo":
                 comp_label.setText("Lado A (mm)")
+            elif formato == "Cantoneira":
+                comp_label.setText("Aba A (mm)")
+            elif formato == "Barra":
+                comp_label.setText("Lado A (mm)")
             else:
                 comp_label.setText("Comprimento")
         larg_label = self._field_labels.get("Largura")
         if larg_label is not None:
-            larg_label.setText("Largura (mm)" if formato == "Chapa" else "Lado B (mm)")
+            if formato == "Chapa":
+                larg_label.setText("Largura (mm)")
+            elif formato == "Cantoneira":
+                larg_label.setText("Aba B (mm)")
+            else:
+                larg_label.setText("Lado B (mm)")
         altura_label = self._field_labels.get("Altura")
         if altura_label is not None:
             altura_label.setText("Altura / tamanho (mm)")
@@ -826,21 +927,21 @@ class _MaterialEditorDialog(QDialog):
             compra_label.setText("Compra (EUR/m)" if formato == "Tubo" else "Compra (EUR/kg)")
         esp_line = self.espessura_combo.lineEdit()
         if esp_line is not None:
-            esp_line.setPlaceholderText("Obrigatória" if espessura_required else "Opcional para perfil")
-        self.espessura_combo.setToolTip("Obrigatória para chapa e tubo." if espessura_required else "Opcional em perfis.")
+            esp_line.setPlaceholderText("Obrigatória" if espessura_required else "Opcional / derivada")
+        self.espessura_combo.setToolTip("Obrigatória para chapa, tubo e cantoneira." if espessura_required else "Opcional quando a secção já define a espessura.")
         self.preco_compra_edit.setPlaceholderText("EUR/m" if formato == "Tubo" else "EUR/kg")
         self.preco_compra_edit.setToolTip("Preço de compra base por metro." if formato == "Tubo" else "Preço de compra base por kg.")
-        self.metros_edit.setPlaceholderText("Comprimento barra (m)" if formato in {"Tubo", "Perfil"} else "")
+        self.metros_edit.setPlaceholderText("Comprimento barra (m)" if formato in {"Tubo", "Perfil", "Cantoneira", "Barra"} else "")
         self.peso_edit.setPlaceholderText("Peso calculado automaticamente")
         self.kg_m_edit.setReadOnly(formato == "Tubo" or profile_catalog)
-        self._set_field_visible("Tipo secção", formato in {"Tubo", "Perfil"})
-        self._set_field_visible("Comprimento", formato == "Chapa" or (formato == "Tubo" and not tube_round))
-        self._set_field_visible("Largura", formato == "Chapa" or (formato == "Tubo" and not tube_round))
+        self._set_field_visible("Tipo secção", formato in {"Tubo", "Perfil", "Cantoneira", "Barra"})
+        self._set_field_visible("Comprimento", formato in {"Chapa", "Cantoneira", "Barra"} or (formato == "Tubo" and not tube_round))
+        self._set_field_visible("Largura", formato in {"Chapa", "Cantoneira", "Barra"} or (formato == "Tubo" and not tube_round))
         self._set_field_visible("Altura", formato == "Perfil")
         self._set_field_visible("Diâmetro", formato == "Tubo" and tube_round)
         self._set_field_visible("Contorno retalho", formato == "Chapa")
         self._set_field_visible("Metros", formato != "Chapa")
-        self._set_field_visible("Kg/m", formato in {"Tubo", "Perfil"})
+        self._set_field_visible("Kg/m", formato in {"Tubo", "Perfil", "Cantoneira", "Barra"})
 
     def _refresh_price_preview(self) -> None:
         try:
@@ -852,7 +953,7 @@ class _MaterialEditorDialog(QDialog):
         self.peso_edit.blockSignals(True)
         self.peso_edit.setText(self.backend._fmt(preview.get("peso_unid", 0)))
         self.peso_edit.blockSignals(False)
-        if str(preview.get("formato", "") or "") in {"Tubo", "Perfil"}:
+        if str(preview.get("formato", "") or "") in {"Tubo", "Perfil", "Cantoneira", "Barra"}:
             self.kg_m_edit.blockSignals(True)
             self.kg_m_edit.setText(self.backend._fmt(preview.get("kg_m", 0)))
             self.kg_m_edit.blockSignals(False)
@@ -1423,24 +1524,42 @@ class MaterialsPage(QWidget):
         secao_tipo = str(preview.get("secao_tipo", "") or "").strip()
         tube_round = formato == "Tubo" and secao_tipo == "redondo"
         profile_catalog = formato == "Perfil" and bool(preview.get("usa_catalogo"))
-        espessura_required = formato in {"Chapa", "Tubo"}
+        espessura_required = formato in {"Chapa", "Tubo", "Cantoneira"}
         esp_label = self._field_labels.get("Espessura")
         if esp_label is not None:
             esp_label.setText("Espessura" if espessura_required else "Espessura (opc.)")
         secao_label = self._field_labels.get("Tipo secção")
         if secao_label is not None:
-            secao_label.setText("Tipo tubo" if formato == "Tubo" else ("Tipo perfil / série" if formato == "Perfil" else "Tipo secção"))
+            if formato == "Tubo":
+                secao_label.setText("Tipo tubo")
+            elif formato == "Perfil":
+                secao_label.setText("Tipo perfil / série")
+            elif formato == "Cantoneira":
+                secao_label.setText("Tipo cantoneira")
+            elif formato == "Barra":
+                secao_label.setText("Tipo barra")
+            else:
+                secao_label.setText("Tipo secção")
         comp_label = self._field_labels.get("Comprimento")
         if comp_label is not None:
             if formato == "Chapa":
                 comp_label.setText("Comprimento (mm)")
             elif formato == "Tubo":
                 comp_label.setText("Lado A (mm)")
+            elif formato == "Cantoneira":
+                comp_label.setText("Aba A (mm)")
+            elif formato == "Barra":
+                comp_label.setText("Lado A (mm)")
             else:
                 comp_label.setText("Comprimento")
         larg_label = self._field_labels.get("Largura")
         if larg_label is not None:
-            larg_label.setText("Largura (mm)" if formato == "Chapa" else "Lado B (mm)")
+            if formato == "Chapa":
+                larg_label.setText("Largura (mm)")
+            elif formato == "Cantoneira":
+                larg_label.setText("Aba B (mm)")
+            else:
+                larg_label.setText("Lado B (mm)")
         altura_label = self._field_labels.get("Altura")
         if altura_label is not None:
             altura_label.setText("Altura / tamanho (mm)")
@@ -1455,21 +1574,21 @@ class MaterialsPage(QWidget):
             compra_label.setText("Compra (EUR/m)" if formato == "Tubo" else "Compra (EUR/kg)")
         esp_line = self.espessura_combo.lineEdit()
         if esp_line is not None:
-            esp_line.setPlaceholderText("Obrigatória" if espessura_required else "Opcional para perfil")
-        self.espessura_combo.setToolTip("Obrigatória para chapa e tubo." if espessura_required else "Opcional em perfis.")
+            esp_line.setPlaceholderText("Obrigatória" if espessura_required else "Opcional / derivada")
+        self.espessura_combo.setToolTip("Obrigatória para chapa, tubo e cantoneira." if espessura_required else "Opcional quando a secção já define a espessura.")
         self.preco_compra_edit.setPlaceholderText("EUR/m" if formato == "Tubo" else "EUR/kg")
         self.preco_compra_edit.setToolTip("Preço de compra base por metro." if formato == "Tubo" else "Preço de compra base por kg.")
-        self.metros_edit.setPlaceholderText("Comprimento barra (m)" if formato in {"Tubo", "Perfil"} else "")
+        self.metros_edit.setPlaceholderText("Comprimento barra (m)" if formato in {"Tubo", "Perfil", "Cantoneira", "Barra"} else "")
         self.peso_edit.setPlaceholderText("Peso calculado automaticamente")
         self.kg_m_edit.setReadOnly(formato == "Tubo" or profile_catalog)
-        self._set_field_visible("Tipo secção", formato in {"Tubo", "Perfil"})
-        self._set_field_visible("Comprimento", formato == "Chapa" or (formato == "Tubo" and not tube_round))
-        self._set_field_visible("Largura", formato == "Chapa" or (formato == "Tubo" and not tube_round))
+        self._set_field_visible("Tipo secção", formato in {"Tubo", "Perfil", "Cantoneira", "Barra"})
+        self._set_field_visible("Comprimento", formato in {"Chapa", "Cantoneira", "Barra"} or (formato == "Tubo" and not tube_round))
+        self._set_field_visible("Largura", formato in {"Chapa", "Cantoneira", "Barra"} or (formato == "Tubo" and not tube_round))
         self._set_field_visible("Altura", formato == "Perfil")
         self._set_field_visible("Diâmetro", formato == "Tubo" and tube_round)
         self._set_field_visible("Contorno retalho", formato == "Chapa")
         self._set_field_visible("Metros", formato != "Chapa")
-        self._set_field_visible("Kg/m", formato in {"Tubo", "Perfil"})
+        self._set_field_visible("Kg/m", formato in {"Tubo", "Perfil", "Cantoneira", "Barra"})
 
     def _refresh_price_preview(self) -> None:
         try:
@@ -1481,7 +1600,7 @@ class MaterialsPage(QWidget):
         self.peso_edit.blockSignals(True)
         self.peso_edit.setText(self.backend._fmt(preview.get("peso_unid", 0)))
         self.peso_edit.blockSignals(False)
-        if str(preview.get("formato", "") or "") in {"Tubo", "Perfil"}:
+        if str(preview.get("formato", "") or "") in {"Tubo", "Perfil", "Cantoneira", "Barra"}:
             self.kg_m_edit.blockSignals(True)
             self.kg_m_edit.setText(self.backend._fmt(preview.get("kg_m", 0)))
             self.kg_m_edit.blockSignals(False)

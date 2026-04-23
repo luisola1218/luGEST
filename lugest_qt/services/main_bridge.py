@@ -173,6 +173,17 @@ _PROFILE_SECTION_OPTIONS: list[dict[str, Any]] = [
     {"key": "OUTRO", "label": "Outro / manual", "catalog": False},
 ]
 
+_ANGLE_SECTION_OPTIONS: list[dict[str, Any]] = [
+    {"key": "abas_iguais", "label": "Abas iguais"},
+    {"key": "abas_desiguais", "label": "Abas desiguais"},
+]
+
+_BAR_SECTION_OPTIONS: list[dict[str, Any]] = [
+    {"key": "chata", "label": "Barra chata"},
+    {"key": "quadrada", "label": "Barra quadrada"},
+    {"key": "retangular", "label": "Barra retangular"},
+]
+
 
 def _profile_catalog_lookup_key(value: Any) -> str:
     token = str(value or "").strip().upper()
@@ -1683,6 +1694,10 @@ class LegacyBackend:
             return [dict(row or {}) for row in _TUBE_SECTION_OPTIONS]
         if formato_txt == "Perfil":
             return [dict(row or {}) for row in _PROFILE_SECTION_OPTIONS]
+        if formato_txt == "Cantoneira":
+            return [dict(row or {}) for row in _ANGLE_SECTION_OPTIONS]
+        if formato_txt == "Barra":
+            return [dict(row or {}) for row in _BAR_SECTION_OPTIONS]
         return []
 
     def material_profile_size_options(self, secao_tipo: Any = "") -> list[str]:
@@ -1750,6 +1765,36 @@ class LegacyBackend:
             if re.search(r"\bperfil\s+h\b", mat_token):
                 return "H"
             return "OUTRO"
+        if formato_txt == "Cantoneira":
+            for option in _ANGLE_SECTION_OPTIONS:
+                if str(option.get("label", "") or "").strip().lower() == raw_value.lower():
+                    return str(option.get("key", "") or "").strip()
+            token = str(raw_value or "").strip().lower()
+            if "desigu" in token:
+                return "abas_desiguais"
+            if "igual" in token or token in {"l", "cantoneira"}:
+                return "abas_iguais"
+            mat_token = self._norm_material_token(material_txt)
+            if "desigu" in mat_token:
+                return "abas_desiguais"
+            return "abas_iguais"
+        if formato_txt == "Barra":
+            for option in _BAR_SECTION_OPTIONS:
+                if str(option.get("label", "") or "").strip().lower() == raw_value.lower():
+                    return str(option.get("key", "") or "").strip()
+            token = str(raw_value or "").strip().lower()
+            if "quadrad" in token:
+                return "quadrada"
+            if "retang" in token:
+                return "retangular"
+            if "chata" in token or "barra" in token:
+                return "chata"
+            mat_token = self._norm_material_token(material_txt)
+            if "quadrad" in mat_token:
+                return "quadrada"
+            if "retang" in mat_token:
+                return "retangular"
+            return "chata"
         return ""
 
     def _material_section_label(self, formato: str, secao_tipo: Any = "") -> str:
@@ -1763,6 +1808,12 @@ class LegacyBackend:
         if formato_txt == "Perfil":
             labels = {str(row.get("key", "") or "").strip(): str(row.get("label", "") or "").strip() for row in _PROFILE_SECTION_OPTIONS}
             return labels.get(key, key)
+        if formato_txt == "Cantoneira":
+            labels = {str(row.get("key", "") or "").strip(): str(row.get("label", "") or "").strip() for row in _ANGLE_SECTION_OPTIONS}
+            return labels.get(key, key.replace("_", " ").title())
+        if formato_txt == "Barra":
+            labels = {str(row.get("key", "") or "").strip(): str(row.get("label", "") or "").strip() for row in _BAR_SECTION_OPTIONS}
+            return labels.get(key, key.replace("_", " ").title())
         return key
 
     def material_geometry_preview(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1877,9 +1928,52 @@ class LegacyBackend:
                 calc_hint = "Perfil: kg/m da secção x comprimento da barra."
                 if uses_catalog:
                     calc_hint = "Perfil: tabela ACAIL ajustada pela densidade da família selecionada x comprimento da barra."
+        elif formato == "Cantoneira":
+            if comprimento <= 0 and largura > 0:
+                comprimento = largura
+            if largura <= 0 and comprimento > 0:
+                largura = comprimento
+            if secao_tipo == "abas_iguais" and comprimento > 0:
+                largura = comprimento
+            if comprimento > 0 and largura > 0 and espessura_mm > 0:
+                area_mm2 = max(0.0, espessura_mm * ((comprimento + largura) - espessura_mm))
+                kg_m = round((area_mm2 * density) / 1000.0, 4)
+                peso_unid = round(kg_m * metros, 4) if metros > 0 else 0.0
+            elif peso_existente > 0:
+                peso_unid = peso_existente
+                auto_weight = False
+            dim_a_text = self._fmt(comprimento) if comprimento > 0 else "-"
+            dim_b_text = self._fmt(largura) if largura > 0 else "-"
+            if comprimento > 0 and largura > 0 and espessura_mm > 0:
+                dimension_label = f"{self._fmt(comprimento)} x {self._fmt(largura)} x {self._fmt(espessura_mm)} mm"
+            calc_hint = "Cantoneira: área aproximada t x (a + b - t) x densidade x comprimento."
+        elif formato == "Barra":
+            if secao_tipo == "quadrada":
+                if comprimento <= 0 and largura > 0:
+                    comprimento = largura
+                if largura <= 0 and comprimento > 0:
+                    largura = comprimento
+            elif largura <= 0 and espessura_mm > 0:
+                largura = espessura_mm
+            if espessura_mm <= 0 and largura > 0:
+                espessura_mm = largura
+            if comprimento > 0 and largura > 0:
+                area_mm2 = max(0.0, comprimento * largura)
+                kg_m = round((area_mm2 * density) / 1000.0, 4)
+                peso_unid = round(kg_m * metros, 4) if metros > 0 else 0.0
+            elif peso_existente > 0:
+                peso_unid = peso_existente
+                auto_weight = False
+            dim_a_text = self._fmt(comprimento) if comprimento > 0 else "-"
+            dim_b_text = self._fmt(largura) if largura > 0 else "-"
+            if comprimento > 0 and largura > 0:
+                dimension_label = f"{self._fmt(comprimento)} x {self._fmt(largura)} mm"
+            calc_hint = "Barra maciça: lado A x lado B x densidade x comprimento da barra."
         else:
             peso_unid = peso_existente
             auto_weight = False
+
+        resolved_espessura = self._fmt(espessura_mm) if espessura_mm > 0 else espessura
 
         return {
             "formato": formato,
@@ -1889,7 +1983,7 @@ class LegacyBackend:
             "largura": round(largura, 3),
             "altura": round(altura_nominal if formato == "Perfil" else altura, 3),
             "diametro": round(diametro, 3),
-            "espessura": espessura,
+            "espessura": resolved_espessura,
             "espessura_mm": round(espessura_mm, 3),
             "metros": round(metros, 4),
             "kg_m": round(kg_m, 4),
@@ -1929,7 +2023,7 @@ class LegacyBackend:
             "base_label": "EUR/m" if formato == "Tubo" else "EUR/kg",
             "p_compra": round(p_compra, 4),
             "preco_unid": round(preco_unid, 4),
-            "espessura_required": formato in {"Chapa", "Tubo"},
+            "espessura_required": formato in {"Chapa", "Tubo", "Cantoneira"},
             **geometry,
         }
 
@@ -2128,14 +2222,15 @@ class LegacyBackend:
         largura = float(geometry.get("largura", largura) or 0)
         altura = float(geometry.get("altura", altura) or 0)
         diametro = float(geometry.get("diametro", diametro) or 0)
+        espessura = str(geometry.get("espessura", espessura) or "").strip()
         metros = float(geometry.get("metros", metros) or 0)
         peso_unid = float(geometry.get("peso_unid", peso_unid) or 0)
         kg_m = float(geometry.get("kg_m", kg_m) or 0)
         secao_tipo = str(geometry.get("secao_tipo", secao_tipo) or "").strip()
         if not material or quantidade <= 0:
             raise ValueError("Material e quantidade sao obrigatorios.")
-        if formato in {"Chapa", "Tubo"} and not espessura:
-            raise ValueError("Para chapa e tubo, espessura e obrigatoria.")
+        if formato in {"Chapa", "Tubo", "Cantoneira"} and not espessura:
+            raise ValueError("Para chapa, tubo e cantoneira, espessura e obrigatoria.")
         if reservado < 0 or reservado > quantidade:
             raise ValueError("Reserva invalida.")
         if formato == "Chapa" and (comprimento <= 0 or largura <= 0):
@@ -2163,6 +2258,20 @@ class LegacyBackend:
                 raise ValueError("Para perfis manuais, indica o peso por metro (kg/m).")
             if peso_unid <= 0:
                 raise ValueError("Nao foi possivel calcular o peso do perfil com os dados indicados.")
+        if formato == "Cantoneira":
+            if metros <= 0:
+                raise ValueError("Para cantoneira, o comprimento da barra e obrigatorio.")
+            if comprimento <= 0 or largura <= 0:
+                raise ValueError("Para cantoneira, indica aba A e aba B.")
+            if peso_unid <= 0:
+                raise ValueError("Nao foi possivel calcular o peso da cantoneira com os dados indicados.")
+        if formato == "Barra":
+            if metros <= 0:
+                raise ValueError("Para barra, o comprimento da barra e obrigatorio.")
+            if comprimento <= 0 or largura <= 0:
+                raise ValueError("Para barra, indica lado A e lado B.")
+            if peso_unid <= 0:
+                raise ValueError("Nao foi possivel calcular o peso da barra com os dados indicados.")
         return {
             "formato": formato,
             "material": material,
@@ -9665,10 +9774,12 @@ class LegacyBackend:
             op_txt = self._planning_normalize_operation(op_name)
             if op_txt not in cleaned:
                 continue
-            resource_txt = self._normalize_workcenter_value(raw_value)
+            resource_txt = self._sanitize_operation_resource(op_txt, raw_value)
+            available_resources = [str(value or "").strip() for value in list(self.workcenter_resource_options(op_txt) or []) if str(value or "").strip()]
+            if not resource_txt and len(available_resources) == 1:
+                resource_txt = str(available_resources[0] or "").strip()
             if not resource_txt:
                 continue
-            available_resources = [str(value or "").strip() for value in list(self.workcenter_resource_options(op_txt) or []) if str(value or "").strip()]
             if available_resources and all(resource_txt.lower() != value.lower() for value in available_resources):
                 raise ValueError(f"O recurso '{resource_txt}' não pertence à operação {op_txt}.")
             cleaned_resources[op_txt] = resource_txt
@@ -11238,11 +11349,29 @@ class LegacyBackend:
         cleaned: dict[str, str] = {}
         for raw_op, raw_resource in raw_map.items():
             op_txt = self._planning_normalize_operation(raw_op, default="")
-            resource_txt = self._normalize_workcenter_value(raw_resource)
+            resource_txt = self._sanitize_operation_resource(op_txt, raw_resource)
             if not op_txt or not resource_txt:
                 continue
             cleaned[op_txt] = resource_txt
         return cleaned
+
+    def _sanitize_operation_resource(self, operation: Any = "", resource: Any = "") -> str:
+        op_txt = self._planning_normalize_operation(operation, default="") if str(operation or "").strip() else ""
+        resource_txt = self._normalize_workcenter_value(resource)
+        if not op_txt:
+            return resource_txt
+        available_resources = [
+            str(value or "").strip()
+            for value in list(self.workcenter_resource_options(op_txt) or [])
+            if str(value or "").strip()
+        ]
+        if not available_resources:
+            return resource_txt
+        if resource_txt and any(resource_txt.lower() == value.lower() for value in available_resources):
+            return next((value for value in available_resources if value.lower() == resource_txt.lower()), resource_txt)
+        if len(available_resources) == 1:
+            return str(available_resources[0] or "").strip()
+        return ""
 
     def _order_operation_resource(
         self,

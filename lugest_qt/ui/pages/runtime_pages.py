@@ -10222,20 +10222,39 @@ class PurchaseNotesPage(QWidget):
                 return "Preço metro (EUR/m)" if formato_txt == "Tubo" else "Preço kg (EUR/kg)"
 
             def _metric_label_text(formato_txt: str) -> str:
-                return "Peso por unid. (kg)"
+                return "Metros por unid. (m)" if formato_txt == "Tubo" else "Peso por unid. (kg)"
 
             def _set_technical_visibility(formato_txt: str, secao_tipo: str, *, selected_stock: bool, profile_catalog: bool) -> None:
                 tube_round = formato_txt == "Tubo" and secao_tipo == "redondo"
-                secao_visible = formato_txt in {"Tubo", "Perfil"}
-                comp_visible = formato_txt == "Chapa" or (formato_txt == "Tubo" and not tube_round)
-                larg_visible = formato_txt == "Chapa" or (formato_txt == "Tubo" and not tube_round)
+                secao_visible = formato_txt in {"Tubo", "Perfil", "Cantoneira", "Barra"}
+                comp_visible = formato_txt in {"Chapa", "Cantoneira", "Barra"} or (formato_txt == "Tubo" and not tube_round)
+                larg_visible = formato_txt in {"Chapa", "Cantoneira", "Barra"} or (formato_txt == "Tubo" and not tube_round)
                 altura_visible = formato_txt == "Perfil"
                 diametro_visible = formato_txt == "Tubo" and tube_round
-                metros_visible = formato_txt in {"Tubo", "Perfil"}
-                kgm_visible = formato_txt in {"Tubo", "Perfil"}
-                secao_label.setText("Tipo tubo" if formato_txt == "Tubo" else ("Tipo perfil / série" if formato_txt == "Perfil" else "Tipo secção"))
-                comp_label.setText("Comprimento (mm)" if formato_txt == "Chapa" else "Lado A (mm)")
-                larg_label.setText("Largura (mm)" if formato_txt == "Chapa" else "Lado B (mm)")
+                metros_visible = formato_txt in {"Tubo", "Perfil", "Cantoneira", "Barra"}
+                kgm_visible = formato_txt in {"Tubo", "Perfil", "Cantoneira", "Barra"}
+                if formato_txt == "Tubo":
+                    secao_label.setText("Tipo tubo")
+                elif formato_txt == "Perfil":
+                    secao_label.setText("Tipo perfil / série")
+                elif formato_txt == "Cantoneira":
+                    secao_label.setText("Tipo cantoneira")
+                elif formato_txt == "Barra":
+                    secao_label.setText("Tipo barra")
+                else:
+                    secao_label.setText("Tipo secção")
+                if formato_txt == "Chapa":
+                    comp_label.setText("Comprimento (mm)")
+                elif formato_txt == "Cantoneira":
+                    comp_label.setText("Aba A (mm)")
+                else:
+                    comp_label.setText("Lado A (mm)")
+                if formato_txt == "Chapa":
+                    larg_label.setText("Largura (mm)")
+                elif formato_txt == "Cantoneira":
+                    larg_label.setText("Aba B (mm)")
+                else:
+                    larg_label.setText("Lado B (mm)")
                 altura_label.setText("Altura / tamanho (mm)")
                 diametro_label.setText("Diâmetro ext. (mm)")
                 metros_label.setText("Comprimento barra (m)")
@@ -10530,7 +10549,7 @@ class PurchaseNotesPage(QWidget):
 
             def _refresh_formats() -> None:
                 formats: list[str] = []
-                for value in ["Chapa", "Perfil", "Tubo", *_unique(material_rows, lambda row: row.get("formato", ""))]:
+                for value in ["Chapa", "Perfil", "Tubo", "Cantoneira", "Barra", *_unique(material_rows, lambda row: row.get("formato", ""))]:
                     if value and value not in formats:
                         formats.append(value)
                 current_format = _clean((current_payload or {}).get("formato", ""))
@@ -13713,6 +13732,8 @@ class OrdersPage(QWidget):
             preferred_resource = str(current_resources.get(op_name, "") or "").strip()
             if preferred_resource:
                 resource_combo.setCurrentText(preferred_resource)
+            elif resource_combo.count() > 0:
+                resource_combo.setCurrentText(str(self.backend.workcenter_default_resource(op_name) or resource_combo.itemText(0) or "").strip())
             row_host = QWidget()
             row_layout = QHBoxLayout(row_host)
             row_layout.setContentsMargins(0, 0, 0, 0)
@@ -17288,6 +17309,10 @@ class QuotesPage(QWidget):
             formato_txt = str(preview.get("formato", record.get("formato", "")) or "").strip().title()
             secao = str(preview.get("secao_tipo", record.get("secao_tipo", "")) or "").strip().upper()
             material_txt = self.backend.desktop_main.norm_text(str(record.get("material", "") or ""))
+            if formato_txt == "Cantoneira":
+                return "Cantoneira"
+            if formato_txt == "Barra":
+                return "Barra"
             if formato_txt == "Perfil" and secao == "L":
                 return "Cantoneira"
             if formato_txt == "Perfil":
