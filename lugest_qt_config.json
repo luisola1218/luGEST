@@ -72,13 +72,7 @@
     }
   },
   "material_assistant_feedback": {},
-  "material_assistant_checks": {
-    "BARCELBAL0001|S235JR|8|AMD-ATL08-A|reserva": {
-      "sep": false,
-      "conf": false,
-      "updated_at": "2026-04-02T09:50:11"
-    }
-  },
+  "material_assistant_checks": {},
   "pulse_plan_delay_reasons": {},
   "laser_quote": {
     "active_machine": "BLT641 12kW",
@@ -112,9 +106,9 @@
       "allow_purchase_fallback": true,
       "shape_aware": true,
       "shape_grid_mm": 20.0,
-      "common_line_estimate": true,
+      "common_line_estimate": false,
       "common_line_tolerance_mm": 1.0,
-      "lead_optimization": true,
+      "lead_optimization": false,
       "lead_optimization_pct": 8.0,
       "sheet_profiles": [
         {

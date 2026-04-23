@@ -11,6 +11,7 @@
     "Maquinacao",
     "Montagem",
     "Quinagem",
+    "1320",
     "Roscagem",
     "Serralharia",
     "Soldadura"
@@ -60,7 +61,9 @@
     {
       "name": "Quinagem",
       "operation": "Quinagem",
-      "machines": []
+      "machines": [
+        "1320"
+      ]
     },
     {
       "name": "Roscagem",

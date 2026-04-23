@@ -4141,6 +4141,40 @@ class PlanningPage(QWidget):
         raw = str(operation or "").strip()
         return mapping.get(raw, raw)
 
+    @staticmethod
+    def _operation_accent_color(operation: str) -> str:
+        mapping = {
+            "Corte Laser": "#2563eb",
+            "Quinagem": "#d97706",
+            "Serralharia": "#0f766e",
+            "Maquinacao": "#7c3aed",
+            "Roscagem": "#be123c",
+            "Lacagem": "#0f766e",
+            "Montagem": "#059669",
+            "Embalamento": "#0891b2",
+            "Expedicao": "#1d4ed8",
+            "Furo Manual": "#475569",
+        }
+        return mapping.get(str(operation or "").strip(), "#1d4ed8")
+
+    def _operation_button_stylesheet(self, operation: str, *, selected: bool = False) -> str:
+        accent = self._operation_accent_color(operation)
+        if selected:
+            return (
+                "QPushButton {"
+                f"background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {accent}, stop:1 #0f172a);"
+                "color:#ffffff; border:1px solid rgba(15,23,42,0.28); border-bottom:4px solid #0f172a;"
+                "border-radius:18px; padding:14px 18px; font-size:16px; font-weight:900;}"
+                "QPushButton:hover {filter:brightness(1.05);}"
+            )
+        return (
+            "QPushButton {"
+            "background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #ffffff, stop:0.55 #f8fbff, stop:1 #e6eef9);"
+            f"border:1px solid {accent}; border-bottom:4px solid {accent};"
+            "color:#0f172a; border-radius:18px; padding:14px 18px; font-size:16px; font-weight:800;}"
+            f"QPushButton:hover {{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #ffffff, stop:1 {accent}22);}}"
+        )
+
     def __init__(self, runtime_service, backend=None, parent=None) -> None:
         super().__init__(parent)
         self.runtime_service = runtime_service
@@ -4152,20 +4186,23 @@ class PlanningPage(QWidget):
         self.current_week_dates: list[str] = []
         self.current_time_slots: list[str] = []
         self.current_blocked_windows: list[dict] = []
-        self.current_operation = "Corte Laser"
+        self.current_operation = ""
         self.current_resource = ""
+        self.operation_selected = False
         self.selected_block_id = ""
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(10)
+        root.setSpacing(6)
 
         top_card = CardFrame()
+        self.top_card = top_card
         top_card.set_tone("info")
-        top_card.setMinimumHeight(118)
+        top_card.setMinimumHeight(44)
+        top_card.setMaximumHeight(48)
         top_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         top_layout = QVBoxLayout(top_card)
-        top_layout.setContentsMargins(14, 12, 14, 12)
-        top_layout.setSpacing(8)
+        top_layout.setContentsMargins(14, 4, 14, 4)
+        top_layout.setSpacing(2)
         week_row = QHBoxLayout()
         week_row.setSpacing(6)
         self.week_label = QLabel("-")
@@ -4173,7 +4210,7 @@ class PlanningPage(QWidget):
         self.period_meta = QLabel("Periodo -")
         self.period_meta.setProperty("role", "muted")
         self.period_meta.setStyleSheet("font-size: 11px;")
-        self.period_meta.setMinimumHeight(18)
+        self.period_meta.setMinimumHeight(14)
         week_row.addWidget(self.week_label, 1)
         self.prev_week_btn = QPushButton("Semana -")
         self.prev_week_btn.setProperty("variant", "secondary")
@@ -4222,10 +4259,11 @@ class PlanningPage(QWidget):
         self.deadline_email_btn.setProperty("variant", "warning")
         self.deadline_email_btn.setStyleSheet(
             "QPushButton {background: #f4c542; color: #0f172a; border: 1px solid #caa12b; "
-            "border-radius: 10px; padding: 8px 14px; font-weight: 800;}"
+            "border-radius: 10px; padding: 6px 10px; font-weight: 800; font-size: 11px;}"
             "QPushButton:hover {background: #ffd65a;}"
             "QPushButton:disabled {background: #f5e9b4; color: #7c6a2b;}"
         )
+        self.deadline_email_btn.setMinimumWidth(104)
         self.deadline_email_btn.clicked.connect(self._send_selected_deadline_email)
         self.blocked_btn = QPushButton("Bloqueios")
         self.blocked_btn.setProperty("variant", "secondary")
@@ -4256,45 +4294,13 @@ class PlanningPage(QWidget):
             button.setMinimumHeight(24)
             week_row.addWidget(button)
         top_layout.addLayout(week_row)
-        operations_host = QWidget()
-        operations_host.setMinimumHeight(30)
-        operations_row = QHBoxLayout(operations_host)
-        operations_row.setContentsMargins(0, 0, 0, 0)
-        operations_row.setSpacing(6)
-        operations_label = QLabel("Operacao")
-        operations_label.setProperty("role", "muted")
-        operations_label.setMinimumHeight(18)
-        operations_row.addWidget(operations_label)
-        self.operation_buttons: dict[str, QPushButton] = {}
-        operation_options = list(self.backend.planning_operation_options() if self.backend is not None and hasattr(self.backend, "planning_operation_options") else [])
-        if not operation_options:
-            operation_options = ["Corte Laser", "Quinagem", "Serralharia", "Maquinacao", "Roscagem", "Lacagem", "Montagem"]
-        for op_name in operation_options:
-            button = QPushButton(self._operation_display_name(str(op_name)))
-            button.setCheckable(True)
-            button.setProperty("compact", "true")
-            button.setMinimumHeight(24)
-            button.clicked.connect(lambda checked=False, value=op_name: self._set_operation(value))
-            self.operation_buttons[str(op_name)] = button
-            operations_row.addWidget(button)
-        resource_label = QLabel("Recurso")
-        resource_label.setProperty("role", "muted")
-        resource_label.setMinimumHeight(18)
-        operations_row.addWidget(resource_label)
-        self.resource_combo = QComboBox()
-        self.resource_combo.setMinimumHeight(24)
-        self.resource_combo.setProperty("compact", "true")
-        self.resource_combo.currentTextChanged.connect(lambda _value: self._set_resource(self.resource_combo.currentText().strip()))
-        operations_row.addWidget(self.resource_combo)
-        operations_row.addStretch(1)
         self.status_meta = QLabel("Blocos 0 | Backlog 0")
         self.status_meta.setProperty("role", "muted")
         self.status_meta.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.status_meta.setStyleSheet("font-size: 11px;")
-        self.status_meta.setMinimumHeight(18)
-        top_layout.addWidget(operations_host)
+        self.status_meta.setMinimumHeight(14)
         meta_host = QWidget()
-        meta_host.setMinimumHeight(22)
+        meta_host.setMinimumHeight(14)
         meta_row = QHBoxLayout(meta_host)
         meta_row.setContentsMargins(0, 0, 0, 0)
         meta_row.setSpacing(10)
@@ -4303,17 +4309,134 @@ class PlanningPage(QWidget):
         top_layout.addWidget(meta_host)
         root.addWidget(top_card)
 
+        navigation_card = CardFrame()
+        self.navigation_card = navigation_card
+        navigation_card.set_tone("default")
+        navigation_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        navigation_layout = QVBoxLayout(navigation_card)
+        navigation_layout.setContentsMargins(14, 5, 14, 5)
+        navigation_layout.setSpacing(2)
+        selector_header = QHBoxLayout()
+        selector_header.setSpacing(8)
+        selector_title = QLabel("Seleciona a operação")
+        self.selector_title_label = selector_title
+        selector_title.setStyleSheet("font-size: 15px; font-weight: 900; color: #0f172a;")
+        selector_subtitle = QLabel("Primeiro escolhes a área de trabalho. Depois, dentro da operação, selecionas a máquina/recurso para ver o quadro.")
+        self.selector_subtitle_label = selector_subtitle
+        selector_subtitle.setProperty("role", "muted")
+        selector_subtitle.setWordWrap(True)
+        selector_title_host = QWidget()
+        selector_title_layout = QVBoxLayout(selector_title_host)
+        selector_title_layout.setContentsMargins(0, 0, 0, 0)
+        selector_title_layout.setSpacing(0)
+        selector_title_layout.addWidget(selector_title)
+        selector_title_layout.addWidget(selector_subtitle)
+        self.selector_title_host = selector_title_host
+        self.selector_title_layout = selector_title_layout
+        selector_header.addWidget(selector_title_host, 1)
+        self.operation_summary_label = QLabel("-")
+        self.operation_summary_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.operation_summary_label.setStyleSheet("font-size: 12px; font-weight: 700; color: #334155;")
+        self.operation_summary_label.setWordWrap(False)
+        selector_header.addWidget(self.operation_summary_label, 0)
+        self.change_operation_btn = QPushButton("Trocar operação")
+        self.change_operation_btn.setProperty("variant", "secondary")
+        self.change_operation_btn.setProperty("compact", "true")
+        self.change_operation_btn.setMinimumHeight(26)
+        self.change_operation_btn.setMinimumWidth(128)
+        self.change_operation_btn.clicked.connect(lambda: self._set_operation_entry_state(False))
+        selector_header.addWidget(self.change_operation_btn, 0)
+        self.selector_header = selector_header
+        navigation_layout.addLayout(selector_header)
+
+        self.operation_buttons: dict[str, QPushButton] = {}
+        operation_options = list(self.backend.planning_operation_options() if self.backend is not None and hasattr(self.backend, "planning_operation_options") else [])
+        if not operation_options:
+            operation_options = ["Corte Laser", "Quinagem", "Serralharia", "Maquinacao", "Roscagem", "Lacagem", "Montagem", "Embalamento", "Expedicao", "Furo Manual"]
+        operation_grid_host = QWidget()
+        self.operation_grid_host = operation_grid_host
+        operation_grid_host.setMaximumWidth(1280)
+        operation_grid = QGridLayout(operation_grid_host)
+        self.operation_grid = operation_grid
+        operation_grid.setContentsMargins(0, 0, 0, 0)
+        operation_grid.setHorizontalSpacing(12)
+        operation_grid.setVerticalSpacing(12)
+        for index, op_name in enumerate(operation_options):
+            button = QPushButton(self._operation_display_name(str(op_name)))
+            button.setCheckable(True)
+            button.setMinimumHeight(62)
+            button.setMinimumWidth(228)
+            button.setProperty("variant", "secondary")
+            button.setStyleSheet(self._operation_button_stylesheet(str(op_name)))
+            button.clicked.connect(lambda checked=False, value=op_name: self._set_operation(value))
+            self.operation_buttons[str(op_name)] = button
+            operation_grid.addWidget(button, index // 5, index % 5)
+        operation_wrap = QWidget()
+        self.operation_wrap = operation_wrap
+        operation_wrap_layout = QHBoxLayout(operation_wrap)
+        operation_wrap_layout.setContentsMargins(0, 8, 0, 4)
+        operation_wrap_layout.setSpacing(0)
+        operation_wrap_layout.addStretch(1)
+        operation_wrap_layout.addWidget(operation_grid_host, 0, Qt.AlignHCenter | Qt.AlignTop)
+        operation_wrap_layout.addStretch(1)
+        navigation_layout.addWidget(operation_wrap)
+
+        resource_host = QWidget()
+        self.resource_host = resource_host
+        resource_layout = QHBoxLayout(resource_host)
+        resource_layout.setContentsMargins(0, 0, 0, 0)
+        resource_layout.setSpacing(6)
+        self.resource_panel_title = QLabel("Máquina / recurso")
+        self.resource_panel_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
+        self.resource_panel_hint = QLabel("Seleciona a máquina para analisar o planeamento da operação.")
+        self.resource_panel_hint.setProperty("role", "muted")
+        self.resource_panel_hint.setWordWrap(True)
+        resource_text_host = QWidget()
+        resource_text_layout = QVBoxLayout(resource_text_host)
+        resource_text_layout.setContentsMargins(0, 0, 0, 0)
+        resource_text_layout.setSpacing(0)
+        resource_text_layout.addWidget(self.resource_panel_title)
+        resource_text_layout.addWidget(self.resource_panel_hint)
+        resource_layout.addWidget(resource_text_host, 0)
+        resource_layout.addStretch(1)
+        self.change_operation_inline_btn = QPushButton("Trocar operação")
+        self.change_operation_inline_btn.setProperty("variant", "warning")
+        self.change_operation_inline_btn.setMinimumHeight(28)
+        self.change_operation_inline_btn.setMinimumWidth(138)
+        self.change_operation_inline_btn.setStyleSheet(
+            "QPushButton {background: #f4c542; color: #0f172a; border: 1px solid #caa12b; "
+            "border-radius: 10px; padding: 6px 12px; font-weight: 800; font-size: 11px;}"
+            "QPushButton:hover {background: #ffd65a;}"
+            "QPushButton:disabled {background: #f5e9b4; color: #7c6a2b;}"
+        )
+        self.change_operation_inline_btn.clicked.connect(lambda: self._set_operation_entry_state(False))
+        resource_layout.addWidget(self.change_operation_inline_btn, 0, Qt.AlignVCenter)
+        self.resource_combo = QComboBox()
+        self.resource_combo.setMinimumHeight(28)
+        self.resource_combo.setMinimumWidth(220)
+        self.resource_combo.currentTextChanged.connect(lambda _value: self._set_resource(self.resource_combo.currentText().strip()))
+        resource_layout.addWidget(self.resource_combo, 0, Qt.AlignVCenter)
+        navigation_layout.addWidget(resource_host)
+        root.addWidget(navigation_card)
+
         cards_host = QWidget()
+        self.cards_host = cards_host
         cards_layout = QGridLayout(cards_host)
         cards_layout.setContentsMargins(0, 0, 0, 0)
-        cards_layout.setHorizontalSpacing(12)
+        cards_layout.setHorizontalSpacing(10)
+        cards_layout.setVerticalSpacing(6)
         self.cards = [StatCard(title) for title in ("Blocos ativos", "Encomendas", "Carga semanal", "Blocos fechados")]
         for index, card in enumerate(self.cards):
             cards_layout.addWidget(card, 0, index)
-            card.setMaximumHeight(84)
-            card.title_label.setStyleSheet("font-size: 10px;")
+            card.setMinimumHeight(66)
+            card.setMaximumHeight(70)
+            card.layout().setContentsMargins(12, 10, 12, 10)
+            card.layout().setSpacing(3)
+            card.title_label.setWordWrap(True)
+            card.subtitle_label.setWordWrap(True)
+            card.title_label.setStyleSheet("font-size: 9px;")
             card.value_label.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
-            card.subtitle_label.setStyleSheet("font-size: 10px;")
+            card.subtitle_label.setStyleSheet("font-size: 9px;")
         self.cards[0].set_tone("info")
         self.cards[1].set_tone("warning")
         self.cards[2].set_tone("success")
@@ -4321,21 +4444,23 @@ class PlanningPage(QWidget):
         root.addWidget(cards_host)
 
         main_split = QSplitter(Qt.Horizontal)
+        self.main_split = main_split
         main_split.setChildrenCollapsible(False)
 
         backlog_card = CardFrame()
         backlog_card.set_tone("warning")
         backlog_layout = QVBoxLayout(backlog_card)
-        backlog_layout.setContentsMargins(16, 14, 16, 14)
+        backlog_layout.setContentsMargins(12, 10, 12, 10)
         self.backlog_title = QLabel("Produção / Montagem")
         self.backlog_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        self.backlog_title.setWordWrap(True)
         self.backlog_table = PlanningBacklogTable(self)
         self.backlog_table.setColumnCount(6)
         self.backlog_table.setHorizontalHeaderLabels(["Encomenda", "Cliente", "Material", "Esp.", "Tempo", "Obs."])
         self.backlog_table.verticalHeader().setVisible(False)
         self.backlog_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.backlog_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.backlog_table.verticalHeader().setDefaultSectionSize(20)
+        self.backlog_table.verticalHeader().setDefaultSectionSize(18)
         self.backlog_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.backlog_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.backlog_table.setStyleSheet("font-size: 11px;")
@@ -4353,26 +4478,28 @@ class PlanningPage(QWidget):
         grid_card = CardFrame()
         grid_card.set_tone("info")
         grid_layout = QVBoxLayout(grid_card)
-        grid_layout.setContentsMargins(16, 14, 16, 14)
+        grid_layout.setContentsMargins(12, 10, 12, 10)
         self.grid_title = QLabel("Quadro semanal")
         self.grid_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        self.grid_title.setWordWrap(True)
         self.grid = PlanningGridTable(self)
         self.grid.setEditTriggers(QTableWidget.NoEditTriggers)
         self.grid.setSelectionMode(QTableWidget.NoSelection)
         self.grid.verticalHeader().setVisible(False)
-        self.grid.verticalHeader().setDefaultSectionSize(20)
-        self.grid.verticalHeader().setMinimumSectionSize(18)
+        self.grid.verticalHeader().setDefaultSectionSize(18)
+        self.grid.verticalHeader().setMinimumSectionSize(16)
         self.grid.verticalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.grid.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.grid.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.grid.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.grid.setStyleSheet("font-size: 9px;")
         self.grid.setToolTip("Arrasta os blocos para reajustar. Duplo clique num bloco abre o PDF do fluxo da encomenda.")
         self.grid.itemClicked.connect(self._handle_grid_item_clicked)
         grid_layout.addWidget(self.grid_title)
         grid_layout.addWidget(self.grid)
-        grid_card.setMaximumHeight(620)
+        grid_card.setMaximumHeight(16777215)
         main_split.addWidget(grid_card)
-        main_split.setSizes([430, 1110])
+        main_split.setHandleWidth(6)
+        main_split.setSizes([350, 1190])
         root.addWidget(main_split, 1)
 
         self.active_card = CardFrame(self)
@@ -4386,7 +4513,7 @@ class PlanningPage(QWidget):
         self.active_table.verticalHeader().setVisible(False)
         self.active_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.active_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.active_table.verticalHeader().setDefaultSectionSize(20)
+        self.active_table.verticalHeader().setDefaultSectionSize(18)
         self.active_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.active_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.active_table.setStyleSheet("font-size: 11px;")
@@ -4406,7 +4533,7 @@ class PlanningPage(QWidget):
         self.history_table.setHorizontalHeaderLabels(["Data", "Inicio", "Encomenda", "Material", "Esp.", "Recurso", "Planeado", "Real / Estado"])
         self.history_table.verticalHeader().setVisible(False)
         self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.history_table.verticalHeader().setDefaultSectionSize(20)
+        self.history_table.verticalHeader().setDefaultSectionSize(18)
         self.history_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.history_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.history_table.setStyleSheet("font-size: 11px;")
@@ -4415,11 +4542,17 @@ class PlanningPage(QWidget):
         history_layout.addWidget(self.history_table)
         self.active_card.hide()
         self.history_card.hide()
+        self._set_operation_entry_state(False)
         self._apply_operation_labels()
         self._fit_planning_grid()
         self._sync_planning_actions()
 
     def refresh(self) -> None:
+        if not self.operation_selected or not str(self.current_operation or "").strip():
+            self._set_operation_entry_state(False)
+            self._apply_operation_labels()
+            return
+        self._set_operation_entry_state(True)
         self._refresh_resource_options()
         self._apply_operation_labels()
         if self.backend is not None and hasattr(self.backend, "planning_overview_data"):
@@ -4534,15 +4667,74 @@ class PlanningPage(QWidget):
 
     def _set_operation(self, operation: str) -> None:
         selected = str(operation or "").strip() or "Corte Laser"
-        if selected == self.current_operation:
+        was_selected = bool(self.operation_selected)
+        if was_selected and selected == self.current_operation:
             self._apply_operation_labels()
             return
         self.current_operation = selected
         self.current_resource = ""
+        self.operation_selected = True
+        self._set_operation_entry_state(True)
         self._refresh_resource_options()
         selected_resource = self.resource_combo.currentText().strip()
         self.current_resource = "" if selected_resource.lower() == "todos" else selected_resource
         self.refresh()
+
+    def _set_operation_entry_state(self, selected: bool) -> None:
+        self.top_card.setVisible(bool(selected))
+        self.resource_host.setVisible(bool(selected))
+        self.cards_host.setVisible(bool(selected))
+        self.main_split.setVisible(bool(selected))
+        self.operation_selected = bool(selected and str(self.current_operation or "").strip())
+        self.operation_grid_host.setVisible(not self.operation_selected)
+        self.operation_wrap.setVisible(not self.operation_selected)
+        self.change_operation_btn.setVisible(self.operation_selected)
+        self.change_operation_inline_btn.setVisible(self.operation_selected)
+        self.operation_summary_label.setVisible(self.operation_selected)
+        if self.operation_selected:
+            self.navigation_card.setMinimumHeight(58)
+            self.navigation_card.setMaximumHeight(62)
+            nav_layout = self.navigation_card.layout()
+            if nav_layout is not None:
+                nav_layout.setContentsMargins(14, 3, 14, 4)
+                nav_layout.setSpacing(1)
+            self.selector_title_label.setText("Planeamento da operação")
+            self.selector_subtitle_label.setText("Aqui escolhes a máquina/recurso da operação atual para consultar o quadro semanal.")
+            self.selector_title_label.setStyleSheet("font-size: 12px; font-weight: 900; color: #0f172a;")
+            self.selector_subtitle_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.selector_title_layout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.selector_subtitle_label.setVisible(False)
+            self.resource_panel_hint.setVisible(False)
+            self.operation_summary_label.setVisible(False)
+            self.change_operation_btn.setVisible(False)
+            self.change_operation_inline_btn.setVisible(True)
+            self.resource_panel_title.setStyleSheet("font-size: 12px; font-weight: 800; color: #0f172a;")
+        else:
+            self.navigation_card.setMinimumHeight(270)
+            self.navigation_card.setMaximumHeight(340)
+            nav_layout = self.navigation_card.layout()
+            if nav_layout is not None:
+                nav_layout.setContentsMargins(14, 6, 14, 6)
+                nav_layout.setSpacing(4)
+            self.selector_title_label.setText("Seleciona a operação")
+            self.selector_subtitle_label.setText("Primeiro escolhes a área de trabalho. Depois, dentro da operação, selecionas a máquina/recurso para ver o quadro.")
+            self.selector_title_label.setStyleSheet("font-size: 24px; font-weight: 900; color: #0f172a;")
+            self.selector_subtitle_label.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+            self.selector_title_layout.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+            self.selector_subtitle_label.setVisible(True)
+            self.resource_panel_hint.setVisible(True)
+            self.operation_summary_label.setVisible(True)
+            self.change_operation_btn.setVisible(False)
+            self.change_operation_inline_btn.setVisible(False)
+            self.resource_panel_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
+            self.current_operation = ""
+            self.current_resource = ""
+            self._refresh_resource_options()
+            self.resource_host.setVisible(False)
+        if not selected:
+            self.active_card.hide()
+            self.history_card.hide()
+        self._apply_operation_labels()
 
     def _set_resource(self, resource: str) -> None:
         selected = str(resource or "").strip()
@@ -4555,6 +4747,12 @@ class PlanningPage(QWidget):
 
     def _refresh_resource_options(self) -> None:
         if self.backend is None or not hasattr(self.backend, "workcenter_resource_options"):
+            return
+        if not self.operation_selected or not str(self.current_operation or "").strip():
+            self.resource_combo.blockSignals(True)
+            self.resource_combo.clear()
+            self.resource_combo.blockSignals(False)
+            self.resource_combo.setEnabled(False)
             return
         current_value = str(self.current_resource or self.resource_combo.currentText() or "").strip()
         options = [
@@ -4580,16 +4778,29 @@ class PlanningPage(QWidget):
             self.current_resource = ""
         self.resource_combo.setEnabled(bool(options))
         self.resource_combo.blockSignals(False)
+        current_label = self._operation_display_name(str(self.current_operation or "Corte Laser").strip() or "Corte Laser")
+        selected_resource = str(self.current_resource or "").strip()
+        selected_label = selected_resource or "Todos os recursos"
+        self.resource_panel_title.setText(f"Máquina / recurso - {current_label}")
+        self.resource_panel_hint.setText(
+            f"Dentro de {current_label}, seleciona a máquina/recurso que queres analisar. Atual: {selected_label}."
+        )
 
     def _apply_operation_labels(self) -> None:
-        current = str(self.current_operation or "Corte Laser").strip() or "Corte Laser"
+        current = str(self.current_operation or "").strip()
         resource_suffix = f" | {self.current_resource}" if str(self.current_resource or "").strip() else ""
-        current_label = self._operation_display_name(current)
+        current_label = self._operation_display_name(current) if current else "Operação"
         for op_name, button in self.operation_buttons.items():
-            button.setChecked(op_name == current)
-            button.setProperty("variant", "primary" if op_name == current else "secondary")
+            is_selected = bool(self.operation_selected and op_name == current)
+            button.setChecked(is_selected)
+            button.setProperty("variant", "primary" if is_selected else "secondary")
+            button.setStyleSheet(self._operation_button_stylesheet(op_name, selected=is_selected))
             button.style().unpolish(button)
             button.style().polish(button)
+        if self.operation_selected and current:
+            self.operation_summary_label.setText(f"Operação atual: {current_label}")
+        else:
+            self.operation_summary_label.setText("Escolhe a operação para abrir o planeamento")
         self.backlog_title.setText(f"Pendentes - {current_label}{resource_suffix}")
         self.grid_title.setText(f"Quadro semanal - {current_label}{resource_suffix}")
         self.active_title.setText(f"Blocos - {current_label}{resource_suffix}")
@@ -4717,7 +4928,7 @@ class PlanningPage(QWidget):
         if not hasattr(self, "grid") or self.grid is None:
             return
         header = self.grid.horizontalHeader()
-        header.setMinimumHeight(28)
+        header.setMinimumHeight(26)
         header.setDefaultAlignment(Qt.AlignCenter | Qt.AlignVCenter)
         if self.grid.columnCount() <= 0:
             return
@@ -5099,6 +5310,26 @@ class PlanningPage(QWidget):
 
     def _sync_planning_actions(self) -> None:
         has_backend = self.backend is not None
+        if not self.operation_selected or not str(self.current_operation or "").strip():
+            for button in (
+                self.auto_plan_btn,
+                self.auto_flow_btn,
+                self.clear_week_btn,
+                self.remove_block_btn,
+                self.move_earlier_btn,
+                self.move_later_btn,
+                self.move_prev_day_btn,
+                self.move_next_day_btn,
+                self.view_blocks_btn,
+                self.view_history_btn,
+                self.blocked_btn,
+                self.laser_deadline_btn,
+                self.deadline_email_btn,
+            ):
+                button.setEnabled(False)
+            self.laser_deadline_btn.setVisible(False)
+            self.deadline_email_btn.setVisible(False)
+            return
         active_row = self._selected_active_row()
         if active_row:
             self.selected_block_id = str(active_row.get("id", "") or "").strip()
@@ -14307,7 +14538,16 @@ class LegacyOperatorPage(OperatorPage):
         self.order_rows_all: list[dict] = []
         self.selected_order_number = ""
         for card in self.cards:
-            card.setMaximumHeight(112)
+            card.setMinimumHeight(66)
+            card.setMaximumHeight(74)
+            if card.layout() is not None:
+                card.layout().setContentsMargins(10, 8, 10, 8)
+                card.layout().setSpacing(3)
+            card.title_label.setWordWrap(True)
+            card.subtitle_label.setWordWrap(True)
+            card.title_label.setStyleSheet("font-size: 9px;")
+            card.value_label.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
+            card.subtitle_label.setStyleSheet("font-size: 9px;")
         self.global_progress.setMaximumHeight(20)
         self.groups_table.verticalHeader().setDefaultSectionSize(24)
         self.pieces_table.verticalHeader().setDefaultSectionSize(22)
@@ -14321,8 +14561,8 @@ class LegacyOperatorPage(OperatorPage):
         for col, width in ((0, 132), (1, 84), (2, 106), (3, 94), (4, 56), (5, 64), (6, 74)):
             group_header.setSectionResizeMode(col, QHeaderView.Interactive)
             group_header.resizeSection(col, width)
-        self.control_card.setMaximumHeight(112)
-        self.context_card.setMaximumHeight(142)
+        self.control_card.setMaximumHeight(108)
+        self.context_card.setMaximumHeight(150)
         self.feedback_label.setMaximumHeight(30)
         for widget, width in ((self.operator_combo, 180), (self.posto_combo, 132), (self.operation_combo, 230)):
             widget.setProperty("compact", "true")
@@ -14335,13 +14575,15 @@ class LegacyOperatorPage(OperatorPage):
         self.piece_state_chip.setMinimumWidth(92)
         self.piece_state_chip.setAlignment(Qt.AlignCenter)
         self.piece_title_label.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
-        self.piece_meta_label.setStyleSheet("font-size: 10px; color: #334155;")
+        self.piece_meta_label.setStyleSheet("font-size: 9px; color: #334155;")
         self.pending_label.setStyleSheet("font-size: 9px; color: #5b6f86;")
         context_layout = self.context_card.layout()
         context_layout.setContentsMargins(12, 10, 12, 10)
         context_layout.setSpacing(6)
         self.issue_label.setMaximumHeight(24)
-        self.pending_label.setMaximumHeight(28)
+        self.piece_meta_label.setWordWrap(True)
+        self.pending_label.setWordWrap(True)
+        self.pending_label.setMaximumHeight(36)
         self.operation_strip.setMaximumHeight(24)
         self.piece_progress.setMaximumHeight(16)
         self.operator_combo.setMinimumWidth(150)
@@ -14391,8 +14633,9 @@ class LegacyOperatorPage(OperatorPage):
         selectors_grid.setColumnStretch(2, 3)
         control_layout.addWidget(selectors_host)
         _adopt_layout_item(control_layout, feedback_item)
-        self.control_card.setMaximumHeight(116)
+        self.control_card.setMaximumHeight(108)
         self.feedback_label.setStyleSheet("font-size: 11px; color: #475467;")
+        self.feedback_label.setWordWrap(True)
 
         self.orders_table = QTableWidget(0, 8)
         self.orders_table.setHorizontalHeaderLabels(["Encomenda", "Cliente", "Estado", "Grupos", "Pecas", "Em curso", "Avarias", "Progress"])
@@ -14519,7 +14762,7 @@ class LegacyOperatorPage(OperatorPage):
             right_header_actions.addWidget(button)
         detail_actions_layout.addLayout(right_header_actions)
         detail_actions_layout.addWidget(self.order_state_chip, 0, Qt.AlignTop)
-        detail_actions.setMaximumHeight(62)
+        detail_actions.setMaximumHeight(66)
         detail_layout.addWidget(detail_actions)
 
         self.detail_filter_card = CardFrame()
@@ -14555,7 +14798,7 @@ class LegacyOperatorPage(OperatorPage):
         detail_filter_layout.addStretch(1)
         detail_filter_layout.addWidget(self.detail_state_filter_combo)
         detail_filter_layout.addWidget(self.detail_search_edit)
-        self.detail_filter_card.setMaximumHeight(46)
+        self.detail_filter_card.setMaximumHeight(48)
         detail_layout.addWidget(self.detail_filter_card)
 
         control_host = QWidget()
@@ -14577,7 +14820,7 @@ class LegacyOperatorPage(OperatorPage):
         workspace_split.addWidget(control_host)
         workspace_split.addWidget(context_host)
         workspace_split.setSizes([430, 1570])
-        workspace_split.setMaximumHeight(210)
+        workspace_split.setMaximumHeight(220)
         detail_layout.addWidget(workspace_split)
 
         self.groups_title_label.setText("Grupos ativos")
@@ -15001,42 +15244,67 @@ class LegacyPlanningPage(PlanningPage):
     def __init__(self, runtime_service, backend=None, parent=None) -> None:
         super().__init__(runtime_service, backend, parent)
         root = self.layout()
-        root.setSpacing(6)
+        root.setSpacing(2)
         sections = _take_layout_items(root)
         top_item = sections[0] if len(sections) > 0 else None
-        cards_item = sections[1] if len(sections) > 1 else None
-        body_item = sections[2] if len(sections) > 2 else None
+        nav_item = sections[1] if len(sections) > 1 else None
+        cards_item = sections[2] if len(sections) > 2 else None
+        body_item = sections[3] if len(sections) > 3 else None
 
         top_widget = top_item.widget() if top_item and top_item.widget() is not None else None
         if top_widget is not None:
-            top_widget.setMaximumHeight(56)
+            top_widget.setMinimumHeight(44)
+            top_widget.setMaximumHeight(48)
             top_layout = top_widget.layout()
             if top_layout is not None:
-                top_layout.setContentsMargins(12, 8, 12, 8)
-                top_layout.setSpacing(4)
+                top_layout.setContentsMargins(12, 4, 12, 4)
+                top_layout.setSpacing(2)
+
+        nav_widget = nav_item.widget() if nav_item and nav_item.widget() is not None else None
+        if nav_widget is not None:
+            nav_layout = nav_widget.layout()
+            if bool(getattr(self, "operation_selected", False)):
+                nav_widget.setMinimumHeight(58)
+                nav_widget.setMaximumHeight(62)
+            else:
+                nav_widget.setMinimumHeight(270)
+                nav_widget.setMaximumHeight(340)
+            if nav_layout is not None:
+                nav_layout.setContentsMargins(12, 6, 12, 6)
+                nav_layout.setSpacing(4)
 
         cards_widget = cards_item.widget() if cards_item and cards_item.widget() is not None else None
         if cards_widget is not None:
-            cards_widget.setMaximumHeight(78)
+            cards_widget.setMaximumHeight(70)
             cards_layout = cards_widget.layout()
             if cards_layout is not None:
-                cards_layout.setHorizontalSpacing(8)
-                cards_layout.setVerticalSpacing(0)
+                if isinstance(cards_layout, QGridLayout):
+                    cards_layout.setHorizontalSpacing(8)
+                    cards_layout.setVerticalSpacing(4)
+                else:
+                    cards_layout.setSpacing(4)
         for card in getattr(self, "cards", []):
-            card.setMaximumHeight(76)
+            card.setMinimumHeight(66)
+            card.setMaximumHeight(70)
+            card.layout().setContentsMargins(10, 8, 10, 8)
+            card.layout().setSpacing(3)
+            card.title_label.setWordWrap(True)
+            card.subtitle_label.setWordWrap(True)
             card.title_label.setStyleSheet("font-size: 9px;")
             card.value_label.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
             card.subtitle_label.setStyleSheet("font-size: 9px;")
 
-        self.grid.verticalHeader().setDefaultSectionSize(17)
-        self.grid.verticalHeader().setMinimumSectionSize(17)
+        self.grid.verticalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.grid.verticalHeader().setDefaultSectionSize(16)
+        self.grid.verticalHeader().setMinimumSectionSize(16)
         self.grid.horizontalHeader().setMinimumSectionSize(88)
-        self.grid.horizontalHeader().setFixedHeight(30)
-        self.grid.setStyleSheet("font-size: 8.5px;")
-        self.grid.setMinimumHeight(_table_visible_height(self.grid, 20, extra=8))
+        self.grid.horizontalHeader().setFixedHeight(26)
+        self.grid.setStyleSheet("font-size: 8px;")
+        self.grid.setMinimumHeight(_table_visible_height(self.grid, 20, extra=0))
         self.grid.setMaximumHeight(16777215)
-        self.backlog_table.verticalHeader().setDefaultSectionSize(18)
-        self.backlog_table.setStyleSheet("font-size: 10px;")
+        self.grid.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.backlog_table.verticalHeader().setDefaultSectionSize(17)
+        self.backlog_table.setStyleSheet("font-size: 9.5px;")
         self.backlog_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         backlog_header = self.backlog_table.horizontalHeader()
         for col, width in ((0, 150), (1, 126), (2, 96), (3, 50), (4, 54)):
@@ -15045,11 +15313,13 @@ class LegacyPlanningPage(PlanningPage):
         backlog_header.setStretchLastSection(False)
 
         _adopt_layout_item(root, top_item)
+        _adopt_layout_item(root, nav_item)
         _adopt_layout_item(root, cards_item)
         _adopt_layout_item(root, body_item, 1)
         body_widget = body_item.widget() if body_item and body_item.widget() is not None else None
         if body_widget is not None and isinstance(body_widget, QSplitter):
-            body_widget.setSizes([440, 1120])
+            body_widget.setHandleWidth(6)
+            body_widget.setSizes([340, 1220])
         QTimer.singleShot(0, self._fit_planning_grid)
 
 
