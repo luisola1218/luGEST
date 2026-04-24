@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from PySide6.QtCore import Qt, QDate, QMimeData, QTime, QTimer
-from PySide6.QtGui import QColor, QBrush, QDrag
+from PySide6.QtGui import QColor, QBrush, QDrag, QPixmap
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QAbstractItemView,
@@ -53,7 +53,18 @@ from PySide6.QtWidgets import (
 
 from .laser_batch_quote_dialog import LaserBatchQuoteDialog
 from .laser_nesting_dialog import LaserNestingDialog
-from .laser_quote_dialogs import LaserQuoteDialog, LaserSettingsDialog
+from .laser_quote_dialogs import (
+    LaserQuoteDialog,
+    LaserSettingsDialog,
+    _canonical_material_family as _laser_canonical_material_family,
+    _display_material_family as _laser_display_material_family,
+    _guess_material_family as _laser_guess_material_family,
+    _set_combo_values as _laser_set_combo_values,
+    _settings_gas_names as _laser_settings_gas_names,
+    _settings_material_names as _laser_settings_material_names,
+    _settings_material_subtypes as _laser_settings_material_subtypes,
+)
+from ...services.profile_cad_analysis import analyze_profile_cut_features, render_step_preview_image
 from ..widgets import CardFrame, StatCard
 
 LIST_TABLE_FONT_PX = 15
@@ -22145,6 +22156,15 @@ class QuotesPage(QWidget):
         intro.setProperty("role", "muted")
         layout.addWidget(title)
         layout.addWidget(intro)
+        auto_hint = QLabel(
+            "Leitura automatica: os cortes totais ja incluem furos e rasgos. Exemplo: 26 cortes = 24 furos + 2 cortes exteriores. "
+            "Os valores continuam editaveis antes de aplicar."
+        )
+        auto_hint.setWordWrap(True)
+        auto_hint.setProperty("role", "muted")
+        layout.addWidget(auto_hint)
+
+        laser_settings = dict(self.backend.laser_quote_settings() or {})
 
         toolbar = QHBoxLayout()
         toolbar.setSpacing(8)
@@ -22152,8 +22172,11 @@ class QuotesPage(QWidget):
         add_files_btn.setProperty("variant", "secondary")
         remove_file_btn = QPushButton("Remover selecionado")
         remove_file_btn.setProperty("variant", "secondary")
+        configure_btn = QPushButton("Perfis laser")
+        configure_btn.setProperty("variant", "secondary")
         toolbar.addWidget(add_files_btn)
         toolbar.addWidget(remove_file_btn)
+        toolbar.addWidget(configure_btn)
         toolbar.addStretch(1)
         layout.addLayout(toolbar)
 
@@ -22179,6 +22202,25 @@ class QuotesPage(QWidget):
         )
         layout.addWidget(files_table)
 
+        preview_card = CardFrame()
+        preview_card.set_tone("default")
+        preview_layout = QVBoxLayout(preview_card)
+        preview_layout.setContentsMargins(14, 12, 14, 12)
+        preview_layout.setSpacing(8)
+        preview_title = QLabel("Preview do STEP/IGS")
+        preview_title.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
+        preview_image_label = QLabel("Seleciona um ficheiro para gerar preview.")
+        preview_image_label.setAlignment(Qt.AlignCenter)
+        preview_image_label.setMinimumHeight(240)
+        preview_image_label.setStyleSheet("border: 1px solid #d0d5dd; border-radius: 10px; background: #f8fafc; color: #475467;")
+        preview_info_label = QLabel("O preview usa FreeCAD quando estiver instalado neste posto.")
+        preview_info_label.setWordWrap(True)
+        preview_info_label.setProperty("role", "muted")
+        preview_layout.addWidget(preview_title)
+        preview_layout.addWidget(preview_image_label)
+        preview_layout.addWidget(preview_info_label)
+        layout.addWidget(preview_card)
+
         pricing_card = CardFrame()
         pricing_card.set_tone("default")
         pricing_layout = QGridLayout(pricing_card)
@@ -22186,47 +22228,40 @@ class QuotesPage(QWidget):
         pricing_layout.setHorizontalSpacing(12)
         pricing_layout.setVerticalSpacing(8)
 
-        quality_combo = QComboBox()
-        quality_combo.setEditable(True)
-        for value in list((self.presets or self.backend.order_presets()).get("materiais", []) or []):
-            text = str(value or "").strip()
-            if text:
-                quality_combo.addItem(text)
-        if quality_combo.count() == 0:
-            quality_combo.addItems(["S235JR", "S275JR", "S355JR", "INOX304", "Aluminio"])
-        cut_price_spin = QDoubleSpinBox()
-        cut_price_spin.setRange(0.0, 1000000.0)
-        cut_price_spin.setDecimals(4)
-        cut_price_spin.setPrefix("EUR ")
-        cut_price_spin.setValue(1.25)
-        hole_price_spin = QDoubleSpinBox()
-        hole_price_spin.setRange(0.0, 1000000.0)
-        hole_price_spin.setDecimals(4)
-        hole_price_spin.setPrefix("EUR ")
-        hole_price_spin.setValue(0.85)
-        slot_price_spin = QDoubleSpinBox()
-        slot_price_spin.setRange(0.0, 1000000.0)
-        slot_price_spin.setDecimals(4)
-        slot_price_spin.setPrefix("EUR ")
-        slot_price_spin.setValue(1.15)
-        setup_price_spin = QDoubleSpinBox()
-        setup_price_spin.setRange(0.0, 1000000.0)
-        setup_price_spin.setDecimals(2)
-        setup_price_spin.setPrefix("EUR ")
-        setup_price_spin.setValue(12.0)
+        machine_combo = QComboBox()
+        commercial_combo = QComboBox()
+        material_combo = QComboBox()
+        subtype_combo = QComboBox()
+        subtype_combo.setEditable(True)
+        gas_combo = QComboBox()
+        thickness_spin = QDoubleSpinBox()
+        thickness_spin.setRange(0.1, 200.0)
+        thickness_spin.setDecimals(2)
+        thickness_spin.setSingleStep(0.5)
+        thickness_spin.setValue(3.0)
+        customer_material_check = QCheckBox("Perfil/tubo fornecido pelo cliente")
+        customer_material_check.setChecked(True)
+        customer_material_check.setToolTip("No fluxo STEP/IGS o material base do perfil fica fora do calculo por defeito.")
         total_label = QLabel("Total estimado: 0,00 EUR")
         total_label.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
-        pricing_layout.addWidget(QLabel("Qualidade"), 0, 0)
-        pricing_layout.addWidget(quality_combo, 0, 1)
-        pricing_layout.addWidget(QLabel("Preco por corte"), 0, 2)
-        pricing_layout.addWidget(cut_price_spin, 0, 3)
-        pricing_layout.addWidget(QLabel("Preco por furo"), 1, 0)
-        pricing_layout.addWidget(hole_price_spin, 1, 1)
-        pricing_layout.addWidget(QLabel("Preco por rasgo"), 1, 2)
-        pricing_layout.addWidget(slot_price_spin, 1, 3)
-        pricing_layout.addWidget(QLabel("Preparacao / programacao"), 2, 0)
-        pricing_layout.addWidget(setup_price_spin, 2, 1)
-        pricing_layout.addWidget(total_label, 2, 2, 1, 2)
+        status_label = QLabel("Usa as tabelas do laser com contagem de eventos STEP/IGS, sem duplicar furos.")
+        status_label.setWordWrap(True)
+        status_label.setProperty("role", "muted")
+        pricing_layout.addWidget(QLabel("Maquina"), 0, 0)
+        pricing_layout.addWidget(machine_combo, 0, 1)
+        pricing_layout.addWidget(QLabel("Perfil comercial"), 0, 2)
+        pricing_layout.addWidget(commercial_combo, 0, 3)
+        pricing_layout.addWidget(QLabel("Familia material"), 1, 0)
+        pricing_layout.addWidget(material_combo, 1, 1)
+        pricing_layout.addWidget(QLabel("Subtipo / qualidade"), 1, 2)
+        pricing_layout.addWidget(subtype_combo, 1, 3)
+        pricing_layout.addWidget(QLabel("Gas"), 2, 0)
+        pricing_layout.addWidget(gas_combo, 2, 1)
+        pricing_layout.addWidget(QLabel("Espessura (mm)"), 2, 2)
+        pricing_layout.addWidget(thickness_spin, 2, 3)
+        pricing_layout.addWidget(customer_material_check, 3, 0, 1, 2)
+        pricing_layout.addWidget(total_label, 3, 2, 1, 2)
+        pricing_layout.addWidget(status_label, 4, 0, 1, 4)
         layout.addWidget(pricing_card)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -22266,48 +22301,335 @@ class QuotesPage(QWidget):
             spin.setValue(float(value))
             return spin
 
-        def _recalc_total() -> None:
-            total = float(setup_price_spin.value() or 0.0)
-            for row_index in range(files_table.rowCount()):
-                qty_spin = files_table.cellWidget(row_index, 3)
-                cuts_spin = files_table.cellWidget(row_index, 4)
-                holes_spin = files_table.cellWidget(row_index, 5)
-                slots_spin = files_table.cellWidget(row_index, 6)
-                qty = float(qty_spin.value() if isinstance(qty_spin, QDoubleSpinBox) else 0.0)
-                cuts = float(cuts_spin.value() if isinstance(cuts_spin, QDoubleSpinBox) else 0.0)
-                holes = float(holes_spin.value() if isinstance(holes_spin, QDoubleSpinBox) else 0.0)
-                slots = float(slots_spin.value() if isinstance(slots_spin, QDoubleSpinBox) else 0.0)
-                total += qty * (
-                    (cuts * float(cut_price_spin.value() or 0.0))
-                    + (holes * float(hole_price_spin.value() or 0.0))
-                    + (slots * float(slot_price_spin.value() or 0.0))
+        def _read_geometry_preview(path_txt: str) -> str:
+            try:
+                raw = Path(path_txt).read_bytes()
+            except Exception:
+                return ""
+            if not raw:
+                return ""
+            sample = raw[:1_200_000]
+            for encoding in ("utf-8", "latin-1", "cp1252"):
+                try:
+                    return sample.decode(encoding, errors="ignore")
+                except Exception:
+                    continue
+            return sample.decode("latin-1", errors="ignore")
+
+        def _clear_step_preview(message: str, info: str = "") -> None:
+            preview_image_label.clear()
+            preview_image_label.setPixmap(QPixmap())
+            preview_image_label.setText(message)
+            preview_info_label.setText(info or "O preview usa FreeCAD quando estiver instalado neste posto.")
+
+        def _update_step_preview() -> None:
+            row_index = _selected_row_index(files_table)
+            if row_index < 0:
+                _clear_step_preview("Seleciona um ficheiro para gerar preview.")
+                return
+            file_item = files_table.item(row_index, 0)
+            path_txt = str(file_item.data(Qt.UserRole) if isinstance(file_item, QTableWidgetItem) else "").strip()
+            if not path_txt:
+                _clear_step_preview("Sem ficheiro associado.")
+                return
+            cached_preview = dict(file_item.data(Qt.UserRole + 2) if isinstance(file_item, QTableWidgetItem) else {} or {})
+            if not cached_preview:
+                _clear_step_preview("A gerar preview FreeCAD...", Path(path_txt).name)
+                QApplication.processEvents()
+                try:
+                    cached_preview = dict(render_step_preview_image(path_txt) or {})
+                except Exception as exc:
+                    cached_preview = {"available": False, "note": str(exc)}
+                if isinstance(file_item, QTableWidgetItem):
+                    file_item.setData(Qt.UserRole + 2, dict(cached_preview))
+            image_path = str(cached_preview.get("image_path", "") or "").strip()
+            if cached_preview.get("available") and image_path and Path(image_path).exists():
+                pixmap = QPixmap(image_path)
+                if not pixmap.isNull():
+                    preview_image_label.setText("")
+                    preview_image_label.setPixmap(
+                        pixmap.scaled(760, 260, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    )
+                    preview_info_label.setText(
+                        f"{Path(path_txt).name} | Preview gerado por {str(cached_preview.get('engine', 'FreeCAD') or 'FreeCAD')}"
+                    )
+                    return
+            note_txt = str(cached_preview.get("note", "") or "").strip()
+            _clear_step_preview(
+                "Preview indisponivel neste posto.",
+                note_txt or f"{Path(path_txt).name} | Instala/configura o FreeCAD para gerar imagem do STEP.",
+            )
+
+        def _refresh_machine_and_commercial() -> None:
+            _laser_set_combo_values(machine_combo, list(dict(laser_settings.get("machine_profiles", {}) or {}).keys()))
+            _laser_set_combo_values(commercial_combo, list(dict(laser_settings.get("commercial_profiles", {}) or {}).keys()))
+
+        def _material_subtype_candidates(material_name: str) -> list[str]:
+            extras: list[str] = []
+            try:
+                presets = dict(self.backend.material_presets() or {})
+                family = _laser_guess_material_family(material_name) or str(material_name or "").strip()
+                for value in list(presets.get("materiais", []) or []):
+                    clean = str(value or "").strip()
+                    if not clean or clean == material_name:
+                        continue
+                    if _laser_guess_material_family(clean) == family and clean not in extras:
+                        extras.append(clean)
+            except Exception:
+                pass
+            return _laser_settings_material_subtypes(laser_settings, material_name, extras)
+
+        def _refresh_materials() -> None:
+            current_material = _laser_display_material_family(material_combo.currentText().strip()) or material_combo.currentText().strip()
+            values = _laser_settings_material_names(laser_settings, machine_combo.currentText().strip())
+            _laser_set_combo_values(material_combo, values, current_material if current_material else (values[0] if values else "Ferro"))
+            _refresh_subtypes()
+
+        def _refresh_subtypes() -> None:
+            current_subtype = subtype_combo.currentText().strip()
+            values = _material_subtype_candidates(material_combo.currentText().strip())
+            _laser_set_combo_values(subtype_combo, values, current_subtype)
+            if current_subtype and current_subtype not in [subtype_combo.itemText(index) for index in range(subtype_combo.count())]:
+                subtype_combo.setCurrentText(current_subtype)
+            _refresh_gases()
+
+        def _refresh_gases() -> None:
+            current_gas = gas_combo.currentText().strip()
+            values = _laser_settings_gas_names(laser_settings, machine_combo.currentText().strip(), material_combo.currentText().strip())
+            _laser_set_combo_values(gas_combo, values, current_gas if current_gas else (values[0] if values else "Oxigenio"))
+
+        def _configure_profiles() -> None:
+            nonlocal laser_settings
+            cfg_dialog = LaserSettingsDialog(self.backend, self)
+            if cfg_dialog.exec() != QDialog.Accepted:
+                return
+            current_machine = machine_combo.currentText().strip()
+            current_commercial = commercial_combo.currentText().strip()
+            current_material = material_combo.currentText().strip()
+            current_gas = gas_combo.currentText().strip()
+            laser_settings = dict(self.backend.laser_quote_settings() or {})
+            _laser_set_combo_values(machine_combo, list(dict(laser_settings.get("machine_profiles", {}) or {}).keys()), current_machine)
+            _laser_set_combo_values(commercial_combo, list(dict(laser_settings.get("commercial_profiles", {}) or {}).keys()), current_commercial)
+            _refresh_materials()
+            if current_material:
+                material_combo.setCurrentText(current_material)
+                _refresh_subtypes()
+            if current_gas:
+                gas_combo.setCurrentText(current_gas)
+            _recalc_total()
+
+        def _normalize_counts(cuts_value: float, holes_value: float, slots_value: float) -> tuple[int, int, int, int]:
+            holes_count = max(0, int(round(float(holes_value or 0.0))))
+            slots_count = max(0, int(round(float(slots_value or 0.0))))
+            total_cut_count = max(0, int(round(float(cuts_value or 0.0))))
+            if total_cut_count < (holes_count + slots_count):
+                total_cut_count = holes_count + slots_count
+            outer_cut_count = max(0, total_cut_count - holes_count - slots_count)
+            return total_cut_count, holes_count, slots_count, outer_cut_count
+
+        def _estimate_profile_operations(path_txt: str) -> dict[str, Any]:
+            family_txt = _infer_family(path_txt)
+            section_txt = _infer_section(path_txt)
+            section_norm = section_txt.upper().replace(" ", "")
+            stem_lower = Path(path_txt).stem.lower()
+            suffix = Path(path_txt).suffix.lower()
+            cad_analysis = analyze_profile_cut_features(path_txt)
+            text = _read_geometry_preview(path_txt)
+            cuts = int(cad_analysis.get("cuts", 0) or 0)
+            holes = int(cad_analysis.get("holes", 0) or 0)
+            slots = int(cad_analysis.get("slots", 0) or 0)
+            outer_cuts = int(cad_analysis.get("outer_cuts", max(0, cuts - holes - slots)) or 0)
+            generic_cuts = int(cad_analysis.get("generic_cuts", 0) or 0)
+            end_cut_count = int(cad_analysis.get("end_cut_count", 0) or 0)
+            notes: list[str] = []
+            cad_note = str(cad_analysis.get("note", "") or "").strip()
+            if cad_note:
+                notes.append(cad_note)
+            if cuts <= 0:
+                cuts = 4
+                outer_cuts = max(outer_cuts, 4)
+            complex_tokens = ("mitra", "chanfro", "angulo", "bisel", "45")
+            if any(token in stem_lower for token in complex_tokens):
+                cuts = 4
+                outer_cuts = max(outer_cuts, 4)
+                notes.append("nome sugere cortes angulados")
+            if text:
+                plane_count = len(re.findall(r"\bPLANE\b", text, re.IGNORECASE))
+                cylindrical_count = len(re.findall(r"\bCYLINDRICAL_SURFACE\b", text, re.IGNORECASE))
+                if suffix in {".step", ".stp"}:
+                    circle_count = len(re.findall(r"\bCIRCLE\s*\(", text, re.IGNORECASE))
+                    ellipse_count = len(re.findall(r"\bELLIPSE\s*\(", text, re.IGNORECASE))
+                    spline_count = len(re.findall(r"\bB_SPLINE_CURVE(?:_WITH_KNOTS)?\b", text, re.IGNORECASE))
+                    notes.append("leitura STEP textual aplicada")
+                else:
+                    circle_count = len(re.findall(r"(^|,)\s*100\s*,", text, re.MULTILINE))
+                    ellipse_count = len(re.findall(r"(^|,)\s*104\s*,", text, re.MULTILINE))
+                    spline_count = len(re.findall(r"(^|,)\s*126\s*,", text, re.MULTILINE))
+                    notes.append("leitura IGES textual aplicada")
+                if holes <= 0 and 0 < circle_count <= 12:
+                    holes = int(circle_count)
+                elif any(token in stem_lower for token in ("furo", "furos", "hole", "holes")):
+                    holes = 1
+                if slots <= 0 and 0 < ellipse_count <= 8:
+                    slots = int(ellipse_count)
+                elif any(token in stem_lower for token in ("rasgo", "rasgos", "slot", "slots", "oblongo")):
+                    slots = 1
+                if slots == 0 and 0 < spline_count <= 4 and any(token in stem_lower for token in ("slot", "rasgo", "oblongo")):
+                    slots = int(spline_count)
+                if cuts <= 4 and any(token in section_norm for token in ("IPE", "IPN", "HEA", "HEB", "HEM", "UPN", "UNP")):
+                    cuts = max(cuts, 6)
+                    outer_cuts = max(outer_cuts, 6)
+                    notes.append("perfil estrutural identificado; baseline reforcado")
+                elif cuts <= 4 and family_txt == "Tubo":
+                    if any(token in section_norm for token in ("RHS", "SHS")) or ("X" in section_norm):
+                        cuts = max(cuts, 4)
+                        outer_cuts = max(outer_cuts, 4)
+                        notes.append("tubo/perfil retangular detetado")
+                    elif re.search(r"(CHS|ROUND|REDONDO|DN\d+|D\d+|Ø)", section_norm):
+                        cuts = 2
+                        outer_cuts = max(outer_cuts, 2)
+                        notes.append("tubo redondo identificado")
+                    elif cylindrical_count >= 4 and plane_count <= 8:
+                        cuts = 2
+                        outer_cuts = max(outer_cuts, 2)
+                        notes.append("geometria cilindrica dominante")
+                    else:
+                        cuts = max(cuts, 4)
+                        outer_cuts = max(outer_cuts, 4)
+                        notes.append("tubo sem prova de secao redonda; assumidos 4 cortes base")
+                elif cuts <= 4 and family_txt == "Cantoneira":
+                    cuts = max(cuts, 4)
+                    outer_cuts = max(outer_cuts, 4)
+                    notes.append("cantoneira assume 4 cortes base")
+                elif cuts <= 4 and family_txt in {"Perfil", "Barra"}:
+                    cuts = max(cuts, 4)
+                    outer_cuts = max(outer_cuts, 4)
+                    notes.append("perfil/barra assume 4 cortes base")
+            else:
+                notes.append("sem leitura textual disponivel; aplicado fallback conservador")
+            cuts, holes, slots, outer_cuts = _normalize_counts(cuts, holes, slots)
+            if generic_cuts > 0 or end_cut_count > 0:
+                notes.append(
+                    f"leitura atual: {int(cuts)} cortes totais = {int(generic_cuts)} eventos adicionais + {int(end_cut_count)} cortes terminais"
                 )
+            else:
+                notes.append(
+                    f"leitura atual: {int(cuts)} cortes totais = {int(holes)} furos + {int(slots)} rasgos + {int(outer_cuts)} cortes exteriores"
+                )
+            return {
+                "family": family_txt,
+                "section": section_txt,
+                "cuts": int(max(1, cuts)),
+                "holes": int(max(0, holes)),
+                "slots": int(max(0, slots)),
+                "outer_cuts": int(max(0, outer_cuts)),
+                "cad_analysis": dict(cad_analysis or {}),
+                "note": ". ".join(part for part in notes if part).strip(),
+            }
+
+        def _row_payload(row_index: int) -> dict[str, Any]:
+            file_item = files_table.item(row_index, 0)
+            path_txt = str(file_item.data(Qt.UserRole) if isinstance(file_item, QTableWidgetItem) else "").strip()
+            cached_estimate = dict(file_item.data(Qt.UserRole + 1) if isinstance(file_item, QTableWidgetItem) else {} or {})
+            family_combo = files_table.cellWidget(row_index, 1)
+            section_edit = files_table.cellWidget(row_index, 2)
+            qty_spin = files_table.cellWidget(row_index, 3)
+            cuts_spin = files_table.cellWidget(row_index, 4)
+            holes_spin = files_table.cellWidget(row_index, 5)
+            slots_spin = files_table.cellWidget(row_index, 6)
+            family_txt = family_combo.currentText().strip() if isinstance(family_combo, QComboBox) else str(cached_estimate.get("family", "Perfil") or "Perfil")
+            section_txt = section_edit.text().strip() if isinstance(section_edit, QLineEdit) else str(cached_estimate.get("section", "") or "")
+            qty = int(round(float(qty_spin.value() if isinstance(qty_spin, QDoubleSpinBox) else 0.0)))
+            cuts, holes, slots, outer_cuts = _normalize_counts(
+                cuts_spin.value() if isinstance(cuts_spin, QDoubleSpinBox) else 0.0,
+                holes_spin.value() if isinstance(holes_spin, QDoubleSpinBox) else 0.0,
+                slots_spin.value() if isinstance(slots_spin, QDoubleSpinBox) else 0.0,
+            )
+            material_family = _laser_canonical_material_family(material_combo.currentText().strip()) or material_combo.currentText().strip() or "Aco carbono"
+            subtype_txt = subtype_combo.currentText().strip()
+            return {
+                "path": path_txt,
+                "machine_name": machine_combo.currentText().strip(),
+                "commercial_name": commercial_combo.currentText().strip(),
+                "material": material_family,
+                "material_subtype": subtype_txt,
+                "gas": gas_combo.currentText().strip(),
+                "thickness_mm": float(thickness_spin.value() or 0.0),
+                "qtd": max(1, qty),
+                "material_supplied_by_client": bool(customer_material_check.isChecked()),
+                "material_fornecido_cliente": bool(customer_material_check.isChecked()),
+                "profile_family": family_txt or "Perfil",
+                "section": section_txt,
+                "cuts": cuts,
+                "holes": holes,
+                "slots": slots,
+                "outer_cuts": outer_cuts,
+                "profile_metrics": dict(cached_estimate.get("cad_analysis", {}) or {}),
+            }
+
+        def _recalc_total() -> None:
+            total = 0.0
+            status_parts: list[str] = []
+            for row_index in range(files_table.rowCount()):
+                try:
+                    analysis = dict(self.backend.profile_laser_quote_analyze(_row_payload(row_index)) or {})
+                except Exception as exc:
+                    total_label.setText("Total estimado: -")
+                    status_label.setText(str(exc))
+                    return
+                pricing = dict(analysis.get("pricing", {}) or {})
+                metrics = dict(analysis.get("metrics", {}) or {})
+                total += float(pricing.get("total_price", 0.0) or 0.0)
+                feature_count = int(metrics.get("feature_cut_count", metrics.get("generic_cut_count", 0)) or 0)
+                end_count = int(metrics.get("end_cut_count", 0) or 0)
+                if feature_count > 0 or end_count > 0:
+                    status_parts.append(
+                        f"{int(metrics.get('cut_event_count', 0) or 0)} cortes = "
+                        f"{feature_count} eventos adicionais + {end_count} terminais"
+                    )
+                else:
+                    status_parts.append(
+                        f"{int(metrics.get('cut_event_count', 0) or 0)} cortes = "
+                        f"{int(metrics.get('hole_count', 0) or 0)} furos + "
+                        f"{int(metrics.get('outer_cut_count', 0) or 0)} exteriores"
+                    )
             total_label.setText(f"Total estimado: {_fmt_eur(total)}")
+            status_label.setText(status_parts[0] if status_parts else "Usa as tabelas do laser com contagem de eventos STEP/IGS, sem duplicar furos.")
 
         def _add_file_row(path_txt: str) -> None:
+            estimate = _estimate_profile_operations(path_txt)
             row_index = files_table.rowCount()
             files_table.insertRow(row_index)
             file_item = QTableWidgetItem(Path(path_txt).name)
             file_item.setData(Qt.UserRole, str(path_txt))
-            file_item.setToolTip(str(path_txt))
+            file_item.setData(Qt.UserRole + 1, dict(estimate))
+            file_item.setData(Qt.UserRole + 2, {})
+            file_item.setToolTip(f"{path_txt}\n{str(estimate.get('note', '') or '').strip()}")
             files_table.setItem(row_index, 0, file_item)
 
             family_combo = QComboBox()
             family_combo.addItems(families)
-            family_combo.setCurrentText(_infer_family(path_txt))
-            section_edit = QLineEdit(_infer_section(path_txt))
+            family_combo.setCurrentText(str(estimate.get("family", "") or _infer_family(path_txt)))
+            section_edit = QLineEdit(str(estimate.get("section", "") or _infer_section(path_txt)))
             qty_spin = _make_int_spin(1)
-            cuts_spin = _make_int_spin(2)
-            holes_spin = _make_int_spin(0)
-            slots_spin = _make_int_spin(0)
+            cuts_spin = _make_int_spin(int(estimate.get("cuts", 2) or 2))
+            holes_spin = _make_int_spin(int(estimate.get("holes", 0) or 0))
+            slots_spin = _make_int_spin(int(estimate.get("slots", 0) or 0))
             files_table.setCellWidget(row_index, 1, family_combo)
             files_table.setCellWidget(row_index, 2, section_edit)
             files_table.setCellWidget(row_index, 3, qty_spin)
             files_table.setCellWidget(row_index, 4, cuts_spin)
             files_table.setCellWidget(row_index, 5, holes_spin)
             files_table.setCellWidget(row_index, 6, slots_spin)
+            analysis_note = str(estimate.get("note", "") or "").strip()
+            for widget in (family_combo, section_edit, qty_spin, cuts_spin, holes_spin, slots_spin):
+                widget.setToolTip(analysis_note)
             for widget in (qty_spin, cuts_spin, holes_spin, slots_spin):
                 widget.valueChanged.connect(_recalc_total)
+            family_combo.currentTextChanged.connect(_recalc_total)
+            section_edit.textChanged.connect(_recalc_total)
+            files_table.selectRow(row_index)
+            _update_step_preview()
 
         def _pick_files() -> None:
             paths, _ = QFileDialog.getOpenFileNames(
@@ -22326,81 +22648,38 @@ class QuotesPage(QWidget):
             for row_index in selected_rows:
                 files_table.removeRow(row_index)
             _recalc_total()
+            _update_step_preview()
 
         def _accept() -> None:
             if files_table.rowCount() == 0:
                 QMessageBox.warning(dialog, "STEP/IGS", "Adiciona pelo menos um ficheiro STEP/IGS.")
                 return
             lines: list[dict[str, Any]] = []
-            material_txt = quality_combo.currentText().strip() or "S235JR"
             for row_index in range(files_table.rowCount()):
-                file_item = files_table.item(row_index, 0)
-                path_txt = str(file_item.data(Qt.UserRole) if isinstance(file_item, QTableWidgetItem) else "").strip()
-                family_combo = files_table.cellWidget(row_index, 1)
-                section_edit = files_table.cellWidget(row_index, 2)
-                qty_spin = files_table.cellWidget(row_index, 3)
-                cuts_spin = files_table.cellWidget(row_index, 4)
-                holes_spin = files_table.cellWidget(row_index, 5)
-                slots_spin = files_table.cellWidget(row_index, 6)
-                family_txt = family_combo.currentText().strip() if isinstance(family_combo, QComboBox) else "Perfil"
-                section_txt = section_edit.text().strip() if isinstance(section_edit, QLineEdit) else ""
-                qty = float(qty_spin.value() if isinstance(qty_spin, QDoubleSpinBox) else 0.0)
-                cuts = float(cuts_spin.value() if isinstance(cuts_spin, QDoubleSpinBox) else 0.0)
-                holes = float(holes_spin.value() if isinstance(holes_spin, QDoubleSpinBox) else 0.0)
-                slots = float(slots_spin.value() if isinstance(slots_spin, QDoubleSpinBox) else 0.0)
-                if qty <= 0:
+                payload = _row_payload(row_index)
+                if int(payload.get("qtd", 0) or 0) <= 0:
                     continue
-                unit_price = round(
-                    (cuts * float(cut_price_spin.value() or 0.0))
-                    + (holes * float(hole_price_spin.value() or 0.0))
-                    + (slots * float(slot_price_spin.value() or 0.0)),
-                    4,
+                try:
+                    result = dict(self.backend.profile_laser_quote_build_line(payload) or {})
+                except Exception as exc:
+                    QMessageBox.critical(dialog, "STEP/IGS", str(exc))
+                    return
+                analysis = dict(result.get("analysis", {}) or {})
+                line = dict(result.get("line", {}) or {})
+                if not line:
+                    continue
+                metrics = dict(analysis.get("metrics", {}) or {})
+                line["tipo_item"] = self.backend.desktop_main.ORC_LINE_TYPE_SERVICE
+                line["produto_unid"] = "UN"
+                line["line_origin"] = "step_igs_profile_laser"
+                line["summary_html"] = (
+                    f"{str(payload.get('profile_family', 'Perfil') or 'Perfil')} | "
+                    f"cortes {int(metrics.get('cut_event_count', 0) or 0)} | "
+                    f"furos {int(metrics.get('hole_count', 0) or 0)} | "
+                    f"rasgos {int(metrics.get('slot_count', 0) or 0)} | "
+                    f"cortes exteriores {int(metrics.get('outer_cut_count', 0) or 0)}"
                 )
-                stem = Path(path_txt).stem if path_txt else f"STEPIGS-{row_index + 1:02d}"
-                description_parts = [f"Corte laser STEP/IGS {family_txt.lower()}".strip()]
-                if section_txt:
-                    description_parts.append(section_txt)
-                description_parts.append(stem)
-                lines.append(
-                    {
-                        "tipo_item": self.backend.desktop_main.ORC_LINE_TYPE_SERVICE,
-                        "ref_interna": "",
-                        "ref_externa": stem[:120],
-                        "descricao": " | ".join(part for part in description_parts if part),
-                        "material": material_txt,
-                        "espessura": section_txt,
-                        "operacao": "Corte Laser",
-                        "tempo_peca_min": 0.0,
-                        "qtd": qty,
-                        "preco_unit": unit_price,
-                        "desenho": path_txt,
-                        "produto_unid": "UN",
-                        "material_subtype": family_txt,
-                        "line_origin": "step_igs_profile_laser",
-                        "summary_html": f"{family_txt} | cortes {int(cuts)} | furos {int(holes)} | rasgos {int(slots)}",
-                    }
-                )
-            setup_price = float(setup_price_spin.value() or 0.0)
-            if setup_price > 0:
-                lines.insert(
-                    0,
-                    {
-                        "tipo_item": self.backend.desktop_main.ORC_LINE_TYPE_SERVICE,
-                        "ref_interna": "",
-                        "ref_externa": "SETUP-STEP-IGS",
-                        "descricao": "Preparacao / programacao STEP/IGS",
-                        "material": material_txt,
-                        "espessura": "",
-                        "operacao": "Corte Laser",
-                        "tempo_peca_min": 0.0,
-                        "qtd": 1.0,
-                        "preco_unit": round(setup_price, 4),
-                        "desenho": "",
-                        "produto_unid": "UN",
-                        "material_subtype": "Preparacao",
-                        "line_origin": "step_igs_profile_laser",
-                    },
-                )
+                lines.append(line)
             if not lines:
                 QMessageBox.warning(dialog, "STEP/IGS", "Nao foi possivel gerar linhas com os dados atuais.")
                 return
@@ -22412,17 +22691,24 @@ class QuotesPage(QWidget):
 
         add_files_btn.clicked.connect(_pick_files)
         remove_file_btn.clicked.connect(_remove_selected)
+        configure_btn.clicked.connect(_configure_profiles)
         buttons.accepted.connect(_accept)
         buttons.rejected.connect(dialog.reject)
-        for spin in (cut_price_spin, hole_price_spin, slot_price_spin, setup_price_spin):
-            spin.valueChanged.connect(_recalc_total)
+        files_table.itemSelectionChanged.connect(_update_step_preview)
+        machine_combo.currentTextChanged.connect(_refresh_materials)
+        machine_combo.currentTextChanged.connect(_recalc_total)
+        commercial_combo.currentTextChanged.connect(_recalc_total)
+        material_combo.currentTextChanged.connect(_refresh_subtypes)
+        material_combo.currentTextChanged.connect(_recalc_total)
+        subtype_combo.currentTextChanged.connect(_recalc_total)
+        gas_combo.currentTextChanged.connect(_recalc_total)
+        thickness_spin.valueChanged.connect(_recalc_total)
+        customer_material_check.toggled.connect(_recalc_total)
+        _refresh_machine_and_commercial()
+        _refresh_materials()
         _recalc_total()
+        _update_step_preview()
         dialog.exec()
-        bridge = dialog.quote_bridge_payload()
-        if bridge:
-            self.nesting_bridge_data = bridge
-            self._refresh_nesting_bridge()
-            self._render_quote_lines()
 
     def _add_line(self) -> None:
         try:

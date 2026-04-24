@@ -962,8 +962,8 @@
         "materials": {
           "Aco carbono": {
             "density_kg_m3": 7874.0,
-            "price_per_kg": 1.0,
-            "scrap_credit_per_kg": 1.0
+            "price_per_kg": 0.9,
+            "scrap_credit_per_kg": 0.9
           },
           "Aco inox": {
             "density_kg_m3": 7930.0,
@@ -1103,6 +1103,11 @@
           "marking_per_m_eur": 0.61,
           "pierce_eur": 0.1,
           "machine_hour_eur": 80.0
+        },
+        "profile_operations": {
+          "outer_cut_eur": 1.25,
+          "hole_cut_eur": 0.85,
+          "slot_cut_eur": 1.15
         },
         "material_catalog_hidden": {
           "Aco inox": [

@@ -4,7 +4,7 @@ from functools import partial
 import sys
 import time
 
-from PySide6.QtCore import QProcess, Qt, QTimer
+from PySide6.QtCore import QPoint, QRect, QSize, QProcess, Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -65,6 +65,7 @@ class MainWindow(QMainWindow):
         self._trial_block_dialog_open = False
         self._save_warning_open = False
         self._closing = False
+        self._screen_fitted = False
         self._alerts_cache: dict | None = None
         self._alerts_loaded_at = 0.0
         self._alerts_cache_ttl_sec = 10.0
@@ -90,9 +91,8 @@ class MainWindow(QMainWindow):
         }
 
         self.setWindowTitle("luGEST Qt")
-        self.setMinimumSize(1440, 900)
+        self.setMinimumSize(1180, 760)
         self.resize(1600, 960)
-        self.setWindowState(self.windowState() | Qt.WindowMaximized)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -227,6 +227,27 @@ class MainWindow(QMainWindow):
             self.show_page(landing_key)
         else:
             self.status_label.setText("Sem menus disponiveis")
+
+    def _fit_to_available_screen(self) -> None:
+        screen = self.screen()
+        if screen is None and self.windowHandle() is not None:
+            screen = self.windowHandle().screen()
+        if screen is None:
+            return
+        safe = screen.availableGeometry().adjusted(8, 8, -8, -8)
+        if safe.width() <= 0 or safe.height() <= 0:
+            safe = screen.availableGeometry()
+        target_width = min(max(1180, int(safe.width() * 0.985)), safe.width())
+        target_height = min(max(760, int(safe.height() * 0.985)), safe.height())
+        pos_x = safe.x() + max(0, int((safe.width() - target_width) / 2))
+        pos_y = safe.y() + max(0, int((safe.height() - target_height) / 2))
+        self.setGeometry(QRect(QPoint(pos_x, pos_y), QSize(target_width, target_height)))
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        if not self._screen_fitted:
+            self._screen_fitted = True
+            QTimer.singleShot(0, self._fit_to_available_screen)
 
     def _ensure_page(self, key: str) -> QWidget:
         if key in self.pages:

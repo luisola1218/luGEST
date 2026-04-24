@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         window = MainWindow(backend, runtime_service)
-        window.showMaximized()
+        window.show()
         return app.exec()
     except Exception as exc:
         if cli.smoke_test:

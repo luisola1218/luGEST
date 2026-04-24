@@ -12,6 +12,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from .profile_cad_analysis import analyze_profile_cut_features
+
 try:
     import ezdxf  # type: ignore[import-not-found]
 except Exception:  # pragma: no cover - optional dependency
@@ -621,6 +623,11 @@ def default_laser_quote_settings() -> dict[str, Any]:
                     "marking_per_m_eur": 0.66,
                     "pierce_eur": 0.15,
                     "machine_hour_eur": 90.0,
+                },
+                "profile_operations": {
+                    "outer_cut_eur": 1.25,
+                    "hole_cut_eur": 0.85,
+                    "slot_cut_eur": 1.15,
                 },
             }
         },
@@ -1645,6 +1652,37 @@ def _build_description(file_path: str, material_name: str, thickness_mm: float, 
     return f"{stem}{part_txt} | Corte laser {material_name} {thickness_txt}{size_txt}".strip()
 
 
+def _build_profile_description(
+    file_path: str,
+    material_name: str,
+    thickness_mm: float,
+    family_name: str,
+    section_name: str,
+    total_cut_count: int,
+    hole_count: int,
+    slot_count: int,
+) -> str:
+    stem = _coerce_label(Path(str(file_path or "").strip()).stem)
+    profile_txt = str(family_name or "perfil").strip().lower()
+    section_txt = str(section_name or "").strip()
+    features: list[str] = []
+    if total_cut_count > 0:
+        features.append(f"{int(total_cut_count)} cortes")
+    if hole_count > 0:
+        features.append(f"{int(hole_count)} furos")
+    if slot_count > 0:
+        features.append(f"{int(slot_count)} rasgos")
+    suffix = ""
+    if features:
+        suffix = " | " + " / ".join(features)
+    return (
+        f"{stem} | Corte laser STEP/IGS {profile_txt} {material_name} "
+        f"{_round_mm(thickness_mm, 1):g} mm"
+        f"{f' | {section_txt}' if section_txt else ''}"
+        f"{suffix}"
+    ).strip()
+
+
 def estimate_laser_quote(payload: dict[str, Any], settings: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = dict(payload or {})
     merged_settings = merge_laser_quote_settings(settings)
@@ -1911,6 +1949,301 @@ def estimate_laser_quote(payload: dict[str, Any], settings: dict[str, Any] | Non
                 "gas": gas_name,
                 "thickness_mm": thickness_mm,
                 "quantity": quantity,
+            },
+            ensure_ascii=False,
+        ),
+    }
+
+
+def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = dict(payload or {})
+    merged_settings = merge_laser_quote_settings(settings)
+    machine_profile = _active_machine(merged_settings, str(payload.get("machine_name", "") or "").strip())
+    commercial_profile = _active_commercial(merged_settings, str(payload.get("commercial_name", "") or "").strip())
+    file_path = str(payload.get("path", "") or "").strip()
+    thickness_mm = max(0.1, _as_float(payload.get("thickness_mm", 0), 0.0))
+    quantity = max(1, _as_int(payload.get("qtd", payload.get("quantity", 1)), 1))
+    requested_material_family = str(payload.get("material", "") or "").strip() or "Aco carbono"
+    requested_material_subtype = str(payload.get("material_subtype", "") or "").strip()
+    material_family, material_subtype = _infer_material_family_and_subtype(merged_settings, requested_material_family, requested_material_subtype)
+    material_family = _canonical_material_family(material_family) or "Aco carbono"
+    display_material_family = _display_material_family(material_family)
+    display_material = material_subtype or display_material_family
+    material_supplied_by_client = bool(
+        payload.get("material_supplied_by_client", True)
+        or payload.get("material_fornecido_cliente", False)
+        or payload.get("exclude_material_cost", True)
+    )
+    material_cost_included = not material_supplied_by_client
+    gas_name, gas_rows, machine_material = _gas_rows(machine_profile, material_family, str(payload.get("gas", "") or "").strip(), material_subtype)
+    if not gas_rows:
+        raise ValueError(f"Nao existe tabela de corte configurada para {material_family} / {gas_name or 'gas'}")
+    cut_row = _lookup_cut_row(gas_rows, thickness_mm)
+    if not cut_row:
+        raise ValueError("Nao foi possivel encontrar parametros de corte para esta espessura.")
+
+    analyzed_metrics = dict(payload.get("profile_metrics", {}) or {})
+    explicit_counts = any(
+        payload.get(key) not in (None, "")
+        for key in ("cuts", "holes", "slots", "outer_cuts", "end_cut_count", "generic_cuts")
+    )
+    if not analyzed_metrics and file_path and not explicit_counts:
+        try:
+            analyzed_metrics = dict(analyze_profile_cut_features(file_path) or {})
+        except Exception:
+            analyzed_metrics = {}
+
+    total_cut_count = max(0, _as_int(payload.get("cuts", analyzed_metrics.get("cuts", 0)), analyzed_metrics.get("cuts", 0)))
+    hole_count = max(0, _as_int(payload.get("holes", analyzed_metrics.get("holes", 0)), analyzed_metrics.get("holes", 0)))
+    slot_count = max(0, _as_int(payload.get("slots", analyzed_metrics.get("slots", 0)), analyzed_metrics.get("slots", 0)))
+    end_cut_count = max(0, _as_int(payload.get("end_cut_count", analyzed_metrics.get("end_cut_count", 0)), analyzed_metrics.get("end_cut_count", 0)))
+    generic_cut_count = max(0, _as_int(payload.get("generic_cuts", analyzed_metrics.get("generic_cuts", 0)), analyzed_metrics.get("generic_cuts", 0)))
+    derived_outer_cuts = max(0, total_cut_count - hole_count - slot_count)
+    outer_cut_count = max(
+        0,
+        _as_int(
+            payload.get("outer_cuts", max(derived_outer_cuts, end_cut_count + generic_cut_count)),
+            max(derived_outer_cuts, end_cut_count + generic_cut_count),
+        ),
+    )
+    total_cut_count = max(total_cut_count, hole_count + slot_count + outer_cut_count)
+
+    motion_cfg = dict(machine_profile.get("motion", {}) or {})
+    commercial_material = _commercial_material(commercial_profile, material_family, material_subtype)
+    commercial_subtype_override = _commercial_material_subtype_override(commercial_profile, material_family, material_subtype)
+    pricing_material = dict(commercial_material or {})
+    pricing_material.update({key: value for key, value in dict(commercial_subtype_override or {}).items() if value is not None})
+    profile_operations = dict(commercial_profile.get("profile_operations", {}) or {})
+    density_kg_m3 = max(
+        1.0,
+        _as_float(
+            payload.get("density_kg_m3", pricing_material.get("density_kg_m3", machine_material.get("density_kg_m3", 7800.0))),
+            7800.0,
+        ),
+    )
+    material_price_source = "subtype" if commercial_subtype_override else "family"
+    configured_material_price_per_kg = max(0.0, _as_float(payload.get("material_price_per_kg", pricing_material.get("price_per_kg", 0.0)), 0.0))
+    configured_scrap_credit_per_kg = max(0.0, _as_float(payload.get("scrap_credit_per_kg", pricing_material.get("scrap_credit_per_kg", 0.0)), 0.0))
+    material_price_per_kg = 0.0 if material_supplied_by_client else configured_material_price_per_kg
+    scrap_credit_per_kg = 0.0 if material_supplied_by_client else configured_scrap_credit_per_kg
+    utilization_pct = max(1.0, _as_float(payload.get("material_utilization_pct", commercial_profile.get("material_utilization_pct", 82.0)), 82.0))
+    rates = dict(commercial_profile.get("rates", {}) or {})
+    outer_cut_rate = max(0.0, _as_float(payload.get("outer_cut_rate", profile_operations.get("outer_cut_eur", 1.25)), 1.25))
+    hole_cut_rate = max(0.0, _as_float(payload.get("hole_cut_rate", profile_operations.get("hole_cut_eur", 0.85)), 0.85))
+    slot_cut_rate = max(0.0, _as_float(payload.get("slot_cut_rate", profile_operations.get("slot_cut_eur", 1.15)), 1.15))
+    machine_hour_eur = max(0.0, _as_float(payload.get("machine_hour_eur", rates.get("machine_hour_eur", 0.0)), 0.0))
+    base_margin_pct = max(0.0, _as_float(payload.get("margin_pct", commercial_profile.get("margin_pct", 0.0)), 0.0))
+    base_setup_time_min = max(0.0, _as_float(payload.get("setup_time_min", commercial_profile.get("setup_time_min", 0.0)), 0.0))
+    handling_eur = max(0.0, _as_float(payload.get("handling_eur", commercial_profile.get("handling_eur", 0.0)), 0.0))
+    cost_mode = str(payload.get("cost_mode", commercial_profile.get("cost_mode", "hybrid_max")) or "hybrid_max").strip().lower()
+    series_tier = _pick_series_tier(commercial_profile, quantity)
+    series_margin_delta_pct = _as_float(series_tier.get("margin_delta_pct", 0.0), 0.0)
+    series_setup_multiplier = max(0.05, _as_float(series_tier.get("setup_multiplier", 1.0), 1.0))
+    margin_pct = max(0.0, base_margin_pct + series_margin_delta_pct)
+    setup_time_min = max(0.0, base_setup_time_min * series_setup_multiplier)
+    effective_cut_speed_m_min = _effective_speed_m_min(cut_row, motion_cfg)
+    rapid_speed_mm_s = max(1.0, _as_float(payload.get("rapid_speed_mm_s", motion_cfg.get("rapid_speed_mm_s", 200.0)), 200.0))
+    lead_in_mm = max(0.0, _as_float(payload.get("lead_in_mm", motion_cfg.get("lead_in_mm", 2.0)), 2.0))
+    lead_out_mm = max(0.0, _as_float(payload.get("lead_out_mm", motion_cfg.get("lead_out_mm", 2.0)), 2.0))
+    lead_move_speed_mm_s = max(0.1, _as_float(payload.get("lead_move_speed_mm_s", motion_cfg.get("lead_move_speed_mm_s", 3.0)), 3.0))
+    pierce_sec_each = max(
+        0.0,
+        (
+            _as_float(payload.get("pierce_base_ms", motion_cfg.get("pierce_base_ms", 400.0)), 400.0)
+            + (thickness_mm * _as_float(payload.get("pierce_per_mm_ms", motion_cfg.get("pierce_per_mm_ms", 35.0)), 35.0))
+        )
+        / 1000.0,
+    )
+    first_gas_delay_sec = max(0.0, _as_float(payload.get("first_gas_delay_ms", motion_cfg.get("first_gas_delay_ms", 200.0)), 200.0) / 1000.0)
+    gas_delay_sec = max(0.0, _as_float(payload.get("gas_delay_ms", motion_cfg.get("gas_delay_ms", 0.0)), 0.0) / 1000.0)
+    motion_overhead_factor = 1.0 + (max(0.0, _as_float(payload.get("motion_overhead_pct", motion_cfg.get("motion_overhead_pct", 4.0)), 4.0)) / 100.0)
+    setup_time_sec_share = _safe_div(setup_time_min * 60.0, quantity, 0.0)
+    pierce_count = total_cut_count
+    lead_time_sec = pierce_count * _safe_div(lead_in_mm + lead_out_mm, lead_move_speed_mm_s, 0.0)
+    pierce_time_sec = pierce_count * pierce_sec_each
+    gas_time_sec = (first_gas_delay_sec if pierce_count > 0 else 0.0) + (max(0, pierce_count - 1) * gas_delay_sec)
+    rapid_jump_mm = max(0.0, _as_float(payload.get("profile_rapid_between_cuts_mm", 12.0), 12.0))
+    rapid_length_m = max(0.0, (max(0, pierce_count - 1) * rapid_jump_mm) / 1000.0)
+    rapid_time_sec = _safe_div(rapid_length_m * 1000.0, rapid_speed_mm_s, 0.0)
+    machine_time_sec_unit = (lead_time_sec + pierce_time_sec + gas_time_sec + rapid_time_sec) * motion_overhead_factor
+    machine_time_total_unit = machine_time_sec_unit + setup_time_sec_share
+    net_area_m2 = max(0.0, _as_float(payload.get("net_area_m2_override", 0.0), 0.0))
+    thickness_m = thickness_mm / 1000.0
+    net_mass_kg = max(0.0, net_area_m2 * thickness_m * density_kg_m3)
+    gross_mass_kg = max(net_mass_kg, net_mass_kg / max(0.01, utilization_pct / 100.0)) if net_area_m2 > 0.0 else 0.0
+    scrap_mass_kg = max(0.0, gross_mass_kg - net_mass_kg)
+    material_cost_unit = gross_mass_kg * material_price_per_kg
+    scrap_credit_unit = scrap_mass_kg * scrap_credit_per_kg if gross_mass_kg > 0.0 else 0.0
+    material_net_cost_unit = max(0.0, material_cost_unit - scrap_credit_unit)
+    profile_operation_cost_unit = (
+        (outer_cut_count * outer_cut_rate)
+        + (hole_count * hole_cut_rate)
+        + (slot_count * slot_cut_rate)
+    )
+    machine_runtime_cost_unit = (machine_time_total_unit / 3600.0) * machine_hour_eur
+    if cost_mode == "machine_time":
+        effective_cutting_cost_unit = machine_runtime_cost_unit
+        effective_cutting_label = "Tempo maquina perfil"
+    elif cost_mode == "per_meter":
+        effective_cutting_cost_unit = profile_operation_cost_unit
+        effective_cutting_label = "Eventos STEP/IGS"
+    else:
+        effective_cutting_cost_unit = max(profile_operation_cost_unit, machine_runtime_cost_unit)
+        effective_cutting_label = "Hibrido perfil (maior entre eventos e tempo)"
+    subtotal_cost_unit = material_net_cost_unit + effective_cutting_cost_unit + handling_eur
+    unit_price_before_min = subtotal_cost_unit * (1.0 + (margin_pct / 100.0))
+    final_total = unit_price_before_min * quantity
+    final_unit = _safe_div(final_total, quantity, unit_price_before_min)
+    family_txt = str(payload.get("profile_family", payload.get("family", "Perfil")) or "Perfil").strip()
+    section_txt = str(payload.get("section", payload.get("section_label", "")) or "").strip()
+    description = str(payload.get("description", "") or "").strip() or _build_profile_description(
+        file_path,
+        display_material,
+        thickness_mm,
+        family_txt,
+        section_txt,
+        total_cut_count,
+        hole_count,
+        slot_count,
+    )
+    ref_externa = str(payload.get("ref_externa", "") or "").strip() or _sanitize_file_stem(file_path)
+    warnings: list[str] = []
+    if material_supplied_by_client:
+        warnings.append("Perfil/tubo assumido como materia fornecida pelo cliente: o calculo considera apenas processo laser.")
+    if total_cut_count <= 0:
+        warnings.append("Sem cortes detetados automaticamente. Confirma os contadores antes de aplicar.")
+    elif hole_count > total_cut_count:
+        warnings.append("Os furos excedem o numero total de cortes. O total foi ajustado para evitar dupla contagem.")
+    if configured_material_price_per_kg <= 0.0 and not material_supplied_by_client:
+        warnings.append(f"Sem preco comercial configurado para {display_material}.")
+    analysis_note = str(analyzed_metrics.get("note", "") or "").strip()
+    if analysis_note:
+        warnings.append(analysis_note)
+    return {
+        "file_path": file_path,
+        "geometry": {
+            "file_path": file_path,
+            "bbox_mm": {},
+            "source": "step_profile",
+        },
+        "machine": {
+            "name": str(machine_profile.get("name", "") or merged_settings.get("active_machine", "")),
+            "material": display_material,
+            "material_family": material_family,
+            "material_subtype": material_subtype,
+            "material_supplied_by_client": material_supplied_by_client,
+            "material_cost_included": material_cost_included,
+            "gas": gas_name,
+            "thickness_mm": round(thickness_mm, 3),
+            "cut_row": cut_row,
+            "motion": motion_cfg,
+            "effective_cut_speed_m_min": round(effective_cut_speed_m_min, 4),
+        },
+        "commercial": {
+            "name": str(commercial_profile.get("name", "") or merged_settings.get("active_commercial", "")),
+            "cost_mode": cost_mode,
+            "effective_cutting_label": effective_cutting_label,
+            "series_key": str(series_tier.get("key", "") or ""),
+            "series_label": str(series_tier.get("label", "") or ""),
+            "series_margin_delta_pct": round(series_margin_delta_pct, 3),
+            "series_setup_multiplier": round(series_setup_multiplier, 4),
+            "base_margin_pct": round(base_margin_pct, 3),
+            "margin_pct": round(margin_pct, 3),
+            "minimum_line_eur": 0.0,
+            "minimum_applied": False,
+            "base_setup_time_min": round(base_setup_time_min, 3),
+            "setup_time_min": round(setup_time_min, 3),
+            "handling_eur": round(handling_eur, 2),
+            "material_utilization_pct": round(utilization_pct, 3),
+            "material_supplied_by_client": material_supplied_by_client,
+            "material_cost_included": material_cost_included,
+            "material_price_source": material_price_source,
+        },
+        "metrics": {
+            "cut_length_m": 0.0,
+            "mark_length_m": 0.0,
+            "rapid_length_m": round(rapid_length_m, 4),
+            "pierce_count": int(pierce_count),
+            "cut_event_count": int(total_cut_count),
+            "outer_cut_count": int(outer_cut_count),
+            "hole_count": int(hole_count),
+            "slot_count": int(slot_count),
+            "end_cut_count": int(end_cut_count),
+            "generic_cut_count": int(generic_cut_count),
+            "feature_cut_count": int(max(0, hole_count + slot_count + generic_cut_count)),
+            "net_area_m2": round(net_area_m2, 6),
+            "density_kg_m3": round(density_kg_m3, 3),
+            "net_mass_kg": round(net_mass_kg, 4),
+            "gross_mass_kg": round(gross_mass_kg, 4),
+            "scrap_mass_kg": round(scrap_mass_kg, 4),
+        },
+        "times": {
+            "cut_sec": 0.0,
+            "mark_sec": 0.0,
+            "rapid_sec": round(rapid_time_sec, 3),
+            "lead_sec": round(lead_time_sec, 3),
+            "pierce_sec": round(pierce_time_sec, 3),
+            "gas_sec": round(gas_time_sec, 3),
+            "setup_share_sec": round(setup_time_sec_share, 3),
+            "machine_total_sec": round(machine_time_total_unit, 3),
+            "machine_total_min": round(machine_time_total_unit / 60.0, 3),
+        },
+        "pricing": {
+            "material_cost_unit": _round_money(material_net_cost_unit, 4),
+            "material_gross_cost_unit": _round_money(material_cost_unit, 4),
+            "scrap_credit_unit": _round_money(scrap_credit_unit, 4),
+            "process_only_cost_unit": _round_money(max(0.0, subtotal_cost_unit - material_net_cost_unit), 4),
+            "material_cost_included": material_cost_included,
+            "profile_operation_cost_unit": _round_money(profile_operation_cost_unit, 4),
+            "machine_runtime_cost_unit": _round_money(machine_runtime_cost_unit, 4),
+            "effective_cutting_cost_unit": _round_money(effective_cutting_cost_unit, 4),
+            "mark_cost_unit": 0.0,
+            "defilm_cost_unit": 0.0,
+            "pierce_cost_unit": 0.0,
+            "handling_unit": _round_money(handling_eur, 4),
+            "subtotal_cost_unit": _round_money(subtotal_cost_unit, 4),
+            "unit_price_before_min": _round_money(unit_price_before_min, 4),
+            "unit_price": _round_money(final_unit, 4),
+            "total_price": _round_money(final_total, 2),
+            "quantity": quantity,
+        },
+        "line_suggestion": {
+            "tipo_item": "servico",
+            "ref_externa": ref_externa,
+            "descricao": description,
+            "material": display_material,
+            "material_family": material_family,
+            "material_subtype": material_subtype,
+            "material_supplied_by_client": material_supplied_by_client,
+            "material_fornecido_cliente": material_supplied_by_client,
+            "material_cost_included": material_cost_included,
+            "espessura": f"{_round_mm(thickness_mm, 3):g}",
+            "operacao": "Corte Laser STEP/IGS",
+            "tempo_peca_min": round(machine_time_total_unit / 60.0, 3),
+            "qtd": quantity,
+            "preco_unit": round(final_unit, 4),
+            "desenho": file_path,
+        },
+        "warnings": list(dict.fromkeys([str(item or "").strip() for item in warnings if str(item or "").strip()])),
+        "debug_json": json.dumps(
+            {
+                "machine": str(machine_profile.get("name", "") or ""),
+                "commercial": str(commercial_profile.get("name", "") or ""),
+                "material_family": material_family,
+                "material_subtype": material_subtype,
+                "material": display_material,
+                "material_supplied_by_client": material_supplied_by_client,
+                "material_price_source": material_price_source,
+                "series_key": str(series_tier.get("key", "") or ""),
+                "series_label": str(series_tier.get("label", "") or ""),
+                "gas": gas_name,
+                "thickness_mm": thickness_mm,
+                "quantity": quantity,
+                "cuts": total_cut_count,
+                "holes": hole_count,
+                "slots": slot_count,
+                "outer_cuts": outer_cut_count,
+                "generic_cuts": generic_cut_count,
             },
             ensure_ascii=False,
         ),

@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, QTimer, Qt
-from PySide6.QtGui import QColor, QBrush, QIcon, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
+from PySide6.QtGui import QGuiApplication, QColor, QBrush, QIcon, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -397,6 +398,7 @@ class LaserNestingDialog(QDialog):
         self._window_fitted_to_screen = False
         self._stored_window_geometry = QRect()
         self.setWindowTitle("Nesting Laser")
+        self.setMinimumSize(980, 620)
         self.resize(1540, 980)
         screen = self.screen()
         if screen is not None:
@@ -527,7 +529,7 @@ class LaserNestingDialog(QDialog):
 
         self.section_stack = QTabWidget()
         self.section_stack.setDocumentMode(True)
-        self.section_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
+        self.section_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.section_stack.setStyleSheet(
             """
             QTabWidget::pane {
@@ -557,7 +559,17 @@ class LaserNestingDialog(QDialog):
             """
         )
         self.section_stack.tabBar().hide()
-        root.addWidget(self.section_stack, 1)
+        self.body_scroll = QScrollArea()
+        self.body_scroll.setWidgetResizable(True)
+        self.body_scroll.setFrameShape(QFrame.NoFrame)
+        self.body_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.body_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        body_host = QWidget()
+        self.body_layout = QVBoxLayout(body_host)
+        self.body_layout.setContentsMargins(0, 0, 0, 0)
+        self.body_layout.setSpacing(10)
+        self.body_scroll.setWidget(body_host)
+        root.addWidget(self.body_scroll, 1)
 
         config_page = QWidget()
         config_page_layout = QVBoxLayout(config_page)
@@ -1116,7 +1128,7 @@ class LaserNestingDialog(QDialog):
         define_page_layout.setSpacing(10)
         self.define_tabs = QTabWidget()
         self.define_tabs.setDocumentMode(True)
-        self.define_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
+        self.define_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.define_tabs.setStyleSheet(
             """
             QTabBar::tab {
@@ -1149,7 +1161,7 @@ class LaserNestingDialog(QDialog):
         nest_page_layout.setSpacing(10)
         self.nest_tabs = QTabWidget()
         self.nest_tabs.setDocumentMode(True)
-        self.nest_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
+        self.nest_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.nest_tabs.setStyleSheet(self.define_tabs.styleSheet())
         self.nest_tabs.addTab(summary_tab, "Cenários")
         self.nest_tabs.addTab(sheets_tab, "Layouts / chapas")
@@ -1162,7 +1174,7 @@ class LaserNestingDialog(QDialog):
         results_page_layout.setSpacing(10)
         self.results_tabs = QTabWidget()
         self.results_tabs.setDocumentMode(True)
-        self.results_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
+        self.results_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.results_tabs.setStyleSheet(self.define_tabs.styleSheet())
         self.results_tabs.addTab(diagnostics_tab, "Pendentes / avisos")
         self.results_tabs.addTab(costs_tab, "Custos / decisão")
@@ -1172,10 +1184,11 @@ class LaserNestingDialog(QDialog):
         self.section_stack.addTab(define_page, "1. Definir")
         self.section_stack.addTab(nest_page, "2. Nest")
         self.section_stack.addTab(results_page, "3. Corte / orçamento")
+        self.body_layout.addWidget(self.section_stack, 1)
         self.wizard_path_label = QLabel("")
         self.wizard_path_label.setProperty("role", "muted")
         self.wizard_path_label.setStyleSheet("font-size: 11px; font-weight: 700; color: #365b7c;")
-        root.addWidget(self.wizard_path_label)
+        self.body_layout.addWidget(self.wizard_path_label)
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
@@ -1225,21 +1238,66 @@ class LaserNestingDialog(QDialog):
         self._apply_premium_layout()
         self._sync_window_toggle_label()
 
-    def _fit_to_available_screen(self) -> None:
+    def _resolve_target_screen(self):
+        window_handle = self.windowHandle()
+        if window_handle is not None and window_handle.screen() is not None:
+            return window_handle.screen()
+        parent = self.parentWidget()
+        if parent is not None:
+            parent_handle = parent.windowHandle()
+            if parent_handle is not None and parent_handle.screen() is not None:
+                return parent_handle.screen()
+            parent_screen = parent.screen()
+            if parent_screen is not None:
+                return parent_screen
+            parent_frame = parent.frameGeometry()
+            if parent_frame.isValid():
+                located = QGuiApplication.screenAt(parent_frame.center())
+                if located is not None:
+                    return located
         screen = self.screen()
-        if screen is None and self.windowHandle() is not None:
-            screen = self.windowHandle().screen()
+        if screen is not None:
+            return screen
+        return QGuiApplication.primaryScreen()
+
+    def _frame_extra_size(self) -> QSize:
+        window_handle = self.windowHandle()
+        if window_handle is not None:
+            try:
+                margins = window_handle.frameMargins()
+                extra_width = max(0, int(margins.left()) + int(margins.right()))
+                extra_height = max(0, int(margins.top()) + int(margins.bottom()))
+                if extra_width > 0 or extra_height > 0:
+                    return QSize(extra_width, extra_height)
+            except Exception:
+                pass
+        frame = self.frameGeometry()
+        body = self.geometry()
+        return QSize(max(16, frame.width() - body.width()), max(48, frame.height() - body.height()))
+
+    def _fit_to_available_screen(self) -> None:
+        screen = self._resolve_target_screen()
         if screen is None:
             return
-        safe = screen.availableGeometry().adjusted(10, 10, -10, -54)
+        if not self._stored_window_geometry.isValid():
+            self._stored_window_geometry = self.geometry()
+        safe = screen.availableGeometry().adjusted(8, 8, -8, -8)
         if safe.width() <= 0 or safe.height() <= 0:
             safe = screen.availableGeometry()
-        target_width = min(max(1220, int(safe.width() * 0.95)), safe.width())
-        target_height = min(max(780, int(safe.height() * 0.88)), safe.height())
+        frame_extra = self._frame_extra_size()
+        max_width = max(980, safe.width() - frame_extra.width())
+        max_height = max(620, safe.height() - frame_extra.height())
+        target_width = min(max(1180, int(max_width * 0.985)), max_width)
+        target_height = min(max(720, int(max_height * 0.965)), max_height)
         pos_x = safe.x() + max(0, int((safe.width() - target_width) / 2))
         pos_y = safe.y() + max(0, int((safe.height() - target_height) / 2))
-        self.setMaximumSize(safe.size())
-        self.setGeometry(QRect(QPoint(pos_x, pos_y), QSize(target_width, target_height)))
+        self.resize(target_width, target_height)
+        self.move(pos_x, pos_y)
+        self._window_fitted_to_screen = True
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+        self._sync_window_toggle_label()
 
     def _toggle_window_mode(self) -> None:
         if self._window_fitted_to_screen:
@@ -1266,7 +1324,8 @@ class LaserNestingDialog(QDialog):
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         if not self._window_fitted_to_screen:
-            self._fit_to_available_screen()
+            QTimer.singleShot(0, self._fit_to_available_screen)
+            QTimer.singleShot(80, self._fit_to_available_screen)
         self._sync_window_toggle_label()
 
     def changeEvent(self, event) -> None:  # type: ignore[override]

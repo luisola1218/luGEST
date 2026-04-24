@@ -15,7 +15,7 @@ from typing import Any
 
 import lugest_storage
 
-from .laser_quote_engine import estimate_laser_quote, merge_laser_quote_settings
+from .laser_quote_engine import estimate_laser_quote, estimate_profile_laser_quote, merge_laser_quote_settings
 
 
 _STEEL_DENSITY_G_CM3 = 7.85
@@ -769,6 +769,16 @@ class LegacyBackend:
 
     def laser_quote_build_line(self, payload: dict[str, Any]) -> dict[str, Any]:
         analysis = self.laser_quote_analyze(payload)
+        return {
+            "analysis": analysis,
+            "line": dict(analysis.get("line_suggestion", {}) or {}),
+        }
+
+    def profile_laser_quote_analyze(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return estimate_profile_laser_quote(dict(payload or {}), self.laser_quote_settings())
+
+    def profile_laser_quote_build_line(self, payload: dict[str, Any]) -> dict[str, Any]:
+        analysis = self.profile_laser_quote_analyze(payload)
         return {
             "analysis": analysis,
             "line": dict(analysis.get("line_suggestion", {}) or {}),
