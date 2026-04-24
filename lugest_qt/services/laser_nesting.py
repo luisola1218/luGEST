@@ -1454,6 +1454,14 @@ def _strategy_sort_key(name: str):
     normalized = str(name or "").strip().lower()
     if normalized.startswith("shape-"):
         normalized = normalized[6:]
+    if normalized == "compact":
+        return lambda row: (
+            max(-1, min(2, _as_int(getattr(row.get("item"), "priority", row.get("priority", 0)), 0))),
+            _as_float(row.get("bbox_area_mm2", 0.0), 0.0),
+            min(row["item"].bbox_width_mm, row["item"].bbox_height_mm),
+            _as_float(row["item"].net_area_mm2, 0.0) / max(1.0, _as_float(row.get("bbox_area_mm2", 0.0), 0.0)),
+            max(row["item"].bbox_width_mm, row["item"].bbox_height_mm),
+        )
     if normalized == "area":
         return lambda row: (
             max(-1, min(2, _as_int(getattr(row.get("item"), "priority", row.get("priority", 0)), 0))),
@@ -1558,14 +1566,21 @@ def _material_estimate(items: list[NestItem], summary: dict[str, Any], settings:
 
 def _result_score(result: dict[str, Any]) -> tuple[float, ...]:
     summary = dict(result.get("summary", {}) or {})
+    purchase_area = _as_float(summary.get("purchase_sheet_area_mm2", 0.0), 0.0)
+    total_area = _as_float(summary.get("total_sheet_area_mm2", 0.0), 0.0)
+    span_area = _as_float(summary.get("layout_span_area_mm2", 0.0), 0.0)
+    utilization_net = _as_float(summary.get("utilization_net_pct", 0.0), 0.0)
+    compactness = _as_float(summary.get("layout_compactness_pct", 0.0), 0.0)
+    wasted_area = max(0.0, total_area - _as_float(summary.get("used_net_area_mm2", 0.0), 0.0))
     return (
         _as_int(summary.get("part_count_unplaced", 0), 0),
-        _as_float(summary.get("purchase_sheet_area_mm2", 0.0), 0.0),
-        _as_float(summary.get("total_sheet_area_mm2", 0.0), 0.0),
+        purchase_area,
+        wasted_area,
+        total_area,
         _as_int(summary.get("sheet_count", 0), 0),
-        _as_float(summary.get("layout_span_area_mm2", 0.0), 0.0),
-        -_as_float(summary.get("layout_compactness_pct", 0.0), 0.0),
-        -_as_float(summary.get("utilization_net_pct", 0.0), 0.0),
+        span_area,
+        -utilization_net,
+        -compactness,
         -_as_float(summary.get("utilization_bbox_pct", 0.0), 0.0),
     )
 
@@ -1873,7 +1888,7 @@ def _pack_profile(
     usable_width, usable_height = _profile_usable_dimensions(normalized_profile, edge_margin_mm)
     best_result: dict[str, Any] | None = None
 
-    for strategy_name in ("longest-side", "area", "height-first", "width-first"):
+    for strategy_name in ("longest-side", "area", "height-first", "width-first", "compact"):
         ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(strategy_name), reverse=True)
         warnings = list(base_warnings or [])
         sheets: list[dict[str, Any]] = []
@@ -1998,7 +2013,7 @@ def _pack_profile_shape(
     best_result: dict[str, Any] | None = None
     shape_cache: dict[tuple[str, bool, float, float], dict[str, Any]] = {}
 
-    for strategy_name in ("shape-longest-side", "shape-area", "shape-height-first", "shape-width-first"):
+    for strategy_name in ("shape-longest-side", "shape-area", "shape-height-first", "shape-width-first", "shape-compact"):
         ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(strategy_name), reverse=True)
         warnings = list(base_warnings or [])
         sheets: list[dict[str, Any]] = []
@@ -2134,7 +2149,7 @@ def _pack_with_stock(
     }
     best_result: dict[str, Any] | None = None
 
-    for strategy_name in ("longest-side", "area", "height-first", "width-first"):
+    for strategy_name in ("longest-side", "area", "height-first", "width-first", "compact"):
         ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(strategy_name), reverse=True)
         warnings = list(base_warnings or [])
         sheets: list[dict[str, Any]] = []
@@ -2281,7 +2296,7 @@ def _pack_with_stock_shape(
     best_result: dict[str, Any] | None = None
     shape_cache: dict[tuple[str, bool, float, float], dict[str, Any]] = {}
 
-    for strategy_name in ("shape-longest-side", "shape-area", "shape-height-first", "shape-width-first"):
+    for strategy_name in ("shape-longest-side", "shape-area", "shape-height-first", "shape-width-first", "shape-compact"):
         ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(strategy_name), reverse=True)
         warnings = list(base_warnings or [])
         sheets: list[dict[str, Any]] = []
@@ -2436,6 +2451,7 @@ def nest_parts(
     use_stock_first: bool = False,
     allow_purchase_fallback: bool = True,
     shape_aware: bool | None = None,
+    strict_shape_only: bool = False,
     shape_grid_mm: float | None = None,
 ) -> dict[str, Any]:
     settings = merge_laser_quote_settings(laser_settings)
@@ -2448,6 +2464,29 @@ def nest_parts(
     requested_engine = "shape" if use_shape_engine else "bbox"
 
     def _choose_engine_variant(*, bbox_result: dict[str, Any] | None, shape_result: dict[str, Any] | None) -> dict[str, Any]:
+        if requested_engine == "shape":
+            if shape_result is not None:
+                chosen = dict(shape_result or {})
+                chosen_summary = dict(chosen.get("summary", {}) or {})
+                chosen_summary["engine_requested"] = "shape"
+                chosen_summary["engine_used"] = "shape"
+                chosen_summary["engine_modes_tested"] = ["shape"] + (["bbox"] if bbox_result is not None else [])
+                chosen["summary"] = chosen_summary
+                return chosen
+            if strict_shape_only:
+                raise RuntimeError("Nao foi possivel calcular o nesting apenas por contorno real com a geometria e configuracao atuais.")
+            if bbox_result is not None:
+                fallback = dict(bbox_result or {})
+                fallback_summary = dict(fallback.get("summary", {}) or {})
+                fallback_summary["engine_requested"] = "shape"
+                fallback_summary["engine_used"] = "bbox"
+                fallback_summary["engine_modes_tested"] = ["bbox"]
+                fallback["summary"] = fallback_summary
+                fallback["warnings"] = _unique_texts(
+                    ["Nesting por contorno indisponível neste cenário; foi usado fallback por bounding box."]
+                    + list(fallback.get("warnings", []) or [])
+                )
+                return fallback
         return _choose_best_engine_result(
             bbox_result=bbox_result,
             shape_result=shape_result,
@@ -2470,6 +2509,8 @@ def nest_parts(
             grid_mm=grid_mm,
         )
         shape_active = bool(use_shape_engine and shape_ok)
+        if use_shape_engine and strict_shape_only and not shape_active:
+            raise RuntimeError(shape_reason or "O motor de contorno real nao conseguiu validar este cenario.")
         if use_shape_engine and not shape_active and shape_reason:
             warnings.append(f"Nesting por contorno desativado automaticamente: {shape_reason}")
         best_result: dict[str, Any] | None = None
@@ -2609,6 +2650,8 @@ def nest_parts(
         grid_mm=grid_mm,
     )
     shape_active = bool(use_shape_engine and shape_ok)
+    if use_shape_engine and strict_shape_only and not shape_active:
+        raise RuntimeError(shape_reason or "O motor de contorno real nao conseguiu validar este cenario.")
     if use_shape_engine and not shape_active and shape_reason:
         warnings.append(f"Nesting por contorno desativado automaticamente: {shape_reason}")
     if use_stock_first and normalized_stock:

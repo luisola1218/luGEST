@@ -2381,27 +2381,30 @@ class OperatorPage(QWidget):
         _apply_state_chip(self.piece_state_chip, state)
         current_op_txt = str(ctx.get("current_operation", "") or piece.get("operacao_atual", "") or "-").strip() or "-"
         self.piece_meta_label.setText(
-            f"Encomenda {enc_num} | Cliente {_format_client_label(group.get('cliente', '-'), show_name=self._show_client_name())} | "
-            f"{group.get('material', '-')} {group.get('espessura', '-')} mm\n"
-            f"Operador {piece.get('operador', '-') or '-'} | Operacao atual {current_op_txt} | Quantidade {float(ctx.get('produzido_ok', 0) or 0):.1f}/{float(ctx.get('quantidade_pedida', 0) or 0):.1f} | "
-            f"Fluxo {int(ops_progress.get('done', 0))}/{int(ops_progress.get('total', 0))} | Tempo aberto {float(ctx.get('current_operation_elapsed_min', 0) or 0):.1f} min | "
-            f"Avarias acumuladas {float(ctx.get('avaria_total_min', 0) or 0):.1f} min"
+            f"Enc. {enc_num} | Cliente {_format_client_label(group.get('cliente', '-'), show_name=self._show_client_name())}\n"
+            f"Material {group.get('material', '-')} | Esp. {group.get('espessura', '-')} mm | Op. atual {current_op_txt}\n"
+            f"Oper. {piece.get('operador', '-') or '-'} | Qtd {float(ctx.get('produzido_ok', 0) or 0):.1f}/{float(ctx.get('quantidade_pedida', 0) or 0):.1f} | Tempo {float(ctx.get('current_operation_elapsed_min', 0) or 0):.1f} min\n"
+            f"Fluxo {int(ops_progress.get('done', 0))}/{int(ops_progress.get('total', 0))} | Avarias {float(ctx.get('avaria_total_min', 0) or 0):.1f} min"
         )
         self.issue_label.setText(issue_text)
-        self.issue_label.setStyleSheet("color: #b42318; font-weight: 700;" if ctx.get("has_open_avaria") else "color: #475467;")
+        self.issue_label.setStyleSheet("font-size: 8.1px; color: #b42318; font-weight: 700;" if ctx.get("has_open_avaria") else "font-size: 8.1px; color: #475467;")
         pend_txt = ", ".join(pending[:3]) if pending else "-"
         done_txt = ", ".join(done[:3]) if done else "-"
         if len(pending) > 3:
             pend_txt = f"{pend_txt}, +{len(pending) - 3}"
         if len(done) > 3:
             done_txt = f"{done_txt}, +{len(done) - 3}"
-        self.pending_label.setText(f"Pendentes: {pend_txt} | Concluidas: {done_txt}")
+        self.pending_label.setText(f"Pendentes: {pend_txt} | Feitas: {done_txt}")
         _clear_layout_widgets(self.operation_strip_layout)
         for op in list(piece.get("ops", []) or []):
             chip = QLabel()
             op_name = str(op.get("nome", "") or "-")
             op_state = str(op.get("estado", "") or "-")
             _apply_state_chip(chip, op_state, _elide_middle(op_name, 16))
+            chip.setStyleSheet(
+                chip.styleSheet()
+                + " min-height: 20px; max-height: 20px; padding: 3px 8px; font-size: 8.5px; margin-top: 2px;"
+            )
             self.operation_strip_layout.addWidget(chip)
         self.operation_strip_layout.addStretch(1)
         self.piece_progress.setValue(int(round(float(ops_progress.get("progress_pct", 0) or 0))))
@@ -14538,11 +14541,11 @@ class LegacyOperatorPage(OperatorPage):
         self.order_rows_all: list[dict] = []
         self.selected_order_number = ""
         for card in self.cards:
-            card.setMinimumHeight(66)
-            card.setMaximumHeight(74)
+            card.setMinimumHeight(70)
+            card.setMaximumHeight(78)
             if card.layout() is not None:
-                card.layout().setContentsMargins(10, 8, 10, 8)
-                card.layout().setSpacing(3)
+                card.layout().setContentsMargins(12, 9, 12, 9)
+                card.layout().setSpacing(4)
             card.title_label.setWordWrap(True)
             card.subtitle_label.setWordWrap(True)
             card.title_label.setStyleSheet("font-size: 9px;")
@@ -14561,9 +14564,11 @@ class LegacyOperatorPage(OperatorPage):
         for col, width in ((0, 132), (1, 84), (2, 106), (3, 94), (4, 56), (5, 64), (6, 74)):
             group_header.setSectionResizeMode(col, QHeaderView.Interactive)
             group_header.resizeSection(col, width)
-        self.control_card.setMaximumHeight(108)
-        self.context_card.setMaximumHeight(150)
-        self.feedback_label.setMaximumHeight(30)
+        self.control_card.setMinimumHeight(176)
+        self.control_card.setMaximumHeight(176)
+        self.context_card.setMinimumHeight(176)
+        self.context_card.setMaximumHeight(176)
+        self.feedback_label.setMaximumHeight(54)
         for widget, width in ((self.operator_combo, 180), (self.posto_combo, 132), (self.operation_combo, 230)):
             widget.setProperty("compact", "true")
             widget.setMinimumWidth(width)
@@ -14572,23 +14577,25 @@ class LegacyOperatorPage(OperatorPage):
             button.setMinimumWidth(0)
             button.setMinimumHeight(28)
         self.select_all_pieces_box.setProperty("compact", "true")
-        self.piece_state_chip.setMinimumWidth(92)
+        self.piece_state_chip.setMinimumWidth(118)
         self.piece_state_chip.setAlignment(Qt.AlignCenter)
-        self.piece_title_label.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
-        self.piece_meta_label.setStyleSheet("font-size: 9px; color: #334155;")
-        self.pending_label.setStyleSheet("font-size: 9px; color: #5b6f86;")
+        self.piece_title_label.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
+        self.piece_title_label.setMinimumHeight(22)
+        self.piece_meta_label.setStyleSheet("font-size: 8.6px; color: #334155;")
+        self.pending_label.setStyleSheet("font-size: 8.4px; color: #5b6f86;")
         context_layout = self.context_card.layout()
-        context_layout.setContentsMargins(12, 10, 12, 10)
+        context_layout.setContentsMargins(15, 12, 15, 12)
         context_layout.setSpacing(6)
-        self.issue_label.setMaximumHeight(24)
+        self.issue_label.setMaximumHeight(34)
+        self.issue_label.setStyleSheet("font-size: 8.1px; color: #475467;")
         self.piece_meta_label.setWordWrap(True)
         self.pending_label.setWordWrap(True)
-        self.pending_label.setMaximumHeight(36)
-        self.operation_strip.setMaximumHeight(24)
-        self.piece_progress.setMaximumHeight(16)
-        self.operator_combo.setMinimumWidth(150)
-        self.posto_combo.setMinimumWidth(110)
-        self.operation_combo.setMinimumWidth(170)
+        self.pending_label.setMaximumHeight(26)
+        self.operation_strip.setMaximumHeight(34)
+        self.piece_progress.setMaximumHeight(18)
+        self.operator_combo.setMinimumWidth(138)
+        self.posto_combo.setMinimumWidth(102)
+        self.operation_combo.setMinimumWidth(156)
         piece_header = self.pieces_table.horizontalHeader()
         for col, width in ((0, 34), (1, 140), (2, 320), (3, 96), (4, 126), (5, 104), (6, 74), (7, 66), (8, 66), (9, 126), (10, 360)):
             piece_header.setSectionResizeMode(col, QHeaderView.Interactive)
@@ -14607,16 +14614,16 @@ class LegacyOperatorPage(OperatorPage):
         self.pieces_table.setStyleSheet("font-size: 11.5px;")
 
         control_layout = self.control_card.layout()
-        control_layout.setContentsMargins(8, 6, 8, 6)
-        control_layout.setSpacing(4)
+        control_layout.setContentsMargins(15, 11, 15, 11)
+        control_layout.setSpacing(7)
         control_items = _take_layout_items(control_layout)
         selectors_item = control_items[0] if len(control_items) > 0 else None
         feedback_item = control_items[2] if len(control_items) > 2 else None
         selectors_host = QWidget()
         selectors_grid = QGridLayout(selectors_host)
         selectors_grid.setContentsMargins(0, 0, 0, 0)
-        selectors_grid.setHorizontalSpacing(6)
-        selectors_grid.setVerticalSpacing(2)
+        selectors_grid.setHorizontalSpacing(8)
+        selectors_grid.setVerticalSpacing(3)
         op_label = QLabel("Operador")
         posto_label = QLabel("Posto")
         oper_label = QLabel("Operacao")
@@ -14633,8 +14640,9 @@ class LegacyOperatorPage(OperatorPage):
         selectors_grid.setColumnStretch(2, 3)
         control_layout.addWidget(selectors_host)
         _adopt_layout_item(control_layout, feedback_item)
-        self.control_card.setMaximumHeight(108)
-        self.feedback_label.setStyleSheet("font-size: 11px; color: #475467;")
+        self.control_card.setMinimumHeight(160)
+        self.control_card.setMaximumHeight(160)
+        self.feedback_label.setStyleSheet("font-size: 9px; color: #475467;")
         self.feedback_label.setWordWrap(True)
 
         self.orders_table = QTableWidget(0, 8)
@@ -14672,7 +14680,7 @@ class LegacyOperatorPage(OperatorPage):
         self.list_page = QWidget()
         list_layout = QVBoxLayout(self.list_page)
         list_layout.setContentsMargins(0, 0, 0, 0)
-        list_layout.setSpacing(10)
+        list_layout.setSpacing(8)
         _adopt_layout_item(list_layout, stats_item)
         _adopt_layout_item(list_layout, progress_item)
         list_actions = CardFrame()
@@ -14734,8 +14742,8 @@ class LegacyOperatorPage(OperatorPage):
         detail_actions = CardFrame()
         detail_actions.set_tone("default")
         detail_actions_layout = QHBoxLayout(detail_actions)
-        detail_actions_layout.setContentsMargins(10, 6, 10, 6)
-        detail_actions_layout.setSpacing(6)
+        detail_actions_layout.setContentsMargins(14, 8, 14, 8)
+        detail_actions_layout.setSpacing(10)
         back_btn = QPushButton("Voltar a encomendas")
         back_btn.setProperty("variant", "secondary")
         back_btn.setMinimumWidth(166)
@@ -14743,13 +14751,14 @@ class LegacyOperatorPage(OperatorPage):
         focus_block = QVBoxLayout()
         focus_block.setSpacing(2)
         self.order_focus_label = QLabel("Sem encomenda selecionada")
-        self.order_focus_label.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
+        self.order_focus_label.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
         self.order_meta_label = QLabel("Seleciona uma encomenda para entrar no detalhe.")
         self.order_meta_label.setProperty("role", "muted")
-        self.order_meta_label.setStyleSheet("font-size: 11px;")
+        self.order_meta_label.setStyleSheet("font-size: 10.5px; color: #486581;")
+        self.order_meta_label.setWordWrap(True)
         self.order_state_chip = QLabel("-")
         _apply_state_chip(self.order_state_chip, "-")
-        self.order_state_chip.setMinimumWidth(124)
+        self.order_state_chip.setMinimumWidth(132)
         self.order_state_chip.setAlignment(Qt.AlignCenter)
         focus_block.addWidget(self.order_focus_label)
         focus_block.addWidget(self.order_meta_label)
@@ -14762,14 +14771,14 @@ class LegacyOperatorPage(OperatorPage):
             right_header_actions.addWidget(button)
         detail_actions_layout.addLayout(right_header_actions)
         detail_actions_layout.addWidget(self.order_state_chip, 0, Qt.AlignTop)
-        detail_actions.setMaximumHeight(66)
+        detail_actions.setMaximumHeight(72)
         detail_layout.addWidget(detail_actions)
 
         self.detail_filter_card = CardFrame()
         self.detail_filter_card.set_tone("info")
         detail_filter_layout = QHBoxLayout(self.detail_filter_card)
-        detail_filter_layout.setContentsMargins(10, 6, 10, 6)
-        detail_filter_layout.setSpacing(5)
+        detail_filter_layout.setContentsMargins(12, 8, 12, 8)
+        detail_filter_layout.setSpacing(8)
         self.detail_active_chip = QLabel("-")
         self.detail_late_chip = QLabel("-")
         self.detail_running_chip = QLabel("-")
@@ -14782,7 +14791,7 @@ class LegacyOperatorPage(OperatorPage):
             self.detail_groups_chip,
             self.detail_total_chip,
         ):
-            chip.setMinimumWidth(74)
+            chip.setMinimumWidth(86)
             chip.setAlignment(Qt.AlignCenter)
             detail_filter_layout.addWidget(chip)
         self.detail_state_filter_combo = QComboBox()
@@ -14798,15 +14807,14 @@ class LegacyOperatorPage(OperatorPage):
         detail_filter_layout.addStretch(1)
         detail_filter_layout.addWidget(self.detail_state_filter_combo)
         detail_filter_layout.addWidget(self.detail_search_edit)
-        self.detail_filter_card.setMaximumHeight(48)
-        detail_layout.addWidget(self.detail_filter_card)
+        self.detail_filter_card.setMaximumHeight(50)
 
         control_host = QWidget()
-        control_host.setMinimumWidth(390)
-        control_host.setMaximumWidth(460)
+        control_host.setMinimumWidth(420)
+        control_host.setMaximumWidth(480)
         control_host_layout = QVBoxLayout(control_host)
         control_host_layout.setContentsMargins(0, 0, 0, 0)
-        control_host_layout.setSpacing(6)
+        control_host_layout.setSpacing(4)
         _adopt_layout_item(control_host_layout, control_item)
 
         context_host = QWidget()
@@ -14819,20 +14827,20 @@ class LegacyOperatorPage(OperatorPage):
         workspace_split.setChildrenCollapsible(False)
         workspace_split.addWidget(control_host)
         workspace_split.addWidget(context_host)
-        workspace_split.setSizes([430, 1570])
-        workspace_split.setMaximumHeight(220)
+        workspace_split.setSizes([410, 1670])
+        workspace_split.setMaximumHeight(222)
         detail_layout.addWidget(workspace_split)
 
         self.groups_title_label.setText("Grupos ativos")
-        self.groups_title_label.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
+        self.groups_title_label.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
         self.pieces_title_label.setText("Pecas do grupo")
-        self.pieces_title_label.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
-        groups_visible_height = _table_visible_height(self.groups_table, 4, extra=12)
+        self.pieces_title_label.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
+        groups_visible_height = _table_visible_height(self.groups_table, 8, extra=18)
         self.groups_table.setMinimumHeight(groups_visible_height)
-        self.groups_table.setMaximumHeight(groups_visible_height)
+        self.groups_table.setMaximumHeight(16777215)
         self.pieces_table.setMinimumHeight(620)
         self.pieces_table.setSizeAdjustPolicy(QAbstractItemView.AdjustIgnored)
-        self.pieces_card.setMinimumHeight(700)
+        self.pieces_card.setMinimumHeight(620)
         pieces_layout = self.pieces_card.layout()
         if pieces_layout is not None and pieces_layout.count() > 0:
             header_item = pieces_layout.itemAt(0)
@@ -14866,11 +14874,74 @@ class LegacyOperatorPage(OperatorPage):
                 header_layout.addWidget(self.multi_count_chip)
                 header_layout.addWidget(self.select_all_pieces_box)
         groups_widget = groups_item.widget()
+        pieces_widget = pieces_item.widget() if pieces_item is not None and pieces_item.widget() is not None else None
+
+        self.open_group_btn = QPushButton("Abrir espessura")
+        self.open_group_btn.clicked.connect(self._open_selected_group_detail)
+        self.open_group_btn.setMinimumWidth(146)
+        self.group_overview_stack = QStackedWidget()
+
+        overview_page = QWidget()
+        overview_layout = QVBoxLayout(overview_page)
+        overview_layout.setContentsMargins(0, 0, 0, 0)
+        overview_layout.setSpacing(8)
+        overview_actions = CardFrame()
+        overview_actions.set_tone("info")
+        overview_actions_layout = QHBoxLayout(overview_actions)
+        overview_actions_layout.setContentsMargins(12, 8, 12, 8)
+        overview_actions_layout.setSpacing(8)
+        overview_title = QLabel("Espessuras da encomenda")
+        overview_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
+        overview_hint = QLabel("Seleciona uma espessura para abrir as referências e o nesting associado.")
+        overview_hint.setProperty("role", "muted")
+        overview_hint.setWordWrap(True)
+        overview_actions_layout.addWidget(overview_title)
+        overview_actions_layout.addWidget(overview_hint, 1)
+        overview_actions_layout.addWidget(self.open_group_btn)
+        overview_layout.addWidget(overview_actions)
         if groups_widget is not None:
-            groups_widget.setMinimumHeight(groups_visible_height + 44)
-            groups_widget.setMaximumHeight(groups_visible_height + 44)
-        _adopt_layout_item(detail_layout, groups_item)
-        _adopt_layout_item(detail_layout, pieces_item, 1)
+            groups_widget.setMinimumHeight(groups_visible_height + 96)
+            groups_widget.setMaximumHeight(16777215)
+        _adopt_layout_item(overview_layout, groups_item, 1)
+
+        detail_group_page = QWidget()
+        detail_group_layout = QVBoxLayout(detail_group_page)
+        detail_group_layout.setContentsMargins(0, 0, 0, 0)
+        detail_group_layout.setSpacing(8)
+        self.group_detail_header = CardFrame()
+        self.group_detail_header.set_tone("info")
+        group_detail_header_layout = QHBoxLayout(self.group_detail_header)
+        group_detail_header_layout.setContentsMargins(14, 10, 14, 10)
+        group_detail_header_layout.setSpacing(10)
+        self.back_to_groups_btn = QPushButton("Voltar às espessuras")
+        self.back_to_groups_btn.setProperty("variant", "secondary")
+        self.back_to_groups_btn.setMinimumWidth(164)
+        self.back_to_groups_btn.clicked.connect(self._show_group_overview)
+        self.group_detail_label = QLabel("Sem espessura selecionada")
+        self.group_detail_label.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        self.group_detail_meta = QLabel("Seleciona uma espessura para abrir o detalhe produtivo.")
+        self.group_detail_meta.setProperty("role", "muted")
+        self.group_detail_meta.setStyleSheet("font-size: 10.5px; color: #486581;")
+        self.group_detail_meta.setWordWrap(True)
+        group_detail_text = QVBoxLayout()
+        group_detail_text.setSpacing(2)
+        group_detail_text.addWidget(self.group_detail_label)
+        group_detail_text.addWidget(self.group_detail_meta)
+        group_detail_header_layout.addWidget(self.back_to_groups_btn)
+        group_detail_header_layout.addLayout(group_detail_text, 1)
+        detail_group_layout.addWidget(self.group_detail_header)
+        detail_group_layout.addWidget(self.detail_filter_card)
+
+        self.nesting_info_card = None
+        self.nesting_info_hint = None
+        self.nesting_info_table = None
+        if pieces_widget is not None:
+            pieces_widget.setMinimumHeight(620)
+        _adopt_layout_item(detail_group_layout, pieces_item, 1)
+
+        self.group_overview_stack.addWidget(overview_page)
+        self.group_overview_stack.addWidget(detail_group_page)
+        detail_layout.addWidget(self.group_overview_stack, 1)
 
         self.view_stack.addWidget(self.list_page)
         self.view_stack.addWidget(self.detail_page)
@@ -14879,9 +14950,11 @@ class LegacyOperatorPage(OperatorPage):
         self.orders_table.itemSelectionChanged.connect(self._sync_order_focus)
         self.orders_table.itemDoubleClicked.connect(lambda *_args: self._open_selected_order())
         self.groups_table.itemSelectionChanged.connect(self._sync_group_focus)
-        self.groups_table.itemDoubleClicked.connect(lambda *_args: self._show_order_detail())
+        self.groups_table.itemSelectionChanged.connect(self._sync_group_open_button)
+        self.groups_table.itemDoubleClicked.connect(lambda *_args: self._open_selected_group_detail())
         self._show_order_list()
         self._sync_order_focus()
+        self._sync_group_open_button()
 
     def _render_groups_table(self, previous_group: tuple[str, str, str] | None = None, previous_piece: str = "") -> None:
         self.groups_table.setSortingEnabled(False)
@@ -14993,6 +15066,18 @@ class LegacyOperatorPage(OperatorPage):
 
     def _show_order_detail(self) -> None:
         self.view_stack.setCurrentWidget(self.detail_page)
+        self._show_group_overview()
+
+    def _show_group_overview(self) -> None:
+        if hasattr(self, "group_overview_stack"):
+            self.group_overview_stack.setCurrentIndex(0)
+        self._sync_group_open_button()
+
+    def _show_group_detail(self) -> None:
+        if hasattr(self, "group_overview_stack"):
+            self.group_overview_stack.setCurrentIndex(1)
+        self._refresh_group_support_panel()
+        self._sync_group_open_button()
 
     def can_auto_refresh(self) -> bool:
         return self.view_stack.currentWidget() is self.list_page
@@ -15186,6 +15271,11 @@ class LegacyOperatorPage(OperatorPage):
         self.open_order_btn.setEnabled(bool(row))
         self._set_order_header(row)
 
+    def _sync_group_open_button(self) -> None:
+        has_group = bool(self._current_group())
+        if hasattr(self, "open_group_btn"):
+            self.open_group_btn.setEnabled(has_group)
+
     def _apply_order_filter(self, numero: str, previous_group: tuple[str, str, str] | None = None, previous_piece: str = "") -> None:
         numero_txt = str(numero or "").strip()
         self.selected_order_number = numero_txt
@@ -15197,6 +15287,7 @@ class LegacyOperatorPage(OperatorPage):
         self._set_order_header(order_row)
         if not self.items:
             self._clear_piece_context()
+            self._refresh_group_support_panel()
 
     def _sync_group_focus(self) -> None:
         group = self._current_group()
@@ -15215,10 +15306,162 @@ class LegacyOperatorPage(OperatorPage):
                 f"Estado {group.get('estado_espessura', group.get('estado', '-'))}"
             )
         self.order_meta_label.setText(summary)
+        if hasattr(self, "group_detail_label"):
+            if group:
+                self.group_detail_label.setText(
+                    f"{group.get('material', '-')} {group.get('espessura', '-')} mm | {_format_client_label(group.get('cliente', '-'), show_name=True)}"
+                )
+                self.group_detail_meta.setText(
+                    f"{int(len(list(group.get('pieces', []) or [])))} referência(s) | "
+                    f"Estado {group.get('estado_espessura', group.get('estado', '-'))} | "
+                    f"Tempo planeado {float(group.get('tempo_plan_min', 0) or 0):.1f} min | "
+                    f"Tempo real {float(group.get('tempo_real_min', 0) or 0):.1f} min"
+                )
+            else:
+                self.group_detail_label.setText("Sem espessura selecionada")
+                self.group_detail_meta.setText("Seleciona uma espessura para abrir o detalhe produtivo.")
+        self._refresh_group_support_panel()
 
     def _handle_group_selection(self) -> None:
         OperatorPage._handle_group_selection(self)
         self._sync_group_focus()
+
+    def _refresh_group_support_panel(self) -> None:
+        if not getattr(self, "nesting_info_table", None):
+            return
+        group = self._current_group()
+        rows: list[tuple[str, str, str]] = []
+        if group:
+            order_num = str(group.get("encomenda", "") or "").strip()
+            material_txt = str(group.get("material", "") or "").strip()
+            thickness_txt = str(group.get("espessura", "") or "").strip()
+            chapa_txt = str(group.get("chapa", "") or "").strip()
+            if chapa_txt and chapa_txt != "-":
+                rows.append(("Chapa", chapa_txt, "Chapa / lote atualmente associado à espessura."))
+            drawings_seen: set[str] = set()
+            refs_seen: set[str] = set()
+            op_seen: set[str] = set()
+            quote_snapshots: list[dict[str, Any]] = []
+            for piece in list(group.get("pieces", []) or []):
+                ref_txt = str(piece.get("ref_externa", "") or piece.get("ref_interna", "") or "").strip()
+                if ref_txt and ref_txt not in refs_seen:
+                    refs_seen.add(ref_txt)
+                    rows.append(("Referência", ref_txt, str(piece.get("descricao", "") or "-").strip() or "-"))
+                drawing_txt = str(piece.get("desenho", "") or "").strip()
+                if drawing_txt and drawing_txt not in drawings_seen:
+                    drawings_seen.add(drawing_txt)
+                    rows.append(("Desenho", Path(drawing_txt).name, drawing_txt))
+                snapshot = dict(piece.get("quote_cost_snapshot", {}) or {})
+                if snapshot:
+                    quote_snapshots.append(snapshot)
+                for op_name in list(piece.get("pendentes", []) or []):
+                    op_txt = str(op_name or "").strip()
+                    if op_txt and op_txt not in op_seen:
+                        op_seen.add(op_txt)
+            if op_seen:
+                rows.append(("Fluxo", "Operações", ", ".join(sorted(op_seen))))
+            if quote_snapshots:
+                quote_number = next((str(row.get("quote_number", "") or "").strip() for row in quote_snapshots if str(row.get("quote_number", "") or "").strip()), "")
+                quote_state = next((str(row.get("quote_state", "") or "").strip() for row in quote_snapshots if str(row.get("quote_state", "") or "").strip()), "")
+                avg_price = 0.0
+                avg_time = 0.0
+                valid_prices = [float(row.get("preco_unit_total_eur", 0) or 0) for row in quote_snapshots]
+                valid_times = [float(row.get("tempo_total_peca_min", 0) or 0) for row in quote_snapshots]
+                if valid_prices:
+                    avg_price = sum(valid_prices) / max(1, len(valid_prices))
+                if valid_times:
+                    avg_time = sum(valid_times) / max(1, len(valid_times))
+                if quote_number:
+                    rows.append(("Orçamento", quote_number, quote_state or "Origem comercial da espessura."))
+                if avg_price > 0 or avg_time > 0:
+                    rows.append(
+                        (
+                            "Estimativa",
+                            f"{avg_price:.2f} EUR/pc",
+                            f"Tempo médio {avg_time:.2f} min/pc | snapshots {len(quote_snapshots)}",
+                        )
+                    )
+            quote_number = ""
+            order_detail_getter = getattr(self.backend, "order_detail", None)
+            if callable(order_detail_getter) and order_num:
+                try:
+                    order_detail = dict(order_detail_getter(order_num) or {})
+                except Exception:
+                    order_detail = {}
+                quote_number = str(order_detail.get("numero_orcamento", "") or "").strip()
+                if quote_number and not any(row[0] == "Orçamento" for row in rows):
+                    rows.append(("Orçamento", quote_number, "Ligação da encomenda ao orçamento de origem."))
+            studies_getter = getattr(self.backend, "orc_nesting_studies", None)
+            if callable(studies_getter) and quote_number:
+                try:
+                    studies = dict(studies_getter(quote_number) or {})
+                except Exception:
+                    studies = {}
+                matched_studies: list[dict[str, Any]] = []
+                refs_norm = {str(value or "").strip().lower() for value in refs_seen if str(value or "").strip()}
+                material_norm = str(material_txt or "").strip().lower()
+                thickness_norm = str(thickness_txt or "").strip().lower()
+                for study_key, study_value in studies.items():
+                    study = dict(study_value or {})
+                    result_data = dict(study.get("result_data", {}) or {})
+                    summary = dict(study.get("summary", result_data.get("summary", {})) or {})
+                    bridge = dict(study.get("quote_bridge", {}) or {})
+                    group_label = str(study.get("group_label", "") or study_key).strip()
+                    label_norm = group_label.lower()
+                    bridge_refs = {
+                        str(row.get("ref_externa", "") or "").strip().lower()
+                        for row in list(bridge.get("part_rows", []) or [])
+                        if isinstance(row, dict) and str(row.get("ref_externa", "") or "").strip()
+                    }
+                    material_match = bool(material_norm) and material_norm in label_norm
+                    thickness_match = bool(thickness_norm) and thickness_norm in label_norm
+                    refs_match = bool(refs_norm and bridge_refs and refs_norm.intersection(bridge_refs))
+                    if refs_match or (material_match and thickness_match):
+                        matched_studies.append(
+                            {
+                                "key": str(study_key or "").strip(),
+                                "label": group_label or "-",
+                                "updated_at": str(study.get("updated_at", "") or "").strip(),
+                                "summary": summary,
+                            }
+                        )
+                if matched_studies:
+                    matched_studies.sort(key=lambda row: str(row.get("updated_at", "") or ""), reverse=True)
+                    best = matched_studies[0]
+                    best_summary = dict(best.get("summary", {}) or {})
+                    rows.append(
+                        (
+                            "Nesting",
+                            best.get("label", "-"),
+                            f"{float(best_summary.get('utilization_net_pct', 0) or 0):.1f}% real | "
+                            f"{int(best_summary.get('sheet_count', 0) or 0)} chapa(s) | "
+                            f"{int(best_summary.get('part_count_placed', 0) or 0)}/{int(best_summary.get('part_count_requested', 0) or 0)} colocadas",
+                        )
+                    )
+                    if len(matched_studies) > 1:
+                        rows.append(("Estudos", str(len(matched_studies)), "Foram encontrados vários estudos compatíveis com esta espessura."))
+        self.nesting_info_table.setRowCount(len(rows))
+        for row_index, values in enumerate(rows):
+            for col_index, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                item.setToolTip(str(value))
+                if col_index == 0:
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                self.nesting_info_table.setItem(row_index, col_index, item)
+        if hasattr(self, "nesting_info_hint"):
+            self.nesting_info_hint.setText(
+                "Sem informação técnica adicional para esta espessura."
+                if not rows
+                else f"{len(rows)} registo(s) técnicos ligados à espessura selecionada."
+            )
+
+    def _open_selected_group_detail(self) -> None:
+        if not self._current_group():
+            QMessageBox.warning(self, "Operador", "Seleciona uma espessura.")
+            return
+        self._show_group_detail()
 
     def _open_selected_order(self) -> None:
         row = self._current_order_row()
@@ -15694,7 +15937,27 @@ class QuotesPage(QWidget):
 
         self.notes_tabs = QTabWidget()
         self.notes_tabs.setDocumentMode(True)
-        self.notes_tabs.setStyleSheet("QTabBar::tab { font-size: 11px; min-height: 27px; }")
+        self.notes_tabs.setStyleSheet(
+            """
+            QTabBar::tab {
+                font-size: 11px;
+                min-height: 34px;
+                min-width: 116px;
+                padding: 6px 16px;
+                margin-right: 4px;
+                border: 1px solid #c8d4e2;
+                border-top-left-radius: 10px;
+                border-top-right-radius: 10px;
+                background: #eef4fb;
+            }
+            QTabBar::tab:selected {
+                background: #ffffff;
+                border-color: #9fb8d2;
+                color: #0f172a;
+                font-weight: 800;
+            }
+            """
+        )
 
         transport_page = QWidget()
         transport_page_layout = QVBoxLayout(transport_page)
@@ -15752,7 +16015,7 @@ class QuotesPage(QWidget):
         transport_actions_layout = QGridLayout(transport_actions_card)
         transport_actions_layout.setContentsMargins(10, 8, 10, 8)
         transport_actions_layout.setHorizontalSpacing(12)
-        transport_actions_layout.setVerticalSpacing(6)
+        transport_actions_layout.setVerticalSpacing(8)
         transport_actions_title = QLabel("Cálculo e aplicação")
         transport_actions_title.setStyleSheet("font-size: 11px; font-weight: 800; color: #0f172a;")
         transport_actions_hint = QLabel("Usa os parâmetros do transporte para sugerir um valor coerente com a orçamentação.")
@@ -15774,19 +16037,25 @@ class QuotesPage(QWidget):
         apply_transport_btn.setProperty("compact", "true")
         apply_transport_btn.setToolTip("Aplica o cálculo do transporte ao orçamento atual.")
         apply_transport_btn.clicked.connect(self._apply_transport_calc)
+        for button in (fill_notes_btn, apply_transport_btn):
+            button.setMinimumHeight(38)
+            button.setMinimumWidth(196)
+            button.setMaximumWidth(196)
+            button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.transport_suggest_label.setStyleSheet("font-size: 16px; font-weight: 900; color: #0f172a;")
         self.transport_suggest_label.setAlignment(Qt.AlignCenter)
-        transport_action_buttons = QVBoxLayout()
+        transport_action_buttons = QHBoxLayout()
         transport_action_buttons.setContentsMargins(0, 0, 0, 0)
-        transport_action_buttons.setSpacing(6)
+        transport_action_buttons.setSpacing(10)
+        transport_action_buttons.addStretch(1)
         transport_action_buttons.addWidget(fill_notes_btn)
         transport_action_buttons.addWidget(apply_transport_btn)
-        transport_actions_layout.addLayout(transport_actions_text, 0, 0)
-        transport_actions_layout.addWidget(self.transport_suggest_label, 0, 1)
-        transport_actions_layout.addLayout(transport_action_buttons, 0, 2)
-        transport_actions_layout.setColumnStretch(0, 5)
-        transport_actions_layout.setColumnStretch(1, 3)
-        transport_actions_layout.setColumnStretch(2, 3)
+        transport_action_buttons.addStretch(1)
+        transport_actions_layout.addLayout(transport_actions_text, 0, 0, 1, 2)
+        transport_actions_layout.addWidget(self.transport_suggest_label, 1, 0, 1, 2)
+        transport_actions_layout.addLayout(transport_action_buttons, 2, 0, 1, 2)
+        transport_actions_layout.setColumnStretch(0, 1)
+        transport_actions_layout.setColumnStretch(1, 1)
 
         transport_grid.addWidget(transport_form_card, 0, 0, 1, 3)
         transport_grid.addWidget(transport_actions_card, 1, 0, 1, 3)
@@ -15875,6 +16144,18 @@ class QuotesPage(QWidget):
         self.quote_summary_card.set_tone("info")
         self.quote_summary_card.setMaximumWidth(265)
         self.quote_summary_card.setMinimumWidth(236)
+        self.quote_summary_card.setStyleSheet(
+            """
+            QFrame#Card {
+                background: #fff4ee;
+                border: 1px solid #f1c2ad;
+                border-radius: 16px;
+            }
+            QLabel {
+                color: #7c2d12;
+            }
+            """
+        )
         summary_layout = QVBoxLayout(self.quote_summary_card)
         summary_layout.setContentsMargins(12, 10, 12, 10)
         summary_layout.setSpacing(8)
@@ -15949,12 +16230,11 @@ class QuotesPage(QWidget):
         lines_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
         add_line_btn = QPushButton("Adicionar linha")
         add_line_btn.clicked.connect(self._add_line)
-        laser_line_btn = QPushButton("Peca Unit. DXF/DWG")
-        laser_line_btn.clicked.connect(self._add_laser_line)
         laser_batch_btn = QPushButton("Lote DXF/DWG")
         laser_batch_btn.setProperty("variant", "secondary")
         laser_batch_btn.clicked.connect(self._add_laser_batch_lines)
-        laser_nesting_btn = QPushButton("Plano chapa")
+        laser_batch_btn.setToolTip("Permite carregar um único desenho ou um lote completo de DXF/DWG.")
+        laser_nesting_btn = QPushButton("Nesting")
         laser_nesting_btn.setProperty("variant", "secondary")
         laser_nesting_btn.clicked.connect(self._open_laser_nesting)
         add_model_btn = QPushButton("Conjunto/Modelo")
@@ -15993,12 +16273,12 @@ class QuotesPage(QWidget):
         open_draw_btn = QPushButton("Ver desenho")
         open_draw_btn.setProperty("variant", "secondary")
         open_draw_btn.clicked.connect(self._open_line_drawing)
-        laser_nesting_btn.setToolTip("Abrir o plano de chapa / nesting das linhas laser do orcamento.")
+        laser_nesting_btn.setToolTip("Abrir o estudo de nesting das linhas laser do orçamento.")
         line_title_row.addWidget(lines_title)
         line_title_row.addStretch(1)
         line_actions.addLayout(line_title_row)
         self.nesting_bridge_label = QLabel(
-            "Preco unitario da tabela = orcamentacao por peca. Plano chapa = validacao global de materia, stock/retalho e pecas realmente programadas."
+            "Preco unitario da tabela = orcamentacao por peca. Nesting = validacao global de materia, stock/retalho e pecas realmente programadas."
         )
         self.nesting_bridge_label.setProperty("role", "muted")
         self.nesting_bridge_label.setWordWrap(True)
@@ -16008,11 +16288,10 @@ class QuotesPage(QWidget):
         line_buttons.setHorizontalSpacing(8)
         line_buttons.setVerticalSpacing(6)
         action_rows = (
-            (add_line_btn, laser_line_btn, laser_batch_btn, laser_nesting_btn),
-            (conjunto_builder_btn, save_selected_group_btn, add_model_btn, None),
-            (structure_builder_btn, manage_models_btn, laser_cfg_btn, operation_cfg_btn),
-            (prepare_line_btn, edit_line_btn, open_draw_btn, check_weight_btn),
-            (remove_line_btn, None, None, None),
+            (add_line_btn, laser_batch_btn, laser_nesting_btn, add_model_btn),
+            (conjunto_builder_btn, save_selected_group_btn, structure_builder_btn, manage_models_btn),
+            (laser_cfg_btn, operation_cfg_btn, prepare_line_btn, edit_line_btn),
+            (open_draw_btn, check_weight_btn, remove_line_btn, None),
         )
         for row_index, button_row in enumerate(action_rows):
             for col_index, button in enumerate(button_row):
@@ -16028,7 +16307,6 @@ class QuotesPage(QWidget):
         line_actions.addLayout(line_buttons)
         for button in (
             add_line_btn,
-            laser_line_btn,
             laser_batch_btn,
             laser_nesting_btn,
             add_model_btn,
@@ -16351,10 +16629,10 @@ class QuotesPage(QWidget):
         bridge = dict(getattr(self, "nesting_bridge_data", {}) or {})
         if not bridge:
             self.nesting_bridge_label.setText(
-                "Preco unitario da tabela = orcamentacao por peca. Plano chapa = validacao global de materia, stock/retalho e pecas realmente programadas."
+                "Preco unitario da tabela = orcamentacao por peca. Nesting = validacao global de materia, stock/retalho e pecas realmente programadas."
             )
             self.nesting_bridge_label.setToolTip(
-                "O preco unitario das linhas continua comercial e unitario. O plano de chapa serve para validar consumo real de materia, stock, compra e pecas efetivamente programadas."
+                "O preco unitario das linhas continua comercial e unitario. O nesting serve para validar consumo real de materia, stock, compra e pecas efetivamente programadas."
             )
             return
         placed = int(bridge.get("part_count_placed", 0) or 0)
@@ -16368,13 +16646,13 @@ class QuotesPage(QWidget):
         method = str(bridge.get("analysis_method", "-") or "-").strip() or "-"
         profile_name = str(bridge.get("selected_profile_name", "") or "").strip() or "Apenas stock"
         self.nesting_bridge_label.setText(
-            f"Plano chapa atual: {placed}/{requested} programadas | {sheets} chapa(s) | {method} | "
+            f"Nesting atual: {placed}/{requested} programadas | {sheets} chapa(s) | {method} | "
             f"perfil {profile_name} | materia real {material_cost} | compra {purchase_cost} | "
             f"comercial atual {quoted_total} | comercial ajustado ao rateio {rateio_total} | delta {rateio_delta}."
         )
         self.nesting_bridge_label.setToolTip(
             "Tabela do orcamento: preco comercial unitario por referencia.\n"
-            "Plano chapa: custo global real de materia e validacao do lote completo.\n"
+            "Nesting: custo global real de materia e validacao do lote completo.\n"
             "O rateio usa a area liquida colocada para repartir a materia real e a compra necessaria por referencia.\n"
             "Usa a tabela para vender/orcamentar por referencia e o plano de chapa para validar consumo real, compra e cobertura comercial."
         )
@@ -16462,7 +16740,7 @@ class QuotesPage(QWidget):
                 if bridge:
                     programmed = int(bridge_row.get("qty", 0) or 0)
                     requested = int(round(float(row.get("qtd", 0) or 0)))
-                    tooltip_lines.append(f"Plano chapa: {programmed}/{requested} peca(s) programada(s) no ultimo cenario.")
+                    tooltip_lines.append(f"Nesting: {programmed}/{requested} peca(s) programada(s) no ultimo cenario.")
                     if bridge_row:
                         tooltip_lines.append(f"Valor comercial colocado no plano: {_fmt_eur(float(bridge_row.get('quoted_total_eur', 0) or 0))}")
                         tooltip_lines.append(
