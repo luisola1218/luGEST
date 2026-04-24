@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QPointF, QRectF, QSize, QTimer, Qt
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, QTimer, Qt
 from PySide6.QtGui import QColor, QBrush, QIcon, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -25,6 +25,8 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QTabWidget,
     QTextEdit,
+    QToolButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -201,6 +203,9 @@ class NestPreviewView(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self.setBackgroundBrush(QColor("#f8fafc"))
+        self.setAlignment(Qt.AlignCenter)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
     def request_fit(self) -> None:
         self._fit_pending = True
@@ -217,6 +222,7 @@ class NestPreviewView(QGraphicsView):
         self.resetTransform()
         self._zoom_level = 0
         self.fitInView(scene.sceneRect(), Qt.KeepAspectRatio)
+        self.centerOn(scene.sceneRect().center())
         self._fit_pending = False
 
     def fit_scene(self) -> None:
@@ -388,9 +394,16 @@ class LaserNestingDialog(QDialog):
         self.part_rotation_overrides: dict[str, str] = {}
         self.part_priority_overrides: dict[str, int] = {}
         self.saved_studies: dict[str, dict[str, Any]] = {}
+        self._window_fitted_to_screen = False
+        self._stored_window_geometry = QRect()
         self.setWindowTitle("Nesting Laser")
         self.resize(1540, 980)
-        QTimer.singleShot(0, self.showMaximized)
+        screen = self.screen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            target_width = min(max(1280, int(available.width() * 0.94)), max(1280, available.width() - 24))
+            target_height = min(max(820, int(available.height() * 0.90)), max(820, available.height() - 24))
+            self.resize(target_width, target_height)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -414,8 +427,22 @@ class LaserNestingDialog(QDialog):
         self.header_title_label = header_title
         self.header_subtitle_label = header_subtitle
         header_text.addWidget(header_title)
+        header_text.addWidget(header_subtitle)
         header_text.addWidget(self.study_status_label)
         header_layout.addLayout(header_text, 1)
+        self.window_toggle_btn = QToolButton()
+        self.window_toggle_btn.setCursor(Qt.PointingHandCursor)
+        self.window_toggle_btn.setAutoRaise(False)
+        self.window_toggle_btn.clicked.connect(self._toggle_window_mode)
+        self.window_toggle_btn.setStyleSheet(
+            "QToolButton {"
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #e8eef5);"
+            "color: #24384f; border: 1px solid #b8c7d8; border-bottom: 3px solid #9fb0c3;"
+            "border-radius: 18px; padding: 6px 14px; font-size: 12px; font-weight: 800;"
+            "}"
+            "QToolButton:hover {background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #dde7f0);}"
+        )
+        header_layout.addWidget(self.window_toggle_btn, 0, Qt.AlignTop)
         root.addWidget(header_card)
 
         self.stepper_card = CardFrame()
@@ -500,6 +527,7 @@ class LaserNestingDialog(QDialog):
 
         self.section_stack = QTabWidget()
         self.section_stack.setDocumentMode(True)
+        self.section_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
         self.section_stack.setStyleSheet(
             """
             QTabWidget::pane {
@@ -788,7 +816,7 @@ class LaserNestingDialog(QDialog):
             "CardFrame { background: #fbfdff; border: 1px solid #c8d7e6; border-radius: 16px; }"
         )
         preview_layout = QVBoxLayout(preview_card)
-        preview_layout.setContentsMargins(12, 10, 12, 12)
+        preview_layout.setContentsMargins(12, 10, 12, 14)
         preview_layout.setSpacing(8)
         preview_header = QHBoxLayout()
         preview_title = QLabel("Nesting")
@@ -809,19 +837,23 @@ class LaserNestingDialog(QDialog):
         self.preview_scene = QGraphicsScene(self)
         self.preview_view = NestPreviewView(self.preview_scene, self)
         self.preview_view.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing | QPainter.SmoothPixmapTransform)
-        self.preview_view.setStyleSheet("background: #ffffff; border: 1px solid #d8e2ec; border-radius: 12px;")
-        self.preview_view.setFrameShape(QFrame.Box)
-        self.preview_view.setLineWidth(1)
+        self.preview_view.setStyleSheet(
+            "background: #ffffff; border: 1px solid #b9c8d8; border-radius: 10px;"
+        )
+        self.preview_view.setAlignment(Qt.AlignCenter)
+        self.preview_view.setFrameShape(QFrame.NoFrame)
+        self.preview_view.setLineWidth(0)
         self.preview_view.setMidLineWidth(0)
         self.preview_view.setContentsMargins(0, 0, 0, 0)
         self.preview_view.setMinimumHeight(268)
         fit_preview_btn.clicked.connect(self.preview_view.fit_scene)
         self.preview_frame = QFrame()
         self.preview_frame.setStyleSheet(
-            "QFrame { background: #ffffff; border: 1px solid #d8e2ec; border-radius: 12px; }"
+            "QFrame { background: #f4f8fc; border: 2px solid #9cb2c8; border-radius: 14px; "
+            "border-bottom: 3px solid #7f97ae; }"
         )
         preview_frame_layout = QVBoxLayout(self.preview_frame)
-        preview_frame_layout.setContentsMargins(10, 10, 10, 10)
+        preview_frame_layout.setContentsMargins(8, 8, 8, 14)
         preview_frame_layout.setSpacing(0)
         preview_frame_layout.addWidget(self.preview_view, 1)
         preview_layout.addWidget(self.preview_frame, 1)
@@ -1084,6 +1116,7 @@ class LaserNestingDialog(QDialog):
         define_page_layout.setSpacing(10)
         self.define_tabs = QTabWidget()
         self.define_tabs.setDocumentMode(True)
+        self.define_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
         self.define_tabs.setStyleSheet(
             """
             QTabBar::tab {
@@ -1116,6 +1149,7 @@ class LaserNestingDialog(QDialog):
         nest_page_layout.setSpacing(10)
         self.nest_tabs = QTabWidget()
         self.nest_tabs.setDocumentMode(True)
+        self.nest_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
         self.nest_tabs.setStyleSheet(self.define_tabs.styleSheet())
         self.nest_tabs.addTab(summary_tab, "Cenários")
         self.nest_tabs.addTab(sheets_tab, "Layouts / chapas")
@@ -1128,6 +1162,7 @@ class LaserNestingDialog(QDialog):
         results_page_layout.setSpacing(10)
         self.results_tabs = QTabWidget()
         self.results_tabs.setDocumentMode(True)
+        self.results_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
         self.results_tabs.setStyleSheet(self.define_tabs.styleSheet())
         self.results_tabs.addTab(diagnostics_tab, "Pendentes / avisos")
         self.results_tabs.addTab(costs_tab, "Custos / decisão")
@@ -1188,6 +1223,55 @@ class LaserNestingDialog(QDialog):
         self._load_group_rows()
         self._repair_dialog_copy()
         self._apply_premium_layout()
+        self._sync_window_toggle_label()
+
+    def _fit_to_available_screen(self) -> None:
+        screen = self.screen()
+        if screen is None and self.windowHandle() is not None:
+            screen = self.windowHandle().screen()
+        if screen is None:
+            return
+        safe = screen.availableGeometry().adjusted(10, 10, -10, -54)
+        if safe.width() <= 0 or safe.height() <= 0:
+            safe = screen.availableGeometry()
+        target_width = min(max(1220, int(safe.width() * 0.95)), safe.width())
+        target_height = min(max(780, int(safe.height() * 0.88)), safe.height())
+        pos_x = safe.x() + max(0, int((safe.width() - target_width) / 2))
+        pos_y = safe.y() + max(0, int((safe.height() - target_height) / 2))
+        self.setMaximumSize(safe.size())
+        self.setGeometry(QRect(QPoint(pos_x, pos_y), QSize(target_width, target_height)))
+
+    def _toggle_window_mode(self) -> None:
+        if self._window_fitted_to_screen:
+            self.showNormal()
+            self.setMaximumSize(16777215, 16777215)
+            if self._stored_window_geometry.isValid():
+                self.setGeometry(self._stored_window_geometry)
+            self._window_fitted_to_screen = False
+        else:
+            self._stored_window_geometry = self.geometry()
+            self.showNormal()
+            self._fit_to_available_screen()
+            self._window_fitted_to_screen = True
+        QTimer.singleShot(0, self._sync_window_toggle_label)
+
+    def _sync_window_toggle_label(self) -> None:
+        if self._window_fitted_to_screen:
+            self.window_toggle_btn.setText("Restaurar")
+            self.window_toggle_btn.setToolTip("Volta ao tamanho anterior da janela.")
+        else:
+            self.window_toggle_btn.setText("Maximizar")
+            self.window_toggle_btn.setToolTip("Ajusta a janela a area util do ecra, sem sobrepor a barra do Windows.")
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        if not self._window_fitted_to_screen:
+            self._fit_to_available_screen()
+        self._sync_window_toggle_label()
+
+    def changeEvent(self, event) -> None:  # type: ignore[override]
+        super().changeEvent(event)
+        QTimer.singleShot(0, self._sync_window_toggle_label)
 
     def _repair_dialog_copy(self) -> None:
         self.setWindowTitle("Nesting Laser")
@@ -1348,7 +1432,7 @@ class LaserNestingDialog(QDialog):
         self.group_combo.setMinimumHeight(36)
         self.sheet_combo.setMinimumHeight(36)
         self.sheet_view_combo.setMinimumHeight(34)
-        self.preview_view.setMinimumHeight(520)
+        self.preview_view.setMinimumHeight(360)
         self.sheet_gallery.setMinimumHeight(244)
         self.sheet_gallery.setMaximumHeight(286)
         self.stock_card.setMaximumHeight(186)
@@ -3340,7 +3424,16 @@ def _laser_nesting_render_sheet_preview_v2(self: LaserNestingDialog) -> None:
         hint_parts.append(f"{part_in_part_pairs} encaixe(s) interno(s) valido(s)")
     self.preview_hint.setText(" | ".join(hint_parts))
 
-    self.preview_scene.setSceneRect(0, 0, sheet_width, sheet_height)
+    edge_margin_mm = max(0.0, float(self.edge_spin.value()))
+    preview_pad = max(10.0, min(18.0, min(sheet_width, sheet_height) * 0.018))
+    bottom_preview_pad = max(preview_pad * 2.2, 34.0)
+    base_scene_rect = QRectF(
+        -preview_pad,
+        -preview_pad,
+        sheet_width + (preview_pad * 2.0),
+        sheet_height + preview_pad + bottom_preview_pad,
+    )
+    self.preview_scene.setSceneRect(base_scene_rect)
     sheet_outer_polygons = list(display.get("display_outer_polygons", []) or [])
     sheet_hole_polygons = list(display.get("display_hole_polygons", []) or [])
     if sheet_outer_polygons:
@@ -3351,7 +3444,30 @@ def _laser_nesting_render_sheet_preview_v2(self: LaserNestingDialog) -> None:
             polygon = QPolygonF([QPointF(float(x), float(y)) for x, y in list(polygon_points or [])])
             self.preview_scene.addPolygon(polygon, QPen(QColor("#17314f"), 2), QBrush(QColor("#ffffff")))
     else:
-        self.preview_scene.addRect(0, 0, sheet_width, sheet_height, QPen(QColor("#17314f"), 2))
+        self.preview_scene.addRect(
+            0,
+            0,
+            sheet_width,
+            sheet_height,
+            QPen(QColor("#17314f"), 2),
+            QBrush(QColor("#f8fafc")),
+        )
+
+    if edge_margin_mm > 0.0 and (sheet_width - (2.0 * edge_margin_mm)) > 0 and (sheet_height - (2.0 * edge_margin_mm)) > 0:
+        usable_pen = QPen(QColor("#7f97ae"), 1.1, Qt.DashLine)
+        usable_pen.setDashPattern([6, 4])
+        usable_fill = QBrush(QColor(125, 151, 174, 18))
+        self.preview_scene.addRect(
+            edge_margin_mm,
+            edge_margin_mm,
+            sheet_width - (2.0 * edge_margin_mm),
+            sheet_height - (2.0 * edge_margin_mm),
+            usable_pen,
+            usable_fill,
+        )
+        margin_note = self.preview_scene.addText(f"Margem {edge_margin_mm:.1f} mm")
+        margin_note.setDefaultTextColor(QColor("#486581"))
+        margin_note.setPos(edge_margin_mm + 6, max(2.0, edge_margin_mm - 18.0))
 
     for index, placement in enumerate(list(display.get("placements", []) or []), start=1):
         color = self._sheet_preview_color(index)
@@ -3416,6 +3532,7 @@ def _laser_nesting_render_sheet_preview_v2(self: LaserNestingDialog) -> None:
                 ref_item.setPos(float(placement.get("display_x_mm", 0) or 0) + 24, float(placement.get("display_y_mm", 0) or 0) + 2)
                 ref_item.setToolTip(tooltip)
 
+    self.preview_scene.setSceneRect(base_scene_rect)
     self.preview_view.request_fit()
     if self.sheet_plan_table.rowCount() > sheet_index:
         self.sheet_plan_table.blockSignals(True)
@@ -3449,19 +3566,28 @@ def _laser_nesting_sync_wizard_controls_v2(self: LaserNestingDialog) -> None:
         button.setEnabled(section_index in enabled_sections)
         if active:
             button.setStyleSheet(
-                "QPushButton {background: #7ed321; color: #ffffff; border: 1px solid #6ab619; "
-                "border-radius: 22px; padding: 10px 18px; font-size: 15px; font-weight: 900;}"
+                "QPushButton {"
+                "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4b6078, stop:1 #24384f);"
+                "color: #ffffff; border: 1px solid #1c2d41; border-bottom: 3px solid #152334;"
+                "border-radius: 22px; padding: 10px 22px; font-size: 15px; font-weight: 900;"
+                "}"
             )
         elif section_index in enabled_sections:
             button.setStyleSheet(
-                "QPushButton {background: #ffffff; color: #2f4b1d; border: 1px solid #cfe4a4; "
-                "border-radius: 22px; padding: 10px 18px; font-size: 15px; font-weight: 800;}"
-                "QPushButton:hover {background: #f6fce8;}"
+                "QPushButton {"
+                "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #e8eef5);"
+                "color: #24384f; border: 1px solid #b8c7d8; border-bottom: 3px solid #9fb0c3;"
+                "border-radius: 22px; padding: 10px 22px; font-size: 15px; font-weight: 800;"
+                "}"
+                "QPushButton:hover {background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #dde7f0);}"
             )
         else:
             button.setStyleSheet(
-                "QPushButton {background: #f3f4f6; color: #94a3b8; border: 1px solid #d7dce2; "
-                "border-radius: 22px; padding: 10px 18px; font-size: 15px; font-weight: 800;}"
+                "QPushButton {"
+                "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f4f6f8, stop:1 #e6ebf1);"
+                "color: #8b98a7; border: 1px solid #d2d9e1; border-bottom: 3px solid #c4ccd6;"
+                "border-radius: 22px; padding: 10px 22px; font-size: 15px; font-weight: 800;"
+                "}"
             )
     self.prev_section_btn.setEnabled(step_index > 0)
     self.next_section_btn.setEnabled(step_index < (len(WIZARD_STEPS) - 1))

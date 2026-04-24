@@ -1134,7 +1134,100 @@ def _shape_mask(
     return payload
 
 
-def _shape_candidate_score(candidate: dict[str, Any]) -> tuple[float, ...]:
+def _sheet_layout_bounds(sheet: dict[str, Any], *, edge_margin_mm: float = 0.0) -> tuple[float, float, float, float]:
+    placements = list(sheet.get("placements", []) or [])
+    if not placements:
+        return 0.0, 0.0, 0.0, 0.0
+    min_x = min(max(0.0, _as_float(placement.get("x_mm", 0.0), 0.0) - max(0.0, edge_margin_mm)) for placement in placements)
+    min_y = min(max(0.0, _as_float(placement.get("y_mm", 0.0), 0.0) - max(0.0, edge_margin_mm)) for placement in placements)
+    max_x = max(max(0.0, _as_float(placement.get("x_mm", 0.0), 0.0) - max(0.0, edge_margin_mm)) + _as_float(placement.get("width_mm", 0.0), 0.0) for placement in placements)
+    max_y = max(max(0.0, _as_float(placement.get("y_mm", 0.0), 0.0) - max(0.0, edge_margin_mm)) + _as_float(placement.get("height_mm", 0.0), 0.0) for placement in placements)
+    return min_x, min_y, max_x, max_y
+
+
+def _projected_layout_metrics(
+    sheet: dict[str, Any],
+    candidate: dict[str, Any],
+    *,
+    edge_margin_mm: float = 0.0,
+) -> dict[str, float]:
+    placements = list(sheet.get("placements", []) or [])
+    cand_x = _as_float(candidate.get("x", 0.0), 0.0)
+    cand_y = _as_float(candidate.get("y", 0.0), 0.0)
+    cand_w = _as_float(candidate.get("place_w", candidate.get("width", 0.0)), 0.0)
+    cand_h = _as_float(candidate.get("place_h", candidate.get("height", 0.0)), 0.0)
+    if placements:
+        min_x, min_y, max_x, max_y = _sheet_layout_bounds(sheet, edge_margin_mm=edge_margin_mm)
+        proj_min_x = min(min_x, cand_x)
+        proj_min_y = min(min_y, cand_y)
+        proj_max_x = max(max_x, cand_x + cand_w)
+        proj_max_y = max(max_y, cand_y + cand_h)
+    else:
+        proj_min_x = cand_x
+        proj_min_y = cand_y
+        proj_max_x = cand_x + cand_w
+        proj_max_y = cand_y + cand_h
+    span_width = max(0.0, proj_max_x - proj_min_x)
+    span_height = max(0.0, proj_max_y - proj_min_y)
+    profile = dict(sheet.get("profile", {}) or {})
+    sheet_width = max(0.0, _as_float(profile.get("width_mm", 0.0), 0.0))
+    sheet_height = max(0.0, _as_float(profile.get("height_mm", 0.0), 0.0))
+    largest_edge_remnant = 0.0
+    fragmented_remainder = 0.0
+    if sheet_width > 0.0 and sheet_height > 0.0:
+        largest_edge_remnant = _largest_edge_remnant_area(
+            sheet_width,
+            sheet_height,
+            proj_min_x,
+            proj_min_y,
+            proj_max_x,
+            proj_max_y,
+        )
+        projected_remaining_bbox = max(0.0, (sheet_width * sheet_height) - (span_width * span_height))
+        fragmented_remainder = max(0.0, projected_remaining_bbox - largest_edge_remnant)
+    return {
+        "min_x": round(proj_min_x, 3),
+        "min_y": round(proj_min_y, 3),
+        "max_x": round(proj_max_x, 3),
+        "max_y": round(proj_max_y, 3),
+        "span_width": round(span_width, 3),
+        "span_height": round(span_height, 3),
+        "largest_edge_remnant": round(largest_edge_remnant, 3),
+        "fragmented_remainder": round(fragmented_remainder, 3),
+    }
+
+
+def _shape_candidate_score(
+    candidate: dict[str, Any],
+    *,
+    strategy_name: str = "",
+    sheet: dict[str, Any] | None = None,
+    edge_margin_mm: float = 0.0,
+) -> tuple[float, ...]:
+    normalized = str(strategy_name or "").strip().lower()
+    projected = _projected_layout_metrics(sheet or {}, candidate, edge_margin_mm=edge_margin_mm)
+    if "retalho" in normalized:
+        return (
+            _as_float(projected.get("fragmented_remainder", 0.0), 0.0),
+            -_as_float(projected.get("largest_edge_remnant", 0.0), 0.0),
+            _as_float(projected.get("span_width", 0.0), 0.0),
+            _as_float(projected.get("span_height", 0.0), 0.0),
+            _as_float(candidate.get("x", 0.0), 0.0) + _as_float(candidate.get("place_w", 0.0), 0.0),
+            _as_float(candidate.get("y", 0.0), 0.0) + _as_float(candidate.get("place_h", 0.0), 0.0),
+            _as_float(candidate.get("x", 0.0), 0.0),
+            _as_float(candidate.get("y", 0.0), 0.0),
+            _as_float(candidate.get("occupied_area_mm2", 0.0), 0.0),
+        )
+    if "width-first" in normalized:
+        return (
+            _as_float(projected.get("span_width", 0.0), 0.0),
+            _as_float(projected.get("span_height", 0.0), 0.0),
+            _as_float(candidate.get("x", 0.0), 0.0) + _as_float(candidate.get("place_w", 0.0), 0.0),
+            _as_float(candidate.get("y", 0.0), 0.0) + _as_float(candidate.get("place_h", 0.0), 0.0),
+            _as_float(candidate.get("x", 0.0), 0.0),
+            _as_float(candidate.get("y", 0.0), 0.0),
+            _as_float(candidate.get("occupied_area_mm2", 0.0), 0.0),
+        )
     return (
         _as_float(candidate.get("y", 0.0), 0.0) + _as_float(candidate.get("place_h", 0.0), 0.0),
         _as_float(candidate.get("x", 0.0), 0.0) + _as_float(candidate.get("place_w", 0.0), 0.0),
@@ -1196,6 +1289,7 @@ def _try_place_on_shape_sheet(
     part_spacing_mm: float,
     edge_margin_mm: float,
     cache: dict[tuple[str, bool, float, float], dict[str, Any]],
+    strategy_name: str = "",
 ) -> dict[str, Any] | None:
     occupied = set(sheet.get("occupied_cells", set()) or set())
     allowed = sheet.get("allowed_cells", None)
@@ -1284,14 +1378,44 @@ def _try_place_on_shape_sheet(
                     "shape_outer_polygons": tuple(mask.get("shape_outer_polygons", ()) or ()),
                     "shape_hole_polygons": tuple(mask.get("shape_hole_polygons", ()) or ()),
                 }
-                if best is None or _shape_candidate_score(candidate) < _shape_candidate_score(best):
+                if best is None or _shape_candidate_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm) < _shape_candidate_score(best, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm):
                     best = candidate
                 placed_for_orientation = True
                 break
     return best
 
 
-def _placement_score(candidate: dict[str, Any]) -> tuple[float, ...]:
+def _placement_score(
+    candidate: dict[str, Any],
+    *,
+    strategy_name: str = "",
+    sheet: dict[str, Any] | None = None,
+    edge_margin_mm: float = 0.0,
+) -> tuple[float, ...]:
+    normalized = str(strategy_name or "").strip().lower()
+    projected = _projected_layout_metrics(sheet or {}, candidate, edge_margin_mm=edge_margin_mm)
+    if "retalho" in normalized:
+        return (
+            _as_float(projected.get("fragmented_remainder", 0.0), 0.0),
+            -_as_float(projected.get("largest_edge_remnant", 0.0), 0.0),
+            _as_float(projected.get("span_width", 0.0), 0.0),
+            _as_float(projected.get("span_height", 0.0), 0.0),
+            0.0 if not bool(candidate.get("new_shelf")) else 1.0,
+            _as_float(candidate.get("x", 0.0), 0.0) + _as_float(candidate.get("place_w", 0.0), 0.0),
+            _as_float(candidate.get("y", 0.0), 0.0) + _as_float(candidate.get("place_h", 0.0), 0.0),
+            _as_float(candidate.get("waste", 0.0), 0.0),
+            _as_float(candidate.get("height_gap", 0.0), 0.0),
+        )
+    if "width-first" in normalized:
+        return (
+            _as_float(projected.get("span_width", 0.0), 0.0),
+            _as_float(projected.get("span_height", 0.0), 0.0),
+            0.0 if not bool(candidate.get("new_shelf")) else 1.0,
+            _as_float(candidate.get("x", 0.0), 0.0) + _as_float(candidate.get("place_w", 0.0), 0.0),
+            _as_float(candidate.get("y", 0.0), 0.0) + _as_float(candidate.get("place_h", 0.0), 0.0),
+            _as_float(candidate.get("waste", 0.0), 0.0),
+            _as_float(candidate.get("height_gap", 0.0), 0.0),
+        )
     return (
         0.0 if not bool(candidate.get("new_shelf")) else 1.0,
         _as_float(candidate.get("y", 0.0), 0.0) + _as_float(candidate.get("place_h", 0.0), 0.0),
@@ -1299,6 +1423,14 @@ def _placement_score(candidate: dict[str, Any]) -> tuple[float, ...]:
         _as_float(candidate.get("height_gap", 0.0), 0.0),
         _as_float(candidate.get("place_h", 0.0), 0.0),
     )
+
+
+def _largest_edge_remnant_area(width_mm: float, height_mm: float, min_x: float, min_y: float, max_x: float, max_y: float) -> float:
+    left_area = max(0.0, min_x) * max(0.0, height_mm)
+    right_area = max(0.0, width_mm - max_x) * max(0.0, height_mm)
+    top_area = max(0.0, min_y) * max(0.0, width_mm)
+    bottom_area = max(0.0, height_mm - max_y) * max(0.0, width_mm)
+    return max(left_area, right_area, top_area, bottom_area)
 
 
 def _profile_usable_dimensions(profile: dict[str, Any], edge_margin_mm: float) -> tuple[float, float]:
@@ -1319,6 +1451,8 @@ def _try_place_on_sheet(
     usable_height: float,
     part_spacing_mm: float,
     allow_rotate: bool,
+    strategy_name: str = "",
+    edge_margin_mm: float = 0.0,
 ) -> dict[str, Any] | None:
     best: dict[str, Any] | None = None
     for orientation in _candidate_orientations(item, allow_rotate):
@@ -1343,7 +1477,7 @@ def _try_place_on_sheet(
                 "waste": usable_width - (shelf_x + place_w),
                 "height_gap": max(0.0, _as_float(shelf.get("height", 0.0), 0.0) - place_h),
             }
-            if best is None or _placement_score(candidate) < _placement_score(best):
+            if best is None or _placement_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm) < _placement_score(best, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm):
                 best = candidate
         cursor_y = _as_float(sheet.get("cursor_y", 0.0), 0.0)
         if cursor_y + place_h <= usable_height + 1e-6:
@@ -1360,7 +1494,7 @@ def _try_place_on_sheet(
                 "waste": usable_width - place_w,
                 "height_gap": 0.0,
             }
-            if best is None or _placement_score(candidate) < _placement_score(best):
+            if best is None or _placement_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm) < _placement_score(best, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm):
                 best = candidate
     return best
 
@@ -1461,6 +1595,14 @@ def _strategy_sort_key(name: str):
             min(row["item"].bbox_width_mm, row["item"].bbox_height_mm),
             _as_float(row["item"].net_area_mm2, 0.0) / max(1.0, _as_float(row.get("bbox_area_mm2", 0.0), 0.0)),
             max(row["item"].bbox_width_mm, row["item"].bbox_height_mm),
+        )
+    if normalized in {"retalho", "retalho-side", "retalho-useful"}:
+        return lambda row: (
+            max(-1, min(2, _as_int(getattr(row.get("item"), "priority", row.get("priority", 0)), 0))),
+            max(row["item"].bbox_width_mm, row["item"].bbox_height_mm),
+            min(row["item"].bbox_width_mm, row["item"].bbox_height_mm),
+            _as_float(row.get("bbox_area_mm2", 0.0), 0.0),
+            _as_float(row["item"].net_area_mm2, 0.0) / max(1.0, _as_float(row.get("bbox_area_mm2", 0.0), 0.0)),
         )
     if normalized == "area":
         return lambda row: (
@@ -1572,9 +1714,13 @@ def _result_score(result: dict[str, Any]) -> tuple[float, ...]:
     utilization_net = _as_float(summary.get("utilization_net_pct", 0.0), 0.0)
     compactness = _as_float(summary.get("layout_compactness_pct", 0.0), 0.0)
     wasted_area = max(0.0, total_area - _as_float(summary.get("used_net_area_mm2", 0.0), 0.0))
+    largest_edge_remnant = _as_float(summary.get("largest_edge_remnant_area_mm2", 0.0), 0.0)
+    fragmented_remainder = _as_float(summary.get("fragmented_remainder_area_mm2", 0.0), 0.0)
     return (
         _as_int(summary.get("part_count_unplaced", 0), 0),
         purchase_area,
+        fragmented_remainder,
+        -largest_edge_remnant,
         wasted_area,
         total_area,
         _as_int(summary.get("sheet_count", 0), 0),
@@ -1711,7 +1857,13 @@ def _build_sheet_row(sheet: dict[str, Any], index: int) -> dict[str, Any]:
     else:
         layout_span_width = 0.0
         layout_span_height = 0.0
+        min_x = 0.0
+        min_y = 0.0
+        max_x = 0.0
+        max_y = 0.0
     layout_span_area = layout_span_width * layout_span_height
+    largest_edge_remnant_area = _largest_edge_remnant_area(width_mm, height_mm, min_x, min_y, max_x, max_y) if placements else area_mm2
+    remaining_bbox_area = max(0.0, area_mm2 - used_bbox)
     return {
         "index": index + 1,
         "profile_name": str(profile.get("name", "") or "").strip(),
@@ -1736,7 +1888,9 @@ def _build_sheet_row(sheet: dict[str, Any], index: int) -> dict[str, Any]:
         "layout_span_area_mm2": round(layout_span_area, 2),
         "layout_compactness_pct": round((used_bbox / layout_span_area * 100.0) if layout_span_area > 0.0 else 0.0, 2),
         "remaining_net_area_mm2": round(max(0.0, area_mm2 - used_net), 2),
-        "remaining_bbox_area_mm2": round(max(0.0, area_mm2 - used_bbox), 2),
+        "remaining_bbox_area_mm2": round(remaining_bbox_area, 2),
+        "largest_edge_remnant_area_mm2": round(max(0.0, largest_edge_remnant_area), 2),
+        "fragmented_remainder_area_mm2": round(max(0.0, remaining_bbox_area - largest_edge_remnant_area), 2),
         "geometry_validation": _sheet_overlap_diagnostics({"placements": placements}),
     }
 
@@ -1778,6 +1932,8 @@ def _build_summary_base(
         "waste_bbox_pct": 0.0,
         "remaining_net_area_mm2": 0.0,
         "remaining_bbox_area_mm2": 0.0,
+        "largest_edge_remnant_area_mm2": 0.0,
+        "fragmented_remainder_area_mm2": 0.0,
     }
 
 
@@ -1825,6 +1981,8 @@ def _finalize_result(
         summary["used_net_area_mm2"] += _as_float(row.get("used_net_area_mm2", 0.0), 0.0)
         summary["used_bbox_area_mm2"] += _as_float(row.get("used_bbox_area_mm2", 0.0), 0.0)
         summary["layout_span_area_mm2"] += _as_float(row.get("layout_span_area_mm2", 0.0), 0.0)
+        summary["largest_edge_remnant_area_mm2"] += _as_float(row.get("largest_edge_remnant_area_mm2", 0.0), 0.0)
+        summary["fragmented_remainder_area_mm2"] += _as_float(row.get("fragmented_remainder_area_mm2", 0.0), 0.0)
         summary["geometry_solid_overlap_pair_count"] = int(summary.get("geometry_solid_overlap_pair_count", 0) or 0) + solid_overlap_pair_count
         summary["geometry_part_in_part_pair_count"] = int(summary.get("geometry_part_in_part_pair_count", 0) or 0) + part_in_part_pair_count
         area_mm2 = _as_float(row.get("sheet_area_mm2", 0.0), 0.0)
@@ -1849,6 +2007,8 @@ def _finalize_result(
     summary["used_net_area_mm2"] = round(summary["used_net_area_mm2"], 2)
     summary["used_bbox_area_mm2"] = round(summary["used_bbox_area_mm2"], 2)
     summary["layout_span_area_mm2"] = round(summary["layout_span_area_mm2"], 2)
+    summary["largest_edge_remnant_area_mm2"] = round(summary["largest_edge_remnant_area_mm2"], 2)
+    summary["fragmented_remainder_area_mm2"] = round(summary["fragmented_remainder_area_mm2"], 2)
     summary["stock_sheet_area_mm2"] = round(summary["stock_sheet_area_mm2"], 2)
     summary["purchase_sheet_area_mm2"] = round(summary["purchase_sheet_area_mm2"], 2)
     summary["total_sheet_area_mm2"] = round(total_area, 2)
@@ -1888,7 +2048,7 @@ def _pack_profile(
     usable_width, usable_height = _profile_usable_dimensions(normalized_profile, edge_margin_mm)
     best_result: dict[str, Any] | None = None
 
-    for strategy_name in ("longest-side", "area", "height-first", "width-first", "compact"):
+    for strategy_name in ("retalho", "longest-side", "area", "height-first", "width-first", "compact"):
         ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(strategy_name), reverse=True)
         warnings = list(base_warnings or [])
         sheets: list[dict[str, Any]] = []
@@ -1909,7 +2069,11 @@ def _pack_profile(
                 )
                 if candidate is None:
                     continue
-                candidate_score = (0.0, *_placement_score(candidate), float(sheet_index))
+                candidate_score = (
+                    0.0,
+                    *_placement_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm),
+                    float(sheet_index),
+                )
                 if best_candidate is None or candidate_score < best_candidate["score"]:
                     best_candidate = {"placement": candidate, "score": candidate_score}
                     target_sheet = sheet
@@ -1936,7 +2100,14 @@ def _pack_profile(
                     continue
                 target_sheet = candidate_sheet
                 sheets.append(candidate_sheet)
-                best_candidate = {"placement": candidate, "score": (1.0, *_placement_score(candidate), float(len(sheets) - 1))}
+                best_candidate = {
+                    "placement": candidate,
+                    "score": (
+                        1.0,
+                        *_placement_score(candidate, strategy_name=strategy_name, sheet=candidate_sheet, edge_margin_mm=edge_margin_mm),
+                        float(len(sheets) - 1),
+                    ),
+                }
             if target_sheet is not None and best_candidate is not None:
                 _apply_placement(target_sheet, best_candidate["placement"], row, edge_margin_mm=edge_margin_mm, part_spacing_mm=part_spacing_mm)
 
@@ -1987,11 +2158,23 @@ def _shape_engine_feasible(
             continue
         cells = int(math.ceil(usable_width / safe_grid) * math.ceil(usable_height / safe_grid))
         max_cells = max(max_cells, cells)
-    if max_cells > 140_000:
+    if max_cells > 360_000:
         return False, f"Grelha de {safe_grid:g} mm demasiado fina para a chapa configurada."
     if sum(max(1, int(item.qty or 0)) for item in list(items or [])) > 400:
         return False, "Quantidade de pecas demasiado elevada para o modo por contorno nesta fase."
     return True, ""
+
+
+def _effective_shape_grid_mm(raw_grid_mm: float, part_spacing_mm: float, edge_margin_mm: float) -> float:
+    safe_grid = max(2.0, _as_float(raw_grid_mm, 10.0), 2.0)
+    positive_limits = [
+        max(2.0, _as_float(candidate_mm, 0.0), 2.0)
+        for candidate_mm in (part_spacing_mm, edge_margin_mm)
+        if _as_float(candidate_mm, 0.0) > 0
+    ]
+    if not positive_limits:
+        return safe_grid
+    return round(min(safe_grid, min(positive_limits)), 4)
 
 
 def _pack_profile_shape(
@@ -2013,7 +2196,7 @@ def _pack_profile_shape(
     best_result: dict[str, Any] | None = None
     shape_cache: dict[tuple[str, bool, float, float], dict[str, Any]] = {}
 
-    for strategy_name in ("shape-longest-side", "shape-area", "shape-height-first", "shape-width-first", "shape-compact"):
+    for strategy_name in ("shape-retalho", "shape-longest-side", "shape-area", "shape-height-first", "shape-width-first", "shape-compact"):
         ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(strategy_name), reverse=True)
         warnings = list(base_warnings or [])
         sheets: list[dict[str, Any]] = []
@@ -2032,10 +2215,15 @@ def _pack_profile_shape(
                     part_spacing_mm=part_spacing_mm,
                     edge_margin_mm=edge_margin_mm,
                     cache=shape_cache,
+                    strategy_name=strategy_name,
                 )
                 if candidate is None:
                     continue
-                candidate_score = (0.0, *_shape_candidate_score(candidate), float(sheet_index))
+                candidate_score = (
+                    0.0,
+                    *_shape_candidate_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm),
+                    float(sheet_index),
+                )
                 if best_candidate is None or candidate_score < best_candidate["score"]:
                     best_candidate = {"placement": candidate, "score": candidate_score}
                     target_sheet = sheet
@@ -2049,6 +2237,7 @@ def _pack_profile_shape(
                     part_spacing_mm=part_spacing_mm,
                     edge_margin_mm=edge_margin_mm,
                     cache=shape_cache,
+                    strategy_name=strategy_name,
                 )
                 if candidate is None:
                     warnings.append(f"{item.file_name}: nao foi possivel posicionar por contorno na chapa configurada.")
@@ -2063,7 +2252,14 @@ def _pack_profile_shape(
                     continue
                 target_sheet = candidate_sheet
                 sheets.append(candidate_sheet)
-                best_candidate = {"placement": candidate, "score": (1.0, *_shape_candidate_score(candidate), float(len(sheets) - 1))}
+                best_candidate = {
+                    "placement": candidate,
+                    "score": (
+                        1.0,
+                        *_shape_candidate_score(candidate, strategy_name=strategy_name, sheet=candidate_sheet, edge_margin_mm=edge_margin_mm),
+                        float(len(sheets) - 1),
+                    ),
+                }
             if target_sheet is not None and best_candidate is not None:
                 _apply_placement(target_sheet, best_candidate["placement"], row, edge_margin_mm=edge_margin_mm, part_spacing_mm=part_spacing_mm)
 
@@ -2149,7 +2345,7 @@ def _pack_with_stock(
     }
     best_result: dict[str, Any] | None = None
 
-    for strategy_name in ("longest-side", "area", "height-first", "width-first", "compact"):
+    for strategy_name in ("retalho", "longest-side", "area", "height-first", "width-first", "compact"):
         ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(strategy_name), reverse=True)
         warnings = list(base_warnings or [])
         sheets: list[dict[str, Any]] = []
@@ -2174,10 +2370,16 @@ def _pack_with_stock(
                     usable_height=usable_height,
                     part_spacing_mm=part_spacing_mm,
                     allow_rotate=allow_rotate,
+                    strategy_name=strategy_name,
+                    edge_margin_mm=edge_margin_mm,
                 )
                 if candidate is None:
                     continue
-                candidate_score = (0.0, *_placement_score(candidate), float(sheet_index))
+                candidate_score = (
+                    0.0,
+                    *_placement_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm),
+                    float(sheet_index),
+                )
                 if best_candidate is None or candidate_score < best_candidate["score"]:
                     best_candidate = {"placement": candidate, "score": candidate_score}
                     target_sheet = sheet
@@ -2197,11 +2399,19 @@ def _pack_with_stock(
                         usable_height=usable_height,
                         part_spacing_mm=part_spacing_mm,
                         allow_rotate=allow_rotate,
+                        strategy_name=strategy_name,
+                        edge_margin_mm=edge_margin_mm,
                     )
                     if candidate is None:
                         continue
                     source_priority = 0.0 if str(stock_profile.get("source_kind", "") or "").strip().lower() == "retalho" else 1.0
-                    candidate_score = (1.0, source_priority, _as_float(stock_profile.get("area_mm2", 0.0), 0.0), *_placement_score(candidate), float(stock_index))
+                    candidate_score = (
+                        1.0,
+                        source_priority,
+                        _as_float(stock_profile.get("area_mm2", 0.0), 0.0),
+                        *_placement_score(candidate, strategy_name=strategy_name, sheet=candidate_sheet, edge_margin_mm=edge_margin_mm),
+                        float(stock_index),
+                    )
                     if best_candidate is None or candidate_score < best_candidate["score"]:
                         best_candidate = {"placement": candidate, "score": candidate_score}
                         stock_choice = {"index": stock_index, "profile": stock_profile}
@@ -2215,9 +2425,18 @@ def _pack_with_stock(
                     usable_height=purchase_dims[1],
                     part_spacing_mm=part_spacing_mm,
                     allow_rotate=allow_rotate,
+                    strategy_name=strategy_name,
+                    edge_margin_mm=edge_margin_mm,
                 )
                 if candidate is not None:
-                    best_candidate = {"placement": candidate, "score": (2.0, _as_float(normalized_purchase.get("area_mm2", 0.0), 0.0), *_placement_score(candidate))}
+                    best_candidate = {
+                        "placement": candidate,
+                        "score": (
+                            2.0,
+                            _as_float(normalized_purchase.get("area_mm2", 0.0), 0.0),
+                            *_placement_score(candidate, strategy_name=strategy_name, sheet=candidate_sheet, edge_margin_mm=edge_margin_mm),
+                        ),
+                    }
                     target_sheet = candidate_sheet
                     sheets.append(candidate_sheet)
 
@@ -2296,7 +2515,7 @@ def _pack_with_stock_shape(
     best_result: dict[str, Any] | None = None
     shape_cache: dict[tuple[str, bool, float, float], dict[str, Any]] = {}
 
-    for strategy_name in ("shape-longest-side", "shape-area", "shape-height-first", "shape-width-first", "shape-compact"):
+    for strategy_name in ("shape-retalho", "shape-longest-side", "shape-area", "shape-height-first", "shape-width-first", "shape-compact"):
         ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(strategy_name), reverse=True)
         warnings = list(base_warnings or [])
         sheets: list[dict[str, Any]] = []
@@ -2317,10 +2536,15 @@ def _pack_with_stock_shape(
                     part_spacing_mm=part_spacing_mm,
                     edge_margin_mm=edge_margin_mm,
                     cache=shape_cache,
+                    strategy_name=strategy_name,
                 )
                 if candidate is None:
                     continue
-                candidate_score = (0.0, *_shape_candidate_score(candidate), float(sheet_index))
+                candidate_score = (
+                    0.0,
+                    *_shape_candidate_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm),
+                    float(sheet_index),
+                )
                 if best_candidate is None or candidate_score < best_candidate["score"]:
                     best_candidate = {"placement": candidate, "score": candidate_score}
                     target_sheet = sheet
@@ -2340,11 +2564,18 @@ def _pack_with_stock_shape(
                         part_spacing_mm=part_spacing_mm,
                         edge_margin_mm=edge_margin_mm,
                         cache=shape_cache,
+                        strategy_name=strategy_name,
                     )
                     if candidate is None:
                         continue
                     source_priority = 0.0 if str(stock_profile.get("source_kind", "") or "").strip().lower() == "retalho" else 1.0
-                    candidate_score = (1.0, source_priority, _as_float(stock_profile.get("area_mm2", 0.0), 0.0), *_shape_candidate_score(candidate), float(stock_index))
+                    candidate_score = (
+                        1.0,
+                        source_priority,
+                        _as_float(stock_profile.get("area_mm2", 0.0), 0.0),
+                        *_shape_candidate_score(candidate, strategy_name=strategy_name, sheet=candidate_sheet, edge_margin_mm=edge_margin_mm),
+                        float(stock_index),
+                    )
                     if best_candidate is None or candidate_score < best_candidate["score"]:
                         best_candidate = {"placement": candidate, "score": candidate_score}
                         stock_choice = {"index": stock_index, "profile": stock_profile}
@@ -2363,9 +2594,17 @@ def _pack_with_stock_shape(
                         part_spacing_mm=part_spacing_mm,
                         edge_margin_mm=edge_margin_mm,
                         cache=shape_cache,
+                        strategy_name=strategy_name,
                     )
                     if candidate is not None:
-                        best_candidate = {"placement": candidate, "score": (2.0, _as_float(normalized_purchase.get("area_mm2", 0.0), 0.0), *_shape_candidate_score(candidate))}
+                        best_candidate = {
+                            "placement": candidate,
+                            "score": (
+                                2.0,
+                                _as_float(normalized_purchase.get("area_mm2", 0.0), 0.0),
+                                *_shape_candidate_score(candidate, strategy_name=strategy_name, sheet=candidate_sheet, edge_margin_mm=edge_margin_mm),
+                            ),
+                        }
                         target_sheet = candidate_sheet
                         sheets.append(candidate_sheet)
 
@@ -2460,7 +2699,8 @@ def nest_parts(
     expanded = _expand_items(items)
     normalized_stock = [profile for index, row in enumerate(list(stock_sheet_candidates or [])) if (profile := _normalize_stock_sheet_candidate(row, index)) is not None]
     use_shape_engine = bool(nesting_options.get("shape_aware", True) if shape_aware is None else shape_aware)
-    grid_mm = max(2.0, _as_float(nesting_options.get("shape_grid_mm", 10.0) if shape_grid_mm is None else shape_grid_mm, 10.0), 2.0)
+    requested_grid_mm = max(2.0, _as_float(nesting_options.get("shape_grid_mm", 10.0) if shape_grid_mm is None else shape_grid_mm, 10.0), 2.0)
+    grid_mm = _effective_shape_grid_mm(requested_grid_mm, part_spacing_mm, edge_margin_mm)
     requested_engine = "shape" if use_shape_engine else "bbox"
 
     def _choose_engine_variant(*, bbox_result: dict[str, Any] | None, shape_result: dict[str, Any] | None) -> dict[str, Any]:

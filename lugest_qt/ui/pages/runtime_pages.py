@@ -2359,7 +2359,7 @@ class OperatorPage(QWidget):
         pending = list(ctx.get("pending_ops", []) or [])
         done = list(ctx.get("done_ops", []) or [])
         ops_progress = _piece_ops_progress(piece, str(piece.get("operacao_atual", "") or ""))
-        issue_text = "-"
+        issue_text = ""
         if ctx.get("has_open_avaria"):
             issue_text = (
                 f"Avaria em aberto: {ctx.get('avaria_motivo', '-') or '-'}"
@@ -2370,11 +2370,6 @@ class OperatorPage(QWidget):
             motivo = str(live_piece.get("interrupcao_peca_motivo", "") or "").strip()
             if motivo:
                 issue_text = f"Interrupcao registada: {motivo}"
-            else:
-                issue_text = (
-                    f"Fluxo operacional: {int(ops_progress.get('done', 0))}/{int(ops_progress.get('total', 0))} concluidas"
-                    f" | Em curso {int(ops_progress.get('running', 0))} | Pendentes {int(ops_progress.get('pending', 0))}"
-                )
         full_piece_title = f"{piece.get('ref_interna', '-')} | {piece.get('ref_externa', '-')}"
         self.piece_title_label.setText(_elide_middle(full_piece_title, 64))
         self.piece_title_label.setToolTip(full_piece_title)
@@ -2383,11 +2378,11 @@ class OperatorPage(QWidget):
         self.piece_meta_label.setText(
             f"Enc. {enc_num} | Cliente {_format_client_label(group.get('cliente', '-'), show_name=self._show_client_name())}\n"
             f"Material {group.get('material', '-')} | Esp. {group.get('espessura', '-')} mm | Op. atual {current_op_txt}\n"
-            f"Oper. {piece.get('operador', '-') or '-'} | Qtd {float(ctx.get('produzido_ok', 0) or 0):.1f}/{float(ctx.get('quantidade_pedida', 0) or 0):.1f} | Tempo {float(ctx.get('current_operation_elapsed_min', 0) or 0):.1f} min\n"
-            f"Fluxo {int(ops_progress.get('done', 0))}/{int(ops_progress.get('total', 0))} | Avarias {float(ctx.get('avaria_total_min', 0) or 0):.1f} min"
+            f"Oper. {piece.get('operador', '-') or '-'} | Qtd {float(ctx.get('produzido_ok', 0) or 0):.1f}/{float(ctx.get('quantidade_pedida', 0) or 0):.1f} | Tempo {float(ctx.get('current_operation_elapsed_min', 0) or 0):.1f} min | Fluxo {int(ops_progress.get('done', 0))}/{int(ops_progress.get('total', 0))}"
         )
         self.issue_label.setText(issue_text)
-        self.issue_label.setStyleSheet("font-size: 8.1px; color: #b42318; font-weight: 700;" if ctx.get("has_open_avaria") else "font-size: 8.1px; color: #475467;")
+        self.issue_label.setVisible(bool(issue_text))
+        self.issue_label.setStyleSheet("font-size: 8.4px; color: #b42318; font-weight: 700;" if ctx.get("has_open_avaria") else "font-size: 8.3px; color: #475467;")
         pend_txt = ", ".join(pending[:3]) if pending else "-"
         done_txt = ", ".join(done[:3]) if done else "-"
         if len(pending) > 3:
@@ -2403,7 +2398,7 @@ class OperatorPage(QWidget):
             _apply_state_chip(chip, op_state, _elide_middle(op_name, 16))
             chip.setStyleSheet(
                 chip.styleSheet()
-                + " min-height: 20px; max-height: 20px; padding: 3px 8px; font-size: 8.5px; margin-top: 2px;"
+                + " min-height: 21px; max-height: 21px; padding: 3px 8px; font-size: 8.4px; margin-top: 6px;"
             )
             self.operation_strip_layout.addWidget(chip)
         self.operation_strip_layout.addStretch(1)
@@ -14564,12 +14559,12 @@ class LegacyOperatorPage(OperatorPage):
         for col, width in ((0, 132), (1, 84), (2, 106), (3, 94), (4, 56), (5, 64), (6, 74)):
             group_header.setSectionResizeMode(col, QHeaderView.Interactive)
             group_header.resizeSection(col, width)
-        self.control_card.setMinimumHeight(176)
-        self.control_card.setMaximumHeight(176)
-        self.context_card.setMinimumHeight(176)
-        self.context_card.setMaximumHeight(176)
+        self.control_card.setMinimumHeight(178)
+        self.control_card.setMaximumHeight(178)
+        self.context_card.setMinimumHeight(178)
+        self.context_card.setMaximumHeight(178)
         self.feedback_label.setMaximumHeight(54)
-        for widget, width in ((self.operator_combo, 180), (self.posto_combo, 132), (self.operation_combo, 230)):
+        for widget, width in ((self.operator_combo, 176), (self.posto_combo, 128), (self.operation_combo, 292)):
             widget.setProperty("compact", "true")
             widget.setMinimumWidth(width)
         for button in (self.start_btn, self.finish_btn, self.resume_btn, self.pause_btn, self.avaria_btn, self.close_avaria_btn, self.alert_btn, self.manual_consume_btn, self.drawing_btn, self.labels_btn, self.local_refresh_btn):
@@ -14581,21 +14576,31 @@ class LegacyOperatorPage(OperatorPage):
         self.piece_state_chip.setAlignment(Qt.AlignCenter)
         self.piece_title_label.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
         self.piece_title_label.setMinimumHeight(22)
-        self.piece_meta_label.setStyleSheet("font-size: 8.6px; color: #334155;")
-        self.pending_label.setStyleSheet("font-size: 8.4px; color: #5b6f86;")
+        self.piece_meta_label.setStyleSheet("font-size: 9.2px; color: #334155;")
+        self.pending_label.setStyleSheet("font-size: 8.8px; color: #5b6f86;")
         context_layout = self.context_card.layout()
-        context_layout.setContentsMargins(15, 12, 15, 12)
-        context_layout.setSpacing(6)
-        self.issue_label.setMaximumHeight(34)
-        self.issue_label.setStyleSheet("font-size: 8.1px; color: #475467;")
+        context_layout.setContentsMargins(16, 12, 16, 12)
+        context_layout.setSpacing(5)
+        self.issue_label.setMaximumHeight(28)
+        self.issue_label.setStyleSheet("font-size: 8.3px; color: #475467;")
         self.piece_meta_label.setWordWrap(True)
         self.pending_label.setWordWrap(True)
-        self.pending_label.setMaximumHeight(26)
-        self.operation_strip.setMaximumHeight(34)
+        self.pending_label.setMaximumHeight(34)
+        self.operation_strip.setMaximumHeight(40)
         self.piece_progress.setMaximumHeight(18)
-        self.operator_combo.setMinimumWidth(138)
-        self.posto_combo.setMinimumWidth(102)
-        self.operation_combo.setMinimumWidth(156)
+        self.operator_combo.setMinimumWidth(112)
+        self.posto_combo.setMinimumWidth(82)
+        self.operation_combo.setMinimumWidth(258)
+        for combo in (self.operator_combo, self.posto_combo):
+            combo.setStyleSheet(
+                "font-size: 9.4px; padding-right: 20px;"
+                " QComboBox::drop-down { width: 22px; subcontrol-origin: padding; subcontrol-position: top right; }"
+            )
+        self.operation_combo.setStyleSheet(
+            "font-size: 8.4px; padding-right: 44px;"
+            " QComboBox::drop-down { width: 36px; subcontrol-origin: padding; subcontrol-position: center right; border-left: 1px solid #d5dfea; background: #f8fbff; }"
+            " QComboBox::down-arrow { image: none; width: 0px; height: 0px; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #475467; margin-right: 10px; }"
+        )
         piece_header = self.pieces_table.horizontalHeader()
         for col, width in ((0, 34), (1, 140), (2, 320), (3, 96), (4, 126), (5, 104), (6, 74), (7, 66), (8, 66), (9, 126), (10, 360)):
             piece_header.setSectionResizeMode(col, QHeaderView.Interactive)
@@ -14622,26 +14627,25 @@ class LegacyOperatorPage(OperatorPage):
         selectors_host = QWidget()
         selectors_grid = QGridLayout(selectors_host)
         selectors_grid.setContentsMargins(0, 0, 0, 0)
-        selectors_grid.setHorizontalSpacing(8)
-        selectors_grid.setVerticalSpacing(3)
+        selectors_grid.setHorizontalSpacing(7)
+        selectors_grid.setVerticalSpacing(4)
         op_label = QLabel("Operador")
         posto_label = QLabel("Posto")
         oper_label = QLabel("Operacao")
         for label in (op_label, posto_label, oper_label):
-            label.setStyleSheet("font-size: 11px; color: #334155;")
+            label.setStyleSheet("font-size: 9.4px; color: #334155;")
         selectors_grid.addWidget(op_label, 0, 0)
         selectors_grid.addWidget(posto_label, 0, 1)
-        selectors_grid.addWidget(oper_label, 0, 2)
         selectors_grid.addWidget(self.operator_combo, 1, 0)
         selectors_grid.addWidget(self.posto_combo, 1, 1)
-        selectors_grid.addWidget(self.operation_combo, 1, 2)
-        selectors_grid.setColumnStretch(0, 3)
-        selectors_grid.setColumnStretch(1, 2)
-        selectors_grid.setColumnStretch(2, 3)
+        selectors_grid.addWidget(oper_label, 2, 0, 1, 2)
+        selectors_grid.addWidget(self.operation_combo, 3, 0, 1, 2)
+        selectors_grid.setColumnStretch(0, 1)
+        selectors_grid.setColumnStretch(1, 1)
         control_layout.addWidget(selectors_host)
         _adopt_layout_item(control_layout, feedback_item)
-        self.control_card.setMinimumHeight(160)
-        self.control_card.setMaximumHeight(160)
+        self.control_card.setMinimumHeight(166)
+        self.control_card.setMaximumHeight(166)
         self.feedback_label.setStyleSheet("font-size: 9px; color: #475467;")
         self.feedback_label.setWordWrap(True)
 
@@ -14810,8 +14814,8 @@ class LegacyOperatorPage(OperatorPage):
         self.detail_filter_card.setMaximumHeight(50)
 
         control_host = QWidget()
-        control_host.setMinimumWidth(420)
-        control_host.setMaximumWidth(480)
+        control_host.setMinimumWidth(558)
+        control_host.setMaximumWidth(624)
         control_host_layout = QVBoxLayout(control_host)
         control_host_layout.setContentsMargins(0, 0, 0, 0)
         control_host_layout.setSpacing(4)
@@ -14827,8 +14831,8 @@ class LegacyOperatorPage(OperatorPage):
         workspace_split.setChildrenCollapsible(False)
         workspace_split.addWidget(control_host)
         workspace_split.addWidget(context_host)
-        workspace_split.setSizes([410, 1670])
-        workspace_split.setMaximumHeight(222)
+        workspace_split.setSizes([580, 1530])
+        workspace_split.setMaximumHeight(234)
         detail_layout.addWidget(workspace_split)
 
         self.groups_title_label.setText("Grupos ativos")
@@ -16237,6 +16241,9 @@ class QuotesPage(QWidget):
         laser_nesting_btn = QPushButton("Nesting")
         laser_nesting_btn.setProperty("variant", "secondary")
         laser_nesting_btn.clicked.connect(self._open_laser_nesting)
+        profile_step_btn = QPushButton("STEP/IGS Perfil")
+        profile_step_btn.setProperty("variant", "secondary")
+        profile_step_btn.clicked.connect(self._open_profile_step_igs_quote_builder)
         add_model_btn = QPushButton("Conjunto/Modelo")
         add_model_btn.setProperty("variant", "secondary")
         add_model_btn.clicked.connect(self._manage_saved_conjuntos)
@@ -16288,10 +16295,10 @@ class QuotesPage(QWidget):
         line_buttons.setHorizontalSpacing(8)
         line_buttons.setVerticalSpacing(6)
         action_rows = (
-            (add_line_btn, laser_batch_btn, laser_nesting_btn, add_model_btn),
-            (conjunto_builder_btn, save_selected_group_btn, structure_builder_btn, manage_models_btn),
-            (laser_cfg_btn, operation_cfg_btn, prepare_line_btn, edit_line_btn),
-            (open_draw_btn, check_weight_btn, remove_line_btn, None),
+            (add_line_btn, laser_batch_btn, laser_nesting_btn, profile_step_btn),
+            (add_model_btn, conjunto_builder_btn, save_selected_group_btn, structure_builder_btn),
+            (manage_models_btn, laser_cfg_btn, operation_cfg_btn, prepare_line_btn),
+            (edit_line_btn, open_draw_btn, check_weight_btn, remove_line_btn),
         )
         for row_index, button_row in enumerate(action_rows):
             for col_index, button in enumerate(button_row):
@@ -16309,6 +16316,7 @@ class QuotesPage(QWidget):
             add_line_btn,
             laser_batch_btn,
             laser_nesting_btn,
+            profile_step_btn,
             add_model_btn,
             conjunto_builder_btn,
             save_selected_group_btn,
@@ -22116,6 +22124,299 @@ class QuotesPage(QWidget):
             QMessageBox.information(self, "Nesting Laser", "Seleciona primeiro linhas laser com desenho associado.")
             return
         dialog = LaserNestingDialog(self.backend, laser_rows, self, quote_number=self.current_number)
+        dialog.exec()
+
+    def _open_profile_step_igs_quote_builder(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Corte Laser STEP/IGS")
+        dialog.setMinimumWidth(980)
+        dialog.setMinimumHeight(620)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+
+        title = QLabel("Corte laser de perfis / tubos / cantoneiras")
+        title.setStyleSheet("font-size: 18px; font-weight: 800; color: #0f172a;")
+        intro = QLabel(
+            "Fluxo separado do nesting plano. Aqui orçamentas apenas cortes, furos e rasgos a partir de ficheiros STEP/IGS, "
+            "sem assumir o custo do material base do perfil."
+        )
+        intro.setWordWrap(True)
+        intro.setProperty("role", "muted")
+        layout.addWidget(title)
+        layout.addWidget(intro)
+
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
+        add_files_btn = QPushButton("Adicionar STEP/IGS")
+        add_files_btn.setProperty("variant", "secondary")
+        remove_file_btn = QPushButton("Remover selecionado")
+        remove_file_btn.setProperty("variant", "secondary")
+        toolbar.addWidget(add_files_btn)
+        toolbar.addWidget(remove_file_btn)
+        toolbar.addStretch(1)
+        layout.addLayout(toolbar)
+
+        files_table = QTableWidget(0, 7)
+        files_table.setHorizontalHeaderLabels(["Ficheiro", "Tipo", "Secao", "Qtd", "Cortes", "Furos", "Rasgos"])
+        files_table.verticalHeader().setVisible(False)
+        files_table.setSelectionBehavior(QTableWidget.SelectRows)
+        files_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        files_table.setAlternatingRowColors(True)
+        files_table.setMinimumHeight(260)
+        files_table.horizontalHeader().setStretchLastSection(False)
+        _set_table_columns(
+            files_table,
+            [
+                (0, "stretch", 0),
+                (1, "fixed", 120),
+                (2, "fixed", 170),
+                (3, "fixed", 72),
+                (4, "fixed", 78),
+                (5, "fixed", 72),
+                (6, "fixed", 78),
+            ],
+        )
+        layout.addWidget(files_table)
+
+        pricing_card = CardFrame()
+        pricing_card.set_tone("default")
+        pricing_layout = QGridLayout(pricing_card)
+        pricing_layout.setContentsMargins(14, 12, 14, 12)
+        pricing_layout.setHorizontalSpacing(12)
+        pricing_layout.setVerticalSpacing(8)
+
+        quality_combo = QComboBox()
+        quality_combo.setEditable(True)
+        for value in list((self.presets or self.backend.order_presets()).get("materiais", []) or []):
+            text = str(value or "").strip()
+            if text:
+                quality_combo.addItem(text)
+        if quality_combo.count() == 0:
+            quality_combo.addItems(["S235JR", "S275JR", "S355JR", "INOX304", "Aluminio"])
+        cut_price_spin = QDoubleSpinBox()
+        cut_price_spin.setRange(0.0, 1000000.0)
+        cut_price_spin.setDecimals(4)
+        cut_price_spin.setPrefix("EUR ")
+        cut_price_spin.setValue(1.25)
+        hole_price_spin = QDoubleSpinBox()
+        hole_price_spin.setRange(0.0, 1000000.0)
+        hole_price_spin.setDecimals(4)
+        hole_price_spin.setPrefix("EUR ")
+        hole_price_spin.setValue(0.85)
+        slot_price_spin = QDoubleSpinBox()
+        slot_price_spin.setRange(0.0, 1000000.0)
+        slot_price_spin.setDecimals(4)
+        slot_price_spin.setPrefix("EUR ")
+        slot_price_spin.setValue(1.15)
+        setup_price_spin = QDoubleSpinBox()
+        setup_price_spin.setRange(0.0, 1000000.0)
+        setup_price_spin.setDecimals(2)
+        setup_price_spin.setPrefix("EUR ")
+        setup_price_spin.setValue(12.0)
+        total_label = QLabel("Total estimado: 0,00 EUR")
+        total_label.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
+        pricing_layout.addWidget(QLabel("Qualidade"), 0, 0)
+        pricing_layout.addWidget(quality_combo, 0, 1)
+        pricing_layout.addWidget(QLabel("Preco por corte"), 0, 2)
+        pricing_layout.addWidget(cut_price_spin, 0, 3)
+        pricing_layout.addWidget(QLabel("Preco por furo"), 1, 0)
+        pricing_layout.addWidget(hole_price_spin, 1, 1)
+        pricing_layout.addWidget(QLabel("Preco por rasgo"), 1, 2)
+        pricing_layout.addWidget(slot_price_spin, 1, 3)
+        pricing_layout.addWidget(QLabel("Preparacao / programacao"), 2, 0)
+        pricing_layout.addWidget(setup_price_spin, 2, 1)
+        pricing_layout.addWidget(total_label, 2, 2, 1, 2)
+        layout.addWidget(pricing_card)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Aplicar ao orçamento")
+        buttons.button(QDialogButtonBox.Cancel).setText("Fechar")
+        layout.addWidget(buttons)
+
+        families = ["Perfil", "Tubo", "Cantoneira", "Barra"]
+
+        def _infer_family(path_txt: str) -> str:
+            probe = Path(path_txt).stem.lower()
+            if "tubo" in probe:
+                return "Tubo"
+            if "cant" in probe:
+                return "Cantoneira"
+            if "barra" in probe or "chata" in probe:
+                return "Barra"
+            if any(token in probe for token in ("ipe", "ipn", "hea", "heb", "upn", "rhs", "shs", "perfil")):
+                return "Perfil"
+            return "Perfil"
+
+        def _infer_section(path_txt: str) -> str:
+            stem = Path(path_txt).stem.upper().replace("_", " ").replace("-", " ")
+            profile_match = re.search(r"\b(IPE|IPN|HEA|HEB|UPN|RHS|SHS)\s*(\d+)\b", stem)
+            if profile_match:
+                return f"{profile_match.group(1)} {profile_match.group(2)}"
+            size_match = re.search(r"(\d+\s*[Xx]\s*\d+(?:\s*[Xx]\s*\d+(?:[.,]\d+)?)?)", stem)
+            if size_match:
+                return re.sub(r"\s*[Xx]\s*", "x", size_match.group(1)).replace(",", ".")
+            return ""
+
+        def _make_int_spin(value: int) -> QDoubleSpinBox:
+            spin = QDoubleSpinBox()
+            spin.setRange(0.0, 1000000.0)
+            spin.setDecimals(0)
+            spin.setSingleStep(1.0)
+            spin.setValue(float(value))
+            return spin
+
+        def _recalc_total() -> None:
+            total = float(setup_price_spin.value() or 0.0)
+            for row_index in range(files_table.rowCount()):
+                qty_spin = files_table.cellWidget(row_index, 3)
+                cuts_spin = files_table.cellWidget(row_index, 4)
+                holes_spin = files_table.cellWidget(row_index, 5)
+                slots_spin = files_table.cellWidget(row_index, 6)
+                qty = float(qty_spin.value() if isinstance(qty_spin, QDoubleSpinBox) else 0.0)
+                cuts = float(cuts_spin.value() if isinstance(cuts_spin, QDoubleSpinBox) else 0.0)
+                holes = float(holes_spin.value() if isinstance(holes_spin, QDoubleSpinBox) else 0.0)
+                slots = float(slots_spin.value() if isinstance(slots_spin, QDoubleSpinBox) else 0.0)
+                total += qty * (
+                    (cuts * float(cut_price_spin.value() or 0.0))
+                    + (holes * float(hole_price_spin.value() or 0.0))
+                    + (slots * float(slot_price_spin.value() or 0.0))
+                )
+            total_label.setText(f"Total estimado: {_fmt_eur(total)}")
+
+        def _add_file_row(path_txt: str) -> None:
+            row_index = files_table.rowCount()
+            files_table.insertRow(row_index)
+            file_item = QTableWidgetItem(Path(path_txt).name)
+            file_item.setData(Qt.UserRole, str(path_txt))
+            file_item.setToolTip(str(path_txt))
+            files_table.setItem(row_index, 0, file_item)
+
+            family_combo = QComboBox()
+            family_combo.addItems(families)
+            family_combo.setCurrentText(_infer_family(path_txt))
+            section_edit = QLineEdit(_infer_section(path_txt))
+            qty_spin = _make_int_spin(1)
+            cuts_spin = _make_int_spin(2)
+            holes_spin = _make_int_spin(0)
+            slots_spin = _make_int_spin(0)
+            files_table.setCellWidget(row_index, 1, family_combo)
+            files_table.setCellWidget(row_index, 2, section_edit)
+            files_table.setCellWidget(row_index, 3, qty_spin)
+            files_table.setCellWidget(row_index, 4, cuts_spin)
+            files_table.setCellWidget(row_index, 5, holes_spin)
+            files_table.setCellWidget(row_index, 6, slots_spin)
+            for widget in (qty_spin, cuts_spin, holes_spin, slots_spin):
+                widget.valueChanged.connect(_recalc_total)
+
+        def _pick_files() -> None:
+            paths, _ = QFileDialog.getOpenFileNames(
+                dialog,
+                "Selecionar ficheiros STEP/IGS",
+                "",
+                "Modelos 3D (*.step *.stp *.igs *.iges);;Todos (*.*)",
+            )
+            for path_txt in paths:
+                if path_txt:
+                    _add_file_row(path_txt)
+            _recalc_total()
+
+        def _remove_selected() -> None:
+            selected_rows = sorted({item.row() for item in files_table.selectedItems() if item is not None}, reverse=True)
+            for row_index in selected_rows:
+                files_table.removeRow(row_index)
+            _recalc_total()
+
+        def _accept() -> None:
+            if files_table.rowCount() == 0:
+                QMessageBox.warning(dialog, "STEP/IGS", "Adiciona pelo menos um ficheiro STEP/IGS.")
+                return
+            lines: list[dict[str, Any]] = []
+            material_txt = quality_combo.currentText().strip() or "S235JR"
+            for row_index in range(files_table.rowCount()):
+                file_item = files_table.item(row_index, 0)
+                path_txt = str(file_item.data(Qt.UserRole) if isinstance(file_item, QTableWidgetItem) else "").strip()
+                family_combo = files_table.cellWidget(row_index, 1)
+                section_edit = files_table.cellWidget(row_index, 2)
+                qty_spin = files_table.cellWidget(row_index, 3)
+                cuts_spin = files_table.cellWidget(row_index, 4)
+                holes_spin = files_table.cellWidget(row_index, 5)
+                slots_spin = files_table.cellWidget(row_index, 6)
+                family_txt = family_combo.currentText().strip() if isinstance(family_combo, QComboBox) else "Perfil"
+                section_txt = section_edit.text().strip() if isinstance(section_edit, QLineEdit) else ""
+                qty = float(qty_spin.value() if isinstance(qty_spin, QDoubleSpinBox) else 0.0)
+                cuts = float(cuts_spin.value() if isinstance(cuts_spin, QDoubleSpinBox) else 0.0)
+                holes = float(holes_spin.value() if isinstance(holes_spin, QDoubleSpinBox) else 0.0)
+                slots = float(slots_spin.value() if isinstance(slots_spin, QDoubleSpinBox) else 0.0)
+                if qty <= 0:
+                    continue
+                unit_price = round(
+                    (cuts * float(cut_price_spin.value() or 0.0))
+                    + (holes * float(hole_price_spin.value() or 0.0))
+                    + (slots * float(slot_price_spin.value() or 0.0)),
+                    4,
+                )
+                stem = Path(path_txt).stem if path_txt else f"STEPIGS-{row_index + 1:02d}"
+                description_parts = [f"Corte laser STEP/IGS {family_txt.lower()}".strip()]
+                if section_txt:
+                    description_parts.append(section_txt)
+                description_parts.append(stem)
+                lines.append(
+                    {
+                        "tipo_item": self.backend.desktop_main.ORC_LINE_TYPE_SERVICE,
+                        "ref_interna": "",
+                        "ref_externa": stem[:120],
+                        "descricao": " | ".join(part for part in description_parts if part),
+                        "material": material_txt,
+                        "espessura": section_txt,
+                        "operacao": "Corte Laser",
+                        "tempo_peca_min": 0.0,
+                        "qtd": qty,
+                        "preco_unit": unit_price,
+                        "desenho": path_txt,
+                        "produto_unid": "UN",
+                        "material_subtype": family_txt,
+                        "line_origin": "step_igs_profile_laser",
+                        "summary_html": f"{family_txt} | cortes {int(cuts)} | furos {int(holes)} | rasgos {int(slots)}",
+                    }
+                )
+            setup_price = float(setup_price_spin.value() or 0.0)
+            if setup_price > 0:
+                lines.insert(
+                    0,
+                    {
+                        "tipo_item": self.backend.desktop_main.ORC_LINE_TYPE_SERVICE,
+                        "ref_interna": "",
+                        "ref_externa": "SETUP-STEP-IGS",
+                        "descricao": "Preparacao / programacao STEP/IGS",
+                        "material": material_txt,
+                        "espessura": "",
+                        "operacao": "Corte Laser",
+                        "tempo_peca_min": 0.0,
+                        "qtd": 1.0,
+                        "preco_unit": round(setup_price, 4),
+                        "desenho": "",
+                        "produto_unid": "UN",
+                        "material_subtype": "Preparacao",
+                        "line_origin": "step_igs_profile_laser",
+                    },
+                )
+            if not lines:
+                QMessageBox.warning(dialog, "STEP/IGS", "Nao foi possivel gerar linhas com os dados atuais.")
+                return
+            self.line_rows.extend(lines)
+            if not self.workcenter_combo.currentText().strip():
+                self.workcenter_combo.setCurrentText("Laser")
+            self._render_quote_lines()
+            dialog.accept()
+
+        add_files_btn.clicked.connect(_pick_files)
+        remove_file_btn.clicked.connect(_remove_selected)
+        buttons.accepted.connect(_accept)
+        buttons.rejected.connect(dialog.reject)
+        for spin in (cut_price_spin, hole_price_spin, slot_price_spin, setup_price_spin):
+            spin.valueChanged.connect(_recalc_total)
+        _recalc_total()
         dialog.exec()
         bridge = dialog.quote_bridge_payload()
         if bridge:

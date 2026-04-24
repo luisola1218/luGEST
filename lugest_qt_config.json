@@ -98,17 +98,17 @@
       ]
     },
     "nesting": {
-      "default_part_spacing_mm": 5.0,
-      "default_edge_margin_mm": 5.0,
+      "default_part_spacing_mm": 6.0,
+      "default_edge_margin_mm": 6.0,
       "allow_rotate": true,
       "auto_select_sheet": false,
       "use_stock_first": true,
       "allow_purchase_fallback": true,
       "shape_aware": true,
       "shape_grid_mm": 20.0,
-      "common_line_estimate": false,
+      "common_line_estimate": true,
       "common_line_tolerance_mm": 1.0,
-      "lead_optimization": false,
+      "lead_optimization": true,
       "lead_optimization_pct": 8.0,
       "sheet_profiles": [
         {
@@ -196,7 +196,8 @@
           "outer_polygons": [],
           "hole_polygons": []
         }
-      ]
+      ],
+      "shape_strict": false
     },
     "machine_profiles": {
       "BLT641 12kW": {

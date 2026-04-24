@@ -17683,17 +17683,35 @@ class LegacyBackend:
             return y_top - 24, x_positions, total_width
 
         def draw_sheet_map(x: float, y_top: float, width: float, height: float, sheet: dict[str, Any]) -> None:
+            def draw_polygon(points: list[tuple[float, float]], *, stroke_color: Any, fill_color: Any | None = None, stroke_width: float = 1.0) -> None:
+                if len(points) < 3:
+                    return
+                path = c.beginPath()
+                path.moveTo(points[0][0], points[0][1])
+                for px, py in points[1:]:
+                    path.lineTo(px, py)
+                path.close()
+                c.setStrokeColor(stroke_color)
+                c.setLineWidth(stroke_width)
+                if fill_color is not None:
+                    c.setFillColor(fill_color)
+                    c.drawPath(path, stroke=1, fill=1)
+                else:
+                    c.drawPath(path, stroke=1, fill=0)
+
             c.setFillColor(colors.white)
             c.setStrokeColor(palette["line"])
             c.roundRect(x, y_top - height, width, height, 14, stroke=1, fill=1)
+            c.setFillColor(palette["primary_soft_2"])
+            c.roundRect(x + 8, y_top - 26, width - 16, 10, 6, stroke=0, fill=1)
             title = (
                 f"Chapa {int(sheet.get('index', 0) or 0)} | "
                 f"{str(sheet.get('source_label', summary.get('selected_sheet_profile', {}).get('name', '-')) or '-').strip()}"
             )
             c.setFillColor(palette["ink"])
-            set_font(True, 9.2)
+            set_font(True, 11.2)
             c.drawString(x + 10, y_top - 16, _pdf_clip_text(title, width - 20, font_bold, 9.2))
-            set_font(False, 7.8)
+            set_font(False, 8.2)
             c.setFillColor(palette["muted"])
             tech_line = (
                 f"{self._fmt(float(sheet.get('sheet_width_mm', 0) or 0))} x "
@@ -17708,37 +17726,58 @@ class LegacyBackend:
             )
             c.drawString(
                 x + 10,
-                y_top - 38,
+                y_top - 40,
                 f"{int(sheet.get('part_count', 0) or 0)} peca(s) | bbox {self._fmt(sheet.get('utilization_bbox_pct', 0))}% | compra {'sim' if str(sheet.get('source_kind', '') or '').strip().lower() == 'purchase' else 'nao'}",
             )
+            legend_rows = [dict(row or {}) for row in list(sheet.get("placements", []) or [])]
+            inner_x = x + 12
+            inner_y_top = y_top - 52
+            inner_h = height - 66
+            legend_w = max(154.0, min(210.0, width * 0.25))
+            panel_gap = 10.0
+            map_x = inner_x + legend_w + panel_gap
+            map_w = width - 24 - legend_w - panel_gap
+            map_y = y_top - height + 14
+            map_h = max(80.0, inner_h)
+            c.setFillColor(colors.HexColor("#F9FBFE"))
+            c.roundRect(inner_x, map_y, legend_w, map_h, 12, stroke=0, fill=1)
+            c.setStrokeColor(palette["line"])
+            c.roundRect(inner_x, map_y, legend_w, map_h, 12, stroke=1, fill=0)
+            c.setFillColor(colors.HexColor("#F8FAFC"))
+            c.roundRect(map_x, map_y, map_w, map_h, 12, stroke=0, fill=1)
+            c.setStrokeColor(colors.HexColor("#9cb2c8"))
+            c.roundRect(map_x, map_y, map_w, map_h, 12, stroke=1, fill=0)
 
-            draw_x = x + 12
-            legend_rows = [dict(row or {}) for row in list(sheet.get("placements", []) or [])[:6]]
-            legend_h = 16 + (len(legend_rows) * 9 if legend_rows else 0)
-            draw_y = y_top - height + 12 + legend_h
-            draw_w = width - 24
-            draw_h = max(50.0, height - 58 - legend_h)
+            set_font(True, 8.4)
+            c.setFillColor(palette["ink"])
+            c.drawString(inner_x + 10, y_top - 66, "Peças no layout")
+            set_font(False, 7.2)
+            legend_y = y_top - 80
+            max_legend_rows = min(len(legend_rows), 16)
+            for idx, placement in enumerate(legend_rows[:max_legend_rows], start=1):
+                ref_txt = str(placement.get("ref_externa", "") or placement.get("description", "") or "-").strip() or "-"
+                prefix = f"{idx:02d}"
+                c.setFillColor(colors.HexColor("#0f172a"))
+                c.drawString(inner_x + 10, legend_y, prefix)
+                c.drawString(
+                    inner_x + 28,
+                    legend_y,
+                    _pdf_clip_text(ref_txt, legend_w - 40, font_regular, 7.2),
+                )
+                legend_y -= 10
+            remaining = len(legend_rows) - max_legend_rows
+            if remaining > 0:
+                c.setFillColor(palette["muted"])
+                c.drawString(inner_x + 10, legend_y, f"+{remaining} peça(s) adicionais")
+
             sheet_w = max(1.0, float(sheet.get("sheet_width_mm", 0) or 1.0))
             sheet_h = max(1.0, float(sheet.get("sheet_height_mm", 0) or 1.0))
-            scale = min(draw_w / sheet_w, draw_h / sheet_h)
+            draw_pad = 10.0
+            scale = min((map_w - draw_pad * 2.0) / sheet_w, (map_h - draw_pad * 2.0) / sheet_h)
             body_w = sheet_w * scale
             body_h = sheet_h * scale
-            offset_x = draw_x + ((draw_w - body_w) / 2.0)
-            offset_y = draw_y + ((draw_h - body_h) / 2.0)
-
-            if legend_rows:
-                c.setFillColor(palette["surface_alt"])
-                c.roundRect(x + 8, y_top - 54 - legend_h + 8, width - 16, legend_h, 10, stroke=0, fill=1)
-                c.setFillColor(palette["ink"])
-                set_font(True, 7.4)
-                c.drawString(x + 14, y_top - 50, "Pecas no layout")
-                set_font(False, 6.9)
-                legend_y = y_top - 60
-                for idx, placement in enumerate(legend_rows, start=1):
-                    ref_txt = str(placement.get("ref_externa", "") or placement.get("description", "") or "-").strip() or "-"
-                    detail_txt = f"{idx:02d}  {_pdf_clip_text(ref_txt, width - 34, font_regular, 6.9)}"
-                    c.drawString(x + 14, legend_y, detail_txt)
-                    legend_y -= 9
+            offset_x = map_x + ((map_w - body_w) / 2.0)
+            offset_y = map_y + ((map_h - body_h) / 2.0)
 
             def map_point(px: float, py: float) -> tuple[float, float]:
                 return (offset_x + (px * scale), offset_y + (py * scale))
@@ -17751,22 +17790,11 @@ class LegacyBackend:
                 for polygon_points in outer_polygons:
                     mapped = [map_point(float(point[0]), float(point[1])) for point in list(polygon_points or []) if isinstance(point, (list, tuple)) and len(point) >= 2]
                     if len(mapped) >= 3:
-                        c.lines(
-                            [
-                                (mapped[index][0], mapped[index][1], mapped[(index + 1) % len(mapped)][0], mapped[(index + 1) % len(mapped)][1])
-                                for index in range(len(mapped))
-                            ]
-                        )
+                        draw_polygon(mapped, stroke_color=palette["line_strong"], fill_color=colors.white, stroke_width=1.1)
                 for polygon_points in hole_polygons:
                     mapped = [map_point(float(point[0]), float(point[1])) for point in list(polygon_points or []) if isinstance(point, (list, tuple)) and len(point) >= 2]
                     if len(mapped) >= 3:
-                        c.setFillColor(colors.white)
-                        c.lines(
-                            [
-                                (mapped[index][0], mapped[index][1], mapped[(index + 1) % len(mapped)][0], mapped[(index + 1) % len(mapped)][1])
-                                for index in range(len(mapped))
-                            ]
-                        )
+                        draw_polygon(mapped, stroke_color=palette["line_strong"], fill_color=colors.white, stroke_width=0.9)
             else:
                 c.rect(offset_x, offset_y, body_w, body_h, stroke=1, fill=1)
 
@@ -17783,12 +17811,7 @@ class LegacyBackend:
                     for polygon_points in poly_groups:
                         mapped = [map_point(float(point[0]), float(point[1])) for point in list(polygon_points or []) if isinstance(point, (list, tuple)) and len(point) >= 2]
                         if len(mapped) >= 3:
-                            c.lines(
-                                [
-                                    (mapped[index][0], mapped[index][1], mapped[(index + 1) % len(mapped)][0], mapped[(index + 1) % len(mapped)][1])
-                                    for index in range(len(mapped))
-                                ]
-                            )
+                            draw_polygon(mapped, stroke_color=colors.HexColor("#274c77"), fill_color=colors.HexColor(palette_hexes[idx % len(palette_hexes)]), stroke_width=0.9)
                 else:
                     c.rect(
                         label_x,
@@ -17927,24 +17950,20 @@ class LegacyBackend:
             draw_footer()
             c.showPage()
             y = draw_header("Mapas de Chapa", subtitle)
-            box_gap = 12
-            box_width = (page_width - (margin * 2) - box_gap) / 2.0
-            box_height = 214.0
-            x_positions = [margin, margin + box_width + box_gap]
-            current_col = 0
+            box_width = page_width - (margin * 2)
+            box_height = page_height - margin - 74 - 36
             current_y = y
             for sheet in sheets:
                 if current_y - box_height < 50:
                     draw_footer()
                     c.showPage()
                     current_y = draw_header("Mapas de Chapa", subtitle)
-                    current_col = 0
-                draw_sheet_map(x_positions[current_col], current_y, box_width, box_height, sheet)
-                if current_col == 1:
-                    current_col = 0
-                    current_y -= box_height + 14
-                else:
-                    current_col = 1
+                draw_sheet_map(margin, current_y, box_width, box_height, sheet)
+                current_y -= box_height + 14
+                if current_y - box_height >= 50:
+                    draw_footer()
+                    c.showPage()
+                    current_y = draw_header("Mapas de Chapa", subtitle)
 
         draw_footer()
         c.save()
