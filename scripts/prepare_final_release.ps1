@@ -8,9 +8,9 @@ $releaseDateTxt = $releaseDate.ToString('dd/MM/yyyy HH:mm')
 $releaseName = 'App LuisGEST - Revis' + [char]0x00E3 + 'o Final'
 $releaseRoot = Join-Path $desktopRoot $releaseName
 
-$desktopEnvExample = Join-Path $repoRoot 'lugest.env.example'
-$desktopServerEnvExample = Join-Path $repoRoot 'lugest.env.servidor.example'
-$desktopPostEnvExample = Join-Path $repoRoot 'lugest.env.posto.example'
+$desktopEnvExample = Join-Path $repoRoot 'config\examples\lugest.env.example'
+$desktopServerEnvExample = Join-Path $repoRoot 'config\examples\lugest.env.servidor.example'
+$desktopPostEnvExample = Join-Path $repoRoot 'config\examples\lugest.env.posto.example'
 $desktopBranding = Join-Path $repoRoot 'lugest_branding.json'
 $desktopQtConfig = Join-Path $repoRoot 'lugest_qt_config.json'
 $desktopIcon = Join-Path $repoRoot 'app.ico'
@@ -20,11 +20,11 @@ $desktopAdminSetup = Join-Path $repoRoot 'scripts\setup_lugest_admin.ps1'
 $apiSource = Join-Path $repoRoot 'impulse_mobile_api'
 $mobileSource = Join-Path $repoRoot 'impulse_mobile_app'
 $databaseSource = Join-Path $repoRoot 'mysql'
-$securityPlan = Join-Path $repoRoot 'SECURITY_TEST_PLAN.md'
-$installGuide = Join-Path $repoRoot 'GUIA_INSTALACAO_OUTRO_PC.md'
-$fullInstallGuide = Join-Path $repoRoot 'GUIA_INSTALACAO_TOTAL.md'
-$simpleGuide = Join-Path $repoRoot 'GUIA_MUITO_SIMPLES.md'
-$billingPlan = Join-Path $repoRoot 'FATURACAO_PLAN.md'
+$securityPlan = Join-Path $repoRoot 'docs\plans\SECURITY_TEST_PLAN.md'
+$installGuide = Join-Path $repoRoot 'docs\install\GUIA_INSTALACAO_OUTRO_PC.md'
+$fullInstallGuide = Join-Path $repoRoot 'docs\install\GUIA_INSTALACAO_TOTAL.md'
+$simpleGuide = Join-Path $repoRoot 'docs\install\GUIA_MUITO_SIMPLES.md'
+$billingPlan = Join-Path $repoRoot 'docs\plans\FATURACAO_PLAN.md'
 
 function Resolve-MobileApkPath {
     $candidates = @()

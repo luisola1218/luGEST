@@ -385,6 +385,7 @@ class QuotesBridgeMixin:
                     "material": str(row.get("material", "") or "").strip(),
                     "material_family": str(row.get("material_family", "") or "").strip(),
                     "material_subtype": str(row.get("material_subtype", "") or "").strip(),
+                    "stock_item_kind": str(row.get("stock_item_kind", "") or "").strip(),
                     "material_supplied_by_client": material_supplied_by_client,
                     "material_fornecido_cliente": material_supplied_by_client,
                     "material_cost_included": (False if material_supplied_by_client else bool(row.get("material_cost_included", True))),
@@ -392,6 +393,7 @@ class QuotesBridgeMixin:
                     "operacao": str(row.get("operacao", "") or "").strip(),
                     "produto_codigo": str(row.get("produto_codigo", "") or "").strip(),
                     "produto_unid": str(row.get("produto_unid", "") or "").strip(),
+                    "_product_pending_create": bool(row.get("_product_pending_create", False)),
                     "conjunto_codigo": str(row.get("conjunto_codigo", "") or "").strip(),
                     "conjunto_nome": str(row.get("conjunto_nome", "") or "").strip(),
                     "grupo_uuid": str(row.get("grupo_uuid", "") or "").strip(),
@@ -410,6 +412,23 @@ class QuotesBridgeMixin:
                     "tempos_operacao": dict(snapshot.get("tempos_operacao", {}) or {}),
                     "custos_operacao": dict(snapshot.get("custos_operacao", {}) or {}),
                     "quote_cost_snapshot": dict(snapshot.get("quote_cost_snapshot", {}) or {}),
+                    "stock_material_id": str(row.get("stock_material_id", "") or "").strip(),
+                    "price_per_kg": round(self._parse_float(row.get("price_per_kg", 0), 0), 4),
+                    "price_base_value": round(self._parse_float(row.get("price_base_value", 0), 0), 4),
+                    "price_base_label": str(row.get("price_base_label", "") or "").strip(),
+                    "price_markup_pct": round(self._parse_float(row.get("price_markup_pct", 0), 0), 2),
+                    "stock_metric_value": round(self._parse_float(row.get("stock_metric_value", 0), 0), 4),
+                    "meters_per_unit": round(self._parse_float(row.get("meters_per_unit", 0), 0), 3),
+                    "kg_per_m": round(self._parse_float(row.get("kg_per_m", 0), 0), 4),
+                    "length_mm": round(self._parse_float(row.get("length_mm", 0), 0), 1),
+                    "width_mm": round(self._parse_float(row.get("width_mm", 0), 0), 1),
+                    "thickness_mm": round(self._parse_float(row.get("thickness_mm", 0), 0), 2),
+                    "diameter_mm": round(self._parse_float(row.get("diameter_mm", 0), 0), 1),
+                    "profile_section": str(row.get("profile_section", "") or "").strip(),
+                    "profile_size": str(row.get("profile_size", "") or "").strip(),
+                    "tube_section": str(row.get("tube_section", "") or "").strip(),
+                    "quality": str(row.get("quality", "") or "").strip(),
+                    "calc_mode": str(row.get("calc_mode", "") or "").strip(),
                 }
             )
         return {
@@ -477,8 +496,18 @@ class QuotesBridgeMixin:
         quantity = round(self._parse_float(payload.get("qtd", 0), 0), 2)
         if quantity <= 0:
             raise ValueError("Quantidade invalida no conjunto.")
+        stock_item_kind = str(payload.get("stock_item_kind", "") or "").strip()
+        if item_type == self.desktop_main.ORC_LINE_TYPE_PIECE and (
+            stock_item_kind == "raw_material" or str(payload.get("stock_material_id", "") or "").strip()
+        ):
+            stock_item_kind = "raw_material"
+        elif item_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT:
+            stock_item_kind = "product"
+        else:
+            stock_item_kind = ""
         item = {
             "tipo_item": item_type,
+            "stock_item_kind": stock_item_kind,
             "ref_externa": str(payload.get("ref_externa", "") or "").strip(),
             "descricao": str(payload.get("descricao", "") or "").strip(),
             "material": str(payload.get("material", "") or "").strip(),
@@ -526,11 +555,12 @@ class QuotesBridgeMixin:
             item["produto_unid"] = ""
         elif item_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT:
             product = self._product_lookup(item["produto_codigo"])
-            if product is None:
-                raise ValueError("Seleciona um produto de stock valido.")
-            item["descricao"] = item["descricao"] or str(product.get("descricao", "") or "").strip()
-            item["produto_unid"] = item["produto_unid"] or str(product.get("unid", "") or "UN").strip()
-            if item["preco_unit"] <= 0:
+            if product is None and not item["descricao"]:
+                raise ValueError("Descricao obrigatoria no produto.")
+            item["_product_pending_create"] = product is None
+            item["descricao"] = item["descricao"] or str((product or {}).get("descricao", "") or "").strip()
+            item["produto_unid"] = item["produto_unid"] or str((product or {}).get("unid", "") or "UN").strip()
+            if product is not None and item["preco_unit"] <= 0:
                 item["preco_unit"] = round(self._parse_float(self.desktop_main.produto_preco_unitario(product), 0), 4)
             if not item["ref_externa"]:
                 item["ref_externa"] = item["produto_codigo"]
@@ -655,6 +685,7 @@ class QuotesBridgeMixin:
         for item in list(detail.get("itens", []) or []):
             line = {
                 "tipo_item": self.desktop_main.normalize_orc_line_type(item.get("tipo_item")),
+                "stock_item_kind": str(item.get("stock_item_kind", "") or "").strip(),
                 "ref_interna": "",
                 "ref_externa": str(item.get("ref_externa", "") or "").strip(),
                 "descricao": str(item.get("descricao", "") or "").strip(),
@@ -674,6 +705,21 @@ class QuotesBridgeMixin:
                 "preco_unit": round(self._parse_float(item.get("preco_unit", 0), 0), 4),
                 "desenho": str(item.get("desenho", "") or "").strip(),
                 "stock_material_id": str(item.get("stock_material_id", "") or "").strip(),
+                "_product_pending_create": bool(item.get("_product_pending_create", False)),
+                "price_base_value": round(self._parse_float(item.get("price_base_value", 0), 0), 4),
+                "price_base_label": str(item.get("price_base_label", "") or "").strip(),
+                "stock_metric_value": round(self._parse_float(item.get("stock_metric_value", 0), 0), 4),
+                "meters_per_unit": round(self._parse_float(item.get("meters_per_unit", 0), 0), 3),
+                "kg_per_m": round(self._parse_float(item.get("kg_per_m", 0), 0), 4),
+                "length_mm": round(self._parse_float(item.get("length_mm", 0), 0), 1),
+                "width_mm": round(self._parse_float(item.get("width_mm", 0), 0), 1),
+                "thickness_mm": round(self._parse_float(item.get("thickness_mm", 0), 0), 2),
+                "diameter_mm": round(self._parse_float(item.get("diameter_mm", 0), 0), 1),
+                "profile_section": str(item.get("profile_section", "") or "").strip(),
+                "profile_size": str(item.get("profile_size", "") or "").strip(),
+                "tube_section": str(item.get("tube_section", "") or "").strip(),
+                "quality": str(item.get("quality", "") or "").strip(),
+                "calc_mode": str(item.get("calc_mode", "") or "").strip(),
             }
             if self.desktop_main.orc_line_is_product(line) and not line["ref_externa"]:
                 line["ref_externa"] = line["produto_codigo"]
@@ -796,6 +842,7 @@ class QuotesBridgeMixin:
         for item in list(detail.get("itens", []) or []):
             line = {
                 "tipo_item": self.desktop_main.normalize_orc_line_type(item.get("tipo_item")),
+                "stock_item_kind": str(item.get("stock_item_kind", "") or "").strip(),
                 "ref_interna": "",
                 "ref_externa": str(item.get("ref_externa", "") or "").strip(),
                 "descricao": str(item.get("descricao", "") or "").strip(),
@@ -812,6 +859,22 @@ class QuotesBridgeMixin:
                 "qtd": round(self._parse_float(item.get("qtd", 0), 0) * multiplier, 2),
                 "preco_unit": round(self._parse_float(item.get("preco_unit", 0), 0), 4),
                 "desenho": str(item.get("desenho", "") or "").strip(),
+                "stock_material_id": str(item.get("stock_material_id", "") or "").strip(),
+                "_product_pending_create": bool(item.get("_product_pending_create", False)),
+                "price_base_value": round(self._parse_float(item.get("price_base_value", 0), 0), 4),
+                "price_base_label": str(item.get("price_base_label", "") or "").strip(),
+                "stock_metric_value": round(self._parse_float(item.get("stock_metric_value", 0), 0), 4),
+                "meters_per_unit": round(self._parse_float(item.get("meters_per_unit", 0), 0), 3),
+                "kg_per_m": round(self._parse_float(item.get("kg_per_m", 0), 0), 4),
+                "length_mm": round(self._parse_float(item.get("length_mm", 0), 0), 1),
+                "width_mm": round(self._parse_float(item.get("width_mm", 0), 0), 1),
+                "thickness_mm": round(self._parse_float(item.get("thickness_mm", 0), 0), 2),
+                "diameter_mm": round(self._parse_float(item.get("diameter_mm", 0), 0), 1),
+                "profile_section": str(item.get("profile_section", "") or "").strip(),
+                "profile_size": str(item.get("profile_size", "") or "").strip(),
+                "tube_section": str(item.get("tube_section", "") or "").strip(),
+                "quality": str(item.get("quality", "") or "").strip(),
+                "calc_mode": str(item.get("calc_mode", "") or "").strip(),
             }
             if self.desktop_main.orc_line_is_product(line) and not line["ref_externa"]:
                 line["ref_externa"] = line["produto_codigo"]
@@ -820,8 +883,18 @@ class QuotesBridgeMixin:
 
     def _normalize_orc_line(self, payload: dict[str, Any]) -> dict[str, Any]:
         line_type = self.desktop_main.normalize_orc_line_type(payload.get("tipo_item"))
+        stock_item_kind = str(payload.get("stock_item_kind", "") or "").strip()
+        if line_type == self.desktop_main.ORC_LINE_TYPE_PIECE and (
+            stock_item_kind == "raw_material" or str(payload.get("stock_material_id", "") or "").strip()
+        ):
+            stock_item_kind = "raw_material"
+        elif line_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT:
+            stock_item_kind = "product"
+        else:
+            stock_item_kind = ""
         line = {
             "tipo_item": line_type,
+            "stock_item_kind": stock_item_kind,
             "ref_interna": str(payload.get("ref_interna", "") or "").strip(),
             "ref_externa": str(payload.get("ref_externa", "") or "").strip(),
             "descricao": str(payload.get("descricao", "") or "").strip(),
@@ -853,6 +926,15 @@ class QuotesBridgeMixin:
             "stock_metric_value": round(self._parse_float(payload.get("stock_metric_value", 0), 0), 4),
             "price_base_label": str(payload.get("price_base_label", "") or "").strip(),
             "kg_per_m": round(self._parse_float(payload.get("kg_per_m", 0), 0), 4),
+            "meters_per_unit": round(self._parse_float(payload.get("meters_per_unit", 0), 0), 3),
+            "length_mm": round(self._parse_float(payload.get("length_mm", 0), 0), 1),
+            "width_mm": round(self._parse_float(payload.get("width_mm", 0), 0), 1),
+            "thickness_mm": round(self._parse_float(payload.get("thickness_mm", 0), 0), 2),
+            "diameter_mm": round(self._parse_float(payload.get("diameter_mm", 0), 0), 1),
+            "profile_section": str(payload.get("profile_section", "") or "").strip(),
+            "profile_size": str(payload.get("profile_size", "") or "").strip(),
+            "tube_section": str(payload.get("tube_section", "") or "").strip(),
+            "quality": str(payload.get("quality", "") or "").strip(),
             "stock_material_id": str(payload.get("stock_material_id", "") or "").strip(),
             "laser_base_active": bool(payload.get("laser_base_active", False)),
             "laser_base_tempo_unit": round(self._parse_float(payload.get("laser_base_tempo_unit", payload.get("tempo_peca_min", payload.get("tempo_pecas_min", 0))), 0), 4),
@@ -873,13 +955,17 @@ class QuotesBridgeMixin:
                 line["material_family"] = line["material"]
             line["produto_codigo"] = ""
             line["produto_unid"] = ""
+            if stock_item_kind == "raw_material":
+                line["ref_interna"] = ""
+                line["desenho"] = ""
         elif line_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT:
             product = self._product_lookup(line["produto_codigo"])
-            if product is None:
-                raise ValueError("Seleciona um produto de stock valido.")
-            line["descricao"] = line["descricao"] or str(product.get("descricao", "") or "").strip()
-            line["produto_unid"] = line["produto_unid"] or str(product.get("unid", "") or "UN").strip()
-            if line["preco_unit"] <= 0:
+            if product is None and not line["descricao"]:
+                raise ValueError("Descricao obrigatoria no produto.")
+            line["_product_pending_create"] = product is None
+            line["descricao"] = line["descricao"] or str((product or {}).get("descricao", "") or "").strip()
+            line["produto_unid"] = line["produto_unid"] or str((product or {}).get("unid", "") or "UN").strip()
+            if product is not None and line["preco_unit"] <= 0:
                 line["preco_unit"] = round(self._parse_float(self.desktop_main.produto_preco_unitario(product), 0), 4)
             if not line["ref_externa"]:
                 line["ref_externa"] = line["produto_codigo"]
@@ -1005,6 +1091,9 @@ class QuotesBridgeMixin:
             reserved_refs = set(taken_refs)
             for line in lines:
                 if not self.desktop_main.orc_line_is_piece(line):
+                    line["ref_interna"] = ""
+                    continue
+                if self._quote_line_is_raw_material(line):
                     line["ref_interna"] = ""
                     continue
                 ref_externa = str(line.get("ref_externa", "") or "").strip()
@@ -1557,6 +1646,8 @@ class QuotesBridgeMixin:
         row = dict(line or {})
         if self.desktop_main.normalize_orc_line_type(row.get("tipo_item")) != self.desktop_main.ORC_LINE_TYPE_PIECE:
             return False
+        if self._quote_line_is_raw_material(row):
+            return False
         drawing_path = str(row.get("desenho", "") or "").strip()
         ops = [
             str(self.desktop_main.normalize_operacao_nome(op) or op or "").strip()
@@ -1573,6 +1664,19 @@ class QuotesBridgeMixin:
         )
         has_work = bool(ops or detail_ready or time_per_piece > 0)
         return bool(has_work and (drawing_path or (material and thickness)))
+
+    def _quote_line_is_raw_material(self, line: dict[str, Any] | None = None) -> bool:
+        row = dict(line or {})
+        if self.desktop_main.normalize_orc_line_type(row.get("tipo_item")) != self.desktop_main.ORC_LINE_TYPE_PIECE:
+            return False
+        if str(row.get("stock_item_kind", "") or "").strip() == "raw_material":
+            return True
+        if str(row.get("stock_material_id", "") or "").strip():
+            return True
+        subtype = self.desktop_main.norm_text(str(row.get("material_subtype", "") or row.get("calc_mode", "") or "").strip())
+        if subtype == "stockmp":
+            return True
+        return False
 
     def _quote_line_production_route(self, line: dict[str, Any] | None = None) -> str:
         row = dict(line or {})
@@ -1698,9 +1802,16 @@ class QuotesBridgeMixin:
                     {
                         "linha_ordem": len(montagem_items) + 1,
                         "tipo_item": line_type,
+                        "stock_item_kind": str(line.get("stock_item_kind", "") or "").strip(),
                         "descricao": str(line.get("descricao", "") or "").strip(),
+                        "material": str(line.get("material", "") or "").strip(),
+                        "material_family": str(line.get("material_family", "") or "").strip(),
+                        "material_subtype": str(line.get("material_subtype", "") or "").strip(),
+                        "espessura": str(line.get("espessura", "") or "").strip(),
+                        "stock_material_id": str(line.get("stock_material_id", "") or "").strip(),
                         "produto_codigo": str(line.get("produto_codigo", "") or "").strip(),
                         "produto_unid": str(line.get("produto_unid", "") or "").strip(),
+                        "_product_pending_create": bool(line.get("_product_pending_create", False)),
                         "qtd_planeada": round(qtd_line, 2),
                         "qtd_consumida": 0.0,
                         "preco_unit": round(self._parse_float(line.get("preco_unit", 0), 0), 4),
@@ -1818,6 +1929,173 @@ class QuotesBridgeMixin:
             "orcamento": self.orc_detail(numero),
             "encomenda": self.order_detail(enc["numero"]),
         }
+
+    def _quote_purchase_need_key(self, kind: str, line: dict[str, Any]) -> str:
+        if kind == "product":
+            code = str(line.get("produto_codigo", "") or "").strip()
+            if code:
+                return f"product:{code}"
+            return "product:new:" + self.desktop_main.norm_text(str(line.get("descricao", "") or "").strip())
+        ref = str(line.get("stock_material_id", "") or "").strip()
+        if ref:
+            return f"material:{ref}"
+        parts = [
+            str(line.get("material", "") or "").strip(),
+            str(line.get("espessura", "") or "").strip(),
+            str(line.get("material_subtype", "") or line.get("calc_mode", "") or "").strip(),
+            str(line.get("descricao", "") or "").strip(),
+        ]
+        return "material:new:" + "|".join(self.desktop_main.norm_text(part) for part in parts if part)
+
+    def orc_purchase_needs(self, numero: str = "", lines: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+        data = self.ensure_data()
+        numero_txt = str(numero or "").strip()
+        quote_lines = list(lines or [])
+        if not quote_lines:
+            orc = next((row for row in data.get("orcamentos", []) if str(row.get("numero", "") or "").strip() == numero_txt), None)
+            if orc is None:
+                raise ValueError("Orcamento nao encontrado.")
+            quote_lines = list(orc.get("linhas", []) or [])
+        product_map = {
+            str(prod.get("codigo", "") or "").strip(): prod
+            for prod in list(data.get("produtos", []) or [])
+            if str(prod.get("codigo", "") or "").strip()
+        }
+        grouped: dict[str, dict[str, Any]] = {}
+        for raw in quote_lines:
+            line = dict(raw or {})
+            line_type = self.desktop_main.normalize_orc_line_type(line.get("tipo_item"))
+            if line_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT:
+                qty = max(0.0, self._parse_float(line.get("qtd", 0), 0))
+                if qty <= 1e-9:
+                    continue
+                code = str(line.get("produto_codigo", "") or "").strip()
+                product = product_map.get(code)
+                available = max(0.0, self._parse_float((product or {}).get("qty", 0), 0)) if product is not None else 0.0
+                missing = qty if product is None else max(0.0, qty - available)
+                if missing <= 1e-9:
+                    continue
+                key = self._quote_purchase_need_key("product", line)
+                entry = grouped.setdefault(
+                    key,
+                    {
+                        "kind": "product",
+                        "ref": code,
+                        "descricao": str(line.get("descricao", "") or (product or {}).get("descricao", "") or "").strip(),
+                        "unid": str(line.get("produto_unid", "") or (product or {}).get("unid", "") or "UN").strip() or "UN",
+                        "qtd": 0.0,
+                        "qtd_disponivel": available,
+                        "preco": round(self._parse_float((product or {}).get("p_compra", line.get("preco_unit", 0)), 0), 4),
+                        "_product_pending_create": product is None or bool(line.get("_product_pending_create", False)),
+                    },
+                )
+                entry["qtd"] = round(self._parse_float(entry.get("qtd", 0), 0) + missing, 2)
+                continue
+            if line_type != self.desktop_main.ORC_LINE_TYPE_PIECE or not self._quote_line_is_raw_material(line):
+                continue
+            qty = max(0.0, self._parse_float(line.get("qtd", 0), 0))
+            if qty <= 1e-9:
+                continue
+            stock_id = str(line.get("stock_material_id", "") or "").strip()
+            material_record = self.material_by_id(stock_id) if stock_id else None
+            available = 0.0
+            if isinstance(material_record, dict):
+                available = max(
+                    0.0,
+                    self._parse_float(material_record.get("quantidade", 0), 0)
+                    - self._parse_float(material_record.get("reservado", 0), 0),
+                )
+            missing = qty if material_record is None else max(0.0, qty - available)
+            if missing <= 1e-9:
+                continue
+            formato = str(line.get("material_subtype", "") or line.get("calc_mode", "") or (material_record or {}).get("formato", "") or "Chapa").strip()
+            if formato == "Stock MP":
+                formato = str((material_record or {}).get("formato", "") or self.desktop_main.detect_materia_formato(material_record or {}) or "Chapa").strip()
+            price = self._parse_float(line.get("price_base_value", 0), 0)
+            if price <= 0 and isinstance(material_record, dict):
+                price = self._parse_float(material_record.get("p_compra", material_record.get("preco_unid", 0)), 0)
+            key = self._quote_purchase_need_key("material", line)
+            entry = grouped.setdefault(
+                key,
+                {
+                    "kind": "material",
+                    "ref": stock_id,
+                    "descricao": str(line.get("descricao", "") or "").strip(),
+                    "unid": "UN",
+                    "qtd": 0.0,
+                    "qtd_disponivel": available,
+                    "preco": round(price, 4),
+                    "material": str(line.get("material", "") or (material_record or {}).get("material", "") or "").strip(),
+                    "espessura": str(line.get("espessura", "") or (material_record or {}).get("espessura", "") or "").strip(),
+                    "formato": formato or "Chapa",
+                    "comprimento": round(self._parse_float(line.get("length_mm", (material_record or {}).get("comprimento", 0)), 0), 3),
+                    "largura": round(self._parse_float(line.get("width_mm", (material_record or {}).get("largura", 0)), 0), 3),
+                    "diametro": round(self._parse_float(line.get("diameter_mm", (material_record or {}).get("diametro", 0)), 0), 3),
+                    "metros": round(self._parse_float(line.get("meters_per_unit", (material_record or {}).get("metros", 0)), 0), 4),
+                    "kg_m": round(self._parse_float(line.get("kg_per_m", (material_record or {}).get("kg_m", 0)), 0), 4),
+                    "peso_unid": round(self._parse_float(line.get("stock_metric_value", (material_record or {}).get("peso_unid", 0)), 0), 4),
+                    "_material_pending_create": material_record is None,
+                    "_material_manual": material_record is None,
+                },
+            )
+            entry["qtd"] = round(self._parse_float(entry.get("qtd", 0), 0) + missing, 2)
+        rows = [row for row in grouped.values() if self._parse_float(row.get("qtd", 0), 0) > 0]
+        rows.sort(key=lambda row: (str(row.get("kind", "")), str(row.get("ref", "") or row.get("descricao", ""))))
+        return rows
+
+    def orc_create_purchase_quote(self, numero: str, lines: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        numero_txt = str(numero or "").strip()
+        needs = self.orc_purchase_needs(numero_txt, lines)
+        if not needs:
+            raise ValueError("Nao existem necessidades de compra nas linhas do orcamento.")
+        note = self.ne_save(
+            {
+                "fornecedor": "",
+                "fornecedor_id": "",
+                "contacto": "",
+                "obs": f"Pedido de cotacao gerado a partir do orcamento {numero_txt}".strip(),
+                "lines": [
+                    (
+                        {
+                            "ref": str(need.get("ref", "") or "").strip(),
+                            "descricao": str(need.get("descricao", "") or "").strip() or str(need.get("material", "") or "").strip(),
+                            "origem": "Materia-prima",
+                            "qtd": round(self._parse_float(need.get("qtd", 0), 0), 2),
+                            "unid": str(need.get("unid", "") or "UN").strip() or "UN",
+                            "preco": round(self._parse_float(need.get("preco", 0), 0), 4),
+                            "desconto": 0.0,
+                            "iva": 23.0,
+                            "material": str(need.get("material", "") or "").strip(),
+                            "espessura": str(need.get("espessura", "") or "").strip(),
+                            "formato": str(need.get("formato", "") or "Chapa").strip() or "Chapa",
+                            "comprimento": self._parse_float(need.get("comprimento", 0), 0),
+                            "largura": self._parse_float(need.get("largura", 0), 0),
+                            "diametro": self._parse_float(need.get("diametro", 0), 0),
+                            "metros": self._parse_float(need.get("metros", 0), 0),
+                            "kg_m": self._parse_float(need.get("kg_m", 0), 0),
+                            "peso_unid": self._parse_float(need.get("peso_unid", 0), 0),
+                            "_material_pending_create": bool(need.get("_material_pending_create", False)),
+                            "_material_manual": bool(need.get("_material_manual", False)),
+                        }
+                        if str(need.get("kind", "") or "") == "material"
+                        else {
+                            "ref": str(need.get("ref", "") or "").strip(),
+                            "descricao": str(need.get("descricao", "") or "").strip(),
+                            "origem": "Produto",
+                            "qtd": round(self._parse_float(need.get("qtd", 0), 0), 2),
+                            "unid": str(need.get("unid", "") or "UN").strip() or "UN",
+                            "preco": round(self._parse_float(need.get("preco", 0), 0), 4),
+                            "desconto": 0.0,
+                            "iva": 23.0,
+                            "_product_pending_create": bool(need.get("_product_pending_create", False)),
+                        }
+                    )
+                    for need in needs
+                ],
+            }
+        )
+        note_number = str(note.get("numero", "") or "").strip()
+        return {"numero": note_number, "line_count": len(list(note.get("linhas", []) or [])), "needs": needs, "detail": self.ne_detail(note_number)}
 
     def orc_suggest_notes(self, payload: dict[str, Any]) -> str:
         helper = self._orc_render_helper()

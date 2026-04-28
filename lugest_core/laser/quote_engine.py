@@ -2071,6 +2071,12 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
     pricing_material = dict(commercial_material or {})
     pricing_material.update({key: value for key, value in dict(commercial_subtype_override or {}).items() if value is not None})
     profile_operations = dict(commercial_profile.get("profile_operations", {}) or {})
+    include_profile_event_rates = str(
+        payload.get("include_profile_event_rates", commercial_profile.get("include_profile_event_rates", "0")) or "0"
+    ).strip().lower() in {"1", "true", "yes", "sim", "on"}
+    include_profile_setup = str(
+        payload.get("include_profile_setup", commercial_profile.get("include_profile_setup", "0")) or "0"
+    ).strip().lower() in {"1", "true", "yes", "sim", "on"}
     density_kg_m3 = max(
         1.0,
         _as_float(
@@ -2099,7 +2105,7 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
     series_margin_delta_pct = _as_float(series_tier.get("margin_delta_pct", 0.0), 0.0)
     series_setup_multiplier = max(0.05, _as_float(series_tier.get("setup_multiplier", 1.0), 1.0))
     margin_pct = max(0.0, base_margin_pct + series_margin_delta_pct)
-    setup_time_min = max(0.0, base_setup_time_min * series_setup_multiplier)
+    setup_time_min = max(0.0, base_setup_time_min * series_setup_multiplier) if include_profile_setup else 0.0
     effective_cut_speed_m_min = _effective_speed_m_min(cut_row, motion_cfg)
     rapid_speed_mm_s = max(1.0, _as_float(payload.get("rapid_speed_mm_s", motion_cfg.get("rapid_speed_mm_s", 200.0)), 200.0))
     lead_in_mm = max(0.0, _as_float(payload.get("lead_in_mm", motion_cfg.get("lead_in_mm", 2.0)), 2.0))
@@ -2116,7 +2122,7 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
     first_gas_delay_sec = max(0.0, _as_float(payload.get("first_gas_delay_ms", motion_cfg.get("first_gas_delay_ms", 200.0)), 200.0) / 1000.0)
     gas_delay_sec = max(0.0, _as_float(payload.get("gas_delay_ms", motion_cfg.get("gas_delay_ms", 0.0)), 0.0) / 1000.0)
     motion_overhead_factor = 1.0 + (max(0.0, _as_float(payload.get("motion_overhead_pct", motion_cfg.get("motion_overhead_pct", 4.0)), 4.0)) / 100.0)
-    setup_time_sec_share = _safe_div(setup_time_min * 60.0, quantity, 0.0)
+    setup_time_sec_share = _safe_div(setup_time_min * 60.0, quantity, 0.0) if include_profile_setup else 0.0
     pierce_count = total_cut_count
     lead_time_sec = pierce_count * _safe_div(lead_in_mm + lead_out_mm, lead_move_speed_mm_s, 0.0)
     pierce_time_sec = pierce_count * pierce_sec_each
@@ -2166,24 +2172,26 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
     material_cost_unit = gross_mass_kg * material_price_per_kg
     scrap_credit_unit = scrap_mass_kg * scrap_credit_per_kg if gross_mass_kg > 0.0 else 0.0
     material_net_cost_unit = max(0.0, material_cost_unit - scrap_credit_unit)
-    profile_operation_cost_unit = (
-        (outer_cut_count * outer_cut_rate)
-        + (hole_count * hole_cut_rate)
-        + (slot_count * slot_cut_rate)
-    )
+    profile_operation_cost_unit = 0.0
+    if include_profile_event_rates:
+        profile_operation_cost_unit = (
+            (outer_cut_count * outer_cut_rate)
+            + (hole_count * hole_cut_rate)
+            + (slot_count * slot_cut_rate)
+        )
     cut_cost_meter_unit = cut_length_m * cut_rate_per_m
     pierce_cost_unit = pierce_count * pierce_rate
     profile_process_cost_unit = cut_cost_meter_unit + pierce_cost_unit + profile_operation_cost_unit
     machine_runtime_cost_unit = (machine_time_total_unit / 3600.0) * machine_hour_eur
     if cost_mode == "machine_time":
         effective_cutting_cost_unit = machine_runtime_cost_unit + pierce_cost_unit + profile_operation_cost_unit
-        effective_cutting_label = "Tempo maquina + eventos perfil"
+        effective_cutting_label = "Tempo maquina + penetracoes"
     elif cost_mode == "per_meter":
         effective_cutting_cost_unit = profile_process_cost_unit + machine_runtime_cost_unit
-        effective_cutting_label = "Metros + tempo maquina + eventos STEP/IGS"
+        effective_cutting_label = "Metros + tempo maquina + penetracoes"
     else:
         effective_cutting_cost_unit = profile_process_cost_unit + machine_runtime_cost_unit
-        effective_cutting_label = "Hibrido perfil (processo + tempo por espessura)"
+        effective_cutting_label = "Perfil por tabela laser (metros + tempo + penetracoes)"
     subtotal_cost_unit = material_net_cost_unit + effective_cutting_cost_unit + handling_eur
     unit_price_before_min = subtotal_cost_unit * (1.0 + (margin_pct / 100.0))
     final_total = unit_price_before_min * quantity
@@ -2255,6 +2263,8 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
             "material_cost_included": material_cost_included,
             "material_price_source": material_price_source,
             "include_external_profile_cuts": include_external_cuts,
+            "include_profile_event_rates": include_profile_event_rates,
+            "include_profile_setup": include_profile_setup,
         },
         "metrics": {
             "cut_length_m": round(cut_length_m, 4),
@@ -2298,12 +2308,12 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
             "profile_operation_cost_unit": _round_money(profile_operation_cost_unit, 4),
             "cut_cost_meter_unit": _round_money(cut_cost_meter_unit, 4),
             "pierce_cost_unit": _round_money(pierce_cost_unit, 4),
+            "pierce_rate_unit": _round_money(pierce_rate, 4),
             "profile_process_cost_unit": _round_money(profile_process_cost_unit, 4),
             "machine_runtime_cost_unit": _round_money(machine_runtime_cost_unit, 4),
             "effective_cutting_cost_unit": _round_money(effective_cutting_cost_unit, 4),
             "mark_cost_unit": 0.0,
             "defilm_cost_unit": 0.0,
-            "pierce_cost_unit": 0.0,
             "handling_unit": _round_money(handling_eur, 4),
             "subtotal_cost_unit": _round_money(subtotal_cost_unit, 4),
             "unit_price_before_min": _round_money(unit_price_before_min, 4),

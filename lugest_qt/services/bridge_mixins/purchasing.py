@@ -347,6 +347,7 @@ class PurchasingBridgeMixin:
                     "price_basis": str(line.get("price_basis", (product or {}).get("price_basis", "")) or "").strip(),
                     "_material_manual": bool(line.get("_material_manual")),
                     "_material_pending_create": bool(line.get("_material_pending_create")),
+                    "_product_pending_create": bool(line.get("_product_pending_create")),
                 }
             )
         return {
@@ -487,6 +488,61 @@ class PurchasingBridgeMixin:
         self.desktop_main.log_stock(data, "CRIAR_NE", f"{record.get('id', '')} via {note_number}")
         return record
 
+    def _create_product_placeholder_from_note_line(
+        self,
+        line: dict[str, Any],
+        note_number: str,
+        *,
+        quantity: float = 0.0,
+    ) -> dict[str, Any]:
+        data = self.ensure_data()
+        ref = str(line.get("ref", "") or "").strip() or str(self.desktop_main.next_produto_numero(data))
+        descricao = str(line.get("descricao", "") or "").strip()
+        if not descricao:
+            raise ValueError("Descricao do produto em falta.")
+        product = {
+            "codigo": ref,
+            "descricao": descricao,
+            "categoria": str(line.get("categoria", "") or "Comercial").strip() or "Comercial",
+            "subcat": str(line.get("subcat", "") or "").strip(),
+            "tipo": str(line.get("tipo", "") or "Stock").strip() or "Stock",
+            "dimensoes": str(line.get("dimensoes", "") or "").strip(),
+            "comprimento": self._parse_float(line.get("comprimento", 0), 0),
+            "largura": self._parse_float(line.get("largura", 0), 0),
+            "espessura": self._parse_float(line.get("espessura", 0), 0),
+            "metros_unidade": self._parse_float(line.get("metros_unidade", line.get("metros", 0)), 0),
+            "metros": self._parse_float(line.get("metros_unidade", line.get("metros", 0)), 0),
+            "peso_unid": self._parse_float(line.get("peso_unid", 0), 0),
+            "fabricante": str(line.get("fabricante", "") or "").strip(),
+            "modelo": str(line.get("modelo", "") or "").strip(),
+            "unid": str(line.get("unid", "") or "UN").strip() or "UN",
+            "qty": max(0.0, self._parse_float(quantity, 0)),
+            "alerta": 0.0,
+            "p_compra": self._parse_float(line.get("preco", line.get("p_compra", 0)), 0),
+            "pvp1": 0.0,
+            "pvp2": 0.0,
+            "obs": f"Criado automaticamente pela NE {note_number}",
+            "atualizado_em": self.desktop_main.now_iso(),
+        }
+        product["preco_unid"] = round(self._parse_float(self.desktop_main.produto_preco_unitario(product), 0), 4)
+        data.setdefault("produtos", []).append(product)
+        self.desktop_main.ensure_produto_seq(data, ref)
+        if product["qty"] > 0:
+            self.desktop_main.add_produto_mov(
+                data,
+                tipo="CRIAR_NE",
+                operador=str((self.user or {}).get("username", "") or "Sistema"),
+                codigo=ref,
+                descricao=descricao,
+                qtd=product["qty"],
+                antes=0.0,
+                depois=product["qty"],
+                obs=f"NE {note_number}",
+                origem="Notas Encomenda",
+                ref_doc=note_number,
+            )
+        return product
+
     def _ne_normalize_line(self, payload: dict[str, Any]) -> dict[str, Any]:
         origem = str(payload.get("origem", "Produto") or "Produto").strip() or "Produto"
         ref = str(payload.get("ref", "") or "").strip()
@@ -593,6 +649,7 @@ class PurchasingBridgeMixin:
                         0,
                     ),
                     "price_basis": str(payload.get("price_basis", (product or {}).get("price_basis", "")) or "").strip(),
+                    "_product_pending_create": bool(payload.get("_product_pending_create", product is None)),
                 }
             )
         return line
@@ -1078,7 +1135,16 @@ class PurchasingBridgeMixin:
                     line["_material_manual"] = False
             else:
                 product = next((row for row in list(self.ensure_data().get("produtos", []) or []) if str(row.get("codigo", "") or "").strip() == ref), None)
-                if product is not None:
+                if product is None:
+                    product = self._create_product_placeholder_from_note_line(
+                        working_line,
+                        str(note.get("numero", "") or "").strip(),
+                        quantity=qty_apply,
+                    )
+                    ref = str(product.get("codigo", "") or "").strip()
+                    line["ref"] = ref
+                    line["_product_pending_create"] = False
+                else:
                     before = self._parse_float(product.get("qty", 0), 0)
                     product["qty"] = before + qty_apply
                     product["atualizado_em"] = registo_ts
@@ -1095,6 +1161,14 @@ class PurchasingBridgeMixin:
                         origem="Notas Encomenda",
                         ref_doc=str(note.get("numero", "") or "").strip(),
                     )
+                if product is not None:
+                    line["descricao"] = str(product.get("descricao", "") or "").strip()
+                    line["unid"] = str(product.get("unid", line.get("unid", "UN")) or "UN").strip() or "UN"
+                    line["categoria"] = str(product.get("categoria", "") or "").strip()
+                    line["tipo"] = str(product.get("tipo", "") or "").strip()
+                    line["dimensoes"] = str(product.get("dimensoes", "") or "").strip()
+                    line["peso_unid"] = self._parse_float(product.get("peso_unid", 0), 0)
+                    line["metros_unidade"] = self._parse_float(product.get("metros_unidade", product.get("metros", 0)), 0)
             line["_stock_in"] = True
             any_delivery = True
             total_qtd += qty_apply

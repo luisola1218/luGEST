@@ -17,10 +17,16 @@ build_qt_stable/
 dist_qt_stable/
 previews/
 generated/
+backups/
 
 # Logs and runtime files
 *.log
 *.pid
+lugest_runtime_state.json
+lugest_supplier_seq.json
+lugest_transport_seq.json
+lugest_trial.json
+*.local.json
 
 # Mobile / Flutter / Android
 impulse_mobile_app/.dart_tool/

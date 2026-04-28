@@ -14,6 +14,10 @@ from types import SimpleNamespace
 from typing import Any
 
 from lugest_infra.storage import files as lugest_storage
+from lugest_infra.pdf.text import clip_text as _pdf_clip_text
+from lugest_infra.pdf.text import fit_font_size as _pdf_fit_font_size
+from lugest_infra.pdf.text import mix_hex as _pdf_mix_hex
+from lugest_infra.pdf.text import wrap_text as _pdf_wrap_text
 
 from lugest_core.laser.quote_engine import estimate_laser_quote, estimate_profile_laser_quote, merge_laser_quote_settings
 from .bridge_mixins import (
@@ -221,84 +225,6 @@ def _detect_profile_catalog_from_text(value: Any) -> tuple[str, str]:
     if not match:
         return "", ""
     return str(match.group(1) or "").strip(), str(match.group(2) or "").strip()
-
-
-def _pdf_hex_to_rgb(value: str) -> tuple[int, int, int]:
-    text = str(value or "").strip().lstrip("#")
-    if len(text) == 3:
-        text = "".join(ch * 2 for ch in text)
-    if len(text) != 6:
-        text = "1F3C88"
-    try:
-        return tuple(int(text[index : index + 2], 16) for index in (0, 2, 4))
-    except Exception:
-        return (31, 60, 136)
-
-
-def _pdf_rgb_to_hex(rgb: tuple[int, int, int]) -> str:
-    r, g, b = [max(0, min(255, int(value))) for value in tuple(rgb or (31, 60, 136))]
-    return f"#{r:02X}{g:02X}{b:02X}"
-
-
-def _pdf_mix_hex(base_hex: str, target_hex: str, ratio: float) -> str:
-    ratio = max(0.0, min(1.0, float(ratio)))
-    base_rgb = _pdf_hex_to_rgb(base_hex)
-    target_rgb = _pdf_hex_to_rgb(target_hex)
-    return _pdf_rgb_to_hex(
-        tuple(
-            round((base_channel * (1.0 - ratio)) + (target_channel * ratio))
-            for base_channel, target_channel in zip(base_rgb, target_rgb)
-        )
-    )
-
-
-def _pdf_clip_text(value: Any, max_width: float, font_name: str, font_size: float) -> str:
-    from reportlab.pdfbase import pdfmetrics
-
-    text = "" if value is None else str(value)
-    if pdfmetrics.stringWidth(text, font_name, font_size) <= max_width:
-        return text
-    ellipsis = "..."
-    while text and pdfmetrics.stringWidth(text + ellipsis, font_name, font_size) > max_width:
-        text = text[:-1]
-    return f"{text}{ellipsis}" if text else ""
-
-
-def _pdf_wrap_text(value: Any, font_name: str, font_size: float, max_width: float, max_lines: int | None = None) -> list[str]:
-    from reportlab.pdfbase import pdfmetrics
-
-    text = str(value or "").replace("\r", " ").replace("\n", " ").strip()
-    if not text:
-        return []
-    words = text.split()
-    lines: list[str] = []
-    current = ""
-    for word in words:
-        candidate = f"{current} {word}".strip() if current else word
-        if pdfmetrics.stringWidth(candidate, font_name, font_size) <= max_width:
-            current = candidate
-            continue
-        if current:
-            lines.append(current)
-        current = word
-        if max_lines and len(lines) >= max_lines:
-            break
-    if current and (not max_lines or len(lines) < max_lines):
-        lines.append(current)
-    if max_lines and len(lines) > max_lines:
-        lines = lines[:max_lines]
-    return lines
-
-
-def _pdf_fit_font_size(text: Any, font_name: str, max_width: float, preferred_size: float, min_size: float) -> float:
-    from reportlab.pdfbase import pdfmetrics
-
-    size = float(preferred_size)
-    raw = str(text or "")
-    max_width = max(12.0, float(max_width))
-    while size > float(min_size) and pdfmetrics.stringWidth(raw, font_name, size) > max_width:
-        size -= 0.3
-    return max(float(min_size), round(size, 2))
 
 
 class _ValueHolder:
@@ -8964,6 +8890,9 @@ class LegacyBackend(
         for line in list(orc.get("linhas", []) or []):
             if not self.desktop_main.orc_line_is_piece(line):
                 continue
+            if str(line.get("stock_item_kind", "") or "").strip() == "raw_material" or str(line.get("stock_material_id", "") or "").strip():
+                line["ref_interna"] = ""
+                continue
             ref_ext = str(line.get("ref_externa", "") or "").strip()
             if not ref_ext:
                 continue
@@ -9057,6 +8986,8 @@ class LegacyBackend(
                 continue
             orc_client = self._ref_client_code(self._normalize_orc_client(orc.get("cliente", {})).get("codigo", ""))
             for line in list(orc.get("linhas", []) or []):
+                if str(line.get("stock_item_kind", "") or "").strip() == "raw_material" or str(line.get("stock_material_id", "") or "").strip():
+                    continue
                 ref_int = str(line.get("ref_interna", "") or "").strip().upper()
                 ref_ext = str(line.get("ref_externa", "") or "").strip()
                 ref_client = self._ref_client_code(ref_int)
