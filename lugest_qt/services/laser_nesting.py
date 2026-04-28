@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .laser_quote_engine import analyze_dxf_geometry, merge_laser_quote_settings
+from lugest_core.laser.quote_engine import analyze_dxf_geometry, merge_laser_quote_settings
 
 
 DEFAULT_SHEET_PROFILES: list[dict[str, Any]] = [

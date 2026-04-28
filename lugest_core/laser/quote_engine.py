@@ -4,6 +4,7 @@ import copy
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -12,7 +13,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from .profile_cad_analysis import analyze_profile_cut_features
+from lugest_core.cad.profile_analysis import analyze_profile_cut_features
 
 try:
     import ezdxf  # type: ignore[import-not-found]
@@ -245,6 +246,49 @@ def _display_material_family(value: Any) -> str:
     if not canonical:
         return ""
     return MATERIAL_FAMILY_LABELS.get(canonical, canonical)
+
+
+def _profile_section_perimeter_mm(section: Any, family: Any = "") -> float:
+    text = str(section or "").upper().replace(",", ".")
+    values = [float(match) for match in re.findall(r"\d+(?:\.\d+)?", text)]
+    family_norm = _norm_material_token(family)
+    if not values:
+        return 0.0
+    if any(token in family_norm for token in ("CANTONEIRA", "ANGLE")) and len(values) >= 2:
+        leg_a = values[0]
+        leg_b = values[1]
+        return max(0.0, 2.0 * (leg_a + leg_b))
+    if any(token in text for token in ("RHS", "SHS")) or "X" in text:
+        if len(values) >= 2:
+            return max(0.0, 2.0 * (values[0] + values[1]))
+    if any(token in text for token in ("CHS", "DN", "D", "Ø", "ROUND", "REDONDO")):
+        return max(0.0, math.pi * values[0])
+    if len(values) >= 2:
+        return max(0.0, 2.0 * (values[0] + values[1]))
+    return 0.0
+
+
+def _estimate_profile_cut_length_m(
+    *,
+    total_cut_count: int,
+    hole_count: int,
+    slot_count: int,
+    outer_cut_count: int,
+    thickness_mm: float,
+    section: Any = "",
+    family: Any = "",
+) -> float:
+    section_perimeter_mm = _profile_section_perimeter_mm(section, family)
+    end_length_mm = max(0, int(outer_cut_count or 0)) * (section_perimeter_mm if section_perimeter_mm > 0 else max(30.0, thickness_mm * 12.0))
+    hole_diameter_mm = max(6.0, thickness_mm * 2.0)
+    hole_length_mm = max(0, int(hole_count or 0)) * math.pi * hole_diameter_mm
+    slot_width_mm = max(6.0, thickness_mm * 2.0)
+    slot_length_mm = max(18.0, thickness_mm * 8.0)
+    slots_length_mm = max(0, int(slot_count or 0)) * (2.0 * (slot_length_mm + slot_width_mm))
+    accounted = max(0, int(hole_count or 0)) + max(0, int(slot_count or 0)) + max(0, int(outer_cut_count or 0))
+    generic_count = max(0, int(total_cut_count or 0) - accounted)
+    generic_length_mm = generic_count * max(25.0, thickness_mm * 10.0)
+    return round(max(0.0, end_length_mm + hole_length_mm + slots_length_mm + generic_length_mm) / 1000.0, 4)
 
 
 def _infer_material_family_and_subtype(settings: dict[str, Any], material_value: Any, subtype_value: Any = "") -> tuple[str, str]:
@@ -1983,6 +2027,13 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
         raise ValueError("Nao foi possivel encontrar parametros de corte para esta espessura.")
 
     analyzed_metrics = dict(payload.get("profile_metrics", {}) or {})
+    include_external_cuts = str(payload.get("include_external_profile_cuts", "0") or "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "sim",
+        "on",
+    }
     explicit_counts = any(
         payload.get(key) not in (None, "")
         for key in ("cuts", "holes", "slots", "outer_cuts", "end_cut_count", "generic_cuts")
@@ -1993,20 +2044,26 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
         except Exception:
             analyzed_metrics = {}
 
-    total_cut_count = max(0, _as_int(payload.get("cuts", analyzed_metrics.get("cuts", 0)), analyzed_metrics.get("cuts", 0)))
     hole_count = max(0, _as_int(payload.get("holes", analyzed_metrics.get("holes", 0)), analyzed_metrics.get("holes", 0)))
     slot_count = max(0, _as_int(payload.get("slots", analyzed_metrics.get("slots", 0)), analyzed_metrics.get("slots", 0)))
-    end_cut_count = max(0, _as_int(payload.get("end_cut_count", analyzed_metrics.get("end_cut_count", 0)), analyzed_metrics.get("end_cut_count", 0)))
+    raw_end_cut_count = max(0, _as_int(payload.get("end_cut_count", analyzed_metrics.get("end_cut_count", 0)), analyzed_metrics.get("end_cut_count", 0)))
+    end_cut_count = raw_end_cut_count if include_external_cuts else 0
     generic_cut_count = max(0, _as_int(payload.get("generic_cuts", analyzed_metrics.get("generic_cuts", 0)), analyzed_metrics.get("generic_cuts", 0)))
+    fallback_total_cut_count = hole_count + slot_count + generic_cut_count + end_cut_count
+    total_cut_count = max(0, _as_int(payload.get("cuts", fallback_total_cut_count), fallback_total_cut_count))
     derived_outer_cuts = max(0, total_cut_count - hole_count - slot_count)
     outer_cut_count = max(
         0,
         _as_int(
-            payload.get("outer_cuts", max(derived_outer_cuts, end_cut_count + generic_cut_count)),
-            max(derived_outer_cuts, end_cut_count + generic_cut_count),
+            payload.get("outer_cuts", generic_cut_count + end_cut_count),
+            generic_cut_count + end_cut_count,
         ),
     )
-    total_cut_count = max(total_cut_count, hole_count + slot_count + outer_cut_count)
+    if not include_external_cuts:
+        outer_cut_count = min(outer_cut_count, generic_cut_count)
+        total_cut_count = hole_count + slot_count + outer_cut_count
+    else:
+        total_cut_count = max(total_cut_count, hole_count + slot_count + outer_cut_count)
 
     motion_cfg = dict(machine_profile.get("motion", {}) or {})
     commercial_material = _commercial_material(commercial_profile, material_family, material_subtype)
@@ -2028,6 +2085,8 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
     scrap_credit_per_kg = 0.0 if material_supplied_by_client else configured_scrap_credit_per_kg
     utilization_pct = max(1.0, _as_float(payload.get("material_utilization_pct", commercial_profile.get("material_utilization_pct", 82.0)), 82.0))
     rates = dict(commercial_profile.get("rates", {}) or {})
+    cut_rate_per_m = max(0.0, _as_float(payload.get("cut_rate_per_m", rates.get("cut_per_m_eur", 0.0)), 0.0))
+    pierce_rate = max(0.0, _as_float(payload.get("pierce_rate", rates.get("pierce_eur", 0.0)), 0.0))
     outer_cut_rate = max(0.0, _as_float(payload.get("outer_cut_rate", profile_operations.get("outer_cut_eur", 1.25)), 1.25))
     hole_cut_rate = max(0.0, _as_float(payload.get("hole_cut_rate", profile_operations.get("hole_cut_eur", 0.85)), 0.85))
     slot_cut_rate = max(0.0, _as_float(payload.get("slot_cut_rate", profile_operations.get("slot_cut_eur", 1.15)), 1.15))
@@ -2065,7 +2124,39 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
     rapid_jump_mm = max(0.0, _as_float(payload.get("profile_rapid_between_cuts_mm", 12.0), 12.0))
     rapid_length_m = max(0.0, (max(0, pierce_count - 1) * rapid_jump_mm) / 1000.0)
     rapid_time_sec = _safe_div(rapid_length_m * 1000.0, rapid_speed_mm_s, 0.0)
-    machine_time_sec_unit = (lead_time_sec + pierce_time_sec + gas_time_sec + rapid_time_sec) * motion_overhead_factor
+    family_txt = str(payload.get("profile_family", payload.get("family", "Perfil")) or "Perfil").strip()
+    section_txt = str(payload.get("section", payload.get("section_label", "")) or "").strip()
+    cut_length_m = max(
+        0.0,
+        _as_float(
+            payload.get("cut_length_m_override", analyzed_metrics.get("cut_length_m", 0.0)),
+            _as_float(analyzed_metrics.get("cut_length_m", 0.0), 0.0),
+        ),
+    )
+    if not include_external_cuts:
+        internal_length_m = (
+            _as_float(analyzed_metrics.get("feature_cut_length_m", 0.0), 0.0)
+            or (
+                (_as_float(analyzed_metrics.get("hole_cut_length_mm", 0.0), 0.0)
+                + _as_float(analyzed_metrics.get("slot_cut_length_mm", 0.0), 0.0)
+                + _as_float(analyzed_metrics.get("generic_cut_length_mm", 0.0), 0.0))
+                / 1000.0
+            )
+        )
+        if internal_length_m > 0.0:
+            cut_length_m = internal_length_m
+    if cut_length_m <= 0.0:
+        cut_length_m = _estimate_profile_cut_length_m(
+            total_cut_count=total_cut_count,
+            hole_count=hole_count,
+            slot_count=slot_count,
+            outer_cut_count=outer_cut_count,
+            thickness_mm=thickness_mm,
+            section=section_txt,
+            family=family_txt,
+        )
+    cut_time_sec = _safe_div(cut_length_m, effective_cut_speed_m_min / 60.0, 0.0)
+    machine_time_sec_unit = (cut_time_sec + lead_time_sec + pierce_time_sec + gas_time_sec + rapid_time_sec) * motion_overhead_factor
     machine_time_total_unit = machine_time_sec_unit + setup_time_sec_share
     net_area_m2 = max(0.0, _as_float(payload.get("net_area_m2_override", 0.0), 0.0))
     thickness_m = thickness_mm / 1000.0
@@ -2080,22 +2171,23 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
         + (hole_count * hole_cut_rate)
         + (slot_count * slot_cut_rate)
     )
+    cut_cost_meter_unit = cut_length_m * cut_rate_per_m
+    pierce_cost_unit = pierce_count * pierce_rate
+    profile_process_cost_unit = cut_cost_meter_unit + pierce_cost_unit + profile_operation_cost_unit
     machine_runtime_cost_unit = (machine_time_total_unit / 3600.0) * machine_hour_eur
     if cost_mode == "machine_time":
-        effective_cutting_cost_unit = machine_runtime_cost_unit
-        effective_cutting_label = "Tempo maquina perfil"
+        effective_cutting_cost_unit = machine_runtime_cost_unit + pierce_cost_unit + profile_operation_cost_unit
+        effective_cutting_label = "Tempo maquina + eventos perfil"
     elif cost_mode == "per_meter":
-        effective_cutting_cost_unit = profile_operation_cost_unit
-        effective_cutting_label = "Eventos STEP/IGS"
+        effective_cutting_cost_unit = profile_process_cost_unit + machine_runtime_cost_unit
+        effective_cutting_label = "Metros + tempo maquina + eventos STEP/IGS"
     else:
-        effective_cutting_cost_unit = max(profile_operation_cost_unit, machine_runtime_cost_unit)
-        effective_cutting_label = "Hibrido perfil (maior entre eventos e tempo)"
+        effective_cutting_cost_unit = profile_process_cost_unit + machine_runtime_cost_unit
+        effective_cutting_label = "Hibrido perfil (processo + tempo por espessura)"
     subtotal_cost_unit = material_net_cost_unit + effective_cutting_cost_unit + handling_eur
     unit_price_before_min = subtotal_cost_unit * (1.0 + (margin_pct / 100.0))
     final_total = unit_price_before_min * quantity
     final_unit = _safe_div(final_total, quantity, unit_price_before_min)
-    family_txt = str(payload.get("profile_family", payload.get("family", "Perfil")) or "Perfil").strip()
-    section_txt = str(payload.get("section", payload.get("section_label", "")) or "").strip()
     description = str(payload.get("description", "") or "").strip() or _build_profile_description(
         file_path,
         display_material,
@@ -2110,10 +2202,14 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
     warnings: list[str] = []
     if material_supplied_by_client:
         warnings.append("Perfil/tubo assumido como materia fornecida pelo cliente: o calculo considera apenas processo laser.")
+    if not include_external_cuts and raw_end_cut_count > 0:
+        warnings.append(f"Cortes de extremidade ignorados por criterio comercial: {raw_end_cut_count}.")
     if total_cut_count <= 0:
         warnings.append("Sem cortes detetados automaticamente. Confirma os contadores antes de aplicar.")
     elif hole_count > total_cut_count:
         warnings.append("Os furos excedem o numero total de cortes. O total foi ajustado para evitar dupla contagem.")
+    if _as_float(analyzed_metrics.get("cut_length_m", 0.0), 0.0) <= 0.0 and cut_length_m > 0.0:
+        warnings.append("Comprimento de corte estimado por fallback. Se possivel confirma com preview/FreeCAD antes de fechar o preco.")
     if configured_material_price_per_kg <= 0.0 and not material_supplied_by_client:
         warnings.append(f"Sem preco comercial configurado para {display_material}.")
     analysis_note = str(analyzed_metrics.get("note", "") or "").strip()
@@ -2158,9 +2254,11 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
             "material_supplied_by_client": material_supplied_by_client,
             "material_cost_included": material_cost_included,
             "material_price_source": material_price_source,
+            "include_external_profile_cuts": include_external_cuts,
         },
         "metrics": {
-            "cut_length_m": 0.0,
+            "cut_length_m": round(cut_length_m, 4),
+            "cut_length_mm": round(cut_length_m * 1000.0, 3),
             "mark_length_m": 0.0,
             "rapid_length_m": round(rapid_length_m, 4),
             "pierce_count": int(pierce_count),
@@ -2169,8 +2267,11 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
             "hole_count": int(hole_count),
             "slot_count": int(slot_count),
             "end_cut_count": int(end_cut_count),
+            "raw_end_cut_count": int(raw_end_cut_count),
             "generic_cut_count": int(generic_cut_count),
             "feature_cut_count": int(max(0, hole_count + slot_count + generic_cut_count)),
+            "feature_cut_length_m": round(_as_float(analyzed_metrics.get("feature_cut_length_m", 0.0), 0.0), 4),
+            "end_cut_length_m": round(_as_float(analyzed_metrics.get("end_cut_length_m", 0.0), 0.0), 4),
             "net_area_m2": round(net_area_m2, 6),
             "density_kg_m3": round(density_kg_m3, 3),
             "net_mass_kg": round(net_mass_kg, 4),
@@ -2178,7 +2279,7 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
             "scrap_mass_kg": round(scrap_mass_kg, 4),
         },
         "times": {
-            "cut_sec": 0.0,
+            "cut_sec": round(cut_time_sec, 3),
             "mark_sec": 0.0,
             "rapid_sec": round(rapid_time_sec, 3),
             "lead_sec": round(lead_time_sec, 3),
@@ -2195,6 +2296,9 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
             "process_only_cost_unit": _round_money(max(0.0, subtotal_cost_unit - material_net_cost_unit), 4),
             "material_cost_included": material_cost_included,
             "profile_operation_cost_unit": _round_money(profile_operation_cost_unit, 4),
+            "cut_cost_meter_unit": _round_money(cut_cost_meter_unit, 4),
+            "pierce_cost_unit": _round_money(pierce_cost_unit, 4),
+            "profile_process_cost_unit": _round_money(profile_process_cost_unit, 4),
             "machine_runtime_cost_unit": _round_money(machine_runtime_cost_unit, 4),
             "effective_cutting_cost_unit": _round_money(effective_cutting_cost_unit, 4),
             "mark_cost_unit": 0.0,

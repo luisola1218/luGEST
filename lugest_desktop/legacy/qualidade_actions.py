@@ -1,4 +1,4 @@
-from module_context import configure_module, ensure_module
+from lugest_infra.legacy.module_context import configure_module, ensure_module
 
 _CONFIGURED = False
 

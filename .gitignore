@@ -16,6 +16,7 @@ dist/
 build_qt_stable/
 dist_qt_stable/
 previews/
+generated/
 
 # Logs and runtime files
 *.log
@@ -32,4 +33,8 @@ impulse_mobile_app/.flutter-plugins-dependencies
 # Local virtualenvs and IDE
 impulse_mobile_api/.venv/
 .venv/
+.cad312/
 .idea/
+
+# Generated fiscal signing material
+generated/compliance/keys/*.pem

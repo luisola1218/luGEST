@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import lugest_storage
+from lugest_infra.storage import files as lugest_storage
 from lugest_qt.services.main_bridge import LegacyBackend
 
 

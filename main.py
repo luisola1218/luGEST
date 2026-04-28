@@ -21,20 +21,20 @@ from datetime import datetime, timedelta
 from tkinter import Tk, Toplevel, StringVar, DoubleVar, BooleanVar, IntVar, END, PhotoImage, Canvas, Text, Listbox, Button, Frame, Label, Entry
 from tkinter import ttk, messagebox, filedialog, colorchooser, font as tkfont
 
-import app_misc_actions
-import clientes_actions
-import clientes_rooting
-import encomendas_actions
-import materia_actions
-import menu_rooting
-import ne_expedicao_actions
-import operador_ordens_actions
-import orc_actions
-import plan_actions
-import produtos_actions
-import qualidade_actions
-import ui_build_blocks
-import lugest_storage
+from lugest_desktop.legacy import app_misc_actions
+from lugest_desktop.legacy import clientes_actions
+from lugest_desktop.legacy import clientes_rooting
+from lugest_desktop.legacy import encomendas_actions
+from lugest_desktop.legacy import materia_actions
+from lugest_desktop.legacy import menu_rooting
+from lugest_desktop.legacy import ne_expedicao_actions
+from lugest_desktop.legacy import operador_ordens_actions
+from lugest_desktop.legacy import orc_actions
+from lugest_desktop.legacy import plan_actions
+from lugest_desktop.legacy import produtos_actions
+from lugest_desktop.legacy import qualidade_actions
+from lugest_desktop.legacy import ui_build_blocks
+from lugest_infra.storage import files as lugest_storage
 
 # UI mode: auto | ttk | custom
 # Default em "custom" (visual original).

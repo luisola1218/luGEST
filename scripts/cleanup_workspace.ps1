@@ -34,6 +34,7 @@ $pathsToRemove = @(
     'build_qt_stable',
     'dist_qt_stable',
     'dist\lugest_trial.json',
+    '.cad312',
     '.pytest_cache',
     '.mypy_cache',
     '.ruff_cache',

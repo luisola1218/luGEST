@@ -105,11 +105,11 @@
       "use_stock_first": true,
       "allow_purchase_fallback": true,
       "shape_aware": true,
-      "shape_grid_mm": 20.0,
+      "shape_grid_mm": 50.0,
       "common_line_estimate": true,
       "common_line_tolerance_mm": 1.0,
       "lead_optimization": true,
-      "lead_optimization_pct": 8.0,
+      "lead_optimization_pct": 9.0,
       "sheet_profiles": [
         {
           "name": "1000 x 2000",
@@ -974,68 +974,68 @@
         "material_catalog": {
           "Aco carbono": {
             "S235JR": {
-              "price_per_kg": 1.0,
+              "price_per_kg": 0.95,
               "scrap_credit_per_kg": 0.9
             },
             "S275JR": {
-              "price_per_kg": 1.0,
+              "price_per_kg": 0.95,
               "scrap_credit_per_kg": 0.9
             },
             "S355JR": {
-              "price_per_kg": 1.3,
-              "scrap_credit_per_kg": 1.2
+              "price_per_kg": 0.95,
+              "scrap_credit_per_kg": 0.9
             },
             "S355J2+N": {
-              "price_per_kg": 1.3,
-              "scrap_credit_per_kg": 1.2
+              "price_per_kg": 0.95,
+              "scrap_credit_per_kg": 0.9
             },
             "S355MC": {
-              "price_per_kg": 1.3,
-              "scrap_credit_per_kg": 1.2
+              "price_per_kg": 0.95,
+              "scrap_credit_per_kg": 0.9
             },
             "S420MC": {
-              "price_per_kg": 1.3,
-              "scrap_credit_per_kg": 1.2
+              "price_per_kg": 0.95,
+              "scrap_credit_per_kg": 0.9
             },
             "DX51D+Z": {
-              "price_per_kg": 1.3,
-              "scrap_credit_per_kg": 1.2
+              "price_per_kg": 0.95,
+              "scrap_credit_per_kg": 0.9
             },
             "DX53D+Z": {
-              "price_per_kg": 1.3,
-              "scrap_credit_per_kg": 1.2
+              "price_per_kg": 0.95,
+              "scrap_credit_per_kg": 0.9
             },
             "DD11": {
-              "price_per_kg": 1.3,
-              "scrap_credit_per_kg": 1.2
+              "price_per_kg": 0.95,
+              "scrap_credit_per_kg": 0.9
             },
             "DC01": {
-              "price_per_kg": 1.3,
-              "scrap_credit_per_kg": 1.2
+              "price_per_kg": 0.95,
+              "scrap_credit_per_kg": 0.9
             },
             "CORTEN": {
-              "price_per_kg": 1.3,
-              "scrap_credit_per_kg": 1.2
+              "price_per_kg": 0.95,
+              "scrap_credit_per_kg": 0.9
             },
             "S355JOW": {
-              "price_per_kg": 1.3,
-              "scrap_credit_per_kg": 1.2
+              "price_per_kg": 0.95,
+              "scrap_credit_per_kg": 0.9
             },
             "HARDOX 400": {
-              "price_per_kg": 1.3,
-              "scrap_credit_per_kg": 1.2
+              "price_per_kg": 0.95,
+              "scrap_credit_per_kg": 0.9
             },
             "HARDOX 450": {
-              "price_per_kg": 1.3,
-              "scrap_credit_per_kg": 1.2
+              "price_per_kg": 0.95,
+              "scrap_credit_per_kg": 0.9
             },
             "DX51D": {
-              "price_per_kg": 1.3,
-              "scrap_credit_per_kg": 1.2
+              "price_per_kg": 0.95,
+              "scrap_credit_per_kg": 0.9
             },
             "HARDOX": {
-              "price_per_kg": 1.3,
-              "scrap_credit_per_kg": 1.2
+              "price_per_kg": 0.95,
+              "scrap_credit_per_kg": 0.9
             }
           },
           "Aco inox": {

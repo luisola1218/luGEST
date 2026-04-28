@@ -315,7 +315,13 @@ def _run_freecad_step_bridge(mode: str, source_path: str | Path) -> dict[str, An
     cache_dir = Path(tempfile.gettempdir()) / "lugest_step_bridge"
     cache_dir.mkdir(parents=True, exist_ok=True)
     output_path = cache_dir / (
-        hashlib.sha1(f"{mode}|{source.resolve()}|{source.stat().st_mtime_ns}".encode("utf-8", errors="ignore")).hexdigest() + ".json"
+        hashlib.sha1(
+            f"{mode}|{source.resolve()}|{source.stat().st_mtime_ns}|{bridge_path.stat().st_mtime_ns}".encode(
+                "utf-8",
+                errors="ignore",
+            )
+        ).hexdigest()
+        + ".json"
     )
     completed = subprocess.run(
         [freecad_cmd, str(bridge_path), "--pass", str(mode), str(source), str(output_path)],

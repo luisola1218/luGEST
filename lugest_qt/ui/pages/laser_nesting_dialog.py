@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...services.laser_nesting import _sheet_overlap_diagnostics, default_nesting_options, default_sheet_profiles, grouped_laser_rows, nest_parts
-from ...services.laser_quote_engine import estimate_laser_quote
+from lugest_core.laser.quote_engine import estimate_laser_quote
 from ..widgets import CardFrame
 from .laser_quote_dialogs import LaserSettingsDialog, _fmt_num, _spin
 
@@ -2121,7 +2121,7 @@ class LaserNestingDialog(QDialog):
             area_txt = "-"
             preview_payload = self._part_preview_payload(resolved_path or path)
             try:
-                from ...services.laser_quote_engine import analyze_dxf_geometry
+                from lugest_core.laser.quote_engine import analyze_dxf_geometry
 
                 geometry = analyze_dxf_geometry(resolved_path or path, layer_rules)
                 bbox = dict(geometry.get("bbox_mm", {}) or {})

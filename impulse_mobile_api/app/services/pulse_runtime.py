@@ -35,8 +35,8 @@ os.environ.setdefault("LUGEST_DB_PASS", settings.db_pass)
 os.environ.setdefault("LUGEST_DB_NAME", settings.db_name)
 
 import main as desktop_main  # noqa: E402
-import menu_rooting as desktop_pulse  # noqa: E402
-import plan_actions as desktop_plan  # noqa: E402
+from lugest_desktop.legacy import menu_rooting as desktop_pulse  # noqa: E402
+from lugest_desktop.legacy import plan_actions as desktop_plan  # noqa: E402
 from lugest_qt.services.main_bridge import LegacyBackend  # noqa: E402
 
 PERIOD_MAP = {"hoje": 1, "1": 1, "7 dias": 7, "7": 7, "30 dias": 30, "30": 30, "tudo": 0, "0": 0}

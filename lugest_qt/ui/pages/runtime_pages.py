@@ -64,7 +64,7 @@ from .laser_quote_dialogs import (
     _settings_material_names as _laser_settings_material_names,
     _settings_material_subtypes as _laser_settings_material_subtypes,
 )
-from ...services.profile_cad_analysis import analyze_profile_cut_features, render_step_preview_image
+from lugest_core.cad.profile_analysis import analyze_profile_cut_features, render_step_preview_image
 from ..widgets import CardFrame, StatCard
 
 LIST_TABLE_FONT_PX = 15
@@ -22140,10 +22140,32 @@ class QuotesPage(QWidget):
     def _open_profile_step_igs_quote_builder(self) -> None:
         dialog = QDialog(self)
         dialog.setWindowTitle("Corte Laser STEP/IGS")
-        dialog.setMinimumWidth(980)
-        dialog.setMinimumHeight(620)
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(16, 14, 16, 14)
+        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
+        dialog.setSizeGripEnabled(True)
+        dialog.setMinimumSize(860, 520)
+        try:
+            screen = dialog.screen() or QApplication.primaryScreen()
+            available = screen.availableGeometry() if screen is not None else None
+            if available is not None:
+                width = min(1180, max(860, available.width() - 80))
+                height = min(860, max(520, available.height() - 96))
+                dialog.resize(width, height)
+                dialog.move(
+                    available.x() + max(0, (available.width() - width) // 2),
+                    available.y() + max(0, (available.height() - height) // 2),
+                )
+        except Exception:
+            dialog.resize(1120, 780)
+        outer_layout = QVBoxLayout(dialog)
+        outer_layout.setContentsMargins(14, 12, 14, 12)
+        outer_layout.setSpacing(10)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
+        layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(10)
 
         title = QLabel("Corte laser de perfis / tubos / cantoneiras")
@@ -22157,8 +22179,8 @@ class QuotesPage(QWidget):
         layout.addWidget(title)
         layout.addWidget(intro)
         auto_hint = QLabel(
-            "Leitura automatica: os cortes totais ja incluem furos e rasgos. Exemplo: 26 cortes = 24 furos + 2 cortes exteriores. "
-            "Os valores continuam editaveis antes de aplicar."
+            "Leitura automatica: cada contorno independente conta como um evento. Exemplo: 2 janelas retangulares + "
+            "2 cortes terminais = 4 cortes; o preco usa tambem os metros reais de corte e a espessura."
         )
         auto_hint.setWordWrap(True)
         auto_hint.setProperty("role", "muted")
@@ -22180,13 +22202,20 @@ class QuotesPage(QWidget):
         toolbar.addStretch(1)
         layout.addLayout(toolbar)
 
-        files_table = QTableWidget(0, 7)
-        files_table.setHorizontalHeaderLabels(["Ficheiro", "Tipo", "Secao", "Qtd", "Cortes", "Furos", "Rasgos"])
+        files_table = QTableWidget(0, 8)
+        files_table.setHorizontalHeaderLabels(["Ficheiro", "Tipo", "Secao", "Qtd", "Cortes", "Furos", "Rasgos", "m corte"])
         files_table.verticalHeader().setVisible(False)
+        files_table.verticalHeader().setDefaultSectionSize(42)
+        files_table.verticalHeader().setMinimumSectionSize(38)
         files_table.setSelectionBehavior(QTableWidget.SelectRows)
         files_table.setEditTriggers(QTableWidget.NoEditTriggers)
         files_table.setAlternatingRowColors(True)
         files_table.setMinimumHeight(260)
+        files_table.setStyleSheet(
+            "QTableWidget { font-size: 12px; }"
+            " QTableWidget::item { padding: 7px 6px; }"
+            " QHeaderView::section { padding: 8px 6px; font-weight: 800; }"
+        )
         files_table.horizontalHeader().setStretchLastSection(False)
         _set_table_columns(
             files_table,
@@ -22198,6 +22227,7 @@ class QuotesPage(QWidget):
                 (4, "fixed", 78),
                 (5, "fixed", 72),
                 (6, "fixed", 78),
+                (7, "fixed", 86),
             ],
         )
         layout.addWidget(files_table)
@@ -22263,11 +22293,13 @@ class QuotesPage(QWidget):
         pricing_layout.addWidget(total_label, 3, 2, 1, 2)
         pricing_layout.addWidget(status_label, 4, 0, 1, 4)
         layout.addWidget(pricing_card)
+        scroll.setWidget(scroll_content)
+        outer_layout.addWidget(scroll, 1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("Aplicar ao orçamento")
         buttons.button(QDialogButtonBox.Cancel).setText("Fechar")
-        layout.addWidget(buttons)
+        outer_layout.addWidget(buttons)
 
         families = ["Perfil", "Tubo", "Cantoneira", "Barra"]
 
@@ -22299,6 +22331,8 @@ class QuotesPage(QWidget):
             spin.setDecimals(0)
             spin.setSingleStep(1.0)
             spin.setValue(float(value))
+            spin.setMinimumHeight(32)
+            spin.setStyleSheet("QDoubleSpinBox { padding: 4px 8px; font-size: 12px; }")
             return spin
 
         def _read_geometry_preview(path_txt: str) -> str:
@@ -22433,7 +22467,10 @@ class QuotesPage(QWidget):
             section_norm = section_txt.upper().replace(" ", "")
             stem_lower = Path(path_txt).stem.lower()
             suffix = Path(path_txt).suffix.lower()
-            cad_analysis = analyze_profile_cut_features(path_txt)
+            try:
+                cad_analysis = dict(analyze_profile_cut_features(path_txt) or {})
+            except Exception as exc:
+                cad_analysis = {"note": str(exc)}
             text = _read_geometry_preview(path_txt)
             cuts = int(cad_analysis.get("cuts", 0) or 0)
             holes = int(cad_analysis.get("holes", 0) or 0)
@@ -22441,19 +22478,27 @@ class QuotesPage(QWidget):
             outer_cuts = int(cad_analysis.get("outer_cuts", max(0, cuts - holes - slots)) or 0)
             generic_cuts = int(cad_analysis.get("generic_cuts", 0) or 0)
             end_cut_count = int(cad_analysis.get("end_cut_count", 0) or 0)
+            cut_length_m = float(cad_analysis.get("cut_length_m", 0.0) or 0.0)
+            internal_cut_length_m = float(cad_analysis.get("feature_cut_length_m", 0.0) or 0.0)
+            if internal_cut_length_m <= 0.0:
+                internal_cut_length_m = (
+                    float(cad_analysis.get("hole_cut_length_mm", 0.0) or 0.0)
+                    + float(cad_analysis.get("slot_cut_length_mm", 0.0) or 0.0)
+                    + float(cad_analysis.get("generic_cut_length_mm", 0.0) or 0.0)
+                ) / 1000.0
+            if internal_cut_length_m > 0.0:
+                cut_length_m = internal_cut_length_m
+            if cad_analysis:
+                cuts = int(max(0, holes + slots + generic_cuts))
+                outer_cuts = int(max(0, generic_cuts))
             notes: list[str] = []
             cad_note = str(cad_analysis.get("note", "") or "").strip()
             if cad_note:
                 notes.append(cad_note)
-            if cuts <= 0:
-                cuts = 4
-                outer_cuts = max(outer_cuts, 4)
             complex_tokens = ("mitra", "chanfro", "angulo", "bisel", "45")
-            if any(token in stem_lower for token in complex_tokens):
-                cuts = 4
-                outer_cuts = max(outer_cuts, 4)
-                notes.append("nome sugere cortes angulados")
-            if text:
+            if any(token in stem_lower for token in complex_tokens) and not cad_analysis:
+                notes.append("nome sugere cortes angulados; confirma cortes internos")
+            if text and not cad_analysis:
                 plane_count = len(re.findall(r"\bPLANE\b", text, re.IGNORECASE))
                 cylindrical_count = len(re.findall(r"\bCYLINDRICAL_SURFACE\b", text, re.IGNORECASE))
                 if suffix in {".step", ".stp"}:
@@ -22476,53 +22521,38 @@ class QuotesPage(QWidget):
                     slots = 1
                 if slots == 0 and 0 < spline_count <= 4 and any(token in stem_lower for token in ("slot", "rasgo", "oblongo")):
                     slots = int(spline_count)
-                if cuts <= 4 and any(token in section_norm for token in ("IPE", "IPN", "HEA", "HEB", "HEM", "UPN", "UNP")):
-                    cuts = max(cuts, 6)
-                    outer_cuts = max(outer_cuts, 6)
-                    notes.append("perfil estrutural identificado; baseline reforcado")
-                elif cuts <= 4 and family_txt == "Tubo":
+                if any(token in section_norm for token in ("IPE", "IPN", "HEA", "HEB", "HEM", "UPN", "UNP")):
+                    notes.append("perfil estrutural identificado; cortes terminais nao sao cobrados neste criterio")
+                elif family_txt == "Tubo":
                     if any(token in section_norm for token in ("RHS", "SHS")) or ("X" in section_norm):
-                        cuts = max(cuts, 4)
-                        outer_cuts = max(outer_cuts, 4)
-                        notes.append("tubo/perfil retangular detetado")
-                    elif re.search(r"(CHS|ROUND|REDONDO|DN\d+|D\d+|Ø)", section_norm):
-                        cuts = 2
-                        outer_cuts = max(outer_cuts, 2)
-                        notes.append("tubo redondo identificado")
-                    elif cylindrical_count >= 4 and plane_count <= 8:
-                        cuts = 2
-                        outer_cuts = max(outer_cuts, 2)
-                        notes.append("geometria cilindrica dominante")
-                    else:
-                        cuts = max(cuts, 4)
-                        outer_cuts = max(outer_cuts, 4)
-                        notes.append("tubo sem prova de secao redonda; assumidos 4 cortes base")
-                elif cuts <= 4 and family_txt == "Cantoneira":
-                    cuts = max(cuts, 4)
-                    outer_cuts = max(outer_cuts, 4)
-                    notes.append("cantoneira assume 4 cortes base")
-                elif cuts <= 4 and family_txt in {"Perfil", "Barra"}:
-                    cuts = max(cuts, 4)
-                    outer_cuts = max(outer_cuts, 4)
-                    notes.append("perfil/barra assume 4 cortes base")
-            else:
-                notes.append("sem leitura textual disponivel; aplicado fallback conservador")
+                        notes.append("tubo/perfil retangular detetado; cobrados apenas cortes internos")
+                    elif re.search(r"(CHS|ROUND|REDONDO|DN\d+|D\d+|Ø)", section_norm) or cylindrical_count >= 4:
+                        notes.append("tubo redondo identificado; cobrados apenas cortes internos")
+                elif family_txt in {"Cantoneira", "Perfil", "Barra"}:
+                    notes.append("cobrados apenas cortes internos; extremidades ignoradas")
+            elif not cad_analysis:
+                notes.append("sem leitura textual disponivel; sem fallback de cortes exteriores")
             cuts, holes, slots, outer_cuts = _normalize_counts(cuts, holes, slots)
             if generic_cuts > 0 or end_cut_count > 0:
                 notes.append(
-                    f"leitura atual: {int(cuts)} cortes totais = {int(generic_cuts)} eventos adicionais + {int(end_cut_count)} cortes terminais"
+                    f"leitura atual: {int(cuts)} cortes internos cobrados; {int(end_cut_count)} cortes terminais ignorados"
                 )
             else:
                 notes.append(
-                    f"leitura atual: {int(cuts)} cortes totais = {int(holes)} furos + {int(slots)} rasgos + {int(outer_cuts)} cortes exteriores"
+                    f"leitura atual: {int(cuts)} cortes internos = {int(holes)} furos + {int(slots)} rasgos + {int(outer_cuts)} outros internos"
                 )
+            if cut_length_m > 0:
+                notes.append(f"comprimento medido: {cut_length_m:.3f} m")
+            else:
+                notes.append("comprimento nao medido automaticamente; valor editavel")
             return {
                 "family": family_txt,
                 "section": section_txt,
-                "cuts": int(max(1, cuts)),
+                "cuts": int(max(0, cuts)),
                 "holes": int(max(0, holes)),
                 "slots": int(max(0, slots)),
                 "outer_cuts": int(max(0, outer_cuts)),
+                "cut_length_m": round(max(0.0, cut_length_m), 4),
                 "cad_analysis": dict(cad_analysis or {}),
                 "note": ". ".join(part for part in notes if part).strip(),
             }
@@ -22537,9 +22567,11 @@ class QuotesPage(QWidget):
             cuts_spin = files_table.cellWidget(row_index, 4)
             holes_spin = files_table.cellWidget(row_index, 5)
             slots_spin = files_table.cellWidget(row_index, 6)
+            cut_length_spin = files_table.cellWidget(row_index, 7)
             family_txt = family_combo.currentText().strip() if isinstance(family_combo, QComboBox) else str(cached_estimate.get("family", "Perfil") or "Perfil")
             section_txt = section_edit.text().strip() if isinstance(section_edit, QLineEdit) else str(cached_estimate.get("section", "") or "")
             qty = int(round(float(qty_spin.value() if isinstance(qty_spin, QDoubleSpinBox) else 0.0)))
+            cut_length_m = float(cut_length_spin.value() if isinstance(cut_length_spin, QDoubleSpinBox) else float(cached_estimate.get("cut_length_m", 0.0) or 0.0))
             cuts, holes, slots, outer_cuts = _normalize_counts(
                 cuts_spin.value() if isinstance(cuts_spin, QDoubleSpinBox) else 0.0,
                 holes_spin.value() if isinstance(holes_spin, QDoubleSpinBox) else 0.0,
@@ -22564,6 +22596,8 @@ class QuotesPage(QWidget):
                 "holes": holes,
                 "slots": slots,
                 "outer_cuts": outer_cuts,
+                "cut_length_m_override": max(0.0, cut_length_m),
+                "include_external_profile_cuts": False,
                 "profile_metrics": dict(cached_estimate.get("cad_analysis", {}) or {}),
             }
 
@@ -22581,17 +22615,23 @@ class QuotesPage(QWidget):
                 metrics = dict(analysis.get("metrics", {}) or {})
                 total += float(pricing.get("total_price", 0.0) or 0.0)
                 feature_count = int(metrics.get("feature_cut_count", metrics.get("generic_cut_count", 0)) or 0)
-                end_count = int(metrics.get("end_cut_count", 0) or 0)
+                end_count = int(metrics.get("raw_end_cut_count", metrics.get("end_cut_count", 0)) or 0)
+                cut_length_m = float(metrics.get("cut_length_m", 0.0) or 0.0)
+                cut_length_widget = files_table.cellWidget(row_index, 7)
+                if isinstance(cut_length_widget, QDoubleSpinBox) and cut_length_widget.value() <= 0.0 and cut_length_m > 0.0:
+                    cut_length_widget.blockSignals(True)
+                    cut_length_widget.setValue(cut_length_m)
+                    cut_length_widget.blockSignals(False)
                 if feature_count > 0 or end_count > 0:
                     status_parts.append(
                         f"{int(metrics.get('cut_event_count', 0) or 0)} cortes = "
-                        f"{feature_count} eventos adicionais + {end_count} terminais"
+                        f"{feature_count} internos cobrados + {end_count} terminais ignorados | {cut_length_m:.3f} m"
                     )
                 else:
                     status_parts.append(
                         f"{int(metrics.get('cut_event_count', 0) or 0)} cortes = "
                         f"{int(metrics.get('hole_count', 0) or 0)} furos + "
-                        f"{int(metrics.get('outer_cut_count', 0) or 0)} exteriores"
+                        f"{int(metrics.get('slot_count', 0) or 0)} rasgos | {cut_length_m:.3f} m"
                     )
             total_label.setText(f"Total estimado: {_fmt_eur(total)}")
             status_label.setText(status_parts[0] if status_parts else "Usa as tabelas do laser com contagem de eventos STEP/IGS, sem duplicar furos.")
@@ -22615,16 +22655,27 @@ class QuotesPage(QWidget):
             cuts_spin = _make_int_spin(int(estimate.get("cuts", 2) or 2))
             holes_spin = _make_int_spin(int(estimate.get("holes", 0) or 0))
             slots_spin = _make_int_spin(int(estimate.get("slots", 0) or 0))
+            cut_length_spin = QDoubleSpinBox()
+            cut_length_spin.setRange(0.0, 1000000.0)
+            cut_length_spin.setDecimals(3)
+            cut_length_spin.setSingleStep(0.1)
+            cut_length_spin.setValue(float(estimate.get("cut_length_m", 0.0) or 0.0))
+            cut_length_spin.setMinimumHeight(32)
+            cut_length_spin.setStyleSheet("QDoubleSpinBox { padding: 4px 8px; font-size: 12px; }")
+            family_combo.setMinimumHeight(32)
+            section_edit.setMinimumHeight(32)
             files_table.setCellWidget(row_index, 1, family_combo)
             files_table.setCellWidget(row_index, 2, section_edit)
             files_table.setCellWidget(row_index, 3, qty_spin)
             files_table.setCellWidget(row_index, 4, cuts_spin)
             files_table.setCellWidget(row_index, 5, holes_spin)
             files_table.setCellWidget(row_index, 6, slots_spin)
+            files_table.setCellWidget(row_index, 7, cut_length_spin)
+            files_table.setRowHeight(row_index, 42)
             analysis_note = str(estimate.get("note", "") or "").strip()
-            for widget in (family_combo, section_edit, qty_spin, cuts_spin, holes_spin, slots_spin):
+            for widget in (family_combo, section_edit, qty_spin, cuts_spin, holes_spin, slots_spin, cut_length_spin):
                 widget.setToolTip(analysis_note)
-            for widget in (qty_spin, cuts_spin, holes_spin, slots_spin):
+            for widget in (qty_spin, cuts_spin, holes_spin, slots_spin, cut_length_spin):
                 widget.valueChanged.connect(_recalc_total)
             family_combo.currentTextChanged.connect(_recalc_total)
             section_edit.textChanged.connect(_recalc_total)
@@ -22674,10 +22725,11 @@ class QuotesPage(QWidget):
                 line["line_origin"] = "step_igs_profile_laser"
                 line["summary_html"] = (
                     f"{str(payload.get('profile_family', 'Perfil') or 'Perfil')} | "
-                    f"cortes {int(metrics.get('cut_event_count', 0) or 0)} | "
+                    f"cortes internos {int(metrics.get('cut_event_count', 0) or 0)} | "
+                    f"m corte {float(metrics.get('cut_length_m', 0.0) or 0.0):.3f} | "
                     f"furos {int(metrics.get('hole_count', 0) or 0)} | "
                     f"rasgos {int(metrics.get('slot_count', 0) or 0)} | "
-                    f"cortes exteriores {int(metrics.get('outer_cut_count', 0) or 0)}"
+                    f"terminais ignorados {int(metrics.get('raw_end_cut_count', 0) or 0)}"
                 )
                 lines.append(line)
             if not lines:

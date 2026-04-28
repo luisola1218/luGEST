@@ -15,8 +15,25 @@ def _classify_wire(wire) -> str:
     if not curve_kinds:
         return "cut"
     if curve_kinds == {"Circle"}:
-        return "hole"
+        bbox = wire.BoundBox
+        width = max(float(bbox.XLength), float(bbox.YLength), float(bbox.ZLength))
+        ordered = sorted([float(bbox.XLength), float(bbox.YLength), float(bbox.ZLength)], reverse=True)
+        height = ordered[1] if len(ordered) > 1 else 0.0
+        length = _wire_length_mm(wire)
+        expected_circle_length = 3.141592653589793 * max(0.0, (width + height) / 2.0)
+        is_round = width > 0.0 and height > 0.0 and abs(width - height) <= max(0.25, width * 0.08)
+        is_full_circle = expected_circle_length > 0.0 and abs(length - expected_circle_length) <= max(0.75, expected_circle_length * 0.18)
+        if is_round and is_full_circle:
+            return "hole"
+        return "slot"
     return "slot"
+
+
+def _wire_length_mm(wire) -> float:
+    try:
+        return max(0.0, float(getattr(wire, "Length", 0.0) or 0.0))
+    except Exception:
+        return 0.0
 
 
 def _wire_signature(wire, plane_axis_index: int, loop_kind: str) -> tuple[object, ...]:
@@ -95,6 +112,9 @@ def analyze_step_profile(source_path: Path) -> dict[str, object]:
     hole_count = 0
     slot_count = 0
     generic_cut_count = 0
+    hole_cut_length_mm = 0.0
+    slot_cut_length_mm = 0.0
+    generic_cut_length_mm = 0.0
     feature_rows: list[dict[str, object]] = []
 
     for row in lateral_faces:
@@ -108,11 +128,13 @@ def analyze_step_profile(source_path: Path) -> dict[str, object]:
             if signature in seen_features:
                 continue
             seen_features.add(signature)
+            cut_length_mm = _wire_length_mm(wire)
             bbox = wire.BoundBox
             feature_rows.append(
                 {
                     "face_index": int(row["index"]),
                     "kind": loop_kind,
+                    "length_mm": round(cut_length_mm, 3),
                     "signature": list(signature),
                     "bbox": [
                         round(float(bbox.XMin), 3),
@@ -126,20 +148,32 @@ def analyze_step_profile(source_path: Path) -> dict[str, object]:
             )
             if loop_kind == "hole":
                 hole_count += 1
+                hole_cut_length_mm += cut_length_mm
             elif loop_kind == "slot":
                 slot_count += 1
+                slot_cut_length_mm += cut_length_mm
             else:
                 generic_cut_count += 1
+                generic_cut_length_mm += cut_length_mm
 
     side_feature_count = hole_count + slot_count + generic_cut_count
     end_cut_count = len(selected_end_faces)
+    end_cut_length_mm = 0.0
+    for row in selected_end_faces:
+        face = row["face"]
+        outer_wire = getattr(face, "OuterWire", None)
+        if outer_wire is not None:
+            end_cut_length_mm += _wire_length_mm(outer_wire)
     cuts = int(side_feature_count + end_cut_count)
     outer_cuts = int(generic_cut_count + end_cut_count)
+    feature_cut_length_mm = hole_cut_length_mm + slot_cut_length_mm + generic_cut_length_mm
+    cut_length_mm = feature_cut_length_mm + end_cut_length_mm
     notes = [
         f"analise FreeCAD no eixo principal {principal_axis_name}",
         f"eventos adicionais de corte no perfil: {side_feature_count}",
         f"cortes terminais base: {end_cut_count}",
         f"eventos laser totais: {cuts}",
+        f"comprimento de corte medido: {round(cut_length_mm / 1000.0, 3)} m",
     ]
     if hole_count:
         notes.append(f"furos circulares detetados: {hole_count}")
@@ -161,6 +195,15 @@ def analyze_step_profile(source_path: Path) -> dict[str, object]:
         "principal_axis": principal_axis_name,
         "side_feature_count": side_feature_count,
         "end_cut_count": end_cut_count,
+        "cut_length_mm": round(cut_length_mm, 3),
+        "cut_length_m": round(cut_length_mm / 1000.0, 4),
+        "feature_cut_length_mm": round(feature_cut_length_mm, 3),
+        "feature_cut_length_m": round(feature_cut_length_mm / 1000.0, 4),
+        "end_cut_length_mm": round(end_cut_length_mm, 3),
+        "end_cut_length_m": round(end_cut_length_mm / 1000.0, 4),
+        "hole_cut_length_mm": round(hole_cut_length_mm, 3),
+        "slot_cut_length_mm": round(slot_cut_length_mm, 3),
+        "generic_cut_length_mm": round(generic_cut_length_mm, 3),
         "selected_lateral_faces": [int(row["index"]) for row in lateral_faces],
         "selected_end_faces": [int(row["index"]) for row in selected_end_faces],
         "feature_rows": feature_rows,

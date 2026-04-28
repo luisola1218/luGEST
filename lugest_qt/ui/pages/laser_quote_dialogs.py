@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..widgets import CardFrame
-from ...services.laser_quote_engine import default_laser_quote_settings
+from lugest_core.laser.quote_engine import default_laser_quote_settings
 
 MATERIAL_FAMILY_ALIASES = {
     "FERRO": "Aco carbono",
