@@ -98,14 +98,14 @@
       ]
     },
     "nesting": {
-      "default_part_spacing_mm": 6.0,
-      "default_edge_margin_mm": 6.0,
+      "default_part_spacing_mm": 7.0,
+      "default_edge_margin_mm": 7.0,
       "allow_rotate": true,
       "auto_select_sheet": false,
-      "use_stock_first": true,
-      "allow_purchase_fallback": true,
+      "use_stock_first": false,
+      "allow_purchase_fallback": false,
       "shape_aware": true,
-      "shape_grid_mm": 50.0,
+      "shape_grid_mm": 8.0,
       "common_line_estimate": true,
       "common_line_tolerance_mm": 1.0,
       "lead_optimization": true,
@@ -195,9 +195,26 @@
           "peso_unid": 0.0,
           "outer_polygons": [],
           "hole_polygons": []
+        },
+        {
+          "name": "3010X1510",
+          "width_mm": 3010.0,
+          "height_mm": 1510.0,
+          "area_mm2": 4545100.0,
+          "source_kind": "purchase",
+          "source_label": "3010X1510",
+          "material_id": "",
+          "lote": "",
+          "local": "",
+          "quantity_available": 0,
+          "is_retalho": false,
+          "p_compra": 0.0,
+          "peso_unid": 0.0,
+          "outer_polygons": [],
+          "hole_polygons": []
         }
       ],
-      "shape_strict": false
+      "shape_strict": true
     },
     "machine_profiles": {
       "BLT641 12kW": {

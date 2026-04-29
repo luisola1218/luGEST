@@ -1244,8 +1244,8 @@ class PurchaseNotesPage(QWidget):
     def _delivery_dialog(self) -> dict | None:
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Entrega {self.current_number}")
-        dialog.setMinimumSize(900, 620)
-        dialog.resize(980, 700)
+        dialog.setMinimumSize(1500, 720)
+        dialog.resize(1760, 820)
         dialog.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
         dialog.setSizeGripEnabled(True)
         dialog_layout = QVBoxLayout(dialog)
@@ -1254,10 +1254,11 @@ class PurchaseNotesPage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
         content = QWidget()
-        content.setMaximumWidth(940)
+        content.setMinimumWidth(1500)
+        content.setMaximumWidth(1780)
         layout = QVBoxLayout(content)
         layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(10)
@@ -1353,35 +1354,52 @@ class PurchaseNotesPage(QWidget):
 
         table = QTableWidget(len(self.line_rows), 10)
         table.setHorizontalHeaderLabels(
-            ["Ref", "Material", "Esp.", "Descrição", "Peso unit.", "Peso tot.", "Pendente", "Receber", "Lote", "Localização"]
+            [
+                "Ref",
+                "Material",
+                "Esp.",
+                "Descrição",
+                "Peso unit.",
+                "Peso tot.",
+                "Pendente",
+                "Receber",
+                "Lote",
+                "Localização",
+            ]
         )
         table.verticalHeader().setVisible(False)
         table.setSelectionMode(QTableWidget.NoSelection)
-        table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setAlternatingRowColors(True)
-        table.verticalHeader().setDefaultSectionSize(34)
+        table.setWordWrap(False)
+        table.setStyleSheet(
+            "QTableWidget { font-size: 11px; gridline-color: #cbd7e6; alternate-background-color: #f8fbff; }"
+            "QTableWidget::item { padding: 4px 5px; }"
+            "QHeaderView::section { padding: 6px 5px; font-size: 11px; font-weight: 800; }"
+            "QLineEdit, QComboBox, QDoubleSpinBox { font-size: 11px; padding-left: 3px; padding-right: 3px; }"
+        )
+        table.verticalHeader().setDefaultSectionSize(42)
         header = table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Fixed)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.Fixed)
-        header.setSectionResizeMode(3, QHeaderView.Stretch)
-        header.setSectionResizeMode(4, QHeaderView.Fixed)
-        header.setSectionResizeMode(5, QHeaderView.Fixed)
-        header.setSectionResizeMode(6, QHeaderView.Fixed)
-        header.setSectionResizeMode(7, QHeaderView.Fixed)
-        header.setSectionResizeMode(8, QHeaderView.Fixed)
-        header.setSectionResizeMode(9, QHeaderView.Fixed)
-        table.setColumnWidth(0, 102)
-        table.setColumnWidth(2, 62)
-        table.setColumnWidth(4, 82)
-        table.setColumnWidth(5, 82)
-        table.setColumnWidth(6, 82)
-        table.setColumnWidth(7, 92)
-        table.setColumnWidth(8, 130)
-        table.setColumnWidth(9, 170)
-        table.setMinimumHeight(max(220, min(380, _table_visible_height(table, min(len(self.line_rows), 7), extra=12))))
+        header.setStretchLastSection(False)
+        column_widths = {
+            0: 98,
+            1: 128,
+            2: 48,
+            3: 228,
+            4: 74,
+            5: 74,
+            6: 68,
+            7: 82,
+            8: 128,
+            9: 150,
+        }
+        for column, width in column_widths.items():
+            header.setSectionResizeMode(column, QHeaderView.Fixed)
+            table.setColumnWidth(column, width)
+        table.setMinimumWidth(sum(column_widths.values()) + 28)
+        table.setMinimumHeight(max(260, min(460, _table_visible_height(table, min(len(self.line_rows), 9), extra=16))))
         qty_inputs: list[QDoubleSpinBox] = []
         lote_inputs: list[QLineEdit] = []
         local_inputs: list[QComboBox] = []
@@ -1408,14 +1426,14 @@ class PurchaseNotesPage(QWidget):
             elif "ENTREGUE" in entrega_txt:
                 pending = 0.0
             table.setItem(row_index, 0, QTableWidgetItem(ref))
-            material_item = QTableWidgetItem(_elide_middle(material_txt, 34))
+            material_item = QTableWidgetItem(_elide_middle(material_txt, 46))
             material_item.setToolTip(material_txt)
             table.setItem(row_index, 1, material_item)
             esp_item = QTableWidgetItem(esp_txt if self.backend.desktop_main.origem_is_materia(row.get("origem", "")) else "")
             esp_item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
             esp_item.setToolTip(esp_txt)
             table.setItem(row_index, 2, esp_item)
-            desc_item = QTableWidgetItem(_elide_middle(desc, 52))
+            desc_item = QTableWidgetItem(_elide_middle(desc, 88))
             desc_item.setToolTip(desc)
             table.setItem(row_index, 3, desc_item)
             weight_unit = self._line_weight_unit(row)
@@ -1435,7 +1453,8 @@ class PurchaseNotesPage(QWidget):
             qty_spin.setRange(0.0, pending)
             qty_spin.setDecimals(2)
             qty_spin.setValue(pending if pending > 0 else 0.0)
-            qty_spin.setMinimumWidth(112)
+            qty_spin.setMinimumWidth(70)
+            qty_spin.setMaximumWidth(78)
             qty_spin.setMinimumHeight(30)
             qty_spin.setAlignment(Qt.AlignCenter)
             qty_inputs.append(qty_spin)
@@ -1443,6 +1462,8 @@ class PurchaseNotesPage(QWidget):
             is_material_line = self.backend.desktop_main.origem_is_materia(row.get("origem", ""))
             lote_edit = QLineEdit("")
             lote_edit.setMinimumHeight(30)
+            lote_edit.setMinimumWidth(112)
+            lote_edit.setMaximumWidth(122)
             lote_edit.setPlaceholderText("Escrever apenas se necessário")
             lote_edit.setEnabled(is_material_line)
             lote_inputs.append(lote_edit)
@@ -1455,9 +1476,11 @@ class PurchaseNotesPage(QWidget):
                 local_combo.addItem(option)
             local_combo.setCurrentText("")
             local_combo.setMinimumHeight(30)
+            local_combo.setMinimumWidth(112)
+            local_combo.setMaximumWidth(122)
             local_combo.setEnabled(is_material_line)
             local_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-            local_combo.setMinimumContentsLength(12)
+            local_combo.setMinimumContentsLength(10)
             if local_combo.lineEdit() is not None:
                 local_combo.lineEdit().setPlaceholderText("Selecionar / escrever")
             local_inputs.append(local_combo)
@@ -1470,7 +1493,7 @@ class PurchaseNotesPage(QWidget):
         lines_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
         lines_hint = QLabel(
             "Nas linhas de matéria-prima, a entrada cria o registo de stock quando ele ainda não existe. "
-            "O lote e a localização podem ser definidos agora ou ficar em branco."
+            "Preenche Lote/Localização nesta fase. A inspeção, defeito e decisão ficam no menu Qualidade depois da receção."
         )
         lines_hint.setProperty("role", "muted")
         lines_hint.setWordWrap(True)

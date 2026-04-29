@@ -382,6 +382,8 @@ class QuotesBridgeMixin:
                     "ref_interna": str(row.get("ref_interna", "") or "").strip(),
                     "ref_externa": str(row.get("ref_externa", "") or "").strip(),
                     "descricao": str(row.get("descricao", "") or "").strip(),
+                    "dimensao": str(row.get("dimensao", row.get("dimensoes", "")) or "").strip(),
+                    "dimensoes": str(row.get("dimensao", row.get("dimensoes", "")) or "").strip(),
                     "material": str(row.get("material", "") or "").strip(),
                     "material_family": str(row.get("material_family", "") or "").strip(),
                     "material_subtype": str(row.get("material_subtype", "") or "").strip(),
@@ -481,7 +483,7 @@ class QuotesBridgeMixin:
 
     def _next_assembly_model_code(self) -> str:
         highest = 0
-        for row in list(self.ensure_data().get("conjuntos_modelo", []) or []):
+        for row in list(self.ensure_data().get("conjuntos_modelo", []) or []) + list(self.ensure_data().get("conjuntos", []) or []):
             codigo = str((row or {}).get("codigo", "") or "").strip().upper()
             digits = "".join(ch for ch in codigo if ch.isdigit())
             if digits:
@@ -489,7 +491,7 @@ class QuotesBridgeMixin:
                     highest = max(highest, int(digits))
                 except Exception:
                     continue
-        return f"CJ{highest + 1:04d}"
+        return f"MOD{highest + 1:04d}"
 
     def _normalize_assembly_model_item(self, payload: dict[str, Any]) -> dict[str, Any]:
         item_type = self.desktop_main.normalize_orc_line_type(payload.get("tipo_item"))
@@ -510,6 +512,7 @@ class QuotesBridgeMixin:
             "stock_item_kind": stock_item_kind,
             "ref_externa": str(payload.get("ref_externa", "") or "").strip(),
             "descricao": str(payload.get("descricao", "") or "").strip(),
+            "dimensao": str(payload.get("dimensao", payload.get("dimensoes", "")) or "").strip(),
             "material": str(payload.get("material", "") or "").strip(),
             "espessura": str(payload.get("espessura", "") or "").strip(),
             "operacao": str(payload.get("operacao", "") or "").strip(),
@@ -553,6 +556,16 @@ class QuotesBridgeMixin:
                 raise ValueError("Material e espessura sao obrigatorios nas pecas fabricadas.")
             item["produto_codigo"] = ""
             item["produto_unid"] = ""
+            if stock_item_kind == "raw_material":
+                item["ref_interna"] = ""
+                item["operacao"] = ""
+                item["desenho"] = ""
+                item["tempo_peca_min"] = 0.0
+                item["operacoes_lista"] = []
+                item["operacoes_fluxo"] = []
+                item["operacoes_detalhe"] = []
+                item["tempos_operacao"] = {}
+                item["custos_operacao"] = {}
         elif item_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT:
             product = self._product_lookup(item["produto_codigo"])
             if product is None and not item["descricao"]:
@@ -786,7 +799,7 @@ class QuotesBridgeMixin:
 
     def conjunto_save(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = self.ensure_data()
-        code = str(payload.get("codigo", "") or "").strip() or self._next_assembly_model_code().replace("CJM-", "CJ-")
+        code = str(payload.get("codigo", "") or "").strip() or self._next_assembly_model_code()
         descricao = str(payload.get("descricao", "") or "").strip()
         if not descricao:
             raise ValueError("Descricao obrigatoria no conjunto.")
@@ -884,8 +897,17 @@ class QuotesBridgeMixin:
     def _normalize_orc_line(self, payload: dict[str, Any]) -> dict[str, Any]:
         line_type = self.desktop_main.normalize_orc_line_type(payload.get("tipo_item"))
         stock_item_kind = str(payload.get("stock_item_kind", "") or "").strip()
+        raw_by_stock_ref = self._quote_line_looks_stock_material_ref(payload.get("ref_externa"))
+        if raw_by_stock_ref:
+            operacao_norm = self.desktop_main.norm_text(str(payload.get("operacao", "") or "").strip())
+            raw_by_stock_ref = bool(
+                line_type == self.desktop_main.ORC_LINE_TYPE_PIECE
+                and not str(payload.get("desenho", "") or "").strip()
+                and round(self._parse_float(payload.get("tempo_peca_min", payload.get("tempo_pecas_min", 0)), 0), 4) <= 0
+                and operacao_norm in {"", "-", "stockmp", "materia prima", "materia-prima"}
+            )
         if line_type == self.desktop_main.ORC_LINE_TYPE_PIECE and (
-            stock_item_kind == "raw_material" or str(payload.get("stock_material_id", "") or "").strip()
+            stock_item_kind == "raw_material" or str(payload.get("stock_material_id", "") or "").strip() or raw_by_stock_ref
         ):
             stock_item_kind = "raw_material"
         elif line_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT:
@@ -898,6 +920,7 @@ class QuotesBridgeMixin:
             "ref_interna": str(payload.get("ref_interna", "") or "").strip(),
             "ref_externa": str(payload.get("ref_externa", "") or "").strip(),
             "descricao": str(payload.get("descricao", "") or "").strip(),
+            "dimensao": str(payload.get("dimensao", payload.get("dimensoes", "")) or "").strip(),
             "material": str(payload.get("material", "") or "").strip(),
             "material_family": str(payload.get("material_family", "") or "").strip(),
             "material_subtype": str(payload.get("material_subtype", "") or "").strip(),
@@ -940,6 +963,8 @@ class QuotesBridgeMixin:
             "laser_base_tempo_unit": round(self._parse_float(payload.get("laser_base_tempo_unit", payload.get("tempo_peca_min", payload.get("tempo_pecas_min", 0))), 0), 4),
             "laser_base_preco_unit": round(self._parse_float(payload.get("laser_base_preco_unit", payload.get("preco_unit", 0)), 0), 4),
         }
+        if stock_item_kind == "raw_material" and not line["stock_material_id"] and self._quote_line_looks_stock_material_ref(line["ref_externa"]):
+            line["stock_material_id"] = line["ref_externa"]
         if line["material_supplied_by_client"] or line["material_fornecido_cliente"]:
             line["material_supplied_by_client"] = True
             line["material_fornecido_cliente"] = True
@@ -957,7 +982,20 @@ class QuotesBridgeMixin:
             line["produto_unid"] = ""
             if stock_item_kind == "raw_material":
                 line["ref_interna"] = ""
+                line["produto_codigo"] = ""
+                line["produto_unid"] = ""
+                line["operacao"] = ""
                 line["desenho"] = ""
+                line["tempo_peca_min"] = 0.0
+                line["laser_base_active"] = False
+                line["laser_base_tempo_unit"] = 0.0
+                line["laser_base_preco_unit"] = 0.0
+                line["operacoes_lista"] = []
+                line["operacoes_fluxo"] = []
+                line["operacoes_detalhe"] = []
+                line["tempos_operacao"] = {}
+                line["custos_operacao"] = {}
+                line["quote_cost_snapshot"] = {}
         elif line_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT:
             product = self._product_lookup(line["produto_codigo"])
             if product is None and not line["descricao"]:
@@ -1057,18 +1095,26 @@ class QuotesBridgeMixin:
             line["preco_unit"] = round(base_price + extra_price, 4)
             line["total"] = round(line["qtd"] * line["preco_unit"], 2)
 
-        snapshot_source = {**dict(payload or {}), **line}
-        snapshot = self._quote_line_operation_snapshot(snapshot_source)
-        _repair_laser_base(snapshot)
-        _apply_laser_base_blend(snapshot)
-        snapshot_source = {**dict(payload or {}), **line}
-        snapshot = self._quote_line_operation_snapshot(snapshot_source)
-        line["operacoes_lista"] = list(snapshot.get("operacoes", []) or [])
-        line["operacoes_fluxo"] = [dict(item or {}) for item in list(snapshot.get("operacoes_fluxo", []) or []) if isinstance(item, dict)]
-        line["operacoes_detalhe"] = [dict(item or {}) for item in list(snapshot.get("operacoes_detalhe", []) or []) if isinstance(item, dict)]
-        line["tempos_operacao"] = dict(snapshot.get("tempos_operacao", {}) or {})
-        line["custos_operacao"] = dict(snapshot.get("custos_operacao", {}) or {})
-        line["quote_cost_snapshot"] = dict(snapshot.get("quote_cost_snapshot", {}) or {})
+        if stock_item_kind == "raw_material":
+            line["operacoes_lista"] = []
+            line["operacoes_fluxo"] = []
+            line["operacoes_detalhe"] = []
+            line["tempos_operacao"] = {}
+            line["custos_operacao"] = {}
+            line["quote_cost_snapshot"] = {}
+        else:
+            snapshot_source = {**dict(payload or {}), **line}
+            snapshot = self._quote_line_operation_snapshot(snapshot_source)
+            _repair_laser_base(snapshot)
+            _apply_laser_base_blend(snapshot)
+            snapshot_source = {**dict(payload or {}), **line}
+            snapshot = self._quote_line_operation_snapshot(snapshot_source)
+            line["operacoes_lista"] = list(snapshot.get("operacoes", []) or [])
+            line["operacoes_fluxo"] = [dict(item or {}) for item in list(snapshot.get("operacoes_fluxo", []) or []) if isinstance(item, dict)]
+            line["operacoes_detalhe"] = [dict(item or {}) for item in list(snapshot.get("operacoes_detalhe", []) or []) if isinstance(item, dict)]
+            line["tempos_operacao"] = dict(snapshot.get("tempos_operacao", {}) or {})
+            line["custos_operacao"] = dict(snapshot.get("custos_operacao", {}) or {})
+            line["quote_cost_snapshot"] = dict(snapshot.get("quote_cost_snapshot", {}) or {})
         return line
 
     def orc_save(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1673,10 +1719,22 @@ class QuotesBridgeMixin:
             return True
         if str(row.get("stock_material_id", "") or "").strip():
             return True
+        if self._quote_line_looks_stock_material_ref(row.get("ref_externa")):
+            if str(row.get("desenho", "") or "").strip():
+                return False
+            if round(self._parse_float(row.get("tempo_peca_min", row.get("tempo_pecas_min", 0)), 0), 4) > 0:
+                return False
+            operacao_norm = self.desktop_main.norm_text(str(row.get("operacao", "") or "").strip())
+            if operacao_norm in {"", "-", "stockmp", "materia prima", "materia-prima"}:
+                return True
         subtype = self.desktop_main.norm_text(str(row.get("material_subtype", "") or row.get("calc_mode", "") or "").strip())
         if subtype == "stockmp":
             return True
         return False
+
+    def _quote_line_looks_stock_material_ref(self, value: Any) -> bool:
+        raw = str(value or "").strip().upper()
+        return bool(raw.startswith("MAT") and raw[3:].isdigit())
 
     def _quote_line_production_route(self, line: dict[str, Any] | None = None) -> str:
         row = dict(line or {})
@@ -1804,6 +1862,7 @@ class QuotesBridgeMixin:
                         "tipo_item": line_type,
                         "stock_item_kind": str(line.get("stock_item_kind", "") or "").strip(),
                         "descricao": str(line.get("descricao", "") or "").strip(),
+                        "dimensao": str(line.get("dimensao", line.get("dimensoes", "")) or "").strip(),
                         "material": str(line.get("material", "") or "").strip(),
                         "material_family": str(line.get("material_family", "") or "").strip(),
                         "material_subtype": str(line.get("material_subtype", "") or "").strip(),
@@ -2021,6 +2080,7 @@ class QuotesBridgeMixin:
                     "kind": "material",
                     "ref": stock_id,
                     "descricao": str(line.get("descricao", "") or "").strip(),
+                    "dimensao": str(line.get("dimensao", line.get("dimensoes", "")) or "").strip(),
                     "unid": "UN",
                     "qtd": 0.0,
                     "qtd_disponivel": available,
@@ -2067,6 +2127,8 @@ class QuotesBridgeMixin:
                             "iva": 23.0,
                             "material": str(need.get("material", "") or "").strip(),
                             "espessura": str(need.get("espessura", "") or "").strip(),
+                            "dimensao": str(need.get("dimensao", "") or "").strip(),
+                            "dimensoes": str(need.get("dimensao", "") or "").strip(),
                             "formato": str(need.get("formato", "") or "Chapa").strip() or "Chapa",
                             "comprimento": self._parse_float(need.get("comprimento", 0), 0),
                             "largura": self._parse_float(need.get("largura", 0), 0),

@@ -37,6 +37,7 @@ from .pages.billing_page import BillingPage
 from .pages.material_assistant_page import MaterialAssistantPage
 from .pages.materials_page import MaterialsPage
 from .pages.products_page import ProductsPage
+from .pages.quality_page import QualityPage
 from .pages.runtime_pages import (
     AvariasPage,
     ClientsPage,
@@ -88,6 +89,7 @@ class MainWindow(QMainWindow):
             "opp": lambda: OppPage(self.backend),
             "material_assistant": lambda: MaterialAssistantPage(self.backend),
             "transportes": lambda: TransportsPage(self.backend),
+            "quality": lambda: QualityPage(self.backend),
         }
 
         self.setWindowTitle("luGEST Qt")
@@ -177,6 +179,7 @@ class MainWindow(QMainWindow):
             ("shipping", "Expedição"),
             ("billing", "Faturação"),
             ("purchase_notes", "Notas Encomenda"),
+            ("quality", "Qualidade"),
             ("pulse", "Pulse"),
             ("avarias", "Avarias"),
             ("home", "Resumo"),

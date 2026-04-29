@@ -8686,21 +8686,21 @@ class OrdersPage(QWidget):
     def _refresh_montagem_table(self) -> None:
         self.detail_montagem = list(self.current_detail.get("montagem_items", []) or [])
         shortages_map = {
-            str(row.get("produto_codigo", "") or "").strip(): row
+            str(row.get("item_key", "") or row.get("produto_codigo", "") or row.get("stock_material_id", "") or row.get("descricao", "") or "").strip(): row
             for row in list(self.current_detail.get("montagem_shortages", []) or [])
-            if str(row.get("produto_codigo", "") or "").strip()
+            if str(row.get("item_key", "") or row.get("produto_codigo", "") or row.get("stock_material_id", "") or row.get("descricao", "") or "").strip()
         }
         _fill_table(
             self.montagem_table,
             [
                 [
                     row.get("tipo_label", "-"),
-                    row.get("produto_codigo", "-") or "-",
+                    row.get("produto_codigo", "") or row.get("stock_material_id", "") or row.get("material", "") or "-",
                     row.get("descricao", "-"),
                     f"{float(row.get('qtd_planeada', 0) or 0):.2f}",
                     f"{float(row.get('qtd_consumida', 0) or 0):.2f}",
                     f"{float(row.get('qtd_pendente', 0) or 0):.2f}",
-                    f"{float((shortages_map.get(str(row.get('produto_codigo', '') or '').strip(), {}) or {}).get('qtd_em_falta', 0) or 0):.2f}",
+                    f"{float((shortages_map.get(str(row.get('item_key', '') or row.get('produto_codigo', '') or row.get('stock_material_id', '') or row.get('descricao', '') or '').strip(), {}) or {}).get('qtd_em_falta', 0) or 0):.2f}",
                     row.get("estado", "-"),
                 ]
                 for row in self.detail_montagem
@@ -8709,7 +8709,7 @@ class OrdersPage(QWidget):
         )
         for row_index, row in enumerate(self.detail_montagem):
             _paint_table_row(self.montagem_table, row_index, str(row.get("estado", "")))
-            code = str(row.get("produto_codigo", "") or "").strip()
+            code = str(row.get("item_key", "") or row.get("produto_codigo", "") or row.get("stock_material_id", "") or row.get("descricao", "") or "").strip()
             shortage = shortages_map.get(code, {})
             if not shortage:
                 continue
@@ -11961,11 +11961,109 @@ class QuotesPage(QWidget):
             return True
         if str(data.get("stock_material_id", "") or "").strip():
             return True
+        ref_ext = str(data.get("ref_externa", "") or "").strip().upper()
+        if ref_ext.startswith("MAT") and ref_ext[3:].isdigit():
+            if str(data.get("desenho", "") or "").strip():
+                return False
+            try:
+                tempo = float(data.get("tempo_peca_min", data.get("tempo_pecas_min", 0)) or 0)
+            except Exception:
+                tempo = 0.0
+            if tempo > 0:
+                return False
+            try:
+                op_norm = self.backend.desktop_main.norm_text(str(data.get("operacao", "") or "").strip())
+            except Exception:
+                op_norm = str(data.get("operacao", "") or "").strip().lower()
+            return op_norm in {"", "-", "stockmp", "materia prima", "materia-prima"}
         subtype = str(data.get("material_subtype", "") or data.get("calc_mode", "") or "").strip()
         try:
             return self.backend.desktop_main.norm_text(subtype) == "stockmp"
         except Exception:
             return subtype.lower() == "stockmp"
+
+    def _quote_line_should_be_raw_material_ui(self, row: dict) -> bool:
+        if self._quote_line_is_raw_material_ui(row):
+            return True
+        data = dict(row or {})
+        if self._quote_line_type(data) != self.backend.desktop_main.ORC_LINE_TYPE_PIECE:
+            return False
+        if str(data.get("desenho", "") or "").strip():
+            return False
+        try:
+            tempo = float(data.get("tempo_peca_min", data.get("tempo_pecas_min", 0)) or 0)
+        except Exception:
+            tempo = 0.0
+        if tempo > 0:
+            return False
+        operacao = str(data.get("operacao", "") or "").strip()
+        if operacao:
+            try:
+                op_norm = self.backend.desktop_main.norm_text(operacao)
+            except Exception:
+                op_norm = operacao.lower()
+            if op_norm not in {"stockmp", "materia prima", "materia-prima"}:
+                return False
+        has_raw_origin = any(
+            str(data.get(key, "") or "").strip()
+            for key in (
+                "conjunto_codigo",
+                "conjunto_nome",
+                "calc_mode",
+                "material_subtype",
+                "quantity_units",
+                "weight_total",
+                "stock_material_id",
+            )
+        )
+        if not has_raw_origin:
+            return False
+        marker_text = " ".join(
+            str(data.get(key, "") or "")
+            for key in ("ref_externa", "material", "material_family", "material_subtype", "calc_mode", "descricao")
+        )
+        try:
+            marker_norm = self.backend.desktop_main.norm_text(marker_text)
+        except Exception:
+            marker_norm = marker_text.lower()
+        raw_tokens = (
+            "perfil",
+            "ipe",
+            "ipn",
+            "hea",
+            "heb",
+            "upn",
+            "rebar",
+            "ferro nervurado",
+            "barra",
+            "chapa",
+            "tubo",
+            "cantoneira",
+            "varao",
+            "mat",
+            "stock mp",
+            "stockmp",
+        )
+        return any(token in marker_norm for token in raw_tokens)
+
+    def _coerce_quote_line_raw_material_ui(self, row: dict) -> dict:
+        data = dict(row or {})
+        data["tipo_item"] = self.backend.desktop_main.ORC_LINE_TYPE_PIECE
+        data["stock_item_kind"] = "raw_material"
+        data["ref_interna"] = ""
+        data["operacao"] = ""
+        data["tempo_peca_min"] = 0.0
+        data["desenho"] = ""
+        data["laser_base_active"] = False
+        data["laser_base_tempo_unit"] = 0.0
+        data["laser_base_preco_unit"] = 0.0
+        for key in ("operacoes_lista", "operacoes_fluxo", "operacoes_detalhe"):
+            data[key] = []
+        for key in ("tempos_operacao", "custos_operacao", "quote_cost_snapshot"):
+            data[key] = {}
+        if not str(data.get("material_subtype", "") or "").strip():
+            data["material_subtype"] = str(data.get("calc_mode", "") or "Stock MP").strip()
+        return data
 
     def _quote_line_type_label(self, row: dict) -> str:
         if self._quote_line_is_raw_material_ui(row):
@@ -11975,7 +12073,7 @@ class QuotesPage(QWidget):
     def _quote_line_primary_ref(self, row: dict) -> str:
         if self._quote_line_is_raw_material_ui(row):
             stock_id = str((row or {}).get("stock_material_id", "") or "").strip()
-            return stock_id or "-"
+            return stock_id or str((row or {}).get("ref_externa", "") or "").strip() or "-"
         line_type = self._quote_line_type(row)
         if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PRODUCT:
             return str((row or {}).get("produto_codigo", "") or "").strip() or "-"
@@ -11999,6 +12097,9 @@ class QuotesPage(QWidget):
         if self._quote_line_is_raw_material_ui(row):
             subtype = str((row or {}).get("material_subtype", "") or "").strip()
             esp = str((row or {}).get("espessura", "") or "").strip()
+            dimensao = str((row or {}).get("dimensao", (row or {}).get("dimensoes", "")) or "").strip()
+            if dimensao:
+                return dimensao
             if subtype and esp:
                 return f"{subtype} | {esp}"
             return esp or subtype or "-"
@@ -12086,6 +12187,8 @@ class QuotesPage(QWidget):
         }
         normalized_rows = []
         for row in self.line_rows:
+            if self._quote_line_should_be_raw_material_ui(row):
+                row = self._coerce_quote_line_raw_material_ui(row)
             qtd = float(row.get("qtd", 0) or 0)
             preco_unit = float(row.get("preco_unit", 0) or 0)
             total = round(qtd * preco_unit, 2)
@@ -12098,12 +12201,12 @@ class QuotesPage(QWidget):
                 [
                     self._quote_line_type_label(row),
                     self._quote_line_primary_ref(row),
-                    row.get("ref_externa", "-"),
-                    row.get("descricao", "-"),
+                    row.get("ref_externa", "-") or "-",
+                    row.get("descricao", "-") or "-",
                     self._quote_line_material_display(row),
                     self._quote_line_unit_display(row),
-                    row.get("operacao", "-"),
-                    f"{float(row.get('tempo_peca_min', 0) or 0):.2f} min",
+                    "-" if self._quote_line_is_raw_material_ui(row) or self._quote_line_type(row) == self.backend.desktop_main.ORC_LINE_TYPE_PRODUCT else (row.get("operacao", "-") or "-"),
+                    "-" if self._quote_line_is_raw_material_ui(row) or self._quote_line_type(row) == self.backend.desktop_main.ORC_LINE_TYPE_PRODUCT else f"{float(row.get('tempo_peca_min', 0) or 0):.2f} min",
                     f"{float(row.get('qtd', 0) or 0):.2f}",
                     _fmt_eur(float(row.get("preco_unit", 0) or 0)),
                     _fmt_eur(float(row.get("total", 0) or 0)),
@@ -15134,11 +15237,24 @@ class QuotesPage(QWidget):
         add_labor_btn = QPushButton("Mao de obra")
         add_consumable_btn = QPushButton("Consumivel")
         add_product_btn = QPushButton("Produto stock")
+        add_laser_batch_btn = QPushButton("Lote DXF/DWG")
+        add_step_igs_btn = QPushButton("STEP/IGS")
+        add_structure_btn = QPushButton("Estrutura metalica")
         edit_btn = QPushButton("Editar item")
         edit_btn.setProperty("variant", "secondary")
         remove_btn = QPushButton("Remover item")
         remove_btn.setProperty("variant", "danger")
-        for idx, button in enumerate((add_material_btn, add_labor_btn, add_consumable_btn, add_product_btn, edit_btn, remove_btn)):
+        for idx, button in enumerate((
+            add_material_btn,
+            add_labor_btn,
+            add_consumable_btn,
+            add_product_btn,
+            add_laser_batch_btn,
+            add_step_igs_btn,
+            add_structure_btn,
+            edit_btn,
+            remove_btn,
+        )):
             button.setProperty("compact", "true")
             actions.addWidget(button, idx // 3, idx % 3)
         layout.addLayout(actions)
@@ -15231,6 +15347,55 @@ class QuotesPage(QWidget):
             items.append(payload)
             _render_items()
 
+        def _line_kind_for_shortcut(line: dict) -> str:
+            operation = str(line.get("operacao", "") or "").strip().lower()
+            unit_txt = str(line.get("produto_unid", "") or "").strip().lower()
+            if "corte laser" in operation or unit_txt == "h":
+                return "labor"
+            return self._assembly_item_kind_from_line(line)
+
+        def _add_lines_from_shortcut(lines: list[dict]) -> None:
+            added = 0
+            for row in list(lines or []):
+                if not isinstance(row, dict) or not row:
+                    continue
+                line = dict(row)
+                kind = _line_kind_for_shortcut(line)
+                total_cost = round(float(line.get("qtd", 0) or 0) * float(line.get("preco_unit", 0) or 0), 2)
+                items.append(
+                    {
+                        "kind": kind,
+                        "quantity_units": round(float(line.get("qtd", 0) or 0), 3),
+                        "total_cost": total_cost,
+                        "weight_total": 0.0,
+                        "line": line,
+                    }
+                )
+                added += 1
+            if added:
+                _render_items()
+
+        def _add_laser_batch_to_assembly() -> None:
+            batch_dialog = LaserBatchQuoteDialog(
+                self.backend,
+                dialog,
+                default_machine=self.workcenter_combo.currentText().strip(),
+            )
+            if batch_dialog.exec() != QDialog.Accepted:
+                return
+            result = dict(batch_dialog.result_payload() or {})
+            _add_lines_from_shortcut([dict(row or {}) for row in list(result.get("lines", []) or []) if dict(row or {})])
+
+        def _add_step_igs_to_assembly() -> None:
+            lines = self._open_profile_step_igs_quote_builder(return_lines=True, parent=dialog)
+            _add_lines_from_shortcut([dict(row or {}) for row in list(lines or []) if dict(row or {})])
+
+        def _add_structure_to_assembly() -> None:
+            payload = self._structure_quote_dialog()
+            if not payload:
+                return
+            _add_lines_from_shortcut([dict(row or {}) for row in list(payload.get("lines", []) or []) if dict(row or {})])
+
         def _edit_item() -> None:
             index = _selected_index()
             if index < 0:
@@ -15260,6 +15425,9 @@ class QuotesPage(QWidget):
         add_labor_btn.clicked.connect(lambda: _add_item("labor"))
         add_consumable_btn.clicked.connect(lambda: _add_item("consumable"))
         add_product_btn.clicked.connect(lambda: _add_item("product"))
+        add_laser_batch_btn.clicked.connect(_add_laser_batch_to_assembly)
+        add_step_igs_btn.clicked.connect(_add_step_igs_to_assembly)
+        add_structure_btn.clicked.connect(_add_structure_to_assembly)
         edit_btn.clicked.connect(_edit_item)
         remove_btn.clicked.connect(_remove_item)
         margin_spin.valueChanged.connect(lambda _v: _render_items())
@@ -15794,7 +15962,13 @@ class QuotesPage(QWidget):
                 initial.get("tipo_item", self.backend.desktop_main.ORC_LINE_TYPE_PIECE)
             )
         )
-        if str(initial.get("stock_material_id", "") or "").strip() and initial_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE:
+        if (
+            (
+                str(initial.get("stock_material_id", "") or "").strip()
+                or str(initial.get("stock_item_kind", "") or "").strip() == "raw_material"
+            )
+            and initial_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE
+        ):
             initial_type = "stock_mp"
         ref_history = QComboBox()
         ref_history.setEditable(True)
@@ -15846,6 +16020,7 @@ class QuotesPage(QWidget):
         ref_int_edit = QLineEdit("" if template_mode else str(initial.get("ref_interna", "") or "").strip())
         ref_ext_edit = QLineEdit(str(initial.get("ref_externa", "") or "").strip())
         desc_edit = QLineEdit(str(initial.get("descricao", "") or "").strip())
+        dimension_edit = QLineEdit(str(initial.get("dimensao", initial.get("dimensoes", "")) or "").strip())
         product_unid_edit = QLineEdit(str(initial.get("produto_unid", "") or "").strip())
         product_unid_edit.setReadOnly(True)
         mp_metric_spin = QDoubleSpinBox()
@@ -16112,8 +16287,6 @@ class QuotesPage(QWidget):
                 desc_edit.setText(str(row.get("descricao", "") or "").strip())
             if float(price_spin.value() or 0) <= 0:
                 price_spin.setValue(float(row.get("preco", 0) or 0))
-            if not ref_ext_edit.text().strip():
-                ref_ext_edit.setText(code)
 
         def sync_line_price_from_mp() -> None:
             stock_id = str(stock_line_meta.get("stock_material_id", "") or "").strip()
@@ -16150,6 +16323,7 @@ class QuotesPage(QWidget):
         def sync_stock_material_fields() -> None:
             record, preview = stock_material_detail()
             if not record:
+                stock_line_meta["stock_material_id"] = ""
                 mp_metric_spin.setValue(0.0)
                 mp_price_kg_spin.setValue(0.0)
                 mp_margin_spin.setValue(0.0)
@@ -16162,6 +16336,7 @@ class QuotesPage(QWidget):
                 esp_txt = dim_txt
             if dim_txt:
                 desc_txt = f"{desc_txt} {dim_txt}".strip()
+                dimension_edit.setText(dim_txt)
             if esp_txt and esp_txt not in desc_txt:
                 desc_txt = f"{desc_txt} {esp_txt} mm".strip()
             material_combo.setCurrentText(str(record.get("material", "") or "").strip())
@@ -16559,6 +16734,7 @@ class QuotesPage(QWidget):
         form.addRow("Ref. interna", ref_int_edit)
         form.addRow("Ref. externa", ref_ext_edit)
         form.addRow("Descricao", desc_edit)
+        form.addRow("Dimensao", dimension_edit)
         form.addRow("Codigo/unid", product_unid_edit)
         form.addRow("Stock MP", stock_material_combo)
         form.addRow("Kg por unid.", mp_metric_spin)
@@ -16586,8 +16762,10 @@ class QuotesPage(QWidget):
             is_product = line_type == self.backend.desktop_main.ORC_LINE_TYPE_PRODUCT
             ref_history.setEnabled(is_piece)
             ref_int_edit.setEnabled(is_piece and not template_mode and not is_stock_mp)
+            ref_ext_edit.setEnabled(is_piece and not is_stock_mp)
             material_combo.setEnabled(is_piece)
             esp_combo.setEnabled(is_piece)
+            dimension_edit.setEnabled(is_piece)
             drawing_edit.setEnabled(is_piece and not is_stock_mp)
             btn_generate.setEnabled(is_piece and not template_mode and not is_stock_mp)
             btn_history.setEnabled(is_piece and not is_stock_mp)
@@ -16600,15 +16778,21 @@ class QuotesPage(QWidget):
             set_form_row_visible(stock_material_combo, is_stock_mp, "Stock MP")
             product_unid_edit.setEnabled(is_product or line_type == self.backend.desktop_main.ORC_LINE_TYPE_SERVICE)
             set_form_row_visible(ref_history, is_piece and not is_stock_mp, "Historico")
+            set_form_row_visible(ref_int_edit, is_piece and not is_stock_mp and not template_mode, "Ref. interna")
+            set_form_row_visible(ref_ext_edit, is_piece and not is_stock_mp, "Ref. externa")
             set_form_row_visible(product_combo, is_product, "Produto")
             set_form_row_visible(product_unid_edit, is_product or line_type == self.backend.desktop_main.ORC_LINE_TYPE_SERVICE, "Codigo/unid")
+            set_form_row_visible(material_combo, is_piece, "Material")
+            set_form_row_visible(esp_combo, is_piece, "Espessura")
+            set_form_row_visible(dimension_edit, is_stock_mp, "Dimensao")
             show_stock_commercial = is_stock_mp
-            set_form_row_visible(operation_selector, not is_stock_mp, "Postos")
-            set_form_row_visible(operation_cost_label, not is_stock_mp, "Custeio op.")
-            operation_buttons_host.setVisible(not is_stock_mp)
-            set_form_row_visible(tempo_spin, not is_stock_mp, "Tempo peca (min)")
-            set_form_row_visible(drawing_edit, not is_stock_mp, "Desenho")
-            ref_buttons_host.setVisible(not is_stock_mp)
+            show_operations = is_piece and not is_stock_mp
+            set_form_row_visible(operation_selector, show_operations, "Postos")
+            set_form_row_visible(operation_cost_label, show_operations, "Custeio op.")
+            operation_buttons_host.setVisible(show_operations)
+            set_form_row_visible(tempo_spin, show_operations, "Tempo peca (min)")
+            set_form_row_visible(drawing_edit, show_operations, "Desenho")
+            ref_buttons_host.setVisible(show_operations)
             set_form_row_visible(mp_metric_spin, show_stock_commercial, stock_price_state.get("metric_label", "Kg por unid."))
             set_form_row_visible(mp_price_kg_spin, show_stock_commercial, f"Preco compra ({stock_price_state.get('base_label', 'EUR/kg')})")
             set_form_row_visible(mp_margin_spin, show_stock_commercial, "Margem")
@@ -16616,13 +16800,23 @@ class QuotesPage(QWidget):
                 base_state["laser_base_enabled"] = False
                 base_state["laser_base_time"] = 0.0
                 base_state["laser_base_price"] = 0.0
+                ref_int_edit.clear()
+                ref_ext_edit.clear()
+                material_combo.setCurrentText("")
+                esp_combo.setCurrentText("")
+                dimension_edit.clear()
+                drawing_edit.clear()
+                apply_operations("")
+                tempo_spin.setValue(0.0)
+                stock_line_meta["stock_material_id"] = ""
+                stock_line_meta["material_family"] = ""
+                stock_line_meta["material_subtype"] = ""
                 sync_product_fields()
-                if not operation_edit.text().strip():
-                    apply_operations("Montagem")
             elif is_stock_mp:
                 base_state["laser_base_enabled"] = False
                 base_state["laser_base_time"] = 0.0
                 base_state["laser_base_price"] = 0.0
+                ref_int_edit.clear()
                 drawing_edit.clear()
                 apply_operations("")
                 tempo_spin.setValue(0.0)
@@ -16631,6 +16825,12 @@ class QuotesPage(QWidget):
                 base_state["laser_base_enabled"] = False
                 base_state["laser_base_time"] = 0.0
                 base_state["laser_base_price"] = 0.0
+                ref_int_edit.clear()
+                ref_ext_edit.clear()
+                material_combo.setCurrentText("")
+                esp_combo.setCurrentText("")
+                dimension_edit.clear()
+                drawing_edit.clear()
                 product_unid_edit.setText("SV")
                 if not operation_edit.text().strip():
                     apply_operations("Montagem")
@@ -16671,16 +16871,20 @@ class QuotesPage(QWidget):
             try:
                 if current_type_token() == "stock_mp":
                     record, preview = stock_material_detail()
-                    if not record:
-                        QMessageBox.warning(dialog, "Stock MP", "Seleciona um material valido da matéria-prima.")
+                    if not record and not material_combo.currentText().strip():
+                        QMessageBox.warning(dialog, "Stock MP", "Seleciona stock de matéria-prima ou indica o material manualmente.")
                         return
                     if not desc_edit.text().strip():
-                        sync_stock_material_fields()
+                        if record:
+                            sync_stock_material_fields()
+                        else:
+                            desc_edit.setText(" ".join(part for part in (material_combo.currentText().strip(), dimension_edit.text().strip()) if part).strip())
                     if not material_combo.currentText().strip():
                         material_combo.setCurrentText(str(record.get("material", "") or "").strip())
-                    esp_txt = str(preview.get("espessura", record.get("espessura", "")) or "").strip()
-                    if esp_txt and not esp_combo.currentText().strip():
-                        esp_combo.setCurrentText(esp_txt)
+                    if record:
+                        esp_txt = str(preview.get("espessura", record.get("espessura", "")) or "").strip()
+                        if esp_txt and not esp_combo.currentText().strip():
+                            esp_combo.setCurrentText(esp_txt)
                 dialog.accept()
             except Exception as exc:
                 QMessageBox.critical(dialog, "Linha de orcamento", str(exc))
@@ -16733,12 +16937,26 @@ class QuotesPage(QWidget):
         elif token == "stock_mp":
             final_time_unit = 0.0
             final_price_unit = round(float(price_spin.value() or 0.0), 4)
+        is_raw_stock_line = token == "stock_mp"
+        is_product_line = line_type == self.backend.desktop_main.ORC_LINE_TYPE_PRODUCT
+        final_ref_externa = ""
+        if is_raw_stock_line:
+            record, _preview = stock_material_detail()
+            final_ref_externa = str((record or {}).get("id", "") or stock_line_meta.get("stock_material_id", "") or "").strip()
+        elif line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE:
+            final_ref_externa = ref_ext_edit.text().strip()
+        final_operation = ""
+        if not is_raw_stock_line and not is_product_line:
+            final_operation = " + ".join(full_route_operation_names())
+        keep_operation_meta = not is_raw_stock_line and not is_product_line
         return {
             "tipo_item": line_type,
-            "stock_item_kind": "raw_material" if token == "stock_mp" else ("product" if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PRODUCT else str(initial.get("stock_item_kind", "") or "").strip()),
-            "ref_interna": "" if (template_mode or line_type != self.backend.desktop_main.ORC_LINE_TYPE_PIECE) else ref_int_edit.text().strip(),
-            "ref_externa": ref_ext_edit.text().strip(),
+            "stock_item_kind": "raw_material" if is_raw_stock_line else ("product" if is_product_line else str(initial.get("stock_item_kind", "") or "").strip()),
+            "ref_interna": "" if (template_mode or line_type != self.backend.desktop_main.ORC_LINE_TYPE_PIECE or is_raw_stock_line) else ref_int_edit.text().strip(),
+            "ref_externa": final_ref_externa,
             "descricao": desc_edit.text().strip(),
+            "dimensao": dimension_edit.text().strip(),
+            "dimensoes": dimension_edit.text().strip(),
             "material": material_combo.currentText().strip() if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE else "",
             "material_family": str(stock_line_meta.get("material_family", "") or initial.get("material_family", "") or (material_combo.currentText().strip() if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE else "")).strip() if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE else "",
             "material_subtype": str(stock_line_meta.get("material_subtype", "") or initial.get("material_subtype", "") or ("Stock MP" if token == "stock_mp" else "")).strip() if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE else "",
@@ -16754,13 +16972,13 @@ class QuotesPage(QWidget):
                 else False
             ),
             "espessura": esp_combo.currentText().strip() if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE else "",
-            "operacao": "" if token == "stock_mp" else " + ".join(full_route_operation_names()),
+            "operacao": final_operation,
             "tempo_peca_min": final_time_unit,
             "qtd": qtd_spin.value(),
             "qtd_base": float(qtd_spin.value() if template_mode else initial.get("qtd_base", qtd_spin.value())),
             "preco_unit": final_price_unit,
-            "desenho": drawing_edit.text().strip() if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE else "",
-            "stock_material_id": str(stock_line_meta.get("stock_material_id", "") or "").strip() if token == "stock_mp" or str(initial.get("stock_material_id", "") or "").strip() else "",
+            "desenho": drawing_edit.text().strip() if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE and not is_raw_stock_line else "",
+            "stock_material_id": str(stock_line_meta.get("stock_material_id", "") or "").strip() if (token == "stock_mp" and stock_material_detail()[0]) or str(initial.get("stock_material_id", "") or "").strip() else "",
             "price_per_kg": float(stock_update_payload.get("price_kg", stock_price_kg_value) or 0.0) if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE else 0.0,
             "price_base_value": float(stock_price_base_value or 0.0) if token == "stock_mp" else float(initial.get("price_base_value", 0) or 0.0),
             "price_base_label": stock_pricing_label if token == "stock_mp" else str(initial.get("price_base_label", "") or "").strip(),
@@ -16776,12 +16994,12 @@ class QuotesPage(QWidget):
             "conjunto_codigo": str(initial.get("conjunto_codigo", "") or "").strip(),
             "conjunto_nome": str(initial.get("conjunto_nome", "") or "").strip(),
             "grupo_uuid": str(initial.get("grupo_uuid", "") or "").strip(),
-            "operacoes_lista": list(operation_meta.get("operacoes_lista", []) or []),
-            "operacoes_fluxo": [dict(item or {}) for item in list(operation_meta.get("operacoes_fluxo", []) or []) if isinstance(item, dict)],
-            "operacoes_detalhe": [dict(item or {}) for item in list(operation_meta.get("operacoes_detalhe", []) or []) if isinstance(item, dict)],
-            "tempos_operacao": dict(operation_meta.get("tempos_operacao", {}) or {}),
-            "custos_operacao": dict(operation_meta.get("custos_operacao", {}) or {}),
-            "quote_cost_snapshot": dict(operation_meta.get("quote_cost_snapshot", {}) or {}),
+            "operacoes_lista": list(operation_meta.get("operacoes_lista", []) or []) if keep_operation_meta else [],
+            "operacoes_fluxo": [dict(item or {}) for item in list(operation_meta.get("operacoes_fluxo", []) or []) if isinstance(item, dict)] if keep_operation_meta else [],
+            "operacoes_detalhe": [dict(item or {}) for item in list(operation_meta.get("operacoes_detalhe", []) or []) if isinstance(item, dict)] if keep_operation_meta else [],
+            "tempos_operacao": dict(operation_meta.get("tempos_operacao", {}) or {}) if keep_operation_meta else {},
+            "custos_operacao": dict(operation_meta.get("custos_operacao", {}) or {}) if keep_operation_meta else {},
+            "quote_cost_snapshot": dict(operation_meta.get("quote_cost_snapshot", {}) or {}) if keep_operation_meta else {},
         }
 
     def _assembly_model_editor_dialog(self, initial: dict | None = None) -> dict | None:
@@ -17655,8 +17873,14 @@ class QuotesPage(QWidget):
         dialog = LaserNestingDialog(self.backend, laser_rows, self, quote_number=self.current_number)
         dialog.exec()
 
-    def _open_profile_step_igs_quote_builder(self) -> None:
-        dialog = QDialog(self)
+    def _open_profile_step_igs_quote_builder(
+        self,
+        _checked: bool = False,
+        *,
+        return_lines: bool = False,
+        parent: QWidget | None = None,
+    ) -> list[dict] | None:
+        dialog = QDialog(parent if isinstance(parent, QWidget) else self)
         dialog.setWindowTitle("Corte Laser STEP/IGS")
         dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
         dialog.setSizeGripEnabled(True)
@@ -17697,8 +17921,9 @@ class QuotesPage(QWidget):
         layout.addWidget(title)
         layout.addWidget(intro)
         auto_hint = QLabel(
-            "Leitura automatica: cada contorno independente conta como um evento. Exemplo: 2 janelas retangulares + "
-            "2 cortes terminais = 4 cortes; o preco usa tambem os metros reais de corte e a espessura."
+            "Leitura automatica: Eventos = furos + rasgos + outros cortes internos cobrados. "
+            "Cortes terminais do perfil ficam separados e ignorados por defeito; o preco usa os metros reais, "
+            "a espessura e a tabela da maquina selecionada."
         )
         auto_hint.setWordWrap(True)
         auto_hint.setProperty("role", "muted")
@@ -17720,8 +17945,8 @@ class QuotesPage(QWidget):
         toolbar.addStretch(1)
         layout.addLayout(toolbar)
 
-        files_table = QTableWidget(0, 8)
-        files_table.setHorizontalHeaderLabels(["Ficheiro", "Tipo", "Secao", "Qtd", "Cortes", "Furos", "Rasgos", "m corte"])
+        files_table = QTableWidget(0, 10)
+        files_table.setHorizontalHeaderLabels(["Ficheiro", "Tipo", "Secao", "Qtd", "Eventos", "Furos", "Rasgos", "m corte", "Comp. m", "kg/m"])
         files_table.verticalHeader().setVisible(False)
         files_table.verticalHeader().setDefaultSectionSize(42)
         files_table.verticalHeader().setMinimumSectionSize(38)
@@ -17746,6 +17971,8 @@ class QuotesPage(QWidget):
                 (5, "fixed", 72),
                 (6, "fixed", 78),
                 (7, "fixed", 86),
+                (8, "fixed", 86),
+                (9, "fixed", 86),
             ],
         )
         layout.addWidget(files_table)
@@ -17783,6 +18010,12 @@ class QuotesPage(QWidget):
         subtype_combo.setEditable(True)
         gas_combo = QComboBox()
         thickness_spin = QDoubleSpinBox()
+        material_price_spin = QDoubleSpinBox()
+        material_price_spin.setRange(0.0, 1000000.0)
+        material_price_spin.setDecimals(4)
+        material_price_spin.setSingleStep(0.1)
+        material_price_unit_combo = QComboBox()
+        material_price_unit_combo.addItems(["EUR/kg", "EUR/m", "EUR/ton"])
         thickness_spin.setRange(0.1, 200.0)
         thickness_spin.setDecimals(2)
         thickness_spin.setSingleStep(0.5)
@@ -17807,9 +18040,13 @@ class QuotesPage(QWidget):
         pricing_layout.addWidget(gas_combo, 2, 1)
         pricing_layout.addWidget(QLabel("Espessura (mm)"), 2, 2)
         pricing_layout.addWidget(thickness_spin, 2, 3)
-        pricing_layout.addWidget(customer_material_check, 3, 0, 1, 2)
-        pricing_layout.addWidget(total_label, 3, 2, 1, 2)
-        pricing_layout.addWidget(status_label, 4, 0, 1, 4)
+        pricing_layout.addWidget(QLabel("Preco material"), 3, 0)
+        pricing_layout.addWidget(material_price_spin, 3, 1)
+        pricing_layout.addWidget(QLabel("Unid. preco material"), 3, 2)
+        pricing_layout.addWidget(material_price_unit_combo, 3, 3)
+        pricing_layout.addWidget(customer_material_check, 4, 0, 1, 2)
+        pricing_layout.addWidget(total_label, 4, 2, 1, 2)
+        pricing_layout.addWidget(status_label, 5, 0, 1, 4)
         layout.addWidget(pricing_card)
         scroll.setWidget(scroll_content)
         outer_layout.addWidget(scroll, 1)
@@ -17819,7 +18056,11 @@ class QuotesPage(QWidget):
         buttons.button(QDialogButtonBox.Cancel).setText("Fechar")
         outer_layout.addWidget(buttons)
 
+        result_lines: list[dict] = []
         families = ["Perfil", "Tubo", "Cantoneira", "Barra"]
+        material_price_internal_update = False
+        material_price_user_touched = False
+        material_price_auto_filled = False
 
         def _infer_family(path_txt: str) -> str:
             probe = Path(path_txt).stem.lower()
@@ -17833,6 +18074,12 @@ class QuotesPage(QWidget):
                 return "Perfil"
             return "Perfil"
 
+        def _family_from_analysis(cad_analysis: dict[str, Any], fallback: str) -> str:
+            family = str(cad_analysis.get("family_guess", "") or "").strip()
+            if family in {"Tubo", "Cantoneira", "Barra", "Perfil"}:
+                return family
+            return fallback
+
         def _infer_section(path_txt: str) -> str:
             stem = Path(path_txt).stem.upper().replace("_", " ").replace("-", " ")
             profile_match = re.search(r"\b(IPE|IPN|HEA|HEB|UPN|RHS|SHS)\s*(\d+)\b", stem)
@@ -17842,6 +18089,48 @@ class QuotesPage(QWidget):
             if size_match:
                 return re.sub(r"\s*[Xx]\s*", "x", size_match.group(1)).replace(",", ".")
             return ""
+
+        def _infer_profile_length_m(path_txt: str) -> float:
+            stem = Path(path_txt).stem.lower().replace("_", " ").replace("-", " ")
+            unit_match = re.search(r"(\d+(?:[.,]\d+)?)\s*(mm|m)\b", stem)
+            if unit_match:
+                value = float(unit_match.group(1).replace(",", "."))
+                return round(value / 1000.0 if unit_match.group(2) == "mm" else value, 4)
+            numbers = [float(item.replace(",", ".")) for item in re.findall(r"\d+(?:[.,]\d+)?", stem)]
+            if len(numbers) == 1 and numbers[0] > 20:
+                return round(numbers[0] / 1000.0, 4)
+            return 0.0
+
+        def _infer_material_from_profile(path_txt: str, text: str = "") -> tuple[str, str]:
+            probe = f"{Path(path_txt).stem} {str(text or '')[:120000]}".upper()
+            subtype_patterns = [
+                r"\bS235(?:JR)?\b",
+                r"\bS275(?:JR)?\b",
+                r"\bS355(?:JR|J2\+N|MC|JOW)?\b",
+                r"\bS420MC\b",
+                r"\bDX5[13]D(?:\+Z)?\b",
+                r"\bDD11\b",
+                r"\bDC01\b",
+                r"\bCORTEN\b",
+                r"\bHARDOX(?:\s*4[05]0)?\b",
+                r"\bINOX\s*3(?:04|16)L?\b",
+                r"\bAISI\s*3(?:04|16)L?\b",
+                r"\b1\.4(?:301|307|401|404|016)\b",
+            ]
+            matched_subtype = ""
+            for pattern in subtype_patterns:
+                match = re.search(pattern, probe)
+                if match:
+                    matched_subtype = re.sub(r"\s+", " ", match.group(0).strip())
+                    break
+            guessed = _laser_guess_material_family(matched_subtype)
+            if guessed:
+                return _laser_canonical_material_family(guessed) or guessed, matched_subtype
+            if re.search(r"\b(INOX|STAINLESS|AISI\s*3(?:04|16)L?|1\.4(?:301|307|401|404|016))\b", probe):
+                return "Aco inox", matched_subtype
+            if re.search(r"\b(FERRO|ACO|AÇO|S235|S275|S355|S420|CORTEN|HARDOX|DX5[13]D)\b", probe):
+                return "Aco carbono", matched_subtype
+            return "", matched_subtype
 
         def _make_int_spin(value: int) -> QDoubleSpinBox:
             spin = QDoubleSpinBox()
@@ -17970,6 +18259,62 @@ class QuotesPage(QWidget):
                 gas_combo.setCurrentText(current_gas)
             _recalc_total()
 
+        def _selected_profile_family() -> str:
+            row_index = _selected_row_index(files_table)
+            if row_index < 0 and files_table.rowCount() > 0:
+                row_index = 0
+            if row_index < 0:
+                return ""
+            family_widget = files_table.cellWidget(row_index, 1)
+            if isinstance(family_widget, QComboBox):
+                return family_widget.currentText().strip()
+            return ""
+
+        def _sync_material_unit_for_family() -> None:
+            nonlocal material_price_internal_update
+            if _selected_profile_family() != "Tubo":
+                return
+            material_price_internal_update = True
+            try:
+                material_price_unit_combo.setCurrentText("EUR/m")
+            finally:
+                material_price_internal_update = False
+
+        def _sync_material_cost_controls() -> None:
+            enabled = not bool(customer_material_check.isChecked())
+            material_price_spin.setEnabled(enabled)
+            material_price_unit_combo.setEnabled(enabled)
+
+        def _refresh_material_price_default() -> None:
+            nonlocal material_price_internal_update, material_price_auto_filled
+            if material_price_user_touched:
+                return
+            if _selected_profile_family() == "Tubo":
+                _sync_material_unit_for_family()
+                return
+            if material_price_spin.value() > 0.0:
+                return
+            try:
+                profiles = dict(laser_settings.get("commercial_profiles", {}) or {})
+                profile = dict(profiles.get(commercial_combo.currentText().strip(), {}) or {})
+                family = _laser_canonical_material_family(material_combo.currentText().strip()) or material_combo.currentText().strip()
+                subtype = subtype_combo.currentText().strip()
+                material = dict(dict(profile.get("materials", {}) or {}).get(family, {}) or {})
+                catalog = dict(dict(profile.get("material_catalog", {}) or {}).get(family, {}) or {})
+                if subtype and subtype in catalog:
+                    material.update(dict(catalog.get(subtype, {}) or {}))
+                price = float(material.get("price_per_kg", 0.0) or 0.0)
+            except Exception:
+                price = 0.0
+            if price > 0.0:
+                material_price_internal_update = True
+                try:
+                    material_price_unit_combo.setCurrentText("EUR/kg")
+                    material_price_spin.setValue(price)
+                    material_price_auto_filled = True
+                finally:
+                    material_price_internal_update = False
+
         def _normalize_counts(cuts_value: float, holes_value: float, slots_value: float) -> tuple[int, int, int, int]:
             holes_count = max(0, int(round(float(holes_value or 0.0))))
             slots_count = max(0, int(round(float(slots_value or 0.0))))
@@ -17989,6 +18334,9 @@ class QuotesPage(QWidget):
                 cad_analysis = dict(analyze_profile_cut_features(path_txt) or {})
             except Exception as exc:
                 cad_analysis = {"note": str(exc)}
+            family_txt = _family_from_analysis(cad_analysis, family_txt)
+            if not section_txt:
+                section_txt = str(cad_analysis.get("section_label", "") or "").strip()
             text = _read_geometry_preview(path_txt)
             cuts = int(cad_analysis.get("cuts", 0) or 0)
             holes = int(cad_analysis.get("holes", 0) or 0)
@@ -18010,9 +18358,15 @@ class QuotesPage(QWidget):
                 cuts = int(max(0, holes + slots + generic_cuts))
                 outer_cuts = int(max(0, generic_cuts))
             notes: list[str] = []
+            inferred_material_family, inferred_material_subtype = _infer_material_from_profile(path_txt, text)
             cad_note = str(cad_analysis.get("note", "") or "").strip()
             if cad_note:
                 notes.append(cad_note)
+            if inferred_material_family:
+                material_label = _laser_display_material_family(inferred_material_family) or inferred_material_family
+                notes.append(
+                    f"material sugerido: {material_label}{f' / {inferred_material_subtype}' if inferred_material_subtype else ''}"
+                )
             complex_tokens = ("mitra", "chanfro", "angulo", "bisel", "45")
             if any(token in stem_lower for token in complex_tokens) and not cad_analysis:
                 notes.append("nome sugere cortes angulados; confirma cortes internos")
@@ -18071,6 +18425,11 @@ class QuotesPage(QWidget):
                 "slots": int(max(0, slots)),
                 "outer_cuts": int(max(0, outer_cuts)),
                 "cut_length_m": round(max(0.0, cut_length_m), 4),
+                "profile_length_m": float(cad_analysis.get("profile_length_m", 0.0) or 0.0) or _infer_profile_length_m(path_txt),
+                "profile_kg_m": float(cad_analysis.get("profile_kg_m", 0.0) or 0.0),
+                "thickness_mm": float(cad_analysis.get("thickness_mm_guess", 0.0) or 0.0),
+                "material_family": inferred_material_family,
+                "material_subtype": inferred_material_subtype,
                 "cad_analysis": dict(cad_analysis or {}),
                 "note": ". ".join(part for part in notes if part).strip(),
             }
@@ -18086,10 +18445,14 @@ class QuotesPage(QWidget):
             holes_spin = files_table.cellWidget(row_index, 5)
             slots_spin = files_table.cellWidget(row_index, 6)
             cut_length_spin = files_table.cellWidget(row_index, 7)
+            profile_length_spin = files_table.cellWidget(row_index, 8)
+            profile_kg_m_spin = files_table.cellWidget(row_index, 9)
             family_txt = family_combo.currentText().strip() if isinstance(family_combo, QComboBox) else str(cached_estimate.get("family", "Perfil") or "Perfil")
             section_txt = section_edit.text().strip() if isinstance(section_edit, QLineEdit) else str(cached_estimate.get("section", "") or "")
             qty = int(round(float(qty_spin.value() if isinstance(qty_spin, QDoubleSpinBox) else 0.0)))
             cut_length_m = float(cut_length_spin.value() if isinstance(cut_length_spin, QDoubleSpinBox) else float(cached_estimate.get("cut_length_m", 0.0) or 0.0))
+            profile_length_m = float(profile_length_spin.value() if isinstance(profile_length_spin, QDoubleSpinBox) else float(cached_estimate.get("profile_length_m", 0.0) or 0.0))
+            profile_kg_m = float(profile_kg_m_spin.value() if isinstance(profile_kg_m_spin, QDoubleSpinBox) else float(cached_estimate.get("profile_kg_m", 0.0) or 0.0))
             cuts, holes, slots, outer_cuts = _normalize_counts(
                 cuts_spin.value() if isinstance(cuts_spin, QDoubleSpinBox) else 0.0,
                 holes_spin.value() if isinstance(holes_spin, QDoubleSpinBox) else 0.0,
@@ -18097,6 +18460,9 @@ class QuotesPage(QWidget):
             )
             material_family = _laser_canonical_material_family(material_combo.currentText().strip()) or material_combo.currentText().strip() or "Aco carbono"
             subtype_txt = subtype_combo.currentText().strip()
+            material_price_unit = material_price_unit_combo.currentText().strip()
+            if family_txt == "Tubo":
+                material_price_unit = "EUR/m"
             return {
                 "path": path_txt,
                 "machine_name": machine_combo.currentText().strip(),
@@ -18108,6 +18474,10 @@ class QuotesPage(QWidget):
                 "qtd": max(1, qty),
                 "material_supplied_by_client": bool(customer_material_check.isChecked()),
                 "material_fornecido_cliente": bool(customer_material_check.isChecked()),
+                "profile_material_price": float(material_price_spin.value() or 0.0),
+                "profile_material_price_unit": material_price_unit,
+                "profile_length_m": max(0.0, profile_length_m),
+                "profile_kg_m": max(0.0, profile_kg_m),
                 "profile_family": family_txt or "Perfil",
                 "section": section_txt,
                 "cuts": cuts,
@@ -18117,7 +18487,6 @@ class QuotesPage(QWidget):
                 "cut_length_m_override": max(0.0, cut_length_m),
                 "include_external_profile_cuts": False,
                 "include_profile_event_rates": False,
-                "include_profile_setup": False,
                 "profile_metrics": dict(cached_estimate.get("cad_analysis", {}) or {}),
             }
 
@@ -18134,25 +18503,28 @@ class QuotesPage(QWidget):
                 pricing = dict(analysis.get("pricing", {}) or {})
                 metrics = dict(analysis.get("metrics", {}) or {})
                 total += float(pricing.get("total_price", 0.0) or 0.0)
-                feature_count = int(metrics.get("feature_cut_count", metrics.get("generic_cut_count", 0)) or 0)
                 end_count = int(metrics.get("raw_end_cut_count", metrics.get("end_cut_count", 0)) or 0)
+                holes_count = int(metrics.get("hole_count", 0) or 0)
+                slots_count = int(metrics.get("slot_count", 0) or 0)
+                other_count = int(metrics.get("generic_cut_count", 0) or 0)
                 cut_length_m = float(metrics.get("cut_length_m", 0.0) or 0.0)
+                thickness_factor = float(metrics.get("thickness_rate_factor", 1.0) or 1.0)
+                density_value = float(metrics.get("density_kg_m3", 0.0) or 0.0)
+                material_cost = float(pricing.get("material_cost_unit", 0.0) or 0.0)
+                material_price_value = float(pricing.get("profile_material_price", 0.0) or 0.0)
+                material_price_unit = str(pricing.get("profile_material_price_unit", "") or "").strip().upper()
                 cut_length_widget = files_table.cellWidget(row_index, 7)
                 if isinstance(cut_length_widget, QDoubleSpinBox) and cut_length_widget.value() <= 0.0 and cut_length_m > 0.0:
                     cut_length_widget.blockSignals(True)
                     cut_length_widget.setValue(cut_length_m)
                     cut_length_widget.blockSignals(False)
-                if feature_count > 0 or end_count > 0:
-                    status_parts.append(
-                        f"{int(metrics.get('cut_event_count', 0) or 0)} cortes = "
-                        f"{feature_count} internos cobrados + {end_count} terminais ignorados | {cut_length_m:.3f} m"
-                    )
-                else:
-                    status_parts.append(
-                        f"{int(metrics.get('cut_event_count', 0) or 0)} cortes = "
-                        f"{int(metrics.get('hole_count', 0) or 0)} furos + "
-                        f"{int(metrics.get('slot_count', 0) or 0)} rasgos | {cut_length_m:.3f} m"
-                    )
+                status_parts.append(
+                    f"{int(metrics.get('cut_event_count', 0) or 0)} eventos cobrados = "
+                    f"{holes_count} furos + {slots_count} rasgos + {other_count} outros; "
+                    f"{end_count} terminais ignorados | {cut_length_m:.3f} m | "
+                    f"fator esp. x{thickness_factor:.2f} | dens. {density_value:.0f} kg/m3 | "
+                    f"MP {_fmt_eur(material_cost)} @ {material_price_value:.4f} {material_price_unit}"
+                )
             total_label.setText(f"Total estimado: {_fmt_eur(total)}")
             status_label.setText(status_parts[0] if status_parts else "Usa as tabelas do laser com contagem de eventos STEP/IGS, sem duplicar furos.")
 
@@ -18160,6 +18532,20 @@ class QuotesPage(QWidget):
             estimate = _estimate_profile_operations(path_txt)
             row_index = files_table.rowCount()
             files_table.insertRow(row_index)
+            estimated_thickness = float(estimate.get("thickness_mm", 0.0) or 0.0)
+            if row_index == 0 and estimated_thickness > 0.0:
+                thickness_spin.blockSignals(True)
+                thickness_spin.setValue(estimated_thickness)
+                thickness_spin.blockSignals(False)
+            if row_index == 0 and str(estimate.get("material_family", "") or "").strip():
+                material_display = _laser_display_material_family(str(estimate.get("material_family", "") or "").strip())
+                if material_display:
+                    material_combo.setCurrentText(material_display)
+                    _refresh_subtypes()
+                subtype_txt = str(estimate.get("material_subtype", "") or "").strip()
+                if subtype_txt:
+                    subtype_combo.setCurrentText(subtype_txt)
+                    _refresh_gases()
             file_item = QTableWidgetItem(Path(path_txt).name)
             file_item.setData(Qt.UserRole, str(path_txt))
             file_item.setData(Qt.UserRole + 1, dict(estimate))
@@ -18182,6 +18568,20 @@ class QuotesPage(QWidget):
             cut_length_spin.setValue(float(estimate.get("cut_length_m", 0.0) or 0.0))
             cut_length_spin.setMinimumHeight(32)
             cut_length_spin.setStyleSheet("QDoubleSpinBox { padding: 4px 8px; font-size: 12px; }")
+            profile_length_spin = QDoubleSpinBox()
+            profile_length_spin.setRange(0.0, 1000000.0)
+            profile_length_spin.setDecimals(3)
+            profile_length_spin.setSingleStep(0.1)
+            profile_length_spin.setValue(float(estimate.get("profile_length_m", 0.0) or 0.0))
+            profile_length_spin.setMinimumHeight(32)
+            profile_length_spin.setStyleSheet("QDoubleSpinBox { padding: 4px 8px; font-size: 12px; }")
+            profile_kg_m_spin = QDoubleSpinBox()
+            profile_kg_m_spin.setRange(0.0, 1000000.0)
+            profile_kg_m_spin.setDecimals(4)
+            profile_kg_m_spin.setSingleStep(0.1)
+            profile_kg_m_spin.setValue(float(estimate.get("profile_kg_m", 0.0) or 0.0))
+            profile_kg_m_spin.setMinimumHeight(32)
+            profile_kg_m_spin.setStyleSheet("QDoubleSpinBox { padding: 4px 8px; font-size: 12px; }")
             family_combo.setMinimumHeight(32)
             section_edit.setMinimumHeight(32)
             files_table.setCellWidget(row_index, 1, family_combo)
@@ -18191,15 +18591,19 @@ class QuotesPage(QWidget):
             files_table.setCellWidget(row_index, 5, holes_spin)
             files_table.setCellWidget(row_index, 6, slots_spin)
             files_table.setCellWidget(row_index, 7, cut_length_spin)
+            files_table.setCellWidget(row_index, 8, profile_length_spin)
+            files_table.setCellWidget(row_index, 9, profile_kg_m_spin)
             files_table.setRowHeight(row_index, 42)
             analysis_note = str(estimate.get("note", "") or "").strip()
-            for widget in (family_combo, section_edit, qty_spin, cuts_spin, holes_spin, slots_spin, cut_length_spin):
+            for widget in (family_combo, section_edit, qty_spin, cuts_spin, holes_spin, slots_spin, cut_length_spin, profile_length_spin, profile_kg_m_spin):
                 widget.setToolTip(analysis_note)
-            for widget in (qty_spin, cuts_spin, holes_spin, slots_spin, cut_length_spin):
+            for widget in (qty_spin, cuts_spin, holes_spin, slots_spin, cut_length_spin, profile_length_spin, profile_kg_m_spin):
                 widget.valueChanged.connect(_recalc_total)
+            family_combo.currentTextChanged.connect(_sync_material_unit_for_family)
             family_combo.currentTextChanged.connect(_recalc_total)
             section_edit.textChanged.connect(_recalc_total)
             files_table.selectRow(row_index)
+            _sync_material_unit_for_family()
             _update_step_preview()
 
         def _pick_files() -> None:
@@ -18221,7 +18625,20 @@ class QuotesPage(QWidget):
             _recalc_total()
             _update_step_preview()
 
+        def _on_material_price_changed(_value: float) -> None:
+            nonlocal material_price_user_touched, material_price_auto_filled
+            if not material_price_internal_update:
+                material_price_user_touched = True
+                material_price_auto_filled = False
+            _recalc_total()
+
+        def _on_material_unit_changed(_text: str) -> None:
+            if not material_price_internal_update and _selected_profile_family() == "Tubo":
+                _sync_material_unit_for_family()
+            _recalc_total()
+
         def _accept() -> None:
+            nonlocal result_lines
             if files_table.rowCount() == 0:
                 QMessageBox.warning(dialog, "STEP/IGS", "Adiciona pelo menos um ficheiro STEP/IGS.")
                 return
@@ -18255,6 +18672,10 @@ class QuotesPage(QWidget):
             if not lines:
                 QMessageBox.warning(dialog, "STEP/IGS", "Nao foi possivel gerar linhas com os dados atuais.")
                 return
+            if return_lines:
+                result_lines = [dict(row or {}) for row in lines]
+                dialog.accept()
+                return
             self.line_rows.extend(lines)
             if not self.workcenter_combo.currentText().strip():
                 self.workcenter_combo.setCurrentText("Laser")
@@ -18267,20 +18688,30 @@ class QuotesPage(QWidget):
         buttons.accepted.connect(_accept)
         buttons.rejected.connect(dialog.reject)
         files_table.itemSelectionChanged.connect(_update_step_preview)
+        files_table.itemSelectionChanged.connect(_sync_material_unit_for_family)
         machine_combo.currentTextChanged.connect(_refresh_materials)
         machine_combo.currentTextChanged.connect(_recalc_total)
+        commercial_combo.currentTextChanged.connect(lambda _txt: _refresh_material_price_default())
         commercial_combo.currentTextChanged.connect(_recalc_total)
         material_combo.currentTextChanged.connect(_refresh_subtypes)
+        material_combo.currentTextChanged.connect(lambda _txt: _refresh_material_price_default())
         material_combo.currentTextChanged.connect(_recalc_total)
+        subtype_combo.currentTextChanged.connect(lambda _txt: _refresh_material_price_default())
         subtype_combo.currentTextChanged.connect(_recalc_total)
         gas_combo.currentTextChanged.connect(_recalc_total)
         thickness_spin.valueChanged.connect(_recalc_total)
+        material_price_spin.valueChanged.connect(_on_material_price_changed)
+        material_price_unit_combo.currentTextChanged.connect(_on_material_unit_changed)
+        customer_material_check.toggled.connect(lambda _checked: _sync_material_cost_controls())
         customer_material_check.toggled.connect(_recalc_total)
         _refresh_machine_and_commercial()
         _refresh_materials()
+        _refresh_material_price_default()
+        _sync_material_cost_controls()
         _recalc_total()
         _update_step_preview()
         dialog.exec()
+        return [dict(row or {}) for row in result_lines] if return_lines else None
 
     def _add_line(self) -> None:
         try:

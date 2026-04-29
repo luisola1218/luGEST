@@ -1239,9 +1239,57 @@ class LegacyBackend(
                     preferred_name=self._file_reference_name(payment.get("caminho_comprovativo", ""), payment_name or "comprovativo"),
                 )
 
-    def _save(self, force: bool = False) -> None:
+    def _current_user_label(self) -> str:
+        user = dict(self.user or {})
+        username = str(user.get("username", "") or "").strip()
+        role = str(user.get("role", "") or "").strip()
+        if username and role:
+            return f"{username} | {role}"
+        return username or role or "Sistema"
+
+    def _append_audit_event(
+        self,
+        data: dict[str, Any],
+        *,
+        action: str,
+        entity_type: str = "",
+        entity_id: str = "",
+        summary: str = "",
+        before: Any = None,
+        after: Any = None,
+    ) -> dict[str, Any]:
+        if not isinstance(data, dict):
+            return {}
+        event = {
+            "id": f"AUD-{int(time.time() * 1000)}-{len(list(data.get('audit_log', []) or [])) + 1:04d}",
+            "created_at": str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds")),
+            "user": self._current_user_label(),
+            "action": str(action or "Atualizacao").strip() or "Atualizacao",
+            "entity_type": str(entity_type or "").strip(),
+            "entity_id": str(entity_id or "").strip(),
+            "summary": str(summary or "").strip(),
+        }
+        if before is not None:
+            event["before"] = self._json_safe_clone(before)
+        if after is not None:
+            event["after"] = self._json_safe_clone(after)
+        log = list(data.get("audit_log", []) or [])
+        log.append(event)
+        data["audit_log"] = log[-3000:]
+        return event
+
+    def _save(self, force: bool = False, audit: bool = True) -> None:
         self._normalize_storage_paths_for_save()
         payload, _changed = self._merge_latest_for_save()
+        changed = [str(key) for key in list(_changed or []) if str(key or "") != "audit_log"]
+        if audit and changed:
+            self._append_audit_event(
+                payload,
+                action="Guardar dados",
+                entity_type="Sistema",
+                entity_id=",".join(changed[:8]),
+                summary=f"Buckets alterados: {', '.join(changed[:8])}{'...' if len(changed) > 8 else ''}",
+            )
         self.desktop_main.save_data(payload, force=force)
         if isinstance(payload, dict):
             self._replace_data_cache(payload)
@@ -1748,6 +1796,8 @@ class LegacyBackend(
             if "retang" in mat_token:
                 return "retangular"
             return "chata"
+        if "nervurado" in self.desktop_main.norm_text(formato_txt):
+            return "nervurado"
         return ""
 
     def _material_section_label(self, formato: str, secao_tipo: Any = "") -> str:
@@ -1767,11 +1817,15 @@ class LegacyBackend(
         if formato_txt == "Barra":
             labels = {str(row.get("key", "") or "").strip(): str(row.get("label", "") or "").strip() for row in _BAR_SECTION_OPTIONS}
             return labels.get(key, key.replace("_", " ").title())
+        if "nervurado" in self.desktop_main.norm_text(formato_txt):
+            return "Nervurado"
         return key
 
     def material_geometry_preview(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         row = dict(payload or {})
-        formato = str(row.get("formato") or self.desktop_main.detect_materia_formato(row) or "Chapa").strip().title() or "Chapa"
+        formato_raw = str(row.get("formato") or self.desktop_main.detect_materia_formato(row) or "Chapa").strip() or "Chapa"
+        formato_norm = self.desktop_main.norm_text(formato_raw)
+        formato = "Varão nervurado" if "nervurado" in formato_norm else formato_raw.title()
         material = str(row.get("material", "") or "").strip()
         material_familia = str(row.get("material_familia", row.get("familia", "")) or "").strip()
         family_profile = self.material_family_profile(material, material_familia)
@@ -1922,6 +1976,26 @@ class LegacyBackend(
             if comprimento > 0 and largura > 0:
                 dimension_label = f"{self._fmt(comprimento)} x {self._fmt(largura)} mm"
             calc_hint = "Barra maciça: lado A x lado B x densidade x comprimento da barra."
+        elif formato == "Varão nervurado":
+            if diametro <= 0 and espessura_mm > 0:
+                diametro = espessura_mm
+            if espessura_mm <= 0 and diametro > 0:
+                espessura_mm = diametro
+            if diametro > 0:
+                area_mm2 = max(0.0, math.pi * (diametro ** 2) / 4.0)
+                kg_m = round((area_mm2 * density) / 1000.0, 4)
+                peso_unid = round(kg_m * metros, 4) if metros > 0 else 0.0
+            elif kg_m_manual > 0:
+                kg_m = kg_m_manual
+                peso_unid = round(kg_m * metros, 4) if metros > 0 else 0.0
+            elif peso_existente > 0:
+                peso_unid = peso_existente
+                auto_weight = False
+            dim_a_text = f"Ø{self._fmt(diametro)}" if diametro > 0 else "-"
+            dim_b_text = "-"
+            if diametro > 0:
+                dimension_label = f"Ø{self._fmt(diametro)} mm"
+            calc_hint = "Varão nervurado: secção circular maciça x densidade x comprimento da barra."
         else:
             peso_unid = peso_existente
             auto_weight = False
@@ -1976,7 +2050,7 @@ class LegacyBackend(
             "base_label": "EUR/m" if formato == "Tubo" else "EUR/kg",
             "p_compra": round(p_compra, 4),
             "preco_unid": round(preco_unid, 4),
-            "espessura_required": formato in {"Chapa", "Tubo", "Cantoneira"},
+            "espessura_required": formato in {"Chapa", "Tubo", "Cantoneira", "Varão nervurado"},
             **geometry,
         }
 
@@ -1991,6 +2065,8 @@ class LegacyBackend(
             material["preco_unid"] = float(preview.get("preco_unid", 0.0) or 0.0)
             disponivel = self._parse_float(material.get("quantidade", 0), 0) - self._parse_float(material.get("reservado", 0), 0)
             formato = str(material.get("formato") or self.desktop_main.detect_materia_formato(material) or "Chapa").strip()
+            quality_blocked = self._material_quality_is_blocked(material)
+            quality_status = str(material.get("quality_status", "") or material.get("inspection_status", "") or "").strip()
             try:
                 has_contorno = bool(self._parse_material_contour_points(material.get("contorno_points", material.get("shape_points", []))))
             except Exception:
@@ -2001,6 +2077,8 @@ class LegacyBackend(
             secao_txt = str(preview.get("secao_label", "") or "").strip()
             if secao_txt and secao_txt != "-":
                 tipo = f"{tipo} / {secao_txt}"
+            if quality_status and quality_status != "Aprovado":
+                tipo = f"{tipo} / {quality_status}"
             lote_txt = str(material.get("lote_fornecedor", "") or "").strip()
             origem_lotes = list(material.get("origem_lotes_baixa", []) or [])
             if bool(material.get("is_sobra")) and origem_lotes:
@@ -2029,7 +2107,9 @@ class LegacyBackend(
             if query and not any(query in str(value).lower() for value in values.values()):
                 continue
             severity = "ok"
-            if self._parse_float(material.get("quantidade", 0), 0) == 1:
+            if quality_blocked:
+                severity = "critical"
+            elif self._parse_float(material.get("quantidade", 0), 0) == 1:
                 severity = "one"
             elif disponivel <= float(self.desktop_main.STOCK_VERMELHO):
                 severity = "critical"
@@ -2129,7 +2209,9 @@ class LegacyBackend(
         return "; ".join(f"{self._fmt(point[0])},{self._fmt(point[1])}" for point in points)
 
     def _normalise_material_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        formato = str(payload.get("formato", "Chapa") or "Chapa").strip().title() or "Chapa"
+        formato_raw = str(payload.get("formato", "Chapa") or "Chapa").strip() or "Chapa"
+        formato_norm = self.desktop_main.norm_text(formato_raw)
+        formato = "Varão nervurado" if "nervurado" in formato_norm else formato_raw.title()
         material = str(payload.get("material", "")).strip()
         material_familia = str(payload.get("material_familia", payload.get("familia", "")) or "").strip()
         espessura = str(payload.get("espessura", "")).strip()
@@ -2182,8 +2264,8 @@ class LegacyBackend(
         secao_tipo = str(geometry.get("secao_tipo", secao_tipo) or "").strip()
         if not material or quantidade <= 0:
             raise ValueError("Material e quantidade sao obrigatorios.")
-        if formato in {"Chapa", "Tubo", "Cantoneira"} and not espessura:
-            raise ValueError("Para chapa, tubo e cantoneira, espessura e obrigatoria.")
+        if formato in {"Chapa", "Tubo", "Cantoneira", "Varão nervurado"} and not espessura:
+            raise ValueError("Para chapa, tubo, cantoneira e varão nervurado, espessura/diâmetro e obrigatoria.")
         if reservado < 0 or reservado > quantidade:
             raise ValueError("Reserva invalida.")
         if formato == "Chapa" and (comprimento <= 0 or largura <= 0):
@@ -2225,6 +2307,13 @@ class LegacyBackend(
                 raise ValueError("Para barra, indica lado A e lado B.")
             if peso_unid <= 0:
                 raise ValueError("Nao foi possivel calcular o peso da barra com os dados indicados.")
+        if formato == "Varão nervurado":
+            if metros <= 0:
+                raise ValueError("Para varão nervurado, o comprimento da barra e obrigatorio.")
+            if diametro <= 0:
+                raise ValueError("Para varão nervurado, indica o diâmetro.")
+            if peso_unid <= 0:
+                raise ValueError("Nao foi possivel calcular o peso do varão nervurado com os dados indicados.")
         return {
             "formato": formato,
             "material": material,
@@ -2372,6 +2461,11 @@ class LegacyBackend(
         record = self.material_by_id(material_id)
         if record is None:
             raise ValueError("Material n?o encontrado.")
+        if self._material_quality_is_blocked(record):
+            raise ValueError(
+                f"Material {material_id} bloqueado pela qualidade: "
+                f"{str(record.get('quality_status', record.get('inspection_status', '')) or 'em inspeção')}."
+            )
         qtd = self._parse_float(quantidade, 0)
         if qtd <= 0 or qtd > self._parse_float(record.get("quantidade", 0), 0):
             raise ValueError("Quantidade invalida.")
@@ -2427,6 +2521,8 @@ class LegacyBackend(
         esp_norm = self.encomendas_actions._norm_espessura(espessura)
         rows: list[dict[str, Any]] = []
         for stock in list(self.ensure_data().get("materiais", []) or []):
+            if self._material_quality_is_blocked(stock):
+                continue
             if self.encomendas_actions._norm_material(stock.get("material")) != material_norm:
                 continue
             if self.encomendas_actions._norm_espessura(stock.get("espessura")) != esp_norm:
@@ -2621,6 +2717,8 @@ class LegacyBackend(
             stock = self.material_by_id(material_id)
             if stock is None:
                 raise ValueError(f"Material n?o encontrado: {material_id}")
+            if self._material_quality_is_blocked(stock):
+                raise ValueError(f"Material {material_id} bloqueado pela qualidade.")
             if qty > self._parse_float(stock.get("quantidade", 0), 0):
                 raise ValueError(f"Quantidade superior ao stock em {material_id}.")
             cleaned.append((stock, qty))
@@ -4796,6 +4894,8 @@ class LegacyBackend(
             if stock is None:
                 keep_reservas.append(row)
                 continue
+            if self._material_quality_is_blocked(stock):
+                raise ValueError(f"Material reservado {stock.get('id', '')} bloqueado pela qualidade.")
             stock["quantidade"] = max(0.0, self._parse_float(stock.get("quantidade", 0), 0) - qty_res)
             stock["reservado"] = max(0.0, self._parse_float(stock.get("reservado", 0), 0) - qty_res)
             stock["atualizado_em"] = self.desktop_main.now_iso()
@@ -4818,6 +4918,8 @@ class LegacyBackend(
             stock = self.material_by_id(stock_id)
             if stock is None:
                 raise ValueError("Material n?o encontrado para baixa.")
+            if self._material_quality_is_blocked(stock):
+                raise ValueError(f"Material {stock_id} bloqueado pela qualidade.")
             if self._norm_material_token(stock.get("material")) != self._norm_material_token(material) or self._norm_esp_token(stock.get("espessura")) != self._norm_esp_token(espessura):
                 raise ValueError("O stock selecionado n?o corresponde ao material/espessura.")
             if extra_qty > self._parse_float(stock.get("quantidade", 0), 0):
@@ -6211,13 +6313,57 @@ class LegacyBackend(
         shortages: list[dict[str, Any]] = []
         for item in list((enc or {}).get("montagem_itens", []) or []):
             item_type = self.desktop_main.normalize_orc_line_type(item.get("tipo_item"))
-            if item_type != self.desktop_main.ORC_LINE_TYPE_PRODUCT:
-                continue
             code = str(item.get("produto_codigo", "") or "").strip()
             plan = round(self._parse_float(item.get("qtd_planeada", item.get("qtd", 0)), 0), 2)
             consumed = round(self._parse_float(item.get("qtd_consumida", 0), 0), 2)
             pending = round(max(0.0, plan - consumed), 2)
             if pending <= 1e-9:
+                continue
+            if self._montagem_item_is_raw_material(item):
+                stock_id = str(item.get("stock_material_id", "") or "").strip()
+                material_record = self.material_by_id(stock_id) if stock_id else None
+                if material_record is not None:
+                    available = max(
+                        0.0,
+                        self._parse_float(material_record.get("quantidade", 0), 0)
+                        - self._parse_float(material_record.get("reservado", 0), 0),
+                    )
+                    material_txt = str(material_record.get("material", item.get("material", "")) or "").strip()
+                    esp_txt = str(material_record.get("espessura", item.get("espessura", "")) or "").strip()
+                    unit_price = self._parse_float(material_record.get("preco_unid", material_record.get("p_compra", item.get("preco_unit", 0))), 0)
+                else:
+                    material_txt = str(item.get("material", "") or "").strip()
+                    esp_txt = str(item.get("espessura", "") or "").strip()
+                    candidates = self.material_candidates(material_txt, esp_txt) if material_txt and esp_txt else []
+                    available = round(sum(self._parse_float(row.get("disponivel", 0), 0) for row in candidates), 2)
+                    unit_price = self._parse_float(item.get("preco_unit", item.get("price_base_value", 0)), 0)
+                missing = round(max(0.0, pending - available), 2)
+                if missing > 1e-9:
+                    item_key = self._montagem_item_key(item)
+                    shortages.append(
+                        {
+                            "kind": "material",
+                            "item_key": item_key,
+                            "produto_codigo": "",
+                            "descricao": str(item.get("descricao", "") or material_txt or "").strip(),
+                            "produto_unid": str(item.get("produto_unid", "") or "UN").strip() or "UN",
+                            "qtd_pendente": pending,
+                            "qtd_disponivel": round(available, 2),
+                            "qtd_em_falta": missing,
+                            "produto_encontrado": material_record is not None or available > 0,
+                            "preco_unit": round(unit_price, 4),
+                            "material": material_txt,
+                            "espessura": esp_txt,
+                            "dimensao": str(item.get("dimensao", item.get("dimensoes", "")) or "").strip(),
+                            "stock_material_id": stock_id,
+                            "fornecedor_id": "",
+                            "fornecedor_sugerido": "",
+                            "fornecedor_contacto": "",
+                            "fornecedor_origem": "",
+                        }
+                    )
+                continue
+            if item_type != self.desktop_main.ORC_LINE_TYPE_PRODUCT:
                 continue
             product = product_map.get(code)
             supplier_meta = self._preferred_supplier_for_product(code)
@@ -6234,6 +6380,8 @@ class LegacyBackend(
                 shortages.append(
                     {
                         "produto_codigo": code,
+                        "kind": "product",
+                        "item_key": self._montagem_item_key(item),
                         "descricao": str(item.get("descricao", "") or (product or {}).get("descricao", "") or "").strip(),
                         "produto_unid": str((product or {}).get("unid", "") or item.get("produto_unid", "") or "UN").strip() or "UN",
                         "qtd_pendente": pending,
@@ -6247,8 +6395,32 @@ class LegacyBackend(
                         "fornecedor_origem": str(supplier_meta.get("origem", "") or "").strip(),
                     }
                 )
-        shortages.sort(key=lambda row: (-self._parse_float(row.get("qtd_em_falta", 0), 0), str(row.get("produto_codigo", "") or "")))
+        shortages.sort(key=lambda row: (-self._parse_float(row.get("qtd_em_falta", 0), 0), str(row.get("produto_codigo", "") or row.get("descricao", "") or "")))
         return shortages
+
+    def _montagem_item_is_raw_material(self, item: dict[str, Any] | None) -> bool:
+        row = dict(item or {})
+        if self.desktop_main.normalize_orc_line_type(row.get("tipo_item")) != self.desktop_main.ORC_LINE_TYPE_PIECE:
+            return False
+        if str(row.get("stock_item_kind", "") or "").strip() == "raw_material":
+            return True
+        if str(row.get("stock_material_id", "") or "").strip():
+            return True
+        return False
+
+    def _montagem_item_key(self, item: dict[str, Any] | None) -> str:
+        row = dict(item or {})
+        for key in ("linha_ordem", "grupo_uuid", "stock_material_id", "produto_codigo"):
+            value = str(row.get(key, "") or "").strip()
+            if value:
+                return f"{key}:{value}"
+        parts = [
+            str(row.get("tipo_item", "") or "").strip(),
+            str(row.get("descricao", "") or "").strip(),
+            str(row.get("material", "") or "").strip(),
+            str(row.get("espessura", "") or "").strip(),
+        ]
+        return "raw:" + "|".join(parts)
 
     def montagem_purchase_needs(self, order_numbers: list[str] | None = None) -> list[dict[str, Any]]:
         selected = {str(value or "").strip() for value in list(order_numbers or []) if str(value or "").strip()}
@@ -6273,15 +6445,21 @@ class LegacyBackend(
             client_label = " - ".join([value for value in (client_code, client_name) if value]).strip(" -")
             delivery_date = str(enc.get("data_entrega", "") or "").strip()
             for shortage in shortages:
+                kind = str(shortage.get("kind", "product") or "product").strip()
                 code = str(shortage.get("produto_codigo", "") or "").strip()
-                key = code or str(shortage.get("descricao", "") or "").strip()
+                key = f"{kind}:{code or shortage.get('stock_material_id', '') or shortage.get('material', '')}|{shortage.get('espessura', '')}|{shortage.get('descricao', '')}"
                 entry = grouped.setdefault(
                     key,
                     {
+                        "kind": kind,
                         "produto_codigo": code,
                         "descricao": str(shortage.get("descricao", "") or "").strip(),
                         "produto_unid": str(shortage.get("produto_unid", "") or "UN").strip() or "UN",
                         "preco_unit": round(self._parse_float(shortage.get("preco_unit", 0), 0), 4),
+                        "material": str(shortage.get("material", "") or "").strip(),
+                        "espessura": str(shortage.get("espessura", "") or "").strip(),
+                        "dimensao": str(shortage.get("dimensao", "") or "").strip(),
+                        "stock_material_id": str(shortage.get("stock_material_id", "") or "").strip(),
                         "qtd_em_falta": 0.0,
                         "produto_encontrado": bool(shortage.get("produto_encontrado")),
                         "fornecedor_id": str(shortage.get("fornecedor_id", "") or "").strip(),
@@ -6369,17 +6547,35 @@ class LegacyBackend(
                 "data_entrega": delivery_dates[0] if delivery_dates else "",
                 "obs": " | ".join(obs_parts),
                 "lines": [
-                    {
-                        "ref": str(need.get("produto_codigo", "") or "").strip(),
-                        "descricao": str(need.get("descricao", "") or "").strip(),
-                        "fornecedor_linha": str(need.get("fornecedor", "") or "").strip(),
-                        "origem": "Produto",
-                        "qtd": round(self._parse_float(need.get("qtd_em_falta", 0), 0), 2),
-                        "unid": str(need.get("produto_unid", "") or "UN").strip() or "UN",
-                        "preco": round(self._parse_float(need.get("preco_unit", 0), 0), 4),
-                        "desconto": 0.0,
-                        "iva": 23.0,
-                    }
+                    (
+                        {
+                            "ref": str(need.get("stock_material_id", "") or "").strip(),
+                            "descricao": str(need.get("descricao", "") or need.get("material", "") or "").strip(),
+                            "fornecedor_linha": str(need.get("fornecedor", "") or "").strip(),
+                            "origem": "Materia-prima",
+                            "qtd": round(self._parse_float(need.get("qtd_em_falta", 0), 0), 2),
+                            "unid": str(need.get("produto_unid", "") or "UN").strip() or "UN",
+                            "preco": round(self._parse_float(need.get("preco_unit", 0), 0), 4),
+                            "desconto": 0.0,
+                            "iva": 23.0,
+                            "material": str(need.get("material", "") or "").strip(),
+                            "espessura": str(need.get("espessura", "") or "").strip(),
+                            "dimensao": str(need.get("dimensao", "") or "").strip(),
+                            "dimensoes": str(need.get("dimensao", "") or "").strip(),
+                        }
+                        if str(need.get("kind", "") or "").strip() == "material"
+                        else {
+                            "ref": str(need.get("produto_codigo", "") or "").strip(),
+                            "descricao": str(need.get("descricao", "") or "").strip(),
+                            "fornecedor_linha": str(need.get("fornecedor", "") or "").strip(),
+                            "origem": "Produto",
+                            "qtd": round(self._parse_float(need.get("qtd_em_falta", 0), 0), 2),
+                            "unid": str(need.get("produto_unid", "") or "UN").strip() or "UN",
+                            "preco": round(self._parse_float(need.get("preco_unit", 0), 0), 4),
+                            "desconto": 0.0,
+                            "iva": 23.0,
+                        }
+                    )
                     for need in needs
                     if self._parse_float(need.get("qtd_em_falta", 0), 0) > 0
                 ],
@@ -6481,10 +6677,16 @@ class LegacyBackend(
             montagem_items.append(
                 {
                     "tipo_item": item_type,
-                    "tipo_label": self.desktop_main.orc_line_type_label(item_type),
+                    "stock_item_kind": str(item.get("stock_item_kind", "") or "").strip(),
+                    "tipo_label": "Matéria-prima" if self._montagem_item_is_raw_material(item) else self.desktop_main.orc_line_type_label(item_type),
+                    "item_key": self._montagem_item_key(item),
                     "descricao": str(item.get("descricao", "") or "").strip(),
                     "produto_codigo": str(item.get("produto_codigo", "") or "").strip(),
                     "produto_unid": str(item.get("produto_unid", "") or "").strip(),
+                    "material": str(item.get("material", "") or "").strip(),
+                    "espessura": str(item.get("espessura", "") or "").strip(),
+                    "dimensao": str(item.get("dimensao", item.get("dimensoes", "")) or "").strip(),
+                    "stock_material_id": str(item.get("stock_material_id", "") or "").strip(),
                     "qtd_planeada": plan,
                     "qtd_consumida": consumed,
                     "qtd_pendente": round(max(0.0, plan - consumed), 2),
@@ -6536,7 +6738,10 @@ class LegacyBackend(
             "montagem_shortages": montagem_shortages,
             "montagem_items": montagem_items,
             "can_consume_montagem": any(
-                self.desktop_main.normalize_orc_line_type(row.get("tipo_item")) == self.desktop_main.ORC_LINE_TYPE_PRODUCT
+                (
+                    self.desktop_main.normalize_orc_line_type(row.get("tipo_item")) in {self.desktop_main.ORC_LINE_TYPE_PRODUCT, self.desktop_main.ORC_LINE_TYPE_SERVICE}
+                    or self._montagem_item_is_raw_material(row)
+                )
                 and self._parse_float(row.get("qtd_planeada", 0), 0) > self._parse_float(row.get("qtd_consumida", 0), 0)
                 for row in montagem_items
             ),
@@ -9935,6 +10140,8 @@ class LegacyBackend(
         esp_norm = self.encomendas_actions._norm_espessura(espessura)
         rows = []
         for stock in list(self.ensure_data().get("materiais", []) or []):
+            if self._material_quality_is_blocked(stock):
+                continue
             disponivel = self._parse_float(stock.get("quantidade", 0), 0) - self._parse_float(stock.get("reservado", 0), 0)
             if disponivel <= 0:
                 continue
@@ -9968,6 +10175,8 @@ class LegacyBackend(
             stock = next((m for m in list(self.ensure_data().get("materiais", []) or []) if str(m.get("id", "") or "").strip() == material_id), None)
             if stock is None:
                 raise ValueError(f"Material n?o encontrado: {material_id}")
+            if self._material_quality_is_blocked(stock):
+                raise ValueError(f"Material {material_id} bloqueado pela qualidade.")
             disponivel = self._parse_float(stock.get("quantidade", 0), 0) - self._parse_float(stock.get("reservado", 0), 0)
             if quantidade > disponivel:
                 raise ValueError(f"Quantidade maior que o disponivel para {material_id}")
@@ -10025,17 +10234,40 @@ class LegacyBackend(
         }
         shortages: list[str] = []
         for item in items:
-            if self.desktop_main.normalize_orc_line_type(item.get("tipo_item")) != self.desktop_main.ORC_LINE_TYPE_PRODUCT:
-                continue
             code = str(item.get("produto_codigo", "") or "").strip()
             plan = self._parse_float(item.get("qtd_planeada", item.get("qtd", 0)), 0)
             done = self._parse_float(item.get("qtd_consumida", 0), 0)
             pending = max(0.0, plan - done)
             if pending <= 1e-9:
                 continue
+            if self._montagem_item_is_raw_material(item):
+                stock_id = str(item.get("stock_material_id", "") or "").strip()
+                if stock_id:
+                    material = self.material_by_id(stock_id)
+                    if material is None:
+                        shortages.append(f"{stock_id}: matéria-prima nao encontrada")
+                        continue
+                    if self._material_quality_is_blocked(material):
+                        shortages.append(f"{stock_id}: bloqueado pela qualidade")
+                        continue
+                    available = self._parse_float(material.get("quantidade", 0), 0) - self._parse_float(material.get("reservado", 0), 0)
+                else:
+                    material_txt = str(item.get("material", "") or "").strip()
+                    esp_txt = str(item.get("espessura", "") or "").strip()
+                    candidates = self.material_candidates(material_txt, esp_txt) if material_txt and esp_txt else []
+                    available = sum(self._parse_float(row.get("disponivel", 0), 0) for row in candidates)
+                if pending > available + 1e-9:
+                    label = stock_id or str(item.get("descricao", "") or item.get("material", "") or "-").strip()
+                    shortages.append(f"{label}: faltam {pending - available:.2f} ({available:.2f} disponivel)")
+                continue
+            if self.desktop_main.normalize_orc_line_type(item.get("tipo_item")) != self.desktop_main.ORC_LINE_TYPE_PRODUCT:
+                continue
             product = product_map.get(code)
             if product is None:
                 shortages.append(f"{code or '-'}: produto nao encontrado")
+                continue
+            if bool(product.get("quality_blocked")) or str(product.get("quality_status", "") or "").strip().lower() in {"bloqueado", "reclamado", "rejeitado", "em inspeção", "em inspecao"}:
+                shortages.append(f"{code}: bloqueado pela qualidade")
                 continue
             available = self._parse_float(product.get("qty", 0), 0)
             if pending > available + 1e-9:
@@ -10056,6 +10288,8 @@ class LegacyBackend(
                 product = product_map.get(code)
                 if product is None:
                     continue
+                if bool(product.get("quality_blocked")) or str(product.get("quality_status", "") or "").strip().lower() in {"bloqueado", "reclamado", "rejeitado", "em inspeção", "em inspecao"}:
+                    raise ValueError(f"Produto {code} bloqueado pela qualidade.")
                 before = self._parse_float(product.get("qty", 0), 0)
                 after = max(0.0, before - pending)
                 product["qty"] = after
@@ -10077,6 +10311,39 @@ class LegacyBackend(
                 item["estado"] = "Consumido"
                 item["consumed_at"] = now_txt
                 item["consumed_by"] = actor
+                changed = True
+            elif self._montagem_item_is_raw_material(item):
+                stock_id = str(item.get("stock_material_id", "") or "").strip()
+                allocations: list[dict[str, Any]] = []
+                remaining = pending
+                if stock_id:
+                    allocations.append({"material_id": stock_id, "quantidade": remaining})
+                else:
+                    material_txt = str(item.get("material", "") or "").strip()
+                    esp_txt = str(item.get("espessura", "") or "").strip()
+                    for candidate in self.material_candidates(material_txt, esp_txt) if material_txt and esp_txt else []:
+                        if remaining <= 1e-9:
+                            break
+                        available = self._parse_float(candidate.get("disponivel", 0), 0)
+                        qty = min(available, remaining)
+                        if qty <= 1e-9:
+                            continue
+                        allocations.append({"material_id": str(candidate.get("material_id", "") or "").strip(), "quantidade": qty})
+                        remaining = round(remaining - qty, 6)
+                result = self.consume_material_allocations(
+                    allocations,
+                    reason=f"montagem_{numero}_{str(item.get('descricao', '') or item.get('material', '') or '').strip()}",
+                )
+                item["qtd_consumida"] = round(plan, 2)
+                item["estado"] = "Consumido"
+                item["consumed_at"] = now_txt
+                item["consumed_by"] = actor
+                if not str(item.get("stock_material_id", "") or "").strip() and allocations:
+                    item["stock_material_id"] = str(allocations[0].get("material_id", "") or "").strip()
+                item["stock_consumption"] = {
+                    "consumed_total": round(self._parse_float(result.get("consumed_total", pending), pending), 2),
+                    "used_lots": list(result.get("used_lots", []) or []),
+                }
                 changed = True
             elif item_type == self.desktop_main.ORC_LINE_TYPE_SERVICE:
                 item["qtd_consumida"] = round(plan, 2)
@@ -10470,9 +10737,1002 @@ class LegacyBackend(
             {"key": "shipping", "label": "Expedição"},
             {"key": "billing", "label": "Faturação"},
             {"key": "purchase_notes", "label": "Notas Encomenda"},
+            {"key": "quality", "label": "Qualidade"},
             {"key": "pulse", "label": "Pulse"},
             {"key": "avarias", "label": "Avarias"},
             {"key": "home", "label": "Resumo"},
+        ]
+
+    def audit_rows(self, filter_text: str = "", limit: int = 500) -> list[dict[str, Any]]:
+        query = str(filter_text or "").strip().lower()
+        rows: list[dict[str, Any]] = []
+        for raw in reversed(list(self.ensure_data().get("audit_log", []) or [])):
+            if not isinstance(raw, dict):
+                continue
+            row = {
+                "created_at": str(raw.get("created_at", "") or "").strip(),
+                "user": str(raw.get("user", "") or "").strip(),
+                "action": str(raw.get("action", "") or "").strip(),
+                "entity_type": str(raw.get("entity_type", "") or "").strip(),
+                "entity_id": str(raw.get("entity_id", "") or "").strip(),
+                "summary": str(raw.get("summary", "") or "").strip(),
+            }
+            if query and not any(query in str(value).lower() for value in row.values()):
+                continue
+            rows.append(row)
+            if len(rows) >= max(1, int(limit or 500)):
+                break
+        return rows
+
+    def _next_prefixed_id(self, rows: list[Any], prefix: str, key: str = "id") -> str:
+        max_seq = 0
+        prefix_txt = str(prefix or "ID").strip().upper()
+        for row in list(rows or []):
+            if not isinstance(row, dict):
+                continue
+            raw = str(row.get(key, "") or "").strip().upper()
+            if raw.startswith(f"{prefix_txt}-"):
+                suffix = raw.split("-", 1)[1]
+                if suffix.isdigit():
+                    max_seq = max(max_seq, int(suffix))
+        return f"{prefix_txt}-{max_seq + 1:04d}"
+
+    def quality_summary(self) -> dict[str, Any]:
+        data = self.ensure_data()
+        ncs = [row for row in list(data.get("quality_nonconformities", []) or []) if isinstance(row, dict)]
+        docs = [row for row in list(data.get("quality_documents", []) or []) if isinstance(row, dict)]
+        health = self.quality_data_health()
+        open_ncs = [row for row in ncs if str(row.get("estado", "") or "Aberta").strip().lower() not in {"fechada", "cancelada"}]
+        overdue = 0
+        today = date.today().isoformat()
+        for row in open_ncs:
+            due = str(row.get("prazo", "") or "").strip()[:10]
+            if due and due < today:
+                overdue += 1
+        supplier_ncs = [row for row in ncs if str(row.get("tipo", "") or "").strip().casefold() == "fornecedor" or str(row.get("fornecedor_id", "") or row.get("fornecedor_nome", "") or "").strip()]
+        blocked_materials = [row for row in list(data.get("materiais", []) or []) if self._material_quality_is_blocked(row)]
+        return {
+            "open_nc": len(open_ncs),
+            "overdue_nc": overdue,
+            "supplier_nc": len(supplier_ncs),
+            "blocked_materials": len(blocked_materials),
+            "documents": len(docs),
+            "audit_events": len(list(data.get("audit_log", []) or [])),
+            "quality_issues": len(list(health.get("issues", []) or [])),
+            "updated_at": str(self.desktop_main.now_iso() or "").strip(),
+        }
+
+    def quality_data_health(self) -> dict[str, Any]:
+        options = self.quality_link_options()
+        issues: list[dict[str, str]] = []
+        for row in list(self.ensure_data().get("quality_nonconformities", []) or []):
+            if not isinstance(row, dict):
+                continue
+            entity_type = str(row.get("entidade_tipo", "") or "").strip()
+            entity_id = str(row.get("entidade_id", "") or "").strip()
+            if entity_type and entity_type != "Livre" and entity_id:
+                known = {str(item.get("id", "") or "").strip() for item in list(options.get(entity_type, []) or [])}
+                if entity_id not in known:
+                    issues.append({"tipo": "NC", "id": str(row.get("id", "") or ""), "problema": f"Ligacao inexistente: {entity_type} {entity_id}"})
+        for row in list(self.ensure_data().get("quality_documents", []) or []):
+            if not isinstance(row, dict):
+                continue
+            path_txt = str(row.get("caminho", "") or "").strip()
+            if path_txt and not Path(path_txt).exists():
+                issues.append({"tipo": "Documento", "id": str(row.get("id", "") or ""), "problema": f"Ficheiro nao encontrado: {path_txt}"})
+        open_nc_ids = {
+            str(row.get("id", "") or "").strip()
+            for row in list(self.ensure_data().get("quality_nonconformities", []) or [])
+            if isinstance(row, dict) and str(row.get("estado", "") or "Aberta").strip().lower() not in {"fechada", "cancelada"}
+        }
+        for material in list(self.ensure_data().get("materiais", []) or []):
+            if not isinstance(material, dict) or not self._material_quality_is_blocked(material):
+                continue
+            status_norm = str(material.get("quality_status", "") or material.get("inspection_status", "") or "").strip().casefold()
+            if "inspe" in status_norm and not any(token in status_norm for token in ("bloque", "reclam", "rejeit")):
+                continue
+            nc_id = str(material.get("quality_nc_id", "") or material.get("supplier_claim_id", "") or "").strip()
+            if not nc_id:
+                issues.append({"tipo": "Material", "id": str(material.get("id", "") or ""), "problema": "Material bloqueado sem NC/reclamacao ligada."})
+            elif nc_id not in open_nc_ids:
+                issues.append({"tipo": "Material", "id": str(material.get("id", "") or ""), "problema": f"Material bloqueado com NC inexistente/fechada: {nc_id}"})
+        return {"issues": issues, "ok": not issues}
+
+    def quality_link_options(self) -> dict[str, list[dict[str, str]]]:
+        options: dict[str, list[dict[str, str]]] = {
+            "Livre": [{"id": "", "label": ""}],
+            "OPP": [],
+            "Encomenda": [],
+            "Material": [],
+            "Produto": [],
+            "Fornecedor": [],
+            "Cliente": [],
+            "Documento": [],
+        }
+        try:
+            for row in list(self.opp_rows("", "Todos", "Todos", "Todas", "Todos") or []):
+                opp = str(row.get("opp", "") or "").strip()
+                if not opp:
+                    continue
+                label = " | ".join(
+                    part
+                    for part in (
+                        opp,
+                        str(row.get("encomenda", "") or "").strip(),
+                        str(row.get("ref_interna", "") or "").strip(),
+                        str(row.get("descricao", "") or "").strip(),
+                    )
+                    if part
+                )
+                options["OPP"].append({"id": opp, "label": label})
+        except Exception:
+            pass
+        for enc in list(self.ensure_data().get("encomendas", []) or []):
+            numero = str((enc or {}).get("numero", "") or "").strip()
+            if numero:
+                options["Encomenda"].append({"id": numero, "label": f"{numero} | {str((enc or {}).get('cliente', '') or '').strip()}"})
+        try:
+            for row in list(self.material_rows("") or []):
+                material_id = str(row.get("id", "") or "").strip()
+                if material_id:
+                    options["Material"].append(
+                        {
+                            "id": material_id,
+                            "label": " | ".join(
+                                part
+                                for part in (
+                                    material_id,
+                                    str(row.get("material", "") or "").strip(),
+                                    str(row.get("espessura", "") or "").strip(),
+                                    str(row.get("formato", "") or "").strip(),
+                                )
+                                if part
+                            ),
+                        }
+                    )
+        except Exception:
+            pass
+        for row in list(self.ensure_data().get("produtos", []) or []):
+            if not isinstance(row, dict):
+                continue
+            code = str(row.get("codigo", "") or "").strip()
+            if code:
+                options["Produto"].append({"id": code, "label": f"{code} | {str(row.get('descricao', '') or '').strip()}".strip(" |")})
+        for row in list(self.ensure_data().get("fornecedores", []) or []):
+            supplier_id = str((row or {}).get("id", "") or "").strip()
+            name = str((row or {}).get("nome", "") or "").strip()
+            if supplier_id or name:
+                options["Fornecedor"].append({"id": supplier_id or name, "label": f"{supplier_id} | {name}".strip(" |")})
+        for row in list(self.ensure_data().get("clientes", []) or []):
+            code = str((row or {}).get("codigo", "") or "").strip()
+            name = str((row or {}).get("nome", "") or "").strip()
+            if code or name:
+                options["Cliente"].append({"id": code or name, "label": f"{code} | {name}".strip(" |")})
+        for row in list(self.ensure_data().get("quality_documents", []) or []):
+            doc_id = str((row or {}).get("id", "") or "").strip()
+            title = str((row or {}).get("titulo", "") or "").strip()
+            if doc_id or title:
+                options["Documento"].append({"id": doc_id or title, "label": f"{doc_id} | {title}".strip(" |")})
+        for rows in options.values():
+            rows.sort(key=lambda item: str(item.get("label", "") or item.get("id", "") or "").lower())
+        return options
+
+    def _quality_link_label(self, entity_type: str, entity_id: str) -> str:
+        entity_type_txt = str(entity_type or "Livre").strip() or "Livre"
+        entity_id_txt = str(entity_id or "").strip()
+        if not entity_id_txt:
+            return ""
+        for row in list(self.quality_link_options().get(entity_type_txt, []) or []):
+            if str(row.get("id", "") or "").strip() == entity_id_txt:
+                return str(row.get("label", "") or "").strip()
+        return entity_id_txt
+
+    def _quality_status_code(self, value: Any) -> str:
+        raw = str(value or "").strip().casefold()
+        if "rejeit" in raw:
+            return "REJEITADO"
+        if "aprov" in raw:
+            return "APROVADO"
+        return "EM_INSPECAO"
+
+    def _quality_reference_key(self, value: Any, fallback: Any = "") -> str:
+        raw = str(value or fallback or "").strip()
+        match = re.search(r"\bNE-\d{4}-\d{4}\b", raw, flags=re.IGNORECASE)
+        if match:
+            return match.group(0).upper()
+        return re.sub(r"\s+", " ", raw).casefold()
+
+    def _quality_nc_key(self, payload: dict[str, Any]) -> tuple[str, str, str, str]:
+        origem_raw = str(payload.get("origem", "") or "").strip()
+        origem = re.sub(r"\s+", " ", origem_raw).casefold()
+        if "rece" in origem and "fornecedor" in origem:
+            origem = "rececao fornecedor"
+        referencia = self._quality_reference_key(payload.get("referencia", ""), payload.get("ne_numero", ""))
+        entidade_tipo = str(payload.get("entidade_tipo", "") or payload.get("linked_entity_type", "") or "").strip()
+        entidade_id = str(payload.get("entidade_id", "") or payload.get("linked_entity_id", "") or "").strip()
+        if not entidade_tipo and str(payload.get("material_id", "") or "").strip():
+            entidade_tipo = "Material"
+            entidade_id = str(payload.get("material_id", "") or "").strip()
+        if not entidade_id:
+            entidade_id = str(payload.get("material_id", "") or payload.get("produto_codigo", "") or payload.get("fornecedor_id", "") or payload.get("fornecedor_nome", "") or "").strip()
+        return (origem, referencia, entidade_tipo.casefold(), entidade_id.casefold())
+
+    def _quality_is_open_nc(self, row: dict[str, Any]) -> bool:
+        return str(row.get("estado", "") or "Aberta").strip().casefold() == "aberta"
+
+    def _quality_find_open_nc(self, payload: dict[str, Any], *, exclude_id: str = "") -> dict[str, Any] | None:
+        key = self._quality_nc_key(payload)
+        exclude = str(exclude_id or "").strip()
+        for row in list(self.ensure_data().get("quality_nonconformities", []) or []):
+            if not isinstance(row, dict) or not self._quality_is_open_nc(row):
+                continue
+            if exclude and str(row.get("id", "") or "").strip() == exclude:
+                continue
+            if self._quality_nc_key(row) == key:
+                return row
+        return None
+
+    def _quality_normalize_open_nc_duplicates(self) -> None:
+        data = self.ensure_data()
+        rows = [row for row in list(data.get("quality_nonconformities", []) or []) if isinstance(row, dict)]
+        first_by_key: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        changed = False
+        for row in rows:
+            if not self._quality_is_open_nc(row):
+                continue
+            key = self._quality_nc_key(row)
+            if not all(key):
+                continue
+            keeper = first_by_key.get(key)
+            if keeper is None:
+                first_by_key[key] = row
+                continue
+            row["estado"] = "Cancelada"
+            row["updated_at"] = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
+            row["updated_by"] = self._current_user_label()
+            row["acao"] = (
+                str(row.get("acao", "") or "").strip()
+                + f"\nCancelada automaticamente: NC duplicada de {str(keeper.get('id', '') or '').strip()}."
+            ).strip()
+            changed = True
+        if changed:
+            self._save(force=True, audit=False)
+
+    def quality_reception_rows(self, filter_text: str = "", state_filter: str = "Pendentes") -> list[dict[str, Any]]:
+        query = str(filter_text or "").strip().lower()
+        state = str(state_filter or "Pendentes").strip().casefold()
+        rows: list[dict[str, Any]] = []
+
+        def accept_status(status: str) -> bool:
+            code = self._quality_status_code(status)
+            if "todo" in state:
+                return True
+            if "aprov" in state:
+                return code == "APROVADO"
+            if "rejeit" in state:
+                return code == "REJEITADO"
+            return code == "EM_INSPECAO"
+
+        for material in list(self.ensure_data().get("materiais", []) or []):
+            if not isinstance(material, dict):
+                continue
+            ne_num = str(material.get("inspection_note_number", "") or material.get("origem_ne", "") or "").strip()
+            quality_status = str(material.get("quality_status", "") or material.get("inspection_status", "") or "").strip()
+            if not (ne_num or quality_status or str(material.get("logistic_status", "") or "").strip()):
+                continue
+            if not accept_status(quality_status or "EM_INSPECAO"):
+                continue
+            material_id = str(material.get("id", "") or "").strip()
+            lote = str(material.get("lote_fornecedor", "") or "").strip()
+            row = {
+                "tipo": "Material",
+                "id": material_id,
+                "ref": material_id,
+                "referencia": ne_num,
+                "material": str(material.get("material", "") or "").strip(),
+                "espessura": str(material.get("espessura", "") or "").strip(),
+                "descricao": " ".join(part for part in (str(material.get("formato", "") or "").strip(), str(material.get("dimensao", material.get("dimensoes", "")) or "").strip()) if part),
+                "lote": lote,
+                "fornecedor": str(material.get("inspection_supplier_name", "") or material.get("fornecedor", "") or "").strip(),
+                "fornecedor_id": str(material.get("inspection_supplier_id", "") or material.get("fornecedor_id", "") or "").strip(),
+                "logistic_status": str(material.get("logistic_status", "") or "RECEBIDO").strip(),
+                "quality_status": self._quality_status_code(quality_status or "EM_INSPECAO"),
+                "defeito": str(material.get("inspection_defect", "") or "").strip(),
+                "decisao": str(material.get("inspection_decision", "") or "").strip(),
+                "qtd": self._parse_float(material.get("quantidade", 0), 0),
+                "nc_id": str(material.get("quality_nc_id", "") or material.get("supplier_claim_id", "") or "").strip(),
+                "guia": str(material.get("inspection_guia", "") or "").strip(),
+                "fatura": str(material.get("inspection_fatura", "") or "").strip(),
+            }
+            if query and not any(query in str(value).lower() for value in row.values()):
+                continue
+            rows.append(row)
+
+        for product in list(self.ensure_data().get("produtos", []) or []):
+            if not isinstance(product, dict):
+                continue
+            ne_num = str(product.get("inspection_note_number", "") or "").strip()
+            quality_status = str(product.get("quality_status", "") or "").strip()
+            if not (ne_num or quality_status or str(product.get("logistic_status", "") or "").strip()):
+                continue
+            if not accept_status(quality_status or "EM_INSPECAO"):
+                continue
+            code = str(product.get("codigo", "") or "").strip()
+            row = {
+                "tipo": "Produto",
+                "id": code,
+                "ref": code,
+                "referencia": ne_num,
+                "material": str(product.get("categoria", "") or "").strip(),
+                "espessura": "",
+                "descricao": str(product.get("descricao", "") or "").strip(),
+                "lote": "",
+                "fornecedor": str(product.get("inspection_supplier_name", "") or "").strip(),
+                "fornecedor_id": str(product.get("inspection_supplier_id", "") or "").strip(),
+                "logistic_status": str(product.get("logistic_status", "") or "RECEBIDO").strip(),
+                "quality_status": self._quality_status_code(quality_status or "EM_INSPECAO"),
+                "defeito": str(product.get("inspection_defect", "") or "").strip(),
+                "decisao": str(product.get("inspection_decision", "") or "").strip(),
+                "qtd": self._parse_float(product.get("qty", 0), 0),
+                "nc_id": str(product.get("quality_nc_id", "") or "").strip(),
+                "guia": str(product.get("inspection_guia", "") or "").strip(),
+                "fatura": str(product.get("inspection_fatura", "") or "").strip(),
+            }
+            if query and not any(query in str(value).lower() for value in row.values()):
+                continue
+            rows.append(row)
+        rows.sort(key=lambda item: (str(item.get("quality_status", "")) == "APROVADO", str(item.get("referencia", "")), str(item.get("ref", ""))))
+        return rows
+
+    def quality_reception_save(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = self.ensure_data()
+        item_type = str(payload.get("tipo", payload.get("kind", "")) or "").strip().casefold()
+        item_id = str(payload.get("id", payload.get("ref", "")) or "").strip()
+        status = self._quality_status_code(payload.get("quality_status", payload.get("inspection_status", "")))
+        defect = str(payload.get("defeito", payload.get("inspection_defect", "")) or "").strip()
+        decision = str(payload.get("decisao", payload.get("inspection_decision", "")) or "").strip()
+        now = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
+        if not item_id:
+            raise ValueError("Seleciona uma linha de receção para avaliar.")
+
+        if "prod" in item_type:
+            target = next((row for row in list(data.get("produtos", []) or []) if isinstance(row, dict) and str(row.get("codigo", "") or "").strip() == item_id), None)
+            entity_type = "Produto"
+            entity_id = item_id
+            reference = str(payload.get("referencia", "") or (target or {}).get("inspection_note_number", "") or "").strip()
+            entity_label = " | ".join(part for part in (entity_id, str((target or {}).get("descricao", "") or "").strip()) if part)
+        else:
+            target = self.material_by_id(item_id)
+            entity_type = "Material"
+            entity_id = item_id
+            reference = str(payload.get("referencia", "") or (target or {}).get("inspection_note_number", "") or (target or {}).get("origem_ne", "") or "").strip()
+            entity_label = self._quality_link_label(entity_type, entity_id)
+        if target is None:
+            raise ValueError("Linha de receção não encontrada.")
+
+        before = copy.deepcopy(target)
+        target["logistic_status"] = str(target.get("logistic_status", "") or "RECEBIDO").strip()
+        target["quality_status"] = status
+        target["inspection_status"] = status
+        target["inspection_defect"] = defect
+        target["inspection_decision"] = decision or ("Libertar para stock" if status == "APROVADO" else "Aguardar decisão da qualidade")
+        target["inspection_at"] = now
+        target["inspection_by"] = self._current_user_label()
+        target["quality_blocked"] = status != "APROVADO"
+        target["atualizado_em"] = now
+
+        nc_payload = {
+            "origem": "Receção fornecedor",
+            "referencia": reference,
+            "entidade_tipo": entity_type,
+            "entidade_id": entity_id,
+            "entidade_label": entity_label,
+            "tipo": "Fornecedor",
+            "gravidade": "Alta" if status == "REJEITADO" else "Media",
+            "estado": "Aberta",
+            "responsavel": "Qualidade",
+            "descricao": (
+                f"Avaliação de receção marcada como {status}. "
+                f"Entidade: {entity_label or entity_id}. "
+                f"Defeito/observação: {defect or '-'}."
+            ),
+            "causa": "A apurar com fornecedor/receção.",
+            "acao": target["inspection_decision"],
+            "fornecedor_id": str(target.get("inspection_supplier_id", "") or target.get("fornecedor_id", "") or "").strip(),
+            "fornecedor_nome": str(target.get("inspection_supplier_name", "") or target.get("fornecedor", "") or "").strip(),
+            "material_id": entity_id if entity_type == "Material" else "",
+            "produto_codigo": entity_id if entity_type == "Produto" else "",
+            "lote_fornecedor": str(target.get("lote_fornecedor", "") or "").strip(),
+            "ne_numero": reference,
+            "guia": str(target.get("inspection_guia", "") or "").strip(),
+            "fatura": str(target.get("inspection_fatura", "") or "").strip(),
+            "decisao": target["inspection_decision"],
+        }
+        existing_open = self._quality_find_open_nc(nc_payload)
+        if status == "APROVADO":
+            if existing_open is not None:
+                self.quality_nc_close(str(existing_open.get("id", "") or ""), target["inspection_decision"])
+            if entity_type == "Material":
+                target["supplier_claim_id"] = str(target.get("supplier_claim_id", "") or "").strip()
+            self._append_audit_event(data, action="Receção aprovada", entity_type=entity_type, entity_id=entity_id, summary=target["inspection_decision"], before=before, after=target)
+        else:
+            if status == "REJEITADO" or defect or bool(payload.get("create_nc")):
+                if existing_open is not None:
+                    nc_payload["id"] = str(existing_open.get("id", "") or "").strip()
+                nc = self.quality_nc_save(nc_payload)
+                target["quality_nc_id"] = str(nc.get("id", "") or "").strip()
+                if entity_type == "Material":
+                    target["supplier_claim_id"] = target["quality_nc_id"]
+            self._append_audit_event(data, action="Receção em inspeção", entity_type=entity_type, entity_id=entity_id, summary=target["inspection_decision"], before=before, after=target)
+
+        for note in list(data.get("notas_encomenda", []) or []):
+            if not isinstance(note, dict):
+                continue
+            for line in list(note.get("linhas", []) or []):
+                if not isinstance(line, dict):
+                    continue
+                line_ref = str(line.get("ref", "") or "").strip()
+                if line_ref != entity_id:
+                    continue
+                line["quality_status"] = status
+                line["inspection_status"] = status
+                line["inspection_defect"] = defect
+                line["inspection_decision"] = target["inspection_decision"]
+                line["quality_nc_id"] = str(target.get("quality_nc_id", "") or "").strip()
+        self._sync_ne_from_materia()
+        self._save(force=True, audit=False)
+        return {"tipo": entity_type, "id": entity_id, "quality_status": status, "quality_nc_id": str(target.get("quality_nc_id", "") or "").strip()}
+
+    def quality_nc_rows(self, filter_text: str = "", state_filter: str = "Ativas") -> list[dict[str, Any]]:
+        self._quality_normalize_open_nc_duplicates()
+        query = str(filter_text or "").strip().lower()
+        state = str(state_filter or "Ativas").strip().lower()
+        rows: list[dict[str, Any]] = []
+        for raw in list(self.ensure_data().get("quality_nonconformities", []) or []):
+            if not isinstance(raw, dict):
+                continue
+            row = dict(raw)
+            estado = str(row.get("estado", "") or "Aberta").strip() or "Aberta"
+            estado_norm = estado.lower()
+            if state not in {"todos", "todas", "all"}:
+                if "ativ" in state and estado_norm in {"fechada", "cancelada"}:
+                    continue
+                if "abert" in state and estado_norm != "aberta":
+                    continue
+                if "trat" in state and "trat" not in estado_norm:
+                    continue
+                if "fech" in state and estado_norm != "fechada":
+                    continue
+            emitted = {
+                "id": str(row.get("id", "") or "").strip(),
+                "origem": str(row.get("origem", "") or "").strip(),
+                "referencia": str(row.get("referencia", "") or "").strip(),
+                "entidade_tipo": str(row.get("entidade_tipo", "") or row.get("linked_entity_type", "") or "").strip(),
+                "entidade_id": str(row.get("entidade_id", "") or row.get("linked_entity_id", "") or "").strip(),
+                "entidade_label": str(row.get("entidade_label", "") or row.get("linked_entity_label", "") or "").strip(),
+                "tipo": str(row.get("tipo", "") or "").strip(),
+                "gravidade": str(row.get("gravidade", "") or "Media").strip(),
+                "estado": estado,
+                "responsavel": str(row.get("responsavel", "") or "").strip(),
+                "prazo": str(row.get("prazo", "") or "").strip()[:10],
+                "descricao": str(row.get("descricao", "") or "").strip(),
+                "causa": str(row.get("causa", "") or "").strip(),
+                "acao": str(row.get("acao", "") or "").strip(),
+                "eficacia": str(row.get("eficacia", "") or "").strip(),
+                "fornecedor_id": str(row.get("fornecedor_id", "") or "").strip(),
+                "fornecedor_nome": str(row.get("fornecedor_nome", "") or "").strip(),
+                "material_id": str(row.get("material_id", "") or "").strip(),
+                "lote_fornecedor": str(row.get("lote_fornecedor", "") or "").strip(),
+                "ne_numero": str(row.get("ne_numero", "") or "").strip(),
+                "decisao": str(row.get("decisao", "") or "").strip(),
+                "created_at": str(row.get("created_at", "") or "").strip(),
+                "closed_at": str(row.get("closed_at", "") or "").strip(),
+            }
+            if query and not any(query in str(value).lower() for value in emitted.values()):
+                continue
+            rows.append(emitted)
+        rows.sort(key=lambda item: (str(item.get("estado", "")) == "Fechada", str(item.get("prazo", "") or "9999"), str(item.get("id", ""))), reverse=False)
+        return rows
+
+    def quality_nc_save(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = self.ensure_data()
+        rows = data.setdefault("quality_nonconformities", [])
+        nc_id = str(payload.get("id", "") or "").strip()
+        existing = next((row for row in rows if isinstance(row, dict) and str(row.get("id", "") or "").strip() == nc_id), None) if nc_id else None
+        before = copy.deepcopy(existing) if isinstance(existing, dict) else None
+        if not nc_id:
+            nc_id = self._next_prefixed_id(rows, "NC")
+        now = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
+        row = {
+            "id": nc_id,
+            "origem": str(payload.get("origem", "") or "").strip(),
+            "referencia": str(payload.get("referencia", "") or "").strip(),
+            "entidade_tipo": str(payload.get("entidade_tipo", payload.get("linked_entity_type", "")) or "").strip(),
+            "entidade_id": str(payload.get("entidade_id", payload.get("linked_entity_id", "")) or "").strip(),
+            "tipo": str(payload.get("tipo", "") or "Processo").strip() or "Processo",
+            "gravidade": str(payload.get("gravidade", "") or "Media").strip() or "Media",
+            "estado": str(payload.get("estado", "") or (existing or {}).get("estado", "Aberta") or "Aberta").strip() or "Aberta",
+            "responsavel": str(payload.get("responsavel", "") or "").strip(),
+            "prazo": str(payload.get("prazo", "") or "").strip()[:10],
+            "descricao": str(payload.get("descricao", "") or "").strip(),
+            "causa": str(payload.get("causa", "") or "").strip(),
+            "acao": str(payload.get("acao", "") or "").strip(),
+            "eficacia": str(payload.get("eficacia", "") or "").strip(),
+            "fornecedor_id": str(payload.get("fornecedor_id", (existing or {}).get("fornecedor_id", "")) or "").strip(),
+            "fornecedor_nome": str(payload.get("fornecedor_nome", (existing or {}).get("fornecedor_nome", "")) or "").strip(),
+            "material_id": str(payload.get("material_id", (existing or {}).get("material_id", "")) or "").strip(),
+            "lote_fornecedor": str(payload.get("lote_fornecedor", (existing or {}).get("lote_fornecedor", "")) or "").strip(),
+            "ne_numero": str(payload.get("ne_numero", (existing or {}).get("ne_numero", "")) or "").strip(),
+            "guia": str(payload.get("guia", (existing or {}).get("guia", "")) or "").strip(),
+            "fatura": str(payload.get("fatura", (existing or {}).get("fatura", "")) or "").strip(),
+            "decisao": str(payload.get("decisao", (existing or {}).get("decisao", "")) or "").strip(),
+            "created_at": str((existing or {}).get("created_at", "") or now),
+            "updated_at": now,
+            "created_by": str((existing or {}).get("created_by", "") or self._current_user_label()),
+            "updated_by": self._current_user_label(),
+            "closed_at": str((existing or {}).get("closed_at", "") or "").strip(),
+        }
+        row["entidade_label"] = str(payload.get("entidade_label", "") or "").strip() or self._quality_link_label(
+            row["entidade_tipo"], row["entidade_id"]
+        )
+        if not row["referencia"] and row["entidade_id"]:
+            row["referencia"] = row["entidade_id"]
+        if self._quality_is_open_nc(row):
+            duplicate = self._quality_find_open_nc(row, exclude_id=nc_id)
+            if duplicate is not None:
+                dup_id = str(duplicate.get("id", "") or "").strip()
+                raise ValueError(
+                    f"Já existe uma NC aberta ({dup_id}) para esta origem, referência e entidade. "
+                    "Fecha ou edita essa NC antes de criar outra."
+                )
+        if existing is None:
+            rows.append(row)
+        else:
+            existing.update(row)
+            row = existing
+        self._append_audit_event(
+            data,
+            action="NC guardada",
+            entity_type="Nao conformidade",
+            entity_id=nc_id,
+            summary=f"{row.get('tipo', '')} | {row.get('estado', '')} | {row.get('referencia', '')}",
+            before=before,
+            after=row,
+        )
+        self._save(force=True, audit=False)
+        return dict(row)
+
+    def quality_nc_close(self, nc_id: str, eficacia: str = "") -> dict[str, Any]:
+        data = self.ensure_data()
+        target = next((row for row in list(data.get("quality_nonconformities", []) or []) if isinstance(row, dict) and str(row.get("id", "") or "").strip() == str(nc_id or "").strip()), None)
+        if target is None:
+            raise ValueError("Nao conformidade nao encontrada.")
+        before = copy.deepcopy(target)
+        target["estado"] = "Fechada"
+        target["closed_at"] = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
+        target["closed_by"] = self._current_user_label()
+        if str(eficacia or "").strip():
+            target["eficacia"] = str(eficacia or "").strip()
+        self._append_audit_event(data, action="NC fechada", entity_type="Nao conformidade", entity_id=str(nc_id), summary=str(target.get("eficacia", "") or ""), before=before, after=target)
+        self._save(force=True, audit=False)
+        return dict(target)
+
+    def quality_nc_release_material(self, nc_id: str, decision: str = "Aprovado pela qualidade") -> dict[str, Any]:
+        data = self.ensure_data()
+        nc_id_txt = str(nc_id or "").strip()
+        target = next((row for row in list(data.get("quality_nonconformities", []) or []) if isinstance(row, dict) and str(row.get("id", "") or "").strip() == nc_id_txt), None)
+        if target is None:
+            raise ValueError("Nao conformidade nao encontrada.")
+        material_id = str(target.get("material_id", "") or "").strip()
+        if not material_id and str(target.get("entidade_tipo", "") or "").strip() == "Material":
+            material_id = str(target.get("entidade_id", "") or "").strip()
+        if not material_id:
+            raise ValueError("Esta NC nao esta ligada a um material.")
+        material = self.material_by_id(material_id)
+        if material is None:
+            raise ValueError("Material ligado a NC nao encontrado.")
+        before_material = copy.deepcopy(material)
+        now = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
+        material["quality_status"] = "Aprovado"
+        material["inspection_status"] = "Aprovado"
+        material["quality_blocked"] = False
+        material["inspection_decision"] = str(decision or "Aprovado pela qualidade").strip()
+        material["quality_released_at"] = now
+        material["quality_released_by"] = self._current_user_label()
+        material["atualizado_em"] = now
+        target["decisao"] = str(decision or "Aprovado pela qualidade").strip()
+        target["acao"] = (str(target.get("acao", "") or "").strip() + f"\nLibertacao de material: {material['inspection_decision']}").strip()
+        target["updated_at"] = now
+        target["updated_by"] = self._current_user_label()
+        self._append_audit_event(
+            data,
+            action="Material libertado pela qualidade",
+            entity_type="Material",
+            entity_id=material_id,
+            summary=f"NC {nc_id_txt}: {material['inspection_decision']}",
+            before=before_material,
+            after=material,
+        )
+        self._sync_ne_from_materia()
+        self._save(force=True, audit=False)
+        return {"material_id": material_id, "quality_status": "Aprovado", "nc_id": nc_id_txt}
+
+    def quality_nc_remove(self, nc_id: str) -> None:
+        data = self.ensure_data()
+        value = str(nc_id or "").strip()
+        rows = list(data.get("quality_nonconformities", []) or [])
+        before = next((row for row in rows if isinstance(row, dict) and str(row.get("id", "") or "").strip() == value), None)
+        data["quality_nonconformities"] = [row for row in rows if not (isinstance(row, dict) and str(row.get("id", "") or "").strip() == value)]
+        if before is None:
+            raise ValueError("Nao conformidade nao encontrada.")
+        self._append_audit_event(data, action="NC removida", entity_type="Nao conformidade", entity_id=value, summary=str(before.get("descricao", "") or ""), before=before)
+        self._save(force=True, audit=False)
+
+    def quality_document_rows(self, filter_text: str = "") -> list[dict[str, Any]]:
+        query = str(filter_text or "").strip().lower()
+        rows: list[dict[str, Any]] = []
+        for raw in list(self.ensure_data().get("quality_documents", []) or []):
+            if not isinstance(raw, dict):
+                continue
+            row = {
+                "id": str(raw.get("id", "") or "").strip(),
+                "titulo": str(raw.get("titulo", "") or "").strip(),
+                "tipo": str(raw.get("tipo", "") or "").strip(),
+                "entidade": str(raw.get("entidade", "") or "").strip(),
+                "referencia": str(raw.get("referencia", "") or "").strip(),
+                "versao": str(raw.get("versao", "") or "").strip(),
+                "estado": str(raw.get("estado", "") or "Ativo").strip(),
+                "responsavel": str(raw.get("responsavel", "") or "").strip(),
+                "caminho": str(raw.get("caminho", "") or "").strip(),
+                "obs": str(raw.get("obs", "") or "").strip(),
+                "updated_at": str(raw.get("updated_at", "") or raw.get("created_at", "") or "").strip(),
+            }
+            if query and not any(query in str(value).lower() for value in row.values()):
+                continue
+            rows.append(row)
+        rows.sort(key=lambda item: (str(item.get("tipo", "")), str(item.get("titulo", ""))))
+        return rows
+
+    def quality_document_save(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = self.ensure_data()
+        rows = data.setdefault("quality_documents", [])
+        doc_id = str(payload.get("id", "") or "").strip()
+        existing = next((row for row in rows if isinstance(row, dict) and str(row.get("id", "") or "").strip() == doc_id), None) if doc_id else None
+        before = copy.deepcopy(existing) if isinstance(existing, dict) else None
+        if not doc_id:
+            doc_id = self._next_prefixed_id(rows, "DOC")
+        titulo = str(payload.get("titulo", "") or "").strip()
+        if not titulo:
+            raise ValueError("Titulo do documento obrigatorio.")
+        source_path = str(payload.get("caminho", "") or "").strip()
+        stored_path = source_path
+        if source_path:
+            stored_path = self._store_shared_file(source_path, "quality/documents", preferred_name=self._file_reference_name(source_path, titulo or doc_id))
+        now = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
+        row = {
+            "id": doc_id,
+            "titulo": titulo,
+            "tipo": str(payload.get("tipo", "") or "Evidencia").strip() or "Evidencia",
+            "entidade": str(payload.get("entidade", "") or "").strip(),
+            "referencia": str(payload.get("referencia", "") or "").strip(),
+            "entidade_tipo": str(payload.get("entidade_tipo", payload.get("entidade", "")) or "").strip(),
+            "entidade_id": str(payload.get("entidade_id", payload.get("referencia", "")) or "").strip(),
+            "versao": str(payload.get("versao", "") or "1").strip() or "1",
+            "estado": str(payload.get("estado", "") or "Ativo").strip() or "Ativo",
+            "responsavel": str(payload.get("responsavel", "") or "").strip(),
+            "caminho": stored_path,
+            "obs": str(payload.get("obs", "") or "").strip(),
+            "created_at": str((existing or {}).get("created_at", "") or now),
+            "updated_at": now,
+            "created_by": str((existing or {}).get("created_by", "") or self._current_user_label()),
+            "updated_by": self._current_user_label(),
+        }
+        if existing is None:
+            rows.append(row)
+        else:
+            existing.update(row)
+            row = existing
+        self._append_audit_event(data, action="Documento qualidade guardado", entity_type="Documento", entity_id=doc_id, summary=titulo, before=before, after=row)
+        self._save(force=True, audit=False)
+        return dict(row)
+
+    def quality_document_remove(self, doc_id: str) -> None:
+        data = self.ensure_data()
+        value = str(doc_id or "").strip()
+        rows = list(data.get("quality_documents", []) or [])
+        before = next((row for row in rows if isinstance(row, dict) and str(row.get("id", "") or "").strip() == value), None)
+        data["quality_documents"] = [row for row in rows if not (isinstance(row, dict) and str(row.get("id", "") or "").strip() == value)]
+        if before is None:
+            raise ValueError("Documento nao encontrado.")
+        self._append_audit_event(data, action="Documento qualidade removido", entity_type="Documento", entity_id=value, summary=str(before.get("titulo", "") or ""), before=before)
+        self._save(force=True, audit=False)
+
+    def _quality_pdf_path(self, name: str) -> Path:
+        safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name or "qualidade").strip()).strip("_") or "qualidade"
+        return Path(tempfile.gettempdir()) / f"lugest_{safe}.pdf"
+
+    def _quality_pdf_draw_lines(self, canvas_obj: Any, lines: list[str], x: float, y: float, width: float, *, size: float = 9.0) -> float:
+        for raw in lines:
+            for line in _pdf_wrap_text(raw, "Helvetica", size, width, max_lines=None) or [""]:
+                canvas_obj.drawString(x, y, line)
+                y -= size + 3
+        return y
+
+    def _quality_simple_pdf(self, target: Path, title: str, sections: list[tuple[str, list[str]]]) -> Path:
+        def clean(value: Any) -> str:
+            return str(value or "").replace("\r", " ").replace("\n", " ").strip()
+
+        def esc(value: Any) -> str:
+            text = clean(value)
+            text = text.encode("latin-1", errors="replace").decode("latin-1")
+            return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+        all_lines: list[str] = [clean(title), ""]
+        for section_title, lines in sections:
+            all_lines.append(clean(section_title))
+            all_lines.extend(clean(line) for line in list(lines or []))
+            all_lines.append("")
+        wrapped: list[str] = []
+        for line in all_lines:
+            if not line:
+                wrapped.append("")
+                continue
+            text = line
+            while len(text) > 96:
+                wrapped.append(text[:96])
+                text = text[96:]
+            wrapped.append(text)
+        page_lines: list[list[str]] = []
+        current: list[str] = []
+        for line in wrapped:
+            current.append(line)
+            if len(current) >= 48:
+                page_lines.append(current)
+                current = []
+        if current or not page_lines:
+            page_lines.append(current)
+
+        objects: list[bytes] = []
+        pages_obj_num = 2
+        font_obj_num = 3
+        page_obj_nums: list[int] = []
+        content_obj_nums: list[int] = []
+        next_obj = 4
+        for _page in page_lines:
+            page_obj_nums.append(next_obj)
+            content_obj_nums.append(next_obj + 1)
+            next_obj += 2
+        objects.append(b"<< /Type /Catalog /Pages 2 0 R >>")
+        kids = " ".join(f"{num} 0 R" for num in page_obj_nums)
+        objects.append(f"<< /Type /Pages /Kids [{kids}] /Count {len(page_obj_nums)} >>".encode("ascii"))
+        objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+        for page_num, content_num, lines in zip(page_obj_nums, content_obj_nums, page_lines):
+            objects.append(f"<< /Type /Page /Parent {pages_obj_num} 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 {font_obj_num} 0 R >> >> /Contents {content_num} 0 R >>".encode("ascii"))
+            stream_lines = ["BT", "/F1 10 Tf", "50 800 Td", "14 TL"]
+            for line in lines:
+                stream_lines.append(f"({esc(line)}) Tj")
+                stream_lines.append("T*")
+            stream_lines.append("ET")
+            stream = "\n".join(stream_lines).encode("latin-1", errors="replace")
+            objects.append(b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream")
+
+        payload = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+        offsets = [0]
+        for index, obj in enumerate(objects, start=1):
+            offsets.append(len(payload))
+            payload.extend(f"{index} 0 obj\n".encode("ascii"))
+            payload.extend(obj)
+            payload.extend(b"\nendobj\n")
+        xref_at = len(payload)
+        payload.extend(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode("ascii"))
+        for offset in offsets[1:]:
+            payload.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+        payload.extend(f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF\n".encode("ascii"))
+        target.write_bytes(bytes(payload))
+        return target
+
+    def quality_nc_pdf(self, nc_id: str) -> Path:
+        nc_id_txt = str(nc_id or "").strip()
+        row = next((item for item in self.quality_nc_rows("", "Todos") if str(item.get("id", "") or "").strip() == nc_id_txt), None)
+        if not row:
+            raise ValueError("Nao conformidade nao encontrada.")
+        target = self._quality_pdf_path(f"NC_{nc_id_txt}")
+        try:
+            from reportlab.lib import colors
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib.units import mm
+            from reportlab.pdfgen import canvas as pdf_canvas
+        except Exception:
+            path = self._quality_simple_pdf(
+                target,
+                f"Nao conformidade {nc_id_txt}",
+                [
+                    ("Identificacao", [f"{key}: {row.get(key, '')}" for key in ("estado", "gravidade", "tipo", "origem", "referencia", "entidade_label", "fornecedor_nome", "lote_fornecedor", "ne_numero", "responsavel", "prazo")]),
+                    ("Descricao", [row.get("descricao", "") or "-"]),
+                    ("Causa", [row.get("causa", "") or "-"]),
+                    ("Acao corretiva", [row.get("acao", "") or "-"]),
+                    ("Eficacia", [row.get("eficacia", "") or "-"]),
+                ],
+            )
+            self._append_audit_event(self.ensure_data(), action="PDF NC gerado", entity_type="Nao conformidade", entity_id=nc_id_txt, summary=str(path))
+            self._save(force=True, audit=False)
+            return path
+        canvas_obj = pdf_canvas.Canvas(str(target), pagesize=A4)
+        page_w, page_h = A4
+        margin = 16 * mm
+        y = page_h - margin
+        canvas_obj.setFillColor(colors.HexColor("#000040"))
+        canvas_obj.rect(0, page_h - 24 * mm, page_w, 24 * mm, stroke=0, fill=1)
+        canvas_obj.setFillColor(colors.white)
+        canvas_obj.setFont("Helvetica-Bold", 16)
+        canvas_obj.drawString(margin, page_h - 15 * mm, "Nao conformidade")
+        canvas_obj.setFont("Helvetica", 9)
+        canvas_obj.drawRightString(page_w - margin, page_h - 15 * mm, str(self.desktop_main.now_iso() or "").replace("T", " ")[:19])
+        y -= 34 * mm
+
+        def field(label: str, value: Any) -> None:
+            nonlocal y
+            canvas_obj.setFillColor(colors.HexColor("#334155"))
+            canvas_obj.setFont("Helvetica-Bold", 8)
+            canvas_obj.drawString(margin, y, label)
+            canvas_obj.setFont("Helvetica", 9)
+            canvas_obj.setFillColor(colors.black)
+            y = self._quality_pdf_draw_lines(canvas_obj, [str(value or "-")], margin + 34 * mm, y, page_w - margin * 2 - 34 * mm)
+            y -= 2
+
+        for label, key in (
+            ("ID", "id"),
+            ("Estado", "estado"),
+            ("Gravidade", "gravidade"),
+            ("Tipo", "tipo"),
+            ("Origem", "origem"),
+            ("Referencia", "referencia"),
+            ("Entidade", "entidade_label"),
+            ("Fornecedor", "fornecedor_nome"),
+            ("Lote", "lote_fornecedor"),
+            ("NE", "ne_numero"),
+            ("Guia", "guia"),
+            ("Responsavel", "responsavel"),
+            ("Prazo", "prazo"),
+            ("Criada em", "created_at"),
+            ("Fechada em", "closed_at"),
+        ):
+            field(label, row.get(key, ""))
+        for label, key in (("Descricao", "descricao"), ("Causa", "causa"), ("Acao corretiva", "acao"), ("Eficacia", "eficacia")):
+            y -= 5
+            canvas_obj.setFillColor(colors.HexColor("#000040"))
+            canvas_obj.setFont("Helvetica-Bold", 10)
+            canvas_obj.drawString(margin, y, label)
+            y -= 14
+            canvas_obj.setFillColor(colors.black)
+            canvas_obj.setFont("Helvetica", 9)
+            y = self._quality_pdf_draw_lines(canvas_obj, [str(row.get(key, "") or "-")], margin, y, page_w - margin * 2)
+            if y < 35 * mm:
+                canvas_obj.showPage()
+                y = page_h - margin
+        canvas_obj.save()
+        self._append_audit_event(self.ensure_data(), action="PDF NC gerado", entity_type="Nao conformidade", entity_id=nc_id_txt, summary=str(target))
+        self._save(force=True, audit=False)
+        return target
+
+    def quality_dossier_pdf(self) -> Path:
+        target = self._quality_pdf_path("dossier_qualidade")
+        try:
+            from reportlab.lib import colors
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib.units import mm
+            from reportlab.pdfgen import canvas as pdf_canvas
+        except Exception:
+            summary = self.quality_summary()
+            path = self._quality_simple_pdf(
+                target,
+                "Dossier Qualidade ISO 9001",
+                [
+                    ("Resumo", [f"{key}: {value}" for key, value in summary.items()]),
+                    ("Checklist", [f"{row.get('area', '')}: {row.get('estado', '')} - {row.get('evidencia', '')}" for row in self.quality_iso_checklist()]),
+                    ("Nao conformidades", [f"{row.get('id','')} | {row.get('estado','')} | {row.get('entidade_label') or row.get('referencia','')} | {row.get('descricao','')}" for row in self.quality_nc_rows("", "Todos")[:120]]),
+                    ("Documentos", [f"{row.get('id','')} | {row.get('tipo','')} | {row.get('titulo','')}" for row in self.quality_document_rows("")[:120]]),
+                    ("Auditoria", [f"{row.get('created_at','')} | {row.get('action','')} | {row.get('summary','')}" for row in self.audit_rows("", limit=120)]),
+                ],
+            )
+            self._append_audit_event(self.ensure_data(), action="Dossier qualidade gerado", entity_type="Qualidade", entity_id="ISO9001", summary=str(path))
+            self._save(force=True, audit=False)
+            return path
+        canvas_obj = pdf_canvas.Canvas(str(target), pagesize=A4)
+        page_w, page_h = A4
+        margin = 14 * mm
+
+        def header(title: str) -> float:
+            canvas_obj.setFillColor(colors.HexColor("#000040"))
+            canvas_obj.rect(0, page_h - 22 * mm, page_w, 22 * mm, stroke=0, fill=1)
+            canvas_obj.setFillColor(colors.white)
+            canvas_obj.setFont("Helvetica-Bold", 15)
+            canvas_obj.drawString(margin, page_h - 14 * mm, title)
+            canvas_obj.setFont("Helvetica", 8)
+            canvas_obj.drawRightString(page_w - margin, page_h - 14 * mm, str(self.desktop_main.now_iso() or "").replace("T", " ")[:19])
+            canvas_obj.setFillColor(colors.black)
+            return page_h - 32 * mm
+
+        y = header("Dossier Qualidade ISO 9001")
+        summary = self.quality_summary()
+        canvas_obj.setFont("Helvetica-Bold", 11)
+        canvas_obj.drawString(margin, y, "Resumo")
+        y -= 15
+        canvas_obj.setFont("Helvetica", 9)
+        for label, key in (("NC abertas", "open_nc"), ("NC fora prazo", "overdue_nc"), ("Documentos", "documents"), ("Eventos auditoria", "audit_events")):
+            canvas_obj.drawString(margin, y, f"{label}: {summary.get(key, 0)}")
+            y -= 12
+        y -= 8
+        canvas_obj.setFont("Helvetica-Bold", 11)
+        canvas_obj.drawString(margin, y, "Checklist")
+        y -= 14
+        canvas_obj.setFont("Helvetica", 8.5)
+        for row in self.quality_iso_checklist():
+            text = f"{row.get('area', '')}: {row.get('estado', '')} - {row.get('evidencia', '')}"
+            y = self._quality_pdf_draw_lines(canvas_obj, [text], margin, y, page_w - margin * 2, size=8.5)
+            y -= 2
+        canvas_obj.showPage()
+
+        y = header("Nao conformidades")
+        canvas_obj.setFont("Helvetica", 8)
+        for row in self.quality_nc_rows("", "Todos")[:80]:
+            text = f"{row.get('id','')} | {row.get('estado','')} | {row.get('gravidade','')} | {row.get('entidade_label') or row.get('referencia','')} | {row.get('descricao','')}"
+            y = self._quality_pdf_draw_lines(canvas_obj, [text], margin, y, page_w - margin * 2, size=8)
+            y -= 3
+            if y < 24 * mm:
+                canvas_obj.showPage()
+                y = header("Nao conformidades")
+                canvas_obj.setFont("Helvetica", 8)
+        canvas_obj.showPage()
+
+        y = header("Documentos e auditoria")
+        canvas_obj.setFont("Helvetica-Bold", 10)
+        canvas_obj.drawString(margin, y, "Documentos")
+        y -= 14
+        canvas_obj.setFont("Helvetica", 8)
+        for row in self.quality_document_rows("")[:80]:
+            text = f"{row.get('id','')} | {row.get('tipo','')} | v{row.get('versao','')} | {row.get('titulo','')} | {row.get('entidade') or row.get('entidade_tipo','')} {row.get('referencia') or row.get('entidade_id','')}"
+            y = self._quality_pdf_draw_lines(canvas_obj, [text], margin, y, page_w - margin * 2, size=8)
+            y -= 2
+            if y < 45 * mm:
+                canvas_obj.showPage()
+                y = header("Documentos")
+                canvas_obj.setFont("Helvetica", 8)
+        y -= 8
+        canvas_obj.setFont("Helvetica-Bold", 10)
+        canvas_obj.drawString(margin, y, "Ultimos eventos de auditoria")
+        y -= 14
+        canvas_obj.setFont("Helvetica", 8)
+        for row in self.audit_rows("", limit=100):
+            text = f"{row.get('created_at','')} | {row.get('user','')} | {row.get('action','')} | {row.get('entity_type','')} {row.get('entity_id','')} | {row.get('summary','')}"
+            y = self._quality_pdf_draw_lines(canvas_obj, [text], margin, y, page_w - margin * 2, size=8)
+            y -= 2
+            if y < 24 * mm:
+                canvas_obj.showPage()
+                y = header("Auditoria")
+                canvas_obj.setFont("Helvetica", 8)
+        canvas_obj.save()
+        self._append_audit_event(self.ensure_data(), action="Dossier qualidade gerado", entity_type="Qualidade", entity_id="ISO9001", summary=str(target))
+        self._save(force=True, audit=False)
+        return target
+
+    def quality_iso_checklist(self) -> list[dict[str, str]]:
+        summary = self.quality_summary()
+        docs = self.quality_document_rows()
+        audit_count = int(summary.get("audit_events", 0) or 0)
+        open_nc = int(summary.get("open_nc", 0) or 0)
+        overdue_nc = int(summary.get("overdue_nc", 0) or 0)
+        has_docs = bool(docs)
+        blocked_materials = int(summary.get("blocked_materials", 0) or 0)
+        supplier_nc = int(summary.get("supplier_nc", 0) or 0)
+        return [
+            {"area": "Rastreabilidade", "estado": "OK" if audit_count > 0 else "Pendente", "evidencia": f"{audit_count} eventos de auditoria registados."},
+            {"area": "Nao conformidades", "estado": "Atencao" if overdue_nc else "OK", "evidencia": f"{open_nc} abertas; {overdue_nc} fora de prazo."},
+            {"area": "Rececao e stock", "estado": "Atencao" if blocked_materials else "OK", "evidencia": f"{blocked_materials} lotes bloqueados/em inspecao com rastreabilidade."},
+            {"area": "Reclamacoes a fornecedores", "estado": "OK" if supplier_nc or not blocked_materials else "Pendente", "evidencia": f"{supplier_nc} NC/reclamacoes de fornecedor registadas."},
+            {"area": "Informacao documentada", "estado": "OK" if has_docs else "Pendente", "evidencia": f"{len(docs)} documentos/evidencias ligados ao sistema."},
+            {"area": "Integridade das ligacoes", "estado": "OK" if int(summary.get("quality_issues", 0) or 0) == 0 else "Atencao", "evidencia": f"{int(summary.get('quality_issues', 0) or 0)} problemas em NC/documentos ligados."},
+            {"area": "Alteracoes climaticas ISO 9001:2015/Amd 1:2024", "estado": "Pendente", "evidencia": "Registar no contexto da organizacao se o tema e relevante e que requisitos de partes interessadas existem."},
         ]
 
     def available_roles(self) -> list[str]:

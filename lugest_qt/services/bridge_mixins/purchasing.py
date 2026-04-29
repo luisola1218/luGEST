@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -144,6 +145,95 @@ class PurchasingBridgeMixin:
     def ne_next_number(self) -> str:
         return str(self.desktop_main.peek_next_ne_numero(self.ensure_data()))
 
+    def _infer_purchase_material_line(self, line: dict[str, Any]) -> dict[str, Any]:
+        row = dict(line or {})
+        text = " ".join(
+            str(row.get(key, "") or "")
+            for key in ("descricao", "material", "dimensao", "dimensoes", "ref")
+        )
+        norm = self.desktop_main.norm_text(text)
+
+        def _number(value: Any) -> float:
+            return self._parse_float(str(value or "").replace(",", "."), 0)
+
+        qty_len = re.search(r"(\d+(?:[.,]\d+)?)\s*un\s*x\s*(\d+(?:[.,]\d+)?)\s*m", text, re.IGNORECASE)
+        if qty_len and self._parse_float(row.get("metros", 0), 0) <= 0:
+            row["metros"] = _number(qty_len.group(2))
+        kg_m_match = re.search(r"(\d+(?:[.,]\d+)?)\s*kg\s*/\s*m", text, re.IGNORECASE)
+        if kg_m_match and self._parse_float(row.get("kg_m", 0), 0) <= 0:
+            row["kg_m"] = _number(kg_m_match.group(1))
+        price_match = re.search(r"(\d+(?:[.,]\d+)?)\s*EUR\s*/\s*(kg|m)", text, re.IGNORECASE)
+        if price_match and self._parse_float(row.get("p_compra", row.get("preco", 0)), 0) <= 0:
+            row["p_compra"] = _number(price_match.group(1))
+            row["price_base_label"] = f"EUR/{price_match.group(2).lower()}"
+
+        if "nervurado" in norm:
+            diameter_match = re.search(r"[Øø]\s*(\d+(?:[.,]\d+)?)", text)
+            diameter = _number(diameter_match.group(1)) if diameter_match else self._parse_dimension_mm(row.get("espessura", 0), 0)
+            row["formato"] = "Varão nervurado"
+            row["material"] = str(row.get("material", "") or "Ferro nervurado").strip() or "Ferro nervurado"
+            row["espessura"] = self._fmt(diameter) if diameter > 0 else str(row.get("espessura", "") or "").strip()
+            row["diametro"] = diameter
+            row["secao_tipo"] = "nervurado"
+        elif "cantoneira" in norm:
+            match = re.search(r"(\d+(?:[.,]\d+)?)\s*x\s*(\d+(?:[.,]\d+)?)\s*x\s*(\d+(?:[.,]\d+)?)\s*mm", text, re.IGNORECASE)
+            row["formato"] = "Cantoneira"
+            if match:
+                side_a = _number(match.group(1))
+                side_b = _number(match.group(2))
+                thickness = _number(match.group(3))
+                row["comprimento"] = side_a
+                row["largura"] = side_b
+                row["espessura"] = self._fmt(thickness)
+                row["secao_tipo"] = "abas_iguais" if abs(side_a - side_b) <= 1e-6 else "abas_desiguais"
+        elif "tubo" in norm:
+            match = re.search(r"(\d+(?:[.,]\d+)?)\s*x\s*(\d+(?:[.,]\d+)?)\s*x\s*(\d+(?:[.,]\d+)?)\s*mm", text, re.IGNORECASE)
+            round_match = re.search(r"[Øø]\s*(\d+(?:[.,]\d+)?)\s*x\s*(\d+(?:[.,]\d+)?)\s*mm", text, re.IGNORECASE)
+            row["formato"] = "Tubo"
+            if match:
+                side_a = _number(match.group(1))
+                side_b = _number(match.group(2))
+                thickness = _number(match.group(3))
+                row["comprimento"] = side_a
+                row["largura"] = side_b
+                row["altura"] = side_b
+                row["espessura"] = self._fmt(thickness)
+                row["secao_tipo"] = "quadrado" if abs(side_a - side_b) <= 1e-6 else "retangular"
+            elif round_match:
+                row["diametro"] = _number(round_match.group(1))
+                row["espessura"] = self._fmt(_number(round_match.group(2)))
+                row["secao_tipo"] = "redondo"
+        elif "barra" in norm:
+            match = re.search(r"(\d+(?:[.,]\d+)?)\s*x\s*(\d+(?:[.,]\d+)?)\s*mm", text, re.IGNORECASE)
+            row["formato"] = "Barra"
+            row["secao_tipo"] = "chata"
+            if match:
+                side_a = _number(match.group(1))
+                side_b = _number(match.group(2))
+                row["comprimento"] = side_a
+                row["largura"] = side_b
+                row["espessura"] = self._fmt(side_b)
+        else:
+            profile_match = re.search(r"\b(IPE|IPN|UPN|HEA|HEB|HEM)\s*[- ]?(\d{2,4})\b", text, re.IGNORECASE)
+            if profile_match or "perfil" in norm:
+                row["formato"] = "Perfil"
+                if profile_match:
+                    row["secao_tipo"] = str(profile_match.group(1) or "").strip().upper()
+                    row["altura"] = _number(profile_match.group(2))
+                    row["espessura"] = self._fmt(row["altura"])
+
+        formato = str(row.get("formato", "") or "").strip()
+        if formato:
+            preview = self.material_geometry_preview(row)
+            for key in ("comprimento", "largura", "altura", "diametro", "metros", "kg_m", "peso_unid", "secao_tipo"):
+                if preview.get(key) not in (None, ""):
+                    row[key] = preview.get(key)
+            row["dimensao"] = str(preview.get("dimension_label", "") or row.get("dimensao", row.get("dimensoes", "")) or "").strip()
+            row["dimensoes"] = row["dimensao"]
+            if str(preview.get("espessura", "") or "").strip():
+                row["espessura"] = str(preview.get("espessura", "") or "").strip()
+        return row
+
     def ne_rows(self, filter_text: str = "", state_filter: str = "Ativas") -> list[dict[str, Any]]:
         query = str(filter_text or "").strip().lower()
         state_raw = str(state_filter or "Ativas").strip().lower()
@@ -277,6 +367,8 @@ class PurchasingBridgeMixin:
         documents = self._ne_document_rows(note)
         lines = []
         for line in list(note.get("linhas", []) or []):
+            if self.desktop_main.origem_is_materia(line.get("origem", "")):
+                line = self._infer_purchase_material_line(line)
             qtd = self._parse_float(line.get("qtd", 0), 0)
             qtd_ent = self._parse_float(line.get("qtd_entregue", qtd if line.get("entregue") else 0), 0)
             origem = str(line.get("origem", "Produto") or "Produto").strip()
@@ -376,6 +468,7 @@ class PurchasingBridgeMixin:
         }
 
     def _find_existing_material_from_note_line(self, line: dict[str, Any]) -> dict[str, Any] | None:
+        line = self._infer_purchase_material_line(line)
         material_id = str(line.get("ref", "") or "").strip()
         material_txt = self._norm_material_token(line.get("material", ""))
         esp_txt = self._norm_esp_token(line.get("espessura", ""))
@@ -430,10 +523,17 @@ class PurchasingBridgeMixin:
                     continue
                 if abs(float(candidate.get("kg_m", 0) or 0) - float(probe.get("kg_m", 0) or 0)) > 1e-4:
                     continue
+            elif formato_txt == "Varão nervurado":
+                if abs(float(candidate.get("diametro", 0) or 0) - float(probe.get("diametro", 0) or 0)) > 1e-6:
+                    continue
+                if abs(float(candidate.get("metros", 0) or 0) - float(probe.get("metros", 0) or 0)) > 1e-6:
+                    continue
             else:
                 if abs(float(candidate.get("comprimento", 0) or 0) - float(probe.get("comprimento", 0) or 0)) > 1e-6:
                     continue
                 if abs(float(candidate.get("largura", 0) or 0) - float(probe.get("largura", 0) or 0)) > 1e-6:
+                    continue
+                if formato_txt in {"Barra", "Cantoneira"} and abs(float(candidate.get("metros", 0) or 0) - float(probe.get("metros", 0) or 0)) > 1e-6:
                     continue
             return record
         return None
@@ -447,11 +547,12 @@ class PurchasingBridgeMixin:
         lote_override: str = "",
         localizacao_override: str = "",
     ) -> dict[str, Any] | None:
+        line = self._infer_purchase_material_line(line)
         data = self.ensure_data()
         material_txt = str(line.get("material", "") or "").strip()
         if not material_txt:
             return None
-        formato_txt = str(line.get("formato", "") or "Chapa").strip() or "Chapa"
+        formato_txt = str(line.get("formato", "") or self.desktop_main.detect_materia_formato(line) or "Chapa").strip() or "Chapa"
         lote_txt = str(lote_override or line.get("lote_fornecedor", "") or "").strip()
         local_txt = str(localizacao_override or line.get("localizacao", "") or "").strip()
         geometry = self.material_geometry_preview(line)
@@ -465,6 +566,8 @@ class PurchasingBridgeMixin:
             "largura": self._parse_dimension_mm(geometry.get("largura", line.get("largura", 0)), 0),
             "altura": self._parse_dimension_mm(geometry.get("altura", line.get("altura", 0)), 0),
             "diametro": self._parse_dimension_mm(geometry.get("diametro", line.get("diametro", 0)), 0),
+            "dimensao": str(line.get("dimensao", line.get("dimensoes", "")) or "").strip(),
+            "dimensoes": str(line.get("dimensao", line.get("dimensoes", "")) or "").strip(),
             "metros": self._parse_float(geometry.get("metros", line.get("metros", 0)), 0),
             "kg_m": self._parse_float(geometry.get("kg_m", line.get("kg_m", 0)), 0),
             "quantidade": max(0.0, self._parse_float(quantity, 0)),
@@ -474,7 +577,10 @@ class PurchasingBridgeMixin:
             "lote_fornecedor": lote_txt,
             "secao_tipo": str(geometry.get("secao_tipo", line.get("secao_tipo", "")) or "").strip(),
             "peso_unid": self._parse_float(geometry.get("peso_unid", line.get("peso_unid", 0)), 0),
-            "p_compra": self._parse_float(line.get("p_compra", 0), 0),
+            "p_compra": self._parse_float(line.get("p_compra", line.get("preco", 0)), 0),
+            "fornecedor": str(line.get("fornecedor", "") or "").strip(),
+            "fornecedor_id": str(line.get("fornecedor_id", "") or "").strip(),
+            "origem_ne": str(note_number or "").strip(),
             "contorno_points": [],
             "is_sobra": False,
             "atualizado_em": self.desktop_main.now_iso(),
@@ -487,6 +593,209 @@ class PurchasingBridgeMixin:
             self.desktop_main.push_unique(data.setdefault("espessuras_hist", []), str(record.get("espessura", "") or "").strip())
         self.desktop_main.log_stock(data, "CRIAR_NE", f"{record.get('id', '')} via {note_number}")
         return record
+
+    def _delivery_inspection_payload(self, update: dict[str, Any]) -> dict[str, str]:
+        raw_status = str(update.get("inspection_status", "") or update.get("estado_inspecao", "") or "Aprovado").strip()
+        status_key = raw_status.casefold()
+        if "rejeit" in status_key:
+            status = "Rejeitado"
+        elif "reclam" in status_key:
+            status = "Reclamado"
+        elif "bloque" in status_key:
+            status = "Bloqueado"
+        elif "inspe" in status_key:
+            status = "Em inspeção"
+        else:
+            status = "Aprovado"
+        defect = str(update.get("inspection_defect", "") or update.get("defeito", "") or "").strip()
+        decision = str(update.get("inspection_decision", "") or update.get("decisao", "") or "").strip()
+        decision_key = decision.casefold()
+        if status == "Aprovado":
+            if "rejeit" in decision_key or "devolver" in decision_key:
+                status = "Rejeitado"
+            elif "reclam" in decision_key:
+                status = "Reclamado"
+            elif "bloque" in decision_key:
+                status = "Bloqueado"
+            elif "inspe" in decision_key:
+                status = "Em inspeção"
+        if not decision:
+            if status == "Aprovado":
+                decision = "Entrada normal"
+            elif status == "Em inspeção":
+                decision = "Aguardar inspeção"
+            elif status == "Reclamado":
+                decision = "Reclamar fornecedor"
+            elif status == "Rejeitado":
+                decision = "Devolver ao fornecedor"
+            else:
+                decision = "Bloquear stock"
+        return {"status": status, "defect": defect, "decision": decision}
+
+    def _material_quality_is_blocked(self, material: dict[str, Any] | None) -> bool:
+        if not isinstance(material, dict):
+            return False
+        status = str(material.get("quality_status", "") or material.get("inspection_status", "") or "").strip().casefold()
+        return bool(material.get("quality_blocked")) or any(token in status for token in ("inspe", "bloque", "reclam", "rejeit"))
+
+    def _apply_material_quality_from_delivery(
+        self,
+        material: dict[str, Any],
+        line: dict[str, Any],
+        note: dict[str, Any],
+        inspection: dict[str, str],
+        *,
+        quantity: float,
+        registo_ts: str,
+        guia: str = "",
+        fatura: str = "",
+    ) -> dict[str, Any] | None:
+        if not isinstance(material, dict):
+            return None
+        status = str(inspection.get("status", "") or "Aprovado").strip() or "Aprovado"
+        defect = str(inspection.get("defect", "") or "").strip()
+        decision = str(inspection.get("decision", "") or "").strip()
+        blocked = status != "Aprovado"
+        current_blocked = self._material_quality_is_blocked(material)
+        if blocked or not current_blocked:
+            material["quality_status"] = status
+            material["inspection_status"] = status
+            material["quality_blocked"] = bool(blocked)
+        material["inspection_defect"] = defect
+        material["inspection_decision"] = decision
+        material["inspection_at"] = registo_ts
+        material["inspection_by"] = str((self.user or {}).get("username", "") or "Sistema")
+        material["inspection_note_number"] = str(note.get("numero", "") or "").strip()
+        material["inspection_supplier_id"] = str(note.get("fornecedor_id", "") or material.get("fornecedor_id", "") or "").strip()
+        material["inspection_supplier_name"] = str(note.get("fornecedor", "") or material.get("fornecedor", "") or "").strip()
+        material["inspection_guia"] = str(guia or "").strip()
+        material["inspection_fatura"] = str(fatura or "").strip()
+        line["inspection_status"] = status
+        line["inspection_defect"] = defect
+        line["inspection_decision"] = decision
+        line["quality_status"] = material.get("quality_status", status)
+
+        if not blocked:
+            return None
+        existing_nc_id = str(material.get("quality_nc_id", "") or material.get("supplier_claim_id", "") or "").strip()
+        if existing_nc_id:
+            line["quality_nc_id"] = existing_nc_id
+            return {"id": existing_nc_id}
+        material_id = str(material.get("id", "") or "").strip()
+        lote = str(material.get("lote_fornecedor", "") or line.get("lote_fornecedor", "") or "").strip()
+        supplier_name = str(note.get("fornecedor", "") or material.get("fornecedor", "") or line.get("fornecedor", "") or "").strip()
+        supplier_id = str(note.get("fornecedor_id", "") or material.get("fornecedor_id", "") or "").strip()
+        ref_doc = str(note.get("numero", "") or "").strip()
+        if lote:
+            ref_doc = f"{ref_doc} / lote {lote}" if ref_doc else f"lote {lote}"
+        description = (
+            f"Receção de material marcada como {status}. "
+            f"Material: {material.get('material', '')} {material.get('espessura', '')}; "
+            f"formato: {material.get('formato', '')}; lote: {lote or '-'}; quantidade: {self._fmt(quantity)}. "
+            f"Fornecedor: {supplier_name or supplier_id or '-'}."
+        )
+        if defect:
+            description = f"{description} Defeito/observação: {defect}."
+        try:
+            nc = self.quality_nc_save(
+                {
+                    "origem": "Receção fornecedor",
+                    "referencia": ref_doc,
+                    "entidade_tipo": "Material",
+                    "entidade_id": material_id,
+                    "tipo": "Fornecedor",
+                    "gravidade": "Alta" if status in {"Bloqueado", "Reclamado", "Rejeitado"} else "Media",
+                    "estado": "Aberta",
+                    "responsavel": "Qualidade",
+                    "descricao": description,
+                    "causa": "A apurar com fornecedor/receção.",
+                    "acao": decision or "Bloquear stock e tratar reclamação ao fornecedor.",
+                    "fornecedor_id": supplier_id,
+                    "fornecedor_nome": supplier_name,
+                    "material_id": material_id,
+                    "lote_fornecedor": lote,
+                    "ne_numero": str(note.get("numero", "") or "").strip(),
+                    "guia": str(guia or "").strip(),
+                    "fatura": str(fatura or "").strip(),
+                    "decisao": decision,
+                }
+            )
+        except Exception:
+            nc = None
+        if isinstance(nc, dict) and str(nc.get("id", "") or "").strip():
+            material["quality_nc_id"] = str(nc.get("id", "") or "").strip()
+            material["supplier_claim_id"] = str(nc.get("id", "") or "").strip()
+            line["quality_nc_id"] = str(nc.get("id", "") or "").strip()
+        return nc
+
+    def _apply_product_quality_from_delivery(
+        self,
+        product: dict[str, Any] | None,
+        line: dict[str, Any],
+        note: dict[str, Any],
+        inspection: dict[str, str],
+        *,
+        quantity: float,
+        guia: str = "",
+        fatura: str = "",
+    ) -> dict[str, Any] | None:
+        status = str(inspection.get("status", "") or "Aprovado").strip() or "Aprovado"
+        defect = str(inspection.get("defect", "") or "").strip()
+        decision = str(inspection.get("decision", "") or "").strip()
+        line["inspection_status"] = status
+        line["inspection_defect"] = defect
+        line["inspection_decision"] = decision
+        line["quality_status"] = "" if status == "Aprovado" else status
+        if status == "Aprovado":
+            if isinstance(product, dict):
+                product["quality_status"] = "Aprovado"
+                product["quality_blocked"] = False
+            return None
+        if isinstance(product, dict):
+            product["quality_status"] = status
+            product["quality_blocked"] = True
+            product["inspection_defect"] = defect
+            product["inspection_decision"] = decision
+            product["inspection_note_number"] = str(note.get("numero", "") or "").strip()
+        product_code = str((product or {}).get("codigo", "") or line.get("ref", "") or "").strip()
+        supplier_name = str(note.get("fornecedor", "") or line.get("fornecedor_linha", "") or "").strip()
+        supplier_id = str(note.get("fornecedor_id", "") or "").strip()
+        description = (
+            f"Receção de produto marcada como {status}. "
+            f"Produto: {product_code or '-'} | {str(line.get('descricao', '') or (product or {}).get('descricao', '') or '').strip()}; "
+            f"quantidade: {self._fmt(quantity)}. Fornecedor: {supplier_name or supplier_id or '-'}."
+        )
+        if defect:
+            description = f"{description} Defeito/observação: {defect}."
+        try:
+            nc = self.quality_nc_save(
+                {
+                    "origem": "Receção fornecedor",
+                    "referencia": str(note.get("numero", "") or "").strip(),
+                    "entidade_tipo": "Fornecedor",
+                    "entidade_id": supplier_id or supplier_name,
+                    "tipo": "Fornecedor",
+                    "gravidade": "Alta" if status in {"Bloqueado", "Reclamado", "Rejeitado"} else "Media",
+                    "estado": "Aberta",
+                    "responsavel": "Qualidade",
+                    "descricao": description,
+                    "causa": "A apurar com fornecedor/receção.",
+                    "acao": decision or "Tratar reclamação ao fornecedor.",
+                    "fornecedor_id": supplier_id,
+                    "fornecedor_nome": supplier_name,
+                    "ne_numero": str(note.get("numero", "") or "").strip(),
+                    "guia": str(guia or "").strip(),
+                    "fatura": str(fatura or "").strip(),
+                    "decisao": decision,
+                }
+            )
+        except Exception:
+            nc = None
+        if isinstance(nc, dict) and str(nc.get("id", "") or "").strip():
+            line["quality_nc_id"] = str(nc.get("id", "") or "").strip()
+            if isinstance(product, dict):
+                product["quality_nc_id"] = str(nc.get("id", "") or "").strip()
+        return nc
 
     def _create_product_placeholder_from_note_line(
         self,
@@ -586,6 +895,8 @@ class PurchasingBridgeMixin:
                         "largura": self._parse_dimension_mm(metrics.get("largura", material.get("largura", 0)), 0),
                         "altura": self._parse_dimension_mm(metrics.get("altura", material.get("altura", 0)), 0),
                         "diametro": self._parse_dimension_mm(metrics.get("diametro", material.get("diametro", 0)), 0),
+                        "dimensao": str(material.get("dimensao", material.get("dimensoes", "")) or "").strip(),
+                        "dimensoes": str(material.get("dimensao", material.get("dimensoes", "")) or "").strip(),
                         "metros": self._parse_float(metrics.get("metros", material.get("metros", 0)), 0),
                         "kg_m": self._parse_float(metrics.get("kg_m", material.get("kg_m", 0)), 0),
                         "localizacao": self._localizacao(material),
@@ -600,13 +911,14 @@ class PurchasingBridgeMixin:
                     }
                 )
             else:
-                formato_txt = str(payload.get("formato", "") or "Chapa").strip() or "Chapa"
+                payload = self._infer_purchase_material_line(payload)
+                formato_txt = str(payload.get("formato", "") or self.desktop_main.detect_materia_formato(payload) or "Chapa").strip() or "Chapa"
                 material_txt = str(payload.get("material", "") or "").strip()
                 esp_txt = str(payload.get("espessura", "") or "").strip()
                 if not material_txt:
                     raise ValueError("Qualidade da matéria-prima obrigatória.")
-                if formato_txt in {"Chapa", "Tubo"} and not esp_txt:
-                    raise ValueError("Espessura obrigatória para chapa e tubo.")
+                if formato_txt in {"Chapa", "Tubo", "Cantoneira", "Varão nervurado"} and not esp_txt:
+                    raise ValueError("Espessura obrigatória para chapa, tubo, cantoneira e varão nervurado.")
                 metrics = self.material_geometry_preview(payload)
                 line.update(
                     {
@@ -616,12 +928,14 @@ class PurchasingBridgeMixin:
                         "largura": self._parse_dimension_mm(metrics.get("largura", payload.get("largura", 0)), 0),
                         "altura": self._parse_dimension_mm(metrics.get("altura", payload.get("altura", 0)), 0),
                         "diametro": self._parse_dimension_mm(metrics.get("diametro", payload.get("diametro", 0)), 0),
+                        "dimensao": str(payload.get("dimensao", payload.get("dimensoes", "")) or "").strip(),
+                        "dimensoes": str(payload.get("dimensao", payload.get("dimensoes", "")) or "").strip(),
                         "metros": self._parse_float(metrics.get("metros", payload.get("metros", 0)), 0),
                         "kg_m": self._parse_float(metrics.get("kg_m", payload.get("kg_m", 0)), 0),
                         "localizacao": str(payload.get("localizacao", "") or "").strip(),
                         "lote_fornecedor": str(payload.get("lote_fornecedor", "") or "").strip(),
                         "peso_unid": self._parse_float(metrics.get("peso_unid", payload.get("peso_unid", 0)), 0),
-                        "p_compra": self._parse_float(payload.get("p_compra", 0), 0),
+                        "p_compra": self._parse_float(payload.get("p_compra", payload.get("preco", 0)), 0),
                         "formato": formato_txt,
                         "secao_tipo": str(metrics.get("secao_tipo", payload.get("secao_tipo", "")) or "").strip(),
                         "material_familia": str(payload.get("material_familia", "") or "").strip(),
@@ -1073,9 +1387,16 @@ class PurchasingBridgeMixin:
             # Lote e localizacao da entrega sao sempre decididos nesta operacao.
             working_line["lote_fornecedor"] = lote_override
             working_line["localizacao"] = local_override
+            working_line["fornecedor"] = str(line.get("fornecedor_linha", "") or note.get("fornecedor", "") or "").strip()
+            working_line["fornecedor_id"] = str(note.get("fornecedor_id", "") or "").strip()
+            if self.desktop_main.origem_is_materia(line.get("origem", "")):
+                working_line = self._infer_purchase_material_line(working_line)
             qtd_new = qtd_old + qty_apply
             line["qtd_entregue"] = qtd_new
             line["entregue"] = qtd_new >= (qtd_total - 1e-9)
+            line["logistic_status"] = "RECEBIDO" if line["entregue"] else "PENDENTE"
+            line["quality_status"] = "EM_INSPECAO"
+            line["inspection_status"] = "EM_INSPECAO"
             line["data_entrega_real"] = data_entrega
             line["data_doc_entrega"] = data_documento
             line["guia_entrega"] = guia
@@ -1092,6 +1413,9 @@ class PurchasingBridgeMixin:
                     "qtd": qty_apply,
                     "lote_fornecedor": lote_override,
                     "localizacao": local_override,
+                    "logistic_status": "RECEBIDO",
+                    "quality_status": "EM_INSPECAO",
+                    "inspection_status": "EM_INSPECAO",
                 }
             )
             if self.desktop_main.origem_is_materia(line.get("origem", "")):
@@ -1119,18 +1443,38 @@ class PurchasingBridgeMixin:
                         material["Localizacao"] = local_override
                     material["atualizado_em"] = registo_ts
                 if material is not None:
+                    material["logistic_status"] = "RECEBIDO"
+                    material["quality_status"] = "EM_INSPECAO"
+                    material["inspection_status"] = "EM_INSPECAO"
+                    material["quality_blocked"] = True
+                    material["inspection_at"] = registo_ts
+                    material["inspection_by"] = ""
+                    material["inspection_note_number"] = str(note.get("numero", "") or "").strip()
+                    material["inspection_supplier_id"] = str(note.get("fornecedor_id", "") or material.get("fornecedor_id", "") or "").strip()
+                    material["inspection_supplier_name"] = str(note.get("fornecedor", "") or material.get("fornecedor", "") or "").strip()
+                    material["inspection_guia"] = str(guia or "").strip()
+                    material["inspection_fatura"] = str(fatura or "").strip()
+                    material["atualizado_em"] = registo_ts
                     ref = str(material.get("id", "") or "").strip()
                     line["ref"] = ref
                     line["material"] = str(material.get("material", "") or "").strip()
                     line["espessura"] = str(material.get("espessura", "") or "").strip()
                     line["comprimento"] = self._parse_dimension_mm(material.get("comprimento", 0), 0)
                     line["largura"] = self._parse_dimension_mm(material.get("largura", 0), 0)
+                    line["dimensao"] = str(material.get("dimensao", material.get("dimensoes", "")) or "").strip()
+                    line["dimensoes"] = str(material.get("dimensao", material.get("dimensoes", "")) or "").strip()
                     line["metros"] = self._parse_float(material.get("metros", 0), 0)
                     line["localizacao"] = self._localizacao(material)
                     line["lote_fornecedor"] = str(material.get("lote_fornecedor", "") or "").strip()
                     line["peso_unid"] = self._parse_float(material.get("peso_unid", 0), 0)
                     line["p_compra"] = self._parse_float(material.get("p_compra", 0), 0)
                     line["formato"] = str(material.get("formato") or self.desktop_main.detect_materia_formato(material) or "").strip()
+                    line["quality_status"] = str(material.get("quality_status", "") or "").strip()
+                    line["quality_nc_id"] = str(material.get("quality_nc_id", "") or "").strip()
+                    if line.get("entregas_linha"):
+                        line["entregas_linha"][-1]["stock_ref"] = ref
+                        line["entregas_linha"][-1]["quality_status"] = line["quality_status"]
+                        line["entregas_linha"][-1]["quality_nc_id"] = line["quality_nc_id"]
                     line["_material_pending_create"] = False
                     line["_material_manual"] = False
             else:
@@ -1162,6 +1506,16 @@ class PurchasingBridgeMixin:
                         ref_doc=str(note.get("numero", "") or "").strip(),
                     )
                 if product is not None:
+                    product["logistic_status"] = "RECEBIDO"
+                    product["quality_status"] = "EM_INSPECAO"
+                    product["quality_blocked"] = True
+                    product["inspection_note_number"] = str(note.get("numero", "") or "").strip()
+                    product["inspection_supplier_id"] = str(note.get("fornecedor_id", "") or "").strip()
+                    product["inspection_supplier_name"] = str(note.get("fornecedor", "") or "").strip()
+                    product["inspection_guia"] = str(guia or "").strip()
+                    product["inspection_fatura"] = str(fatura or "").strip()
+                    product["atualizado_em"] = registo_ts
+                    line["quality_status"] = "EM_INSPECAO"
                     line["descricao"] = str(product.get("descricao", "") or "").strip()
                     line["unid"] = str(product.get("unid", line.get("unid", "UN")) or "UN").strip() or "UN"
                     line["categoria"] = str(product.get("categoria", "") or "").strip()
@@ -1169,6 +1523,9 @@ class PurchasingBridgeMixin:
                     line["dimensoes"] = str(product.get("dimensoes", "") or "").strip()
                     line["peso_unid"] = self._parse_float(product.get("peso_unid", 0), 0)
                     line["metros_unidade"] = self._parse_float(product.get("metros_unidade", product.get("metros", 0)), 0)
+                    if line.get("entregas_linha"):
+                        line["entregas_linha"][-1]["quality_status"] = str(line.get("quality_status", "") or "").strip()
+                        line["entregas_linha"][-1]["quality_nc_id"] = str(line.get("quality_nc_id", "") or "").strip()
             line["_stock_in"] = True
             any_delivery = True
             total_qtd += qty_apply
@@ -1198,6 +1555,7 @@ class PurchasingBridgeMixin:
             line["qtd_entregue"] = delivered_qty
             line["entregue"] = bool(qtd_total > 0 and delivered_qty >= (qtd_total - 1e-9))
             line["_stock_in"] = bool(delivered_qty > 0)
+            line["logistic_status"] = "RECEBIDO" if line["entregue"] else ("PENDENTE" if delivered_qty <= 0 else "PENDENTE")
         note["guia_ultima"] = guia
         note["fatura_ultima"] = fatura
         note["data_doc_ultima"] = data_documento

@@ -36,18 +36,88 @@ def _wire_length_mm(wire) -> float:
         return 0.0
 
 
-def _wire_signature(wire, plane_axis_index: int, loop_kind: str) -> tuple[object, ...]:
+def _wire_signature(wire, plane_axis_index: int, side_sign: int, loop_kind: str) -> tuple[object, ...]:
     bbox = wire.BoundBox
     mins = (float(bbox.XMin), float(bbox.YMin), float(bbox.ZMin))
     maxs = (float(bbox.XMax), float(bbox.YMax), float(bbox.ZMax))
     axes = [index for index in range(3) if index != int(plane_axis_index)]
     return (
+        int(plane_axis_index),
+        int(side_sign),
         loop_kind,
         round((mins[axes[0]] + maxs[axes[0]]) / 2.0, 3),
         round((mins[axes[1]] + maxs[axes[1]]) / 2.0, 3),
         round(maxs[axes[0]] - mins[axes[0]], 3),
         round(maxs[axes[1]] - mins[axes[1]], 3),
     )
+
+
+def _round_clean(value: float, digits: int = 3) -> float:
+    rounded = round(float(value or 0.0), digits)
+    if abs(rounded - round(rounded)) <= 0.001:
+        return float(round(rounded))
+    return rounded
+
+
+def _profile_geometry_guess(
+    *,
+    spans: tuple[float, float, float],
+    principal_axis: int,
+    plane_faces: list[dict[str, object]],
+) -> dict[str, object]:
+    cross_axes = [axis for axis in range(3) if axis != int(principal_axis)]
+    cross_spans = [float(spans[axis] if axis < len(spans) else 0.0) for axis in cross_axes]
+    length_mm = float(spans[principal_axis] if principal_axis < len(spans) else 0.0)
+    positions_by_axis: dict[int, list[float]] = {}
+    for axis in cross_axes:
+        raw_positions = sorted(float(row["position"]) for row in plane_faces if int(row["axis_index"]) == axis)
+        cleaned: list[float] = []
+        for value in raw_positions:
+            if not cleaned or abs(value - cleaned[-1]) > 0.35:
+                cleaned.append(value)
+        positions_by_axis[axis] = cleaned
+
+    thickness_candidates: list[float] = []
+    internal_position_count = 0
+    for axis, positions in positions_by_axis.items():
+        if len(positions) < 3:
+            continue
+        span = max(0.0, max(positions) - min(positions))
+        if span <= 0.0:
+            continue
+        for pos in positions[1:-1]:
+            if abs(pos - min(positions)) > 0.6 and abs(pos - max(positions)) > 0.6:
+                internal_position_count += 1
+        diffs = [
+            positions[index + 1] - positions[index]
+            for index in range(len(positions) - 1)
+            if positions[index + 1] - positions[index] > 0.5
+        ]
+        for diff in diffs:
+            if diff <= max(25.0, span * 0.4):
+                thickness_candidates.append(float(diff))
+
+    thickness_mm = min(thickness_candidates) if thickness_candidates else 0.0
+    leg_a = max(cross_spans) if cross_spans else 0.0
+    leg_b = min(cross_spans) if len(cross_spans) > 1 else 0.0
+    family_guess = ""
+    if thickness_mm > 0.0 and leg_a > 0.0 and leg_b > 0.0:
+        if internal_position_count >= 4:
+            family_guess = "Tubo"
+        elif internal_position_count >= 2:
+            family_guess = "Cantoneira"
+    section_label = ""
+    if family_guess in {"Cantoneira", "Tubo"}:
+        section_label = f"{_round_clean(leg_a):g}x{_round_clean(leg_b):g}x{_round_clean(thickness_mm):g}"
+    return {
+        "profile_length_m": round(length_mm / 1000.0, 4) if length_mm > 0.0 else 0.0,
+        "profile_length_mm": round(length_mm, 3),
+        "section_spans_mm": [round(value, 3) for value in cross_spans],
+        "section_label": section_label,
+        "thickness_mm_guess": round(thickness_mm, 3),
+        "family_guess": family_guess,
+        "internal_plane_count": int(internal_position_count),
+    }
 
 
 def analyze_step_profile(source_path: Path) -> dict[str, object]:
@@ -92,14 +162,19 @@ def analyze_step_profile(source_path: Path) -> dict[str, object]:
         )
 
     end_groups: dict[int, list[dict[str, object]]] = {-1: [], 1: []}
-    lateral_faces: list[dict[str, object]] = []
+    lateral_groups: dict[tuple[int, int], list[dict[str, object]]] = {}
     for row in plane_faces:
         side_sign = 1 if float(row["position"]) >= principal_center else -1
         row["side_sign"] = side_sign
         if int(row["axis_index"]) == principal_axis:
             end_groups[side_sign].append(row)
         elif int(row["wires"]) > 1:
-            lateral_faces.append(row)
+            key = (int(row["axis_index"]), int(side_sign))
+            lateral_groups.setdefault(key, []).append(row)
+
+    lateral_faces: list[dict[str, object]] = []
+    for group_rows in lateral_groups.values():
+        lateral_faces.append(max(group_rows, key=lambda item: abs(float(item["position"]) - principal_center)))
 
     selected_end_faces: list[dict[str, object]] = []
     for side_sign in (-1, 1):
@@ -124,7 +199,7 @@ def analyze_step_profile(source_path: Path) -> dict[str, object]:
             if outer_wire is not None and wire.isSame(outer_wire):
                 continue
             loop_kind = _classify_wire(wire)
-            signature = _wire_signature(wire, int(row["axis_index"]), loop_kind)
+            signature = _wire_signature(wire, int(row["axis_index"]), int(row["side_sign"]), loop_kind)
             if signature in seen_features:
                 continue
             seen_features.add(signature)
@@ -175,6 +250,13 @@ def analyze_step_profile(source_path: Path) -> dict[str, object]:
         f"eventos laser totais: {cuts}",
         f"comprimento de corte medido: {round(cut_length_mm / 1000.0, 3)} m",
     ]
+    profile_guess = _profile_geometry_guess(spans=spans, principal_axis=principal_axis, plane_faces=plane_faces)
+    if profile_guess.get("family_guess"):
+        notes.append(
+            f"perfil sugerido: {profile_guess.get('family_guess')} {profile_guess.get('section_label') or ''}".strip()
+        )
+    if float(profile_guess.get("thickness_mm_guess", 0.0) or 0.0) > 0.0:
+        notes.append(f"espessura sugerida: {float(profile_guess.get('thickness_mm_guess', 0.0) or 0.0):g} mm")
     if hole_count:
         notes.append(f"furos circulares detetados: {hole_count}")
     if slot_count:
@@ -207,6 +289,12 @@ def analyze_step_profile(source_path: Path) -> dict[str, object]:
         "selected_lateral_faces": [int(row["index"]) for row in lateral_faces],
         "selected_end_faces": [int(row["index"]) for row in selected_end_faces],
         "feature_rows": feature_rows,
+        "bbox_mm": {
+            "x": round(float(spans[0]), 3),
+            "y": round(float(spans[1]), 3),
+            "z": round(float(spans[2]), 3),
+        },
+        **profile_guess,
         "note": ". ".join(notes),
     }
 

@@ -268,6 +268,39 @@ def _profile_section_perimeter_mm(section: Any, family: Any = "") -> float:
     return 0.0
 
 
+def _profile_section_kg_m(section: Any, family: Any, thickness_mm: float, density_kg_m3: float) -> float:
+    text = str(section or "").upper().replace(",", ".")
+    values = [float(match) for match in re.findall(r"\d+(?:\.\d+)?", text)]
+    family_norm = _norm_material_token(family)
+    density_g_cm3 = max(0.001, float(density_kg_m3 or 7800.0) / 1000.0)
+    thickness = max(0.0, float(thickness_mm or 0.0))
+    if not values:
+        return 0.0
+    area_mm2 = 0.0
+    if any(token in family_norm for token in ("TUBO", "TUBE")):
+        if any(token in text for token in ("CHS", "DN", "D", "Ã˜", "Ø", "ROUND", "REDONDO")) and values:
+            diameter = values[0]
+            inner = max(0.0, diameter - (2.0 * thickness))
+            if diameter > 0.0 and thickness > 0.0:
+                area_mm2 = math.pi * ((diameter ** 2) - (inner ** 2)) / 4.0
+        elif len(values) >= 2 and thickness > 0.0:
+            width = values[0]
+            height = values[1]
+            inner_w = max(0.0, width - (2.0 * thickness))
+            inner_h = max(0.0, height - (2.0 * thickness))
+            area_mm2 = max(0.0, (width * height) - (inner_w * inner_h))
+    elif any(token in family_norm for token in ("CANTONEIRA", "ANGLE")) and len(values) >= 2 and thickness > 0.0:
+        leg_a = values[0]
+        leg_b = values[1]
+        area_mm2 = max(0.0, thickness * ((leg_a + leg_b) - thickness))
+    elif any(token in family_norm for token in ("BARRA", "BAR")):
+        if len(values) >= 2:
+            area_mm2 = max(0.0, values[0] * values[1])
+        elif len(values) == 1 and thickness > 0.0:
+            area_mm2 = max(0.0, values[0] * thickness)
+    return round((area_mm2 * density_g_cm3) / 1000.0, 4) if area_mm2 > 0.0 else 0.0
+
+
 def _estimate_profile_cut_length_m(
     *,
     total_cut_count: int,
@@ -600,6 +633,10 @@ def default_laser_quote_settings() -> dict[str, Any]:
                 "margin_pct": 18.0,
                 "setup_time_min": 3.0,
                 "handling_eur": 0.0,
+                "include_profile_event_rates": False,
+                "profile_reference_thickness_mm": 3.0,
+                "profile_min_thickness_rate_factor": 0.45,
+                "profile_max_thickness_rate_factor": 8.0,
                 "material_utilization_pct": 82.0,
                 "fallback_fill_pct": 72.0,
                 "use_scrap_credit": True,
@@ -1684,6 +1721,37 @@ def _effective_speed_m_min(cut_row: dict[str, Any], motion_cfg: dict[str, Any]) 
     return round(max(0.01, nominal * factor), 4)
 
 
+def _profile_thickness_rate_factor(
+    gas_rows: list[dict[str, Any]],
+    cut_row: dict[str, Any],
+    motion_cfg: dict[str, Any],
+    thickness_mm: float,
+    commercial_profile: dict[str, Any],
+    payload: dict[str, Any],
+) -> tuple[float, float, float]:
+    reference_thickness = max(
+        0.1,
+        _as_float(
+            payload.get("profile_reference_thickness_mm", commercial_profile.get("profile_reference_thickness_mm", 3.0)),
+            3.0,
+        ),
+    )
+    reference_row = _lookup_cut_row(gas_rows, reference_thickness)
+    current_speed = _effective_speed_m_min(cut_row, motion_cfg)
+    reference_speed = _effective_speed_m_min(reference_row or cut_row, motion_cfg)
+    raw_factor = _safe_div(reference_speed, current_speed, 1.0)
+    min_factor = max(
+        0.1,
+        _as_float(payload.get("profile_min_thickness_rate_factor", commercial_profile.get("profile_min_thickness_rate_factor", 0.45)), 0.45),
+    )
+    max_factor = max(
+        min_factor,
+        _as_float(payload.get("profile_max_thickness_rate_factor", commercial_profile.get("profile_max_thickness_rate_factor", 8.0)), 8.0),
+    )
+    factor = min(max(raw_factor, min_factor), max_factor)
+    return round(factor, 4), round(reference_speed, 4), round(current_speed, 4)
+
+
 def _build_description(file_path: str, material_name: str, thickness_mm: float, bbox_mm: dict[str, Any], part_count_hint: int) -> str:
     stem = _coerce_label(Path(str(file_path or "").strip()).stem)
     size_txt = ""
@@ -2013,11 +2081,14 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
     material_family = _canonical_material_family(material_family) or "Aco carbono"
     display_material_family = _display_material_family(material_family)
     display_material = material_subtype or display_material_family
-    material_supplied_by_client = bool(
-        payload.get("material_supplied_by_client", True)
-        or payload.get("material_fornecido_cliente", False)
-        or payload.get("exclude_material_cost", True)
-    )
+    if any(key in payload for key in ("material_supplied_by_client", "material_fornecido_cliente", "exclude_material_cost")):
+        material_supplied_by_client = bool(
+            payload.get("material_supplied_by_client", False)
+            or payload.get("material_fornecido_cliente", False)
+            or payload.get("exclude_material_cost", False)
+        )
+    else:
+        material_supplied_by_client = True
     material_cost_included = not material_supplied_by_client
     gas_name, gas_rows, machine_material = _gas_rows(machine_profile, material_family, str(payload.get("gas", "") or "").strip(), material_subtype)
     if not gas_rows:
@@ -2107,6 +2178,19 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
     margin_pct = max(0.0, base_margin_pct + series_margin_delta_pct)
     setup_time_min = max(0.0, base_setup_time_min * series_setup_multiplier) if include_profile_setup else 0.0
     effective_cut_speed_m_min = _effective_speed_m_min(cut_row, motion_cfg)
+    thickness_rate_factor, reference_cut_speed_m_min, current_cut_speed_m_min = _profile_thickness_rate_factor(
+        gas_rows,
+        cut_row,
+        motion_cfg,
+        thickness_mm,
+        commercial_profile,
+        payload,
+    )
+    scaled_cut_rate_per_m = cut_rate_per_m * thickness_rate_factor
+    scaled_pierce_rate = pierce_rate * max(1.0, math.sqrt(max(0.0, thickness_rate_factor)))
+    scaled_outer_cut_rate = outer_cut_rate * thickness_rate_factor
+    scaled_hole_cut_rate = hole_cut_rate * thickness_rate_factor
+    scaled_slot_cut_rate = slot_cut_rate * thickness_rate_factor
     rapid_speed_mm_s = max(1.0, _as_float(payload.get("rapid_speed_mm_s", motion_cfg.get("rapid_speed_mm_s", 200.0)), 200.0))
     lead_in_mm = max(0.0, _as_float(payload.get("lead_in_mm", motion_cfg.get("lead_in_mm", 2.0)), 2.0))
     lead_out_mm = max(0.0, _as_float(payload.get("lead_out_mm", motion_cfg.get("lead_out_mm", 2.0)), 2.0))
@@ -2169,29 +2253,56 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
     net_mass_kg = max(0.0, net_area_m2 * thickness_m * density_kg_m3)
     gross_mass_kg = max(net_mass_kg, net_mass_kg / max(0.01, utilization_pct / 100.0)) if net_area_m2 > 0.0 else 0.0
     scrap_mass_kg = max(0.0, gross_mass_kg - net_mass_kg)
-    material_cost_unit = gross_mass_kg * material_price_per_kg
-    scrap_credit_unit = scrap_mass_kg * scrap_credit_per_kg if gross_mass_kg > 0.0 else 0.0
-    material_net_cost_unit = max(0.0, material_cost_unit - scrap_credit_unit)
+    profile_length_m = max(0.0, _as_float(payload.get("profile_length_m", payload.get("material_length_m", 0.0)), 0.0))
+    profile_kg_m = max(0.0, _as_float(payload.get("profile_kg_m", payload.get("kg_m", 0.0)), 0.0))
+    if profile_kg_m <= 0.0 and profile_length_m > 0.0:
+        profile_kg_m = _profile_section_kg_m(section_txt, family_txt, thickness_mm, density_kg_m3)
+    profile_mass_kg = profile_kg_m * profile_length_m if profile_kg_m > 0.0 and profile_length_m > 0.0 else 0.0
+    material_price_unit = str(payload.get("profile_material_price_unit", payload.get("material_price_unit", "EUR/kg")) or "EUR/kg").strip().lower()
+    family_norm = _norm_material_token(family_txt)
+    if any(token in family_norm for token in ("TUBO", "TUBE")):
+        material_price_unit = "eur/m"
+    profile_material_price = max(0.0, _as_float(payload.get("profile_material_price", payload.get("material_price", 0.0)), 0.0))
+    explicit_profile_material_cost = 0.0
+    if profile_material_price > 0.0 and profile_length_m > 0.0:
+        if material_price_unit in {"eur/m", "m", "metro", "metros"}:
+            explicit_profile_material_cost = profile_length_m * profile_material_price
+        elif material_price_unit in {"eur/t", "eur/ton", "ton", "tonelada", "toneladas"}:
+            explicit_profile_material_cost = profile_mass_kg * (profile_material_price / 1000.0)
+        else:
+            explicit_profile_material_cost = profile_mass_kg * profile_material_price
+    if explicit_profile_material_cost > 0.0 and not material_supplied_by_client:
+        material_cost_unit = explicit_profile_material_cost
+        scrap_credit_unit = 0.0
+        material_net_cost_unit = material_cost_unit
+        gross_mass_kg = max(gross_mass_kg, profile_mass_kg)
+        net_mass_kg = max(net_mass_kg, profile_mass_kg)
+        scrap_mass_kg = 0.0
+        material_price_source = "profile"
+    else:
+        material_cost_unit = gross_mass_kg * material_price_per_kg
+        scrap_credit_unit = scrap_mass_kg * scrap_credit_per_kg if gross_mass_kg > 0.0 else 0.0
+        material_net_cost_unit = max(0.0, material_cost_unit - scrap_credit_unit)
     profile_operation_cost_unit = 0.0
     if include_profile_event_rates:
         profile_operation_cost_unit = (
-            (outer_cut_count * outer_cut_rate)
-            + (hole_count * hole_cut_rate)
-            + (slot_count * slot_cut_rate)
+            (outer_cut_count * scaled_outer_cut_rate)
+            + (hole_count * scaled_hole_cut_rate)
+            + (slot_count * scaled_slot_cut_rate)
         )
-    cut_cost_meter_unit = cut_length_m * cut_rate_per_m
-    pierce_cost_unit = pierce_count * pierce_rate
+    cut_cost_meter_unit = cut_length_m * scaled_cut_rate_per_m
+    pierce_cost_unit = pierce_count * scaled_pierce_rate
     profile_process_cost_unit = cut_cost_meter_unit + pierce_cost_unit + profile_operation_cost_unit
     machine_runtime_cost_unit = (machine_time_total_unit / 3600.0) * machine_hour_eur
     if cost_mode == "machine_time":
         effective_cutting_cost_unit = machine_runtime_cost_unit + pierce_cost_unit + profile_operation_cost_unit
         effective_cutting_label = "Tempo maquina + penetracoes"
     elif cost_mode == "per_meter":
-        effective_cutting_cost_unit = profile_process_cost_unit + machine_runtime_cost_unit
-        effective_cutting_label = "Metros + tempo maquina + penetracoes"
+        effective_cutting_cost_unit = profile_process_cost_unit
+        effective_cutting_label = "Metros + penetracoes"
     else:
-        effective_cutting_cost_unit = profile_process_cost_unit + machine_runtime_cost_unit
-        effective_cutting_label = "Perfil por tabela laser (metros + tempo + penetracoes)"
+        effective_cutting_cost_unit = max(cut_cost_meter_unit, machine_runtime_cost_unit) + pierce_cost_unit + profile_operation_cost_unit
+        effective_cutting_label = "Hibrido DXF (maior entre metro e tempo + penetracoes)"
     subtotal_cost_unit = material_net_cost_unit + effective_cutting_cost_unit + handling_eur
     unit_price_before_min = subtotal_cost_unit * (1.0 + (margin_pct / 100.0))
     final_total = unit_price_before_min * quantity
@@ -2218,8 +2329,21 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
         warnings.append("Os furos excedem o numero total de cortes. O total foi ajustado para evitar dupla contagem.")
     if _as_float(analyzed_metrics.get("cut_length_m", 0.0), 0.0) <= 0.0 and cut_length_m > 0.0:
         warnings.append("Comprimento de corte estimado por fallback. Se possivel confirma com preview/FreeCAD antes de fechar o preco.")
+    if thickness_rate_factor > 1.15:
+        warnings.append(
+            f"Precos de perfil ajustados pela tabela da maquina para {thickness_mm:g} mm (fator x{thickness_rate_factor:.2f})."
+        )
     if configured_material_price_per_kg <= 0.0 and not material_supplied_by_client:
-        warnings.append(f"Sem preco comercial configurado para {display_material}.")
+        if explicit_profile_material_cost <= 0.0:
+            warnings.append(f"Sem preco comercial configurado para {display_material}.")
+    if (
+        any(token in family_norm for token in ("TUBO", "TUBE"))
+        and not material_supplied_by_client
+        and profile_material_price <= 0.0
+    ):
+        warnings.append("Tubo com materia-prima incluida: indica o preco manual em EUR/m para calcular o custo do material.")
+    if not material_supplied_by_client and explicit_profile_material_cost <= 0.0 and profile_length_m <= 0.0:
+        warnings.append("Material do perfil incluido, mas falta comprimento/preco do perfil para calcular materia-prima.")
     analysis_note = str(analyzed_metrics.get("note", "") or "").strip()
     if analysis_note:
         warnings.append(analysis_note)
@@ -2242,6 +2366,8 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
             "cut_row": cut_row,
             "motion": motion_cfg,
             "effective_cut_speed_m_min": round(effective_cut_speed_m_min, 4),
+            "reference_cut_speed_m_min": round(reference_cut_speed_m_min, 4),
+            "current_cut_speed_m_min": round(current_cut_speed_m_min, 4),
         },
         "commercial": {
             "name": str(commercial_profile.get("name", "") or merged_settings.get("active_commercial", "")),
@@ -2282,8 +2408,12 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
             "feature_cut_count": int(max(0, hole_count + slot_count + generic_cut_count)),
             "feature_cut_length_m": round(_as_float(analyzed_metrics.get("feature_cut_length_m", 0.0), 0.0), 4),
             "end_cut_length_m": round(_as_float(analyzed_metrics.get("end_cut_length_m", 0.0), 0.0), 4),
+            "thickness_rate_factor": round(thickness_rate_factor, 4),
             "net_area_m2": round(net_area_m2, 6),
             "density_kg_m3": round(density_kg_m3, 3),
+            "profile_length_m": round(profile_length_m, 4),
+            "profile_kg_m": round(profile_kg_m, 4),
+            "profile_mass_kg": round(profile_mass_kg, 4),
             "net_mass_kg": round(net_mass_kg, 4),
             "gross_mass_kg": round(gross_mass_kg, 4),
             "scrap_mass_kg": round(scrap_mass_kg, 4),
@@ -2303,12 +2433,20 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
             "material_cost_unit": _round_money(material_net_cost_unit, 4),
             "material_gross_cost_unit": _round_money(material_cost_unit, 4),
             "scrap_credit_unit": _round_money(scrap_credit_unit, 4),
+            "profile_material_price": _round_money(profile_material_price, 4),
+            "profile_material_price_unit": material_price_unit,
             "process_only_cost_unit": _round_money(max(0.0, subtotal_cost_unit - material_net_cost_unit), 4),
             "material_cost_included": material_cost_included,
             "profile_operation_cost_unit": _round_money(profile_operation_cost_unit, 4),
             "cut_cost_meter_unit": _round_money(cut_cost_meter_unit, 4),
             "pierce_cost_unit": _round_money(pierce_cost_unit, 4),
-            "pierce_rate_unit": _round_money(pierce_rate, 4),
+            "cut_rate_per_m_unit": _round_money(scaled_cut_rate_per_m, 4),
+            "base_cut_rate_per_m_unit": _round_money(cut_rate_per_m, 4),
+            "pierce_rate_unit": _round_money(scaled_pierce_rate, 4),
+            "base_pierce_rate_unit": _round_money(pierce_rate, 4),
+            "hole_cut_rate_unit": _round_money(scaled_hole_cut_rate, 4),
+            "slot_cut_rate_unit": _round_money(scaled_slot_cut_rate, 4),
+            "outer_cut_rate_unit": _round_money(scaled_outer_cut_rate, 4),
             "profile_process_cost_unit": _round_money(profile_process_cost_unit, 4),
             "machine_runtime_cost_unit": _round_money(machine_runtime_cost_unit, 4),
             "effective_cutting_cost_unit": _round_money(effective_cutting_cost_unit, 4),

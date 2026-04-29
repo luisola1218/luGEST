@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
+    QWidget,
 )
 
 from ..widgets import CardFrame
@@ -45,7 +46,8 @@ class LaserBatchQuoteDialog(QDialog):
         self.line_payloads: list[dict[str, Any]] = []
         self.summary: dict[str, Any] = {}
         self.setWindowTitle("Lote DXF/DWG")
-        self.resize(1180, 860)
+        self.resize(1340, 860)
+        self.setMinimumWidth(1240)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -107,8 +109,15 @@ class LaserBatchQuoteDialog(QDialog):
         batch_header.addStretch(1)
         batch_header.addWidget(self.batch_info_label)
         batch_layout.addLayout(batch_header)
-        self.batch_table = QTableWidget(0, 7)
-        self.batch_table.setHorizontalHeaderLabels(["Ficheiro", "Descricao", "Ref. externa", "Qtd", "Tempo", "Preco unit.", "Total"])
+        self.batch_table = QTableWidget(0, 10)
+        self.batch_table.setHorizontalHeaderLabels(
+            ["Ficheiro", "Descricao", "Ref. externa", "Qtd", "Operacoes", "Tempo ops", "Preco ops", "Tempo", "Preco unit.", "Total"]
+        )
+        self.batch_table.setStyleSheet(
+            "QTableWidget { font-size: 11px; }"
+            "QHeaderView::section { font-size: 11px; padding: 6px 6px; }"
+            "QPushButton { font-size: 9px; padding: 3px 5px; min-height: 24px; }"
+        )
         self.batch_table.verticalHeader().setVisible(False)
         self.batch_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.batch_table.setEditTriggers(
@@ -121,8 +130,13 @@ class LaserBatchQuoteDialog(QDialog):
         batch_header_view.setSectionResizeMode(0, QHeaderView.Stretch)
         batch_header_view.setSectionResizeMode(1, QHeaderView.Stretch)
         batch_header_view.setSectionResizeMode(2, QHeaderView.Stretch)
-        for col_index in (3, 4, 5, 6):
-            batch_header_view.setSectionResizeMode(col_index, QHeaderView.ResizeToContents)
+        batch_header_view.setSectionResizeMode(3, QHeaderView.Fixed)
+        batch_header_view.resizeSection(3, 48)
+        batch_header_view.setSectionResizeMode(4, QHeaderView.Fixed)
+        batch_header_view.resizeSection(4, 190)
+        for col_index, width in ((5, 92), (6, 98), (7, 88), (8, 96), (9, 86)):
+            batch_header_view.setSectionResizeMode(col_index, QHeaderView.Fixed)
+            batch_header_view.resizeSection(col_index, width)
         batch_layout.addWidget(self.batch_table, 1)
         batch_actions = QHBoxLayout()
         self.add_files_btn = QPushButton("Selecionar DXF/DWG")
@@ -248,6 +262,242 @@ class LaserBatchQuoteDialog(QDialog):
         _set_combo_values(self.commercial_combo, list(dict(self.settings.get("commercial_profiles", {}) or {}).keys()), current_commercial)
         self._refresh_materials()
 
+    def _row_operation_meta(self, row_index: int) -> dict[str, Any]:
+        item = self.batch_table.item(row_index, 0)
+        data = item.data(Qt.UserRole + 1) if item is not None else {}
+        return dict(data or {}) if isinstance(data, dict) else {}
+
+    def _edit_sender_operations(self) -> None:
+        sender = self.sender()
+        for row_index in range(self.batch_table.rowCount()):
+            if self.batch_table.cellWidget(row_index, 4) is sender:
+                self._edit_row_operations(row_index)
+                return
+
+    def _set_row_operation_meta(self, row_index: int, meta: dict[str, Any]) -> None:
+        item = self.batch_table.item(row_index, 0)
+        if item is not None:
+            item.setData(Qt.UserRole + 1, dict(meta or {}))
+        extra_names = [
+            str(row.get("nome", "") or "").strip()
+            for row in list(dict(meta or {}).get("operacoes_detalhe", []) or [])
+            if str(row.get("nome", "") or "").strip()
+        ]
+        names = ["Corte Laser"] + [name for name in extra_names if name != "Corte Laser"]
+        label = " + ".join(names)
+        button = self.batch_table.cellWidget(row_index, 4)
+        if isinstance(button, QPushButton):
+            button.setText(label if len(label) <= 36 else label[:33] + "...")
+            button.setToolTip(label)
+        self._set_result_cell(row_index, 5, f"{_fmt_num(float(dict(meta or {}).get('tempo_ops_unit', 0.0) or 0.0), 3)} min")
+        self._set_result_cell(row_index, 6, _fmt_eur(float(dict(meta or {}).get("preco_ops_unit", 0.0) or 0.0)))
+
+    def _operation_names(self) -> list[str]:
+        try:
+            settings = dict(self.backend.operation_cost_settings() or {})
+            active = str(settings.get("active_profile", "Base") or "Base").strip() or "Base"
+            profile = dict(dict(settings.get("profiles", {}) or {}).get(active, {}) or {})
+            names = [str(name or "").strip() for name in profile.keys() if str(name or "").strip()]
+        except Exception:
+            names = []
+        defaults = ["Quinagem", "Roscagem", "Serralharia", "Maquinacao", "Soldadura", "Pintura", "Lacagem", "Montagem", "Embalamento"]
+        out: list[str] = []
+        for name in defaults + names:
+            clean = str(name or "").strip()
+            if clean and clean != "Corte Laser" and clean not in out:
+                out.append(clean)
+        return out
+
+    def _edit_row_operations(self, row_index: int) -> None:
+        if row_index < 0 or row_index >= self.batch_table.rowCount():
+            return
+        meta = self._row_operation_meta(row_index)
+        selected_map = {str(row.get("nome", "") or "").strip(): dict(row or {}) for row in list(meta.get("operacoes_detalhe", []) or [])}
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Operacoes da peca")
+        dialog.resize(1120, 520)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+        info = QLabel("Define aqui as operacoes extra desta linha. Corte Laser continua a ser calculado pelo DXF; estas linhas somam tempo e preco por unidade.")
+        info.setWordWrap(True)
+        info.setProperty("role", "muted")
+        layout.addWidget(info)
+
+        table = QTableWidget(0, 9)
+        table.setHorizontalHeaderLabels(["Usar", "Operacao", "Modo", "Tipo qtd.", "Qtd/peca", "Setup", "Tempo base", "EUR/h", "Fixo/manual"])
+        table.verticalHeader().setVisible(False)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.Stretch)
+        for col in (4, 5, 6, 7, 8):
+            header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        layout.addWidget(table, 1)
+
+        controls: list[dict[str, Any]] = []
+        modes = [("per_feature", "Por quantidade"), ("per_piece", "Por peca"), ("per_area_m2", "Por area"), ("manual", "Manual")]
+        for op_name in self._operation_names():
+            estimate = dict(
+                self.backend.operation_cost_estimate(
+                    {
+                        "qtd": self._row_quantity(row_index),
+                        "costing_operations": [op_name],
+                        "operacoes_detalhe": [selected_map.get(op_name, {})] if op_name in selected_map else [],
+                    }
+                )
+                or {}
+            )
+            op_row = dict((list(estimate.get("operations", []) or [{}]) or [{}])[0] or {})
+            current = dict(selected_map.get(op_name, op_row) or {})
+            row = table.rowCount()
+            table.insertRow(row)
+            check = QCheckBox()
+            check.setChecked(op_name in selected_map)
+            mode_combo = QComboBox()
+            for key, label in modes:
+                mode_combo.addItem(label, key)
+            target_mode = str(current.get("pricing_mode", op_row.get("pricing_mode", "per_feature")) or "per_feature")
+            for idx in range(mode_combo.count()):
+                if str(mode_combo.itemData(idx) or "") == target_mode:
+                    mode_combo.setCurrentIndex(idx)
+                    break
+            driver_edit = self._make_item(str(current.get("driver_label", op_row.get("driver_label", "Qtd./peca")) or "Qtd./peca"), editable=False)
+            driver_spin = _spin(4, 0.0, 1000000.0, float(current.get("driver_units", op_row.get("driver_units", 1.0)) or 0.0), 1.0)
+            setup_spin = _spin(4, 0.0, 1000000.0, float(current.get("setup_min", op_row.get("setup_min", 0.0)) or 0.0), 0.25)
+            time_spin = _spin(4, 0.0, 1000000.0, float(current.get("unit_time_base_min", current.get("tempo_unit_min", op_row.get("unit_time_base_min", 0.0))) or 0.0), 0.05)
+            hour_spin = _spin(4, 0.0, 1000000.0, float(current.get("hour_rate_eur", op_row.get("hour_rate_eur", 0.0)) or 0.0), 1.0)
+            fixed_spin = _spin(4, 0.0, 1000000.0, float(current.get("fixed_unit_eur", current.get("custo_unit_eur", op_row.get("fixed_unit_eur", 0.0))) or 0.0), 0.1)
+            table.setCellWidget(row, 0, check)
+            table.setItem(row, 1, self._make_item(op_name, editable=False))
+            table.setCellWidget(row, 2, mode_combo)
+            table.setItem(row, 3, driver_edit)
+            table.setCellWidget(row, 4, driver_spin)
+            table.setCellWidget(row, 5, setup_spin)
+            table.setCellWidget(row, 6, time_spin)
+            table.setCellWidget(row, 7, hour_spin)
+            table.setCellWidget(row, 8, fixed_spin)
+            table.setRowHeight(row, 36)
+            controls.append(
+                {
+                    "nome": op_name,
+                    "check": check,
+                    "mode": mode_combo,
+                    "driver_label": driver_edit.text(),
+                    "driver_units": driver_spin,
+                    "setup": setup_spin,
+                    "time": time_spin,
+                    "hour": hour_spin,
+                    "fixed": fixed_spin,
+                }
+            )
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        detail_rows: list[dict[str, Any]] = []
+        for row in controls:
+            if not row["check"].isChecked():
+                continue
+            mode = str(row["mode"].currentData() or "manual")
+            detail_rows.append(
+                {
+                    "nome": row["nome"],
+                    "pricing_mode": mode,
+                    "driver_label": str(row["driver_label"] or "Qtd./peca"),
+                    "driver_units": row["driver_units"].value(),
+                    "driver_units_confirmed": True,
+                    "setup_min": row["setup"].value(),
+                    "unit_time_base_min": row["time"].value(),
+                    "hour_rate_eur": row["hour"].value(),
+                    "fixed_unit_eur": row["fixed"].value(),
+                    "manual_values_confirmed": mode == "manual",
+                    "tempo_unit_min": row["time"].value() if mode == "manual" else None,
+                    "custo_unit_eur": row["fixed"].value() if mode == "manual" else None,
+                }
+            )
+        estimate = dict(
+            self.backend.operation_cost_estimate(
+                {
+                    "qtd": self._row_quantity(row_index),
+                    "costing_operations": [str(row.get("nome", "") or "").strip() for row in detail_rows],
+                    "operacoes_detalhe": detail_rows,
+                }
+            )
+            or {}
+        )
+        summary = dict(estimate.get("summary", {}) or {})
+        final_rows = [dict(row or {}) for row in list(estimate.get("operations", []) or []) if isinstance(row, dict)]
+        self._set_row_operation_meta(
+            row_index,
+            {
+                "operacoes_detalhe": final_rows,
+                "tempos_operacao": {
+                    str(row.get("nome", "") or "").strip(): float(row.get("tempo_unit_min", 0.0) or 0.0)
+                    for row in final_rows
+                    if str(row.get("nome", "") or "").strip() and row.get("tempo_unit_min") not in (None, "")
+                },
+                "custos_operacao": {
+                    str(row.get("nome", "") or "").strip(): float(row.get("custo_unit_eur", 0.0) or 0.0)
+                    for row in final_rows
+                    if str(row.get("nome", "") or "").strip() and row.get("custo_unit_eur") not in (None, "")
+                },
+                "tempo_ops_unit": round(float(summary.get("tempo_unit_total_min", 0.0) or 0.0), 4),
+                "preco_ops_unit": round(float(summary.get("custo_unit_total_eur", 0.0) or 0.0), 4),
+                "quote_cost_snapshot": {
+                    "costing_mode": str(summary.get("costing_mode", "") or ""),
+                    "tempo_total_peca_min": round(float(summary.get("tempo_unit_total_min", 0.0) or 0.0), 4),
+                    "preco_unit_total_eur": round(float(summary.get("custo_unit_total_eur", 0.0) or 0.0), 4),
+                    "qtd": self._row_quantity(row_index),
+                },
+            },
+        )
+        self.line_payloads = []
+        self.summary = {}
+        self._clear_summary()
+
+    def _apply_row_operations_to_line(self, line: dict[str, Any], row_index: int) -> dict[str, Any]:
+        meta = self._row_operation_meta(row_index)
+        detail_rows = [dict(row or {}) for row in list(meta.get("operacoes_detalhe", []) or []) if isinstance(row, dict)]
+        if not detail_rows:
+            return dict(line or {})
+        row = dict(line or {})
+        base_operation = str(row.get("operacao", "") or "Corte Laser").strip() or "Corte Laser"
+        operations = [part.strip() for part in base_operation.split("+") if part.strip()]
+        extra_time = float(meta.get("tempo_ops_unit", 0.0) or 0.0)
+        extra_cost = float(meta.get("preco_ops_unit", 0.0) or 0.0)
+        tempos = dict(row.get("tempos_operacao", {}) or {})
+        custos = dict(row.get("custos_operacao", {}) or {})
+        details = [dict(item or {}) for item in list(row.get("operacoes_detalhe", []) or []) if isinstance(item, dict)]
+        for operation in detail_rows:
+            name = str(operation.get("nome", "") or "").strip()
+            if not name:
+                continue
+            if name not in operations:
+                operations.append(name)
+            time_value = round(float(operation.get("tempo_unit_min", 0.0) or 0.0), 3)
+            cost_value = round(float(operation.get("custo_unit_eur", 0.0) or 0.0), 4)
+            if time_value > 0:
+                tempos[name] = time_value
+            if cost_value > 0:
+                custos[name] = cost_value
+            details.append(dict(operation))
+        row["operacao"] = " + ".join(operations)
+        row["operacoes_lista"] = operations
+        row["operacoes_detalhe"] = details
+        row["tempos_operacao"] = tempos
+        row["custos_operacao"] = custos
+        row["tempo_peca_min"] = round(float(row.get("tempo_peca_min", 0.0) or 0.0) + extra_time, 3)
+        row["preco_unit"] = round(float(row.get("preco_unit", 0.0) or 0.0) + extra_cost, 4)
+        row["total"] = round(float(row.get("qtd", 0.0) or 0.0) * float(row.get("preco_unit", 0.0) or 0.0), 2)
+        return row
+
     def _suggest_from_path(self, path: str) -> tuple[str, str, str]:
         normalized = str(path or "").replace("\\", "/")
         file_name = normalized.split("/")[-1]
@@ -299,9 +549,14 @@ class LaserBatchQuoteDialog(QDialog):
             self.batch_table.setItem(row_index, 1, self._make_item(desc))
             self.batch_table.setItem(row_index, 2, self._make_item(ref))
             self.batch_table.setItem(row_index, 3, self._make_item("1", center=True))
-            self._set_result_cell(row_index, 4, "-")
-            self._set_result_cell(row_index, 5, "-")
-            self._set_result_cell(row_index, 6, "-")
+            ops_btn = QPushButton("Corte Laser")
+            ops_btn.setProperty("variant", "secondary")
+            ops_btn.clicked.connect(self._edit_sender_operations)
+            self.batch_table.setCellWidget(row_index, 4, ops_btn)
+            self._set_row_operation_meta(row_index, {})
+            self._set_result_cell(row_index, 7, "-")
+            self._set_result_cell(row_index, 8, "-")
+            self._set_result_cell(row_index, 9, "-")
             existing.add(clean_path)
         self.line_payloads = []
         self.summary = {}
@@ -402,17 +657,20 @@ class LaserBatchQuoteDialog(QDialog):
                 QMessageBox.critical(self, "Lote DXF/DWG", f"Erro ao analisar {path}:\n{exc}")
                 return False
             analysis = dict(result.get("analysis", {}) or {})
-            line = dict(result.get("line", {}) or {})
+            line = self._apply_row_operations_to_line(dict(result.get("line", {}) or {}), row_index)
             pricing = dict(analysis.get("pricing", {}) or {})
             times = dict(analysis.get("times", {}) or {})
             geometry = dict(analysis.get("geometry", {}) or {})
-            qty = int(pricing.get("quantity", 1) or 1)
+            qty = int(line.get("qtd", pricing.get("quantity", 1)) or 1)
+            unit_price = float(line.get("preco_unit", pricing.get("unit_price", 0)) or 0.0)
+            line_total = round(unit_price * qty, 2)
+            unit_time = float(line.get("tempo_peca_min", times.get("machine_total_min", 0)) or 0.0)
             total_parts += qty
-            total_time += float(times.get("machine_total_min", 0) or 0) * qty
-            total_price += float(pricing.get("total_price", 0) or 0)
-            self._set_result_cell(row_index, 4, f"{_fmt_num((times.get('machine_total_min', 0) or 0) * qty, 2)} min")
-            self._set_result_cell(row_index, 5, _fmt_eur(pricing.get("unit_price", 0)))
-            self._set_result_cell(row_index, 6, _fmt_eur(pricing.get("total_price", 0)))
+            total_time += unit_time * qty
+            total_price += line_total
+            self._set_result_cell(row_index, 7, f"{_fmt_num(unit_time * qty, 2)} min")
+            self._set_result_cell(row_index, 8, _fmt_eur(unit_price))
+            self._set_result_cell(row_index, 9, _fmt_eur(line_total))
             for warn in [str(item or "").strip() for item in list(analysis.get("warnings", []) or []) if str(item or "").strip()]:
                 warnings.append(f"{str(geometry.get('file_name', '') or line.get('ref_externa', '') or 'DXF').strip()}: {warn}")
             results.append({"analysis": analysis, "line": line})

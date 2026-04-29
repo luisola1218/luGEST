@@ -521,7 +521,7 @@ PROD_CATEGORIAS = [
     "Gases",
     "Outros",
 ]
-MATERIA_FORMATOS = ["Chapa", "Tubo", "Perfil", "Cantoneira", "Barra"]
+MATERIA_FORMATOS = ["Chapa", "Tubo", "Perfil", "Cantoneira", "Barra", "Varão nervurado"]
 PROD_SUBCATS = [
     "Carbono",
     "Inox",
@@ -554,6 +554,9 @@ DEFAULT_DATA = {
     "transportes": [],
     "transportes_tarifarios": [],
     "qualidade": [],
+    "quality_nonconformities": [],
+    "quality_documents": [],
+    "audit_log": [],
     "refs": [],
     "materiais_hist": [],
     "espessuras_hist": [],
@@ -2130,6 +2133,29 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "materiais", "diametro", "DECIMAL(10,2) NULL")
         _mysql_ensure_column(cur, "materiais", "kg_m", "DECIMAL(10,4) NULL")
         _mysql_ensure_column(cur, "materiais", "secao_tipo", "VARCHAR(40) NULL")
+        _mysql_ensure_column(cur, "materiais", "logistic_status", "VARCHAR(30) NULL")
+        _mysql_ensure_column(cur, "materiais", "quality_status", "VARCHAR(40) NULL")
+        _mysql_ensure_column(cur, "materiais", "quality_blocked", "BOOLEAN NULL")
+        _mysql_ensure_column(cur, "materiais", "inspection_status", "VARCHAR(40) NULL")
+        _mysql_ensure_column(cur, "materiais", "inspection_defect", "VARCHAR(255) NULL")
+        _mysql_ensure_column(cur, "materiais", "inspection_decision", "VARCHAR(255) NULL")
+        _mysql_ensure_column(cur, "materiais", "inspection_at", "DATETIME NULL")
+        _mysql_ensure_column(cur, "materiais", "inspection_by", "VARCHAR(120) NULL")
+        _mysql_ensure_column(cur, "materiais", "inspection_note_number", "VARCHAR(30) NULL")
+        _mysql_ensure_column(cur, "materiais", "inspection_supplier_id", "VARCHAR(20) NULL")
+        _mysql_ensure_column(cur, "materiais", "inspection_supplier_name", "VARCHAR(150) NULL")
+        _mysql_ensure_column(cur, "materiais", "inspection_guia", "VARCHAR(60) NULL")
+        _mysql_ensure_column(cur, "materiais", "inspection_fatura", "VARCHAR(60) NULL")
+        _mysql_ensure_column(cur, "materiais", "quality_nc_id", "VARCHAR(30) NULL")
+        _mysql_ensure_column(cur, "materiais", "supplier_claim_id", "VARCHAR(30) NULL")
+    if "produtos" in tables:
+        _mysql_ensure_column(cur, "produtos", "logistic_status", "VARCHAR(30) NULL")
+        _mysql_ensure_column(cur, "produtos", "quality_status", "VARCHAR(40) NULL")
+        _mysql_ensure_column(cur, "produtos", "quality_blocked", "BOOLEAN NULL")
+        _mysql_ensure_column(cur, "produtos", "inspection_defect", "VARCHAR(255) NULL")
+        _mysql_ensure_column(cur, "produtos", "inspection_decision", "VARCHAR(255) NULL")
+        _mysql_ensure_column(cur, "produtos", "inspection_note_number", "VARCHAR(30) NULL")
+        _mysql_ensure_column(cur, "produtos", "quality_nc_id", "VARCHAR(30) NULL")
     if "notas_encomenda" in tables:
         _mysql_ensure_column(cur, "notas_encomenda", "ano", "INT NULL")
         _mysql_ensure_column(cur, "notas_encomenda", "fornecedor_id", "VARCHAR(20) NULL")
@@ -2184,6 +2210,12 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "notas_encomenda_linhas", "data_doc_entrega", "DATE NULL")
         _mysql_ensure_column(cur, "notas_encomenda_linhas", "data_entrega_real", "DATE NULL")
         _mysql_ensure_column(cur, "notas_encomenda_linhas", "obs_entrega", "TEXT NULL")
+        _mysql_ensure_column(cur, "notas_encomenda_linhas", "logistic_status", "VARCHAR(30) NULL")
+        _mysql_ensure_column(cur, "notas_encomenda_linhas", "inspection_status", "VARCHAR(40) NULL")
+        _mysql_ensure_column(cur, "notas_encomenda_linhas", "inspection_defect", "VARCHAR(255) NULL")
+        _mysql_ensure_column(cur, "notas_encomenda_linhas", "inspection_decision", "VARCHAR(255) NULL")
+        _mysql_ensure_column(cur, "notas_encomenda_linhas", "quality_status", "VARCHAR(40) NULL")
+        _mysql_ensure_column(cur, "notas_encomenda_linhas", "quality_nc_id", "VARCHAR(30) NULL")
     if "notas_encomenda_entregas" in tables:
         _mysql_ensure_column(cur, "notas_encomenda_entregas", "ne_numero", "VARCHAR(30) NOT NULL")
         _mysql_ensure_column(cur, "notas_encomenda_entregas", "data_registo", "DATETIME NULL")
@@ -2206,6 +2238,12 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "notas_encomenda_linha_entregas", "localizacao", "VARCHAR(100) NULL")
         _mysql_ensure_column(cur, "notas_encomenda_linha_entregas", "entrega_total", "BOOLEAN NULL")
         _mysql_ensure_column(cur, "notas_encomenda_linha_entregas", "stock_ref", "VARCHAR(30) NULL")
+        _mysql_ensure_column(cur, "notas_encomenda_linha_entregas", "logistic_status", "VARCHAR(30) NULL")
+        _mysql_ensure_column(cur, "notas_encomenda_linha_entregas", "inspection_status", "VARCHAR(40) NULL")
+        _mysql_ensure_column(cur, "notas_encomenda_linha_entregas", "inspection_defect", "VARCHAR(255) NULL")
+        _mysql_ensure_column(cur, "notas_encomenda_linha_entregas", "inspection_decision", "VARCHAR(255) NULL")
+        _mysql_ensure_column(cur, "notas_encomenda_linha_entregas", "quality_status", "VARCHAR(40) NULL")
+        _mysql_ensure_column(cur, "notas_encomenda_linha_entregas", "quality_nc_id", "VARCHAR(30) NULL")
     if "notas_encomenda_documentos" in tables:
         _mysql_ensure_column(cur, "notas_encomenda_documentos", "ne_numero", "VARCHAR(30) NOT NULL")
         _mysql_ensure_column(cur, "notas_encomenda_documentos", "data_registo", "DATETIME NULL")
@@ -2710,7 +2748,7 @@ def _mysql_sync_relational_schema(cur, data):
                 UPDATE `materiais`
                 SET `preco_unid` = CASE
                     WHEN `formato` = 'Tubo' THEN COALESCE(`metros`, 0) * COALESCE(`p_compra`, 0)
-                    WHEN `formato` IN ('Chapa', 'Perfil') THEN COALESCE(`peso_unid`, 0) * COALESCE(`p_compra`, 0)
+                    WHEN `formato` IN ('Chapa', 'Perfil', 'Cantoneira', 'Barra', 'Varão nervurado') THEN COALESCE(`peso_unid`, 0) * COALESCE(`p_compra`, 0)
                     ELSE COALESCE(`p_compra`, 0)
                 END
                 WHERE `preco_unid` IS NULL OR `preco_unid` <= 0
@@ -2903,8 +2941,10 @@ def _mysql_sync_relational_schema(cur, data):
                 """
                 INSERT INTO materiais (
                     id, lote_fornecedor, formato, material, material_familia, espessura, comprimento, largura, altura, diametro, metros, kg_m, peso_unid, p_compra, preco_unid,
-                    quantidade, reservado, tipo, localizacao, is_sobra, atualizado_em, origem_lote, origem_encomenda, secao_tipo
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    quantidade, reservado, tipo, localizacao, is_sobra, atualizado_em, origem_lote, origem_encomenda, secao_tipo, logistic_status,
+                    quality_status, quality_blocked, inspection_status, inspection_defect, inspection_decision, inspection_at, inspection_by,
+                    inspection_note_number, inspection_supplier_id, inspection_supplier_name, inspection_guia, inspection_fatura, quality_nc_id, supplier_claim_id
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     mid,
@@ -2931,6 +2971,21 @@ def _mysql_sync_relational_schema(cur, data):
                     _clip(m.get("origem_lote"), 100),
                     _clip(m.get("origem_encomenda"), 30),
                     _clip(m.get("secao_tipo"), 40),
+                    _clip(m.get("logistic_status"), 30),
+                    _clip(m.get("quality_status"), 40),
+                    1 if _to_bool(m.get("quality_blocked")) else 0,
+                    _clip(m.get("inspection_status"), 40),
+                    _clip(m.get("inspection_defect"), 255),
+                    _clip(m.get("inspection_decision"), 255),
+                    _to_mysql_datetime(m.get("inspection_at")),
+                    _clip(m.get("inspection_by"), 120),
+                    _clip(m.get("inspection_note_number"), 30),
+                    _clip(m.get("inspection_supplier_id"), 20),
+                    _clip(m.get("inspection_supplier_name"), 150),
+                    _clip(m.get("inspection_guia"), 60),
+                    _clip(m.get("inspection_fatura"), 60),
+                    _clip(m.get("quality_nc_id"), 30),
+                    _clip(m.get("supplier_claim_id"), 30),
                 ),
             )
 
@@ -2942,8 +2997,9 @@ def _mysql_sync_relational_schema(cur, data):
             cur.execute(
                 """
                 INSERT INTO produtos (
-                    codigo, descricao, categoria, subcat, tipo, unid, qty, alerta, p_compra, atualizado_em
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    codigo, descricao, categoria, subcat, tipo, unid, qty, alerta, p_compra, atualizado_em,
+                    logistic_status, quality_status, quality_blocked, inspection_defect, inspection_decision, inspection_note_number, quality_nc_id
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     codigo,
@@ -2956,6 +3012,13 @@ def _mysql_sync_relational_schema(cur, data):
                     _to_num(p.get("alerta")),
                     _to_num(p.get("p_compra")),
                     _to_mysql_datetime(p.get("atualizado_em")),
+                    _clip(p.get("logistic_status"), 30),
+                    _clip(p.get("quality_status"), 40),
+                    1 if _to_bool(p.get("quality_blocked")) else 0,
+                    _clip(p.get("inspection_defect"), 255),
+                    _clip(p.get("inspection_decision"), 255),
+                    _clip(p.get("inspection_note_number"), 30),
+                    _clip(p.get("quality_nc_id"), 30),
                 ),
             )
 
@@ -3639,8 +3702,8 @@ def _mysql_sync_relational_schema(cur, data):
                             ne_numero, linha_ordem, ref_material, descricao, fornecedor_linha, origem, qtd, unid,
                             preco, desconto, iva, total, entregue, qtd_entregue, lote_fornecedor, material, espessura, comprimento,
                             largura, altura, diametro, metros, kg_m, localizacao, peso_unid, p_compra, formato, material_familia, secao_tipo, stock_in, guia_entrega,
-                            fatura_entrega, data_doc_entrega, data_entrega_real, obs_entrega
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            fatura_entrega, data_doc_entrega, data_entrega_real, obs_entrega, logistic_status, inspection_status, inspection_defect, inspection_decision, quality_status, quality_nc_id
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             ne_num,
@@ -3678,6 +3741,12 @@ def _mysql_sync_relational_schema(cur, data):
                             _to_mysql_date(l.get("data_doc_entrega")),
                             _to_mysql_date(l.get("data_entrega_real")),
                             l.get("obs_entrega"),
+                            _clip(l.get("logistic_status"), 30),
+                            _clip(l.get("inspection_status"), 40),
+                            _clip(l.get("inspection_defect"), 255),
+                            _clip(l.get("inspection_decision"), 255),
+                            _clip(l.get("quality_status"), 40),
+                            _clip(l.get("quality_nc_id"), 30),
                         ),
                     )
                     if "notas_encomenda_linha_entregas" in tables:
@@ -3688,8 +3757,9 @@ def _mysql_sync_relational_schema(cur, data):
                                 """
                                 INSERT INTO notas_encomenda_linha_entregas (
                                     ne_numero, linha_ordem, data_registo, data_entrega, data_documento, guia, fatura, obs, qtd,
-                                    lote_fornecedor, localizacao, entrega_total, stock_ref
-                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    lote_fornecedor, localizacao, entrega_total, stock_ref, logistic_status, inspection_status, inspection_defect,
+                                    inspection_decision, quality_status, quality_nc_id
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                 """,
                                 (
                                     ne_num,
@@ -3705,6 +3775,12 @@ def _mysql_sync_relational_schema(cur, data):
                                     _clip(ent_l.get("localizacao"), 100),
                                     1 if _to_bool(ent_l.get("entrega_total")) else 0,
                                     _clip(ent_l.get("stock_ref"), 30),
+                                    _clip(ent_l.get("logistic_status"), 30),
+                                    _clip(ent_l.get("inspection_status"), 40),
+                                    _clip(ent_l.get("inspection_defect"), 255),
+                                    _clip(ent_l.get("inspection_decision"), 255),
+                                    _clip(ent_l.get("quality_status"), 40),
+                                    _clip(ent_l.get("quality_nc_id"), 30),
                                 ),
                             )
 
@@ -4325,6 +4401,21 @@ def _mysql_load_relational_data():
                         "atualizado_em": _db_to_iso(r.get("atualizado_em")),
                         "origem_lote": str(r.get("origem_lote", "") or ""),
                         "origem_encomenda": str(r.get("origem_encomenda", "") or ""),
+                        "logistic_status": str(r.get("logistic_status", "") or ""),
+                        "quality_status": str(r.get("quality_status", "") or ""),
+                        "quality_blocked": bool(r.get("quality_blocked")),
+                        "inspection_status": str(r.get("inspection_status", "") or ""),
+                        "inspection_defect": str(r.get("inspection_defect", "") or ""),
+                        "inspection_decision": str(r.get("inspection_decision", "") or ""),
+                        "inspection_at": _db_to_iso(r.get("inspection_at")),
+                        "inspection_by": str(r.get("inspection_by", "") or ""),
+                        "inspection_note_number": str(r.get("inspection_note_number", "") or ""),
+                        "inspection_supplier_id": str(r.get("inspection_supplier_id", "") or ""),
+                        "inspection_supplier_name": str(r.get("inspection_supplier_name", "") or ""),
+                        "inspection_guia": str(r.get("inspection_guia", "") or ""),
+                        "inspection_fatura": str(r.get("inspection_fatura", "") or ""),
+                        "quality_nc_id": str(r.get("quality_nc_id", "") or ""),
+                        "supplier_claim_id": str(r.get("supplier_claim_id", "") or ""),
                     }
                 )
 
@@ -4353,6 +4444,13 @@ def _mysql_load_relational_data():
                         "pvp2": 0.0,
                         "obs": "",
                         "atualizado_em": _db_to_iso(r.get("atualizado_em")),
+                        "logistic_status": str(r.get("logistic_status", "") or ""),
+                        "quality_status": str(r.get("quality_status", "") or ""),
+                        "quality_blocked": bool(r.get("quality_blocked")),
+                        "inspection_defect": str(r.get("inspection_defect", "") or ""),
+                        "inspection_decision": str(r.get("inspection_decision", "") or ""),
+                        "inspection_note_number": str(r.get("inspection_note_number", "") or ""),
+                        "quality_nc_id": str(r.get("quality_nc_id", "") or ""),
                     }
                 )
 
@@ -5022,6 +5120,12 @@ def _mysql_load_relational_data():
                             "localizacao": str(ent_l.get("localizacao", "") or ""),
                             "entrega_total": bool(ent_l.get("entrega_total")),
                             "stock_ref": str(ent_l.get("stock_ref", "") or ""),
+                            "logistic_status": str(ent_l.get("logistic_status", "") or ""),
+                            "inspection_status": str(ent_l.get("inspection_status", "") or ""),
+                            "inspection_defect": str(ent_l.get("inspection_defect", "") or ""),
+                            "inspection_decision": str(ent_l.get("inspection_decision", "") or ""),
+                            "quality_status": str(ent_l.get("quality_status", "") or ""),
+                            "quality_nc_id": str(ent_l.get("quality_nc_id", "") or ""),
                         }
                     )
 
@@ -5077,6 +5181,12 @@ def _mysql_load_relational_data():
                         "data_doc_entrega": _db_to_iso(l.get("data_doc_entrega"))[:10],
                         "data_entrega_real": _db_to_iso(l.get("data_entrega_real"))[:10],
                         "obs_entrega": str(l.get("obs_entrega", "") or ""),
+                        "logistic_status": str(l.get("logistic_status", "") or ""),
+                        "inspection_status": str(l.get("inspection_status", "") or ""),
+                        "inspection_defect": str(l.get("inspection_defect", "") or ""),
+                        "inspection_decision": str(l.get("inspection_decision", "") or ""),
+                        "quality_status": str(l.get("quality_status", "") or ""),
+                        "quality_nc_id": str(l.get("quality_nc_id", "") or ""),
                         "entregas_linha": ne_linha_entregas_map.get(key, []),
                     }
                 )
@@ -5507,6 +5617,12 @@ def _mysql_save_relational_data(data, conn=None):
                     RUNTIME_STATE_CONFIG_KEY,
                     RUNTIME_STATE_CONFIG_FILE,
                     _runtime_state_payload(data),
+                    conn=active_conn,
+                )
+                _app_config_save_json(
+                    QUALITY_RUNTIME_CONFIG_KEY,
+                    QUALITY_RUNTIME_CONFIG_FILE,
+                    _quality_runtime_payload(data),
                     conn=active_conn,
                 )
                 _MYSQL_SCHEMA_SYNCED = True
@@ -6459,6 +6575,13 @@ RUNTIME_STATE_CONFIG_DEFAULTS = {
     "workcenter_catalog": [],
     "plano_bloqueios": [],
 }
+QUALITY_RUNTIME_CONFIG_FILE = "lugest_quality_runtime.json"
+QUALITY_RUNTIME_CONFIG_KEY = "quality_runtime"
+QUALITY_RUNTIME_CONFIG_DEFAULTS = {
+    "quality_nonconformities": [],
+    "quality_documents": [],
+    "audit_log": [],
+}
 
 
 def _app_config_json_path(filename):
@@ -6576,6 +6699,28 @@ def _runtime_state_payload(data):
         for key, default in RUNTIME_STATE_CONFIG_DEFAULTS.items():
             clean[key] = copy.deepcopy(default)
         return clean
+
+
+def _quality_runtime_payload(data):
+    payload = {}
+    source = dict(data or {})
+    for key, default in QUALITY_RUNTIME_CONFIG_DEFAULTS.items():
+        value = copy.deepcopy(source.get(key, default))
+        payload[key] = value if isinstance(value, list) else copy.deepcopy(default)
+    try:
+        return json.loads(json.dumps(payload, ensure_ascii=False, default=str))
+    except Exception:
+        return copy.deepcopy(QUALITY_RUNTIME_CONFIG_DEFAULTS)
+
+
+def _apply_quality_runtime_payload(data, payload=None):
+    if not isinstance(data, dict):
+        return data
+    source = payload if isinstance(payload, dict) else _app_config_load_json(QUALITY_RUNTIME_CONFIG_KEY, QUALITY_RUNTIME_CONFIG_FILE)
+    for key, default in QUALITY_RUNTIME_CONFIG_DEFAULTS.items():
+        value = copy.deepcopy((source or {}).get(key, data.get(key, default)))
+        data[key] = value if isinstance(value, list) else copy.deepcopy(default)
+    return data
 
 
 def _apply_runtime_state_payload(data, payload):
@@ -7110,6 +7255,7 @@ def load_data():
     data.setdefault("produtos_mov", [])
     data.setdefault("plano_hist", [])
     _apply_runtime_state_payload(data, data)
+    _apply_quality_runtime_payload(data)
     normalized_orcamentos = []
     for o in data.get("orcamentos", []):
         if not isinstance(o, dict):
@@ -9021,6 +9167,8 @@ def detect_materia_formato(m):
         return fmt
     mat_txt = norm_text((m or {}).get("material", ""))
     secao_txt = norm_text((m or {}).get("secao_tipo", (m or {}).get("tipo_secao", "")))
+    if "nervurado" in mat_txt or secao_txt in {"nervurado", "redondo_nervurado"}:
+        return "Varão nervurado"
     if "cantoneira" in mat_txt or secao_txt in {"abas_iguais", "abas_desiguais"}:
         return "Cantoneira"
     if "tubo" in mat_txt:
@@ -9042,7 +9190,7 @@ def materia_preco_unitario(m):
     formato = detect_materia_formato(m)
     if formato == "Tubo":
         return parse_float((m or {}).get("metros", 0), 0) * compra
-    if formato in ("Chapa", "Perfil", "Cantoneira", "Barra"):
+    if formato in ("Chapa", "Perfil", "Cantoneira", "Barra", "Varão nervurado"):
         return parse_float((m or {}).get("peso_unid", 0), 0) * compra
     return compra
 
@@ -9131,7 +9279,18 @@ def encomenda_montagem_itens(enc):
 
 
 def encomenda_montagem_estado(enc):
-    stock_items = [row for row in encomenda_montagem_itens(enc) if normalize_orc_line_type(row.get("tipo_item")) == ORC_LINE_TYPE_PRODUCT]
+    stock_items = [
+        row
+        for row in encomenda_montagem_itens(enc)
+        if normalize_orc_line_type(row.get("tipo_item")) == ORC_LINE_TYPE_PRODUCT
+        or (
+            normalize_orc_line_type(row.get("tipo_item")) == ORC_LINE_TYPE_PIECE
+            and (
+                str(row.get("stock_item_kind", "") or "").strip() == "raw_material"
+                or str(row.get("stock_material_id", "") or "").strip()
+            )
+        )
+    ]
     if not stock_items:
         return "Nao aplicavel"
     pending = []
@@ -9187,9 +9346,20 @@ def encomenda_montagem_resumo(enc):
     if conjuntos:
         parts.append(", ".join(conjuntos[:2]) + ("..." if len(conjuntos) > 2 else ""))
     produtos = sum(1 for row in items if normalize_orc_line_type((row or {}).get("tipo_item")) == ORC_LINE_TYPE_PRODUCT)
+    materias = sum(
+        1
+        for row in items
+        if normalize_orc_line_type((row or {}).get("tipo_item")) == ORC_LINE_TYPE_PIECE
+        and (
+            str((row or {}).get("stock_item_kind", "") or "").strip() == "raw_material"
+            or str((row or {}).get("stock_material_id", "") or "").strip()
+        )
+    )
     servicos = sum(1 for row in items if normalize_orc_line_type((row or {}).get("tipo_item")) == ORC_LINE_TYPE_SERVICE)
     if produtos:
         parts.append(f"{produtos} comp.")
+    if materias:
+        parts.append(f"{materias} MP")
     if servicos:
         parts.append(f"{servicos} serv.")
     return " | ".join(parts) if parts else "Montagem final"

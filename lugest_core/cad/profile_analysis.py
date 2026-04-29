@@ -519,7 +519,11 @@ def analyze_step_profile(path: str | Path) -> dict[str, Any]:
         for face_bound_ref in list(face.get("face_bounds", []) or []):
             loop_kind = _classify_step_loop(entities, face_bound_ref)
             loop_signature = _loop_projection_signature(entities, face_bound_ref, plane_axis_index)
-            dedupe_key = loop_signature or (loop_kind, str(face_bound_ref))
+            dedupe_key = (
+                int(plane_axis_index),
+                round(float(face.get("position", face.get("position_delta", 0.0)) or 0.0), 3),
+                loop_signature or (loop_kind, str(face_bound_ref)),
+            )
             if dedupe_key in seen_feature_signatures:
                 continue
             seen_feature_signatures.add(dedupe_key)
@@ -569,6 +573,6 @@ def analyze_step_profile(path: str | Path) -> dict[str, Any]:
 
 def analyze_profile_cut_features(path: str | Path) -> dict[str, Any]:
     suffix = str(Path(path).suffix or "").strip().lower()
-    if suffix in {".step", ".stp"}:
+    if suffix in {".step", ".stp", ".igs", ".iges"}:
         return analyze_step_profile(path)
     return {}
