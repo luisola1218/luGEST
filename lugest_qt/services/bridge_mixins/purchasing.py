@@ -571,6 +571,8 @@ class PurchasingBridgeMixin:
             "metros": self._parse_float(geometry.get("metros", line.get("metros", 0)), 0),
             "kg_m": self._parse_float(geometry.get("kg_m", line.get("kg_m", 0)), 0),
             "quantidade": max(0.0, self._parse_float(quantity, 0)),
+            "quality_pending_qty": 0.0,
+            "quality_received_qty": max(0.0, self._parse_float(quantity, 0)),
             "reservado": 0.0,
             "Localização": local_txt,
             "Localizacao": local_txt,
@@ -591,7 +593,8 @@ class PurchasingBridgeMixin:
         self.desktop_main.push_unique(data.setdefault("materiais_hist", []), material_txt)
         if str(record.get("espessura", "") or "").strip():
             self.desktop_main.push_unique(data.setdefault("espessuras_hist", []), str(record.get("espessura", "") or "").strip())
-        self.desktop_main.log_stock(data, "CRIAR_NE", f"{record.get('id', '')} via {note_number}")
+        if self._parse_float(record.get("quantidade", 0), 0) > 0:
+            self.desktop_main.log_stock(data, "CRIAR_NE", f"{record.get('id', '')} via {note_number}")
         return record
 
     def _delivery_inspection_payload(self, update: dict[str, Any]) -> dict[str, str]:
@@ -636,7 +639,9 @@ class PurchasingBridgeMixin:
         if not isinstance(material, dict):
             return False
         status = str(material.get("quality_status", "") or material.get("inspection_status", "") or "").strip().casefold()
-        return bool(material.get("quality_blocked")) or any(token in status for token in ("inspe", "bloque", "reclam", "rejeit"))
+        if status and "aprov" not in status:
+            return True
+        return bool(material.get("quality_blocked")) or any(token in status for token in ("inspe", "inspecao", "averig", "devol", "bloque", "reclam", "rejeit"))
 
     def _apply_material_quality_from_delivery(
         self,
@@ -826,6 +831,8 @@ class PurchasingBridgeMixin:
             "modelo": str(line.get("modelo", "") or "").strip(),
             "unid": str(line.get("unid", "") or "UN").strip() or "UN",
             "qty": max(0.0, self._parse_float(quantity, 0)),
+            "quality_pending_qty": 0.0,
+            "quality_received_qty": max(0.0, self._parse_float(quantity, 0)),
             "alerta": 0.0,
             "p_compra": self._parse_float(line.get("preco", line.get("p_compra", 0)), 0),
             "pvp1": 0.0,
@@ -1424,7 +1431,7 @@ class PurchasingBridgeMixin:
                     material = self._create_material_placeholder_from_note_line(
                         working_line,
                         str(note.get("numero", "") or "").strip(),
-                        quantity=qty_apply,
+                        quantity=0.0,
                         lote_override=lote_override,
                         localizacao_override=local_override,
                     )
@@ -1435,7 +1442,6 @@ class PurchasingBridgeMixin:
                             + "."
                         )
                 else:
-                    material["quantidade"] = self._parse_float(material.get("quantidade", 0), 0) + qty_apply
                     if lote_override:
                         material["lote_fornecedor"] = lote_override
                     if local_override:
@@ -1443,6 +1449,8 @@ class PurchasingBridgeMixin:
                         material["Localizacao"] = local_override
                     material["atualizado_em"] = registo_ts
                 if material is not None:
+                    material["quality_pending_qty"] = self._parse_float(material.get("quality_pending_qty", 0), 0) + qty_apply
+                    material["quality_received_qty"] = self._parse_float(material.get("quality_received_qty", 0), 0) + qty_apply
                     material["logistic_status"] = "RECEBIDO"
                     material["quality_status"] = "EM_INSPECAO"
                     material["inspection_status"] = "EM_INSPECAO"
@@ -1483,29 +1491,16 @@ class PurchasingBridgeMixin:
                     product = self._create_product_placeholder_from_note_line(
                         working_line,
                         str(note.get("numero", "") or "").strip(),
-                        quantity=qty_apply,
+                        quantity=0.0,
                     )
                     ref = str(product.get("codigo", "") or "").strip()
                     line["ref"] = ref
                     line["_product_pending_create"] = False
                 else:
-                    before = self._parse_float(product.get("qty", 0), 0)
-                    product["qty"] = before + qty_apply
                     product["atualizado_em"] = registo_ts
-                    self.desktop_main.add_produto_mov(
-                        self.ensure_data(),
-                        tipo="Entrada",
-                        operador=str((self.user or {}).get("username", "") or "Sistema"),
-                        codigo=ref,
-                        descricao=str(product.get("descricao", "") or "").strip(),
-                        qtd=qty_apply,
-                        antes=before,
-                        depois=product["qty"],
-                        obs=f"NE {note.get('numero', '')}",
-                        origem="Notas Encomenda",
-                        ref_doc=str(note.get("numero", "") or "").strip(),
-                    )
                 if product is not None:
+                    product["quality_pending_qty"] = self._parse_float(product.get("quality_pending_qty", 0), 0) + qty_apply
+                    product["quality_received_qty"] = self._parse_float(product.get("quality_received_qty", 0), 0) + qty_apply
                     product["logistic_status"] = "RECEBIDO"
                     product["quality_status"] = "EM_INSPECAO"
                     product["quality_blocked"] = True
@@ -1526,7 +1521,7 @@ class PurchasingBridgeMixin:
                     if line.get("entregas_linha"):
                         line["entregas_linha"][-1]["quality_status"] = str(line.get("quality_status", "") or "").strip()
                         line["entregas_linha"][-1]["quality_nc_id"] = str(line.get("quality_nc_id", "") or "").strip()
-            line["_stock_in"] = True
+            line["_stock_in"] = False
             any_delivery = True
             total_qtd += qty_apply
             delivered_lines.append(f"{(ref or str(line.get('descricao', '') or '-').strip())} ({self._fmt(qty_apply)})")
@@ -1554,7 +1549,7 @@ class PurchasingBridgeMixin:
                 delivered_qty = qtd_total
             line["qtd_entregue"] = delivered_qty
             line["entregue"] = bool(qtd_total > 0 and delivered_qty >= (qtd_total - 1e-9))
-            line["_stock_in"] = bool(delivered_qty > 0)
+            line["_stock_in"] = bool(str(line.get("quality_status", "") or "").strip() == "APROVADO")
             line["logistic_status"] = "RECEBIDO" if line["entregue"] else ("PENDENTE" if delivered_qty <= 0 else "PENDENTE")
         note["guia_ultima"] = guia
         note["fatura_ultima"] = fatura

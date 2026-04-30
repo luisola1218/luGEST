@@ -214,7 +214,7 @@
           "hole_polygons": []
         }
       ],
-      "shape_strict": true
+      "shape_strict": false
     },
     "machine_profiles": {
       "BLT641 12kW": {
@@ -937,6 +937,10 @@
         "margin_pct": 1.0,
         "setup_time_min": 1.0,
         "handling_eur": 0.0,
+        "include_profile_event_rates": false,
+        "profile_reference_thickness_mm": 3.0,
+        "profile_min_thickness_rate_factor": 0.45,
+        "profile_max_thickness_rate_factor": 8.0,
         "material_utilization_pct": 79.0,
         "fallback_fill_pct": 62.0,
         "use_scrap_credit": true,

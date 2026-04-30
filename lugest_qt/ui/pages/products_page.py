@@ -103,8 +103,8 @@ class ProductsPage(QWidget):
         self._moves_years: list[str] = []
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(14)
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(10)
 
         top_card = CardFrame()
         top_card.set_tone("info")
@@ -116,9 +116,9 @@ class ProductsPage(QWidget):
         title_wrap = QVBoxLayout()
         title_wrap.setContentsMargins(0, 0, 0, 0)
         title_wrap.setSpacing(2)
-        title = QLabel("Gestao de Produtos")
-        title.setStyleSheet("font-size: 17px; color: #0f172a;")
-        subtitle = QLabel("Fluxo antigo: lista principal, ficha compacta e movimentos em sub-menu.")
+        title = QLabel("Stock de Produtos")
+        title.setStyleSheet("font-size: 17px; font-weight: 900; color: #10253d;")
+        subtitle = QLabel("Cadastro, disponibilidade, preços e movimentos com leitura rápida para operação.")
         subtitle.setProperty("role", "muted")
         title_wrap.addWidget(title)
         title_wrap.addWidget(subtitle)
@@ -191,26 +191,33 @@ class ProductsPage(QWidget):
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(14, 12, 14, 12)
         table_layout.setSpacing(8)
-        table_title = QLabel("Produtos")
-        table_title.setStyleSheet("font-size: 17px; color: #0f172a;")
-        self.table = QTableWidget(0, 9)
+        table_header = QHBoxLayout()
+        table_title = QLabel("Produtos em stock")
+        table_title.setStyleSheet("font-size: 15px; font-weight: 900; color: #10253d;")
+        self.table_count_label = QLabel("-")
+        self.table_count_label.setProperty("role", "muted")
+        table_header.addWidget(table_title)
+        table_header.addStretch(1)
+        table_header.addWidget(self.table_count_label)
+        self.table = QTableWidget(0, 10)
+        self.table.setObjectName("StockTable")
         self.table.setHorizontalHeaderLabels(
-            ["Codigo", "Descricao", "Categoria", "Tipo", "Qtd", "Alerta", "Preco/Unid.", "Valor Stock", "Atualizado"]
+            ["Código", "Descrição", "Categoria", "Tipo", "Qtd", "Alerta", "Preço/Unid.", "Valor Stock", "Atualizado", "Estado"]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(28)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         header = self.table.horizontalHeader()
-        header.setStretchLastSection(False)
+        header.setStretchLastSection(True)
         header.setSectionResizeMode(0, QHeaderView.Interactive)
         header.resizeSection(0, 156)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
-        for col, width in ((2, 112), (3, 104), (4, 76), (5, 76), (6, 112), (7, 112), (8, 148)):
+        for col, width in ((2, 112), (3, 104), (4, 76), (5, 76), (6, 112), (7, 112), (8, 148), (9, 126)):
             header.setSectionResizeMode(col, QHeaderView.Interactive)
             header.resizeSection(col, width)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
-        table_layout.addWidget(table_title)
+        table_layout.addLayout(table_header)
         table_layout.addWidget(self.table)
         root.addWidget(table_card, 5)
 
@@ -448,16 +455,34 @@ class ProductsPage(QWidget):
             self.stock_value_label.setText(self._fmt_eur(0))
 
     def _apply_row_colors(self, row_index: int, severity: str, band: str) -> None:
-        background = QColor("#eef2f8" if band == "even" else "#e6ecf5")
+        background = QColor("#ffffff" if band == "even" else "#f6f9fd")
         foreground = QColor("#0f172a")
-        if severity == "warning":
-            foreground = QColor("#b45309")
         for col in range(self.table.columnCount()):
             item = self.table.item(row_index, col)
             if item is None:
                 continue
             item.setBackground(QBrush(background))
             item.setForeground(QBrush(foreground))
+        qty_item = self.table.item(row_index, 4)
+        status_item = self.table.item(row_index, 9)
+        if severity == "warning":
+            for item in (qty_item, status_item):
+                if item is not None:
+                    item.setBackground(QBrush(QColor("#fff7ed")))
+                    item.setForeground(QBrush(QColor("#9a3412")))
+
+    def _product_state_label(self, row: dict) -> str:
+        status = str(row.get("quality_status", "") or "").strip()
+        pending = float(row.get("quality_pending_qty", 0) or 0)
+        if pending > 0 and status:
+            return status
+        qty = float(row.get("qty", 0) or 0)
+        alerta = float(row.get("alerta", 0) or 0)
+        if qty <= 0:
+            return "Sem stock"
+        if alerta > 0 and qty <= alerta:
+            return "Stock baixo"
+        return "Disponível"
 
     def _fill_moves(self, rows: list[dict]) -> None:
         self.moves_table.setRowCount(len(rows))
@@ -518,8 +543,10 @@ class ProductsPage(QWidget):
     def refresh(self) -> None:
         self._load_presets()
         rows = self.backend.product_rows(self.filter_edit.text().strip())
+        self.table_count_label.setText(f"{len(rows)} registos")
         self.table.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
+            state_label = self._product_state_label(row)
             values = [
                 row.get("codigo", "-"),
                 row.get("descricao", "-"),
@@ -530,6 +557,7 @@ class ProductsPage(QWidget):
                 self._fmt_eur(row.get("preco_unid", 0)),
                 self._fmt_eur(row.get("valor_stock", 0)),
                 str(row.get("updated_at", "") or "").replace("T", " ")[:19],
+                state_label,
             ]
             for col_index, value in enumerate(values):
                 item = QTableWidgetItem(str(value))

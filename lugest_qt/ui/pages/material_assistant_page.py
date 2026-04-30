@@ -382,14 +382,23 @@ class MaterialAssistantPage(QWidget):
         self.needs_table.setRowCount(len(self.needs))
         restore_need_row = 0
         for row_index, row in enumerate(self.needs):
+            material_cativado = bool(row.get("material_cativado"))
             values = [
                 str(row.get("numero", "") or "").strip(),
                 str(row.get("posto_trabalho", "") or "-").strip(),
                 str(row.get("cliente", "") or "").strip(),
                 str(row.get("material", "") or "").strip(),
                 str(row.get("espessura", "") or "").strip(),
-                str(row.get("preferred_lot", "") or row.get("current_lot", "") or "-").strip() or "-",
-                str(row.get("preferred_dimensao", "") or "-").strip() or "-",
+                (
+                    str(row.get("preferred_lot", "") or row.get("current_lot", "") or "-").strip() or "-"
+                    if material_cativado
+                    else "Sem material cativado"
+                ),
+                (
+                    str(row.get("preferred_dimensao", "") or "-").strip() or "-"
+                    if material_cativado
+                    else "-"
+                ),
                 _fmt_number(row.get("quantidade_preparar", row.get("piece_qty", 0))),
                 str(row.get("data_entrega", "") or "-").strip() or "-",
                 str(row.get("next_action_label", "") or "-").strip(),
@@ -401,7 +410,7 @@ class MaterialAssistantPage(QWidget):
                 if col_index == 0:
                     item.setData(Qt.UserRole, dict(row))
                 self.needs_table.setItem(row_index, col_index, item)
-            tone = "danger" if not bool(row.get("stock_ready")) else "warning" if bool(row.get("lot_change_required")) else "success"
+            tone = "danger" if not bool(row.get("stock_ready")) else "warning" if (not material_cativado or bool(row.get("lot_change_required"))) else "success"
             _paint_row(self.needs_table, row_index, tone)
             if selected_need_key and str(row.get("key", "") or "").strip() == selected_need_key:
                 restore_need_row = row_index
@@ -427,6 +436,7 @@ class MaterialAssistantPage(QWidget):
     def _kind_label(self, kind: str) -> str:
         mapping = {
             "shortage": "Sem stock",
+            "uncativated": "Sem cativacao",
             "keep_ready": "Nao arrumar",
             "fito_lot": "Urgencia / FITO",
         }
@@ -492,8 +502,13 @@ class MaterialAssistantPage(QWidget):
         self.detail_title.setText(
             f"{need.get('numero', '-')} | {need.get('material', '-')} {need.get('espessura', '-')} mm"
         )
-        tone = "danger" if not bool(need.get("stock_ready")) else "warning" if bool(need.get("lot_change_required")) else "success"
-        label = "Troca por urgencia" if bool(need.get("lot_change_required")) else "Necessidade ativa"
+        material_cativado = bool(need.get("material_cativado"))
+        tone = "danger" if not bool(need.get("stock_ready")) else "warning" if (not material_cativado or bool(need.get("lot_change_required"))) else "success"
+        label = (
+            "Sem material cativado"
+            if not material_cativado
+            else "Troca por urgencia" if bool(need.get("lot_change_required")) else "Necessidade ativa"
+        )
         _apply_chip(self.detail_status, label, tone)
         self.detail_meta.setText(
             " | ".join(
@@ -508,14 +523,21 @@ class MaterialAssistantPage(QWidget):
         )
         html = [
             "<b>Leitura rapida</b><ul>",
+            f"<li>Estado de cativação: {'Cativado' if material_cativado else 'Sem material cativado'}</li>",
             f"<li>Lote atual: {need.get('current_lot', '-') or '-'}</li>",
-            f"<li>Lote sugerido: {need.get('preferred_lot', '-') or '-'}</li>",
-            f"<li>Dimensao sugerida: {need.get('preferred_dimensao', '-') or '-'}</li>",
+            f"<li>Lote sugerido: {need.get('preferred_lot', '-') or '-' if material_cativado else '-'}</li>",
+            f"<li>Dimensao sugerida: {need.get('preferred_dimensao', '-') or '-' if material_cativado else '-'}</li>",
             f"<li>Quantidade a preparar: {_fmt_number(need.get('quantidade_preparar', need.get('piece_qty', 0)))}</li>",
             f"<li>Retalhos encontrados: {int(need.get('retalho_count', 0) or 0)}</li>",
             f"<li>Estado de stock: {need.get('stock_state', '-') or '-'}</li>",
             "</ul>",
         ]
+        if not material_cativado:
+            html.append(
+                "<br><b>Regra operacional</b><br>"
+                "A separação só pode indicar uma chapa/lote depois de existir cativação. "
+                "Enquanto isso, esta linha é apenas uma necessidade planeada."
+            )
         if bool(need.get("lot_change_required")):
             html.append(
                 "<br><b>Regra de urgencia</b><br>"
@@ -926,7 +948,7 @@ class MaterialAssistantPage(QWidget):
                     str(row.get("espessura", "") or "-"),
                     str(row.get("lote_sugerido", row.get("lote_atual", "-")) or "-"),
                     str(row.get("dimensao", "") or "-"),
-                    _fmt_number(row.get("quantidade", 0)),
+                    str(row.get("quantidade_label", "") or _fmt_number(row.get("quantidade", 0))),
                     str(row.get("data_entrega", "") or "-"),
                     f"{row.get('planeamento_hora', '-') or '-'} | {row.get('proxima_acao', '-') or '-'}",
                     str(row.get("acao_sugerida", "") or "-"),
@@ -978,7 +1000,8 @@ class MaterialAssistantPage(QWidget):
                 f"<b>Posto:</b> {row.get('posto_trabalho', '-')}<br>"
                 f"<b>Material:</b> {row.get('material', '-')} {row.get('espessura', '-')} mm<br>"
                 f"<b>Dimensao:</b> {row.get('dimensao', '-')}<br>"
-                f"<b>Quantidade:</b> {_fmt_number(row.get('quantidade', 0))}<br>"
+                f"<b>Quantidade a separar:</b> {row.get('quantidade_label', '-') or '-'}<br>"
+                f"<b>Necessidade:</b> {row.get('necessidade_label', _fmt_number(row.get('quantidade_necessaria', row.get('quantidade', 0))))}<br>"
                 f"<b>Lote sugerido:</b> {row.get('lote_sugerido', row.get('lote_atual', '-'))}<br>"
                 f"<b>Opcoes MP:</b> {row.get('opcoes_mp', '-') or '-'}<br>"
                 f"<b>Entrega:</b> {row.get('data_entrega', '-')}<br>"

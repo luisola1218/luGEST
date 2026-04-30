@@ -77,6 +77,17 @@ def apply_theme(app: QApplication, branding: dict) -> None:
             border: 1px solid #afc0d4;
             border-radius: 10px;
         }}
+        QFrame#QualitySection {{
+            background: #f6f9fd;
+            border: 1px solid #b6c7da;
+            border-left: 4px solid {primary};
+            border-radius: 8px;
+        }}
+        QFrame#QualityToolbar {{
+            background: #fbfdff;
+            border: 1px solid #c5d2e2;
+            border-radius: 8px;
+        }}
         QFrame#LoginCard {{
             background: #ffffff;
             border: 1px solid #c6d2e0;
@@ -145,8 +156,9 @@ def apply_theme(app: QApplication, branding: dict) -> None:
             color: #17314f;
             border: 1px solid transparent;
             border-radius: 6px;
-            padding: 7px 10px;
+            padding: 6px 8px;
             text-align: center;
+            font-size: 12px;
             font-weight: 700;
         }}
         QToolButton[nav="true"]:hover {{
@@ -160,6 +172,15 @@ def apply_theme(app: QApplication, branding: dict) -> None:
         }}
         QLabel[role="muted"] {{
             color: #5b6f86;
+        }}
+        QLabel[role="section_title"] {{
+            color: #10253d;
+            font-size: 15px;
+            font-weight: 900;
+        }}
+        QLabel[role="section_subtitle"] {{
+            color: #526981;
+            font-size: 11px;
         }}
         QLabel[role="field_label"] {{
             color: #5b6f86;
@@ -209,6 +230,17 @@ def apply_theme(app: QApplication, branding: dict) -> None:
             color: {selection_text};
             border: 1px solid {selection_border};
         }}
+        QTableWidget#QualityTable {{
+            alternate-background-color: #f4f8fc;
+            gridline-color: #d0dce8;
+        }}
+        QTableWidget#StockTable {{
+            background: #ffffff;
+            alternate-background-color: #f6f9fd;
+            gridline-color: #d4deea;
+            border: 1px solid #b3c4d8;
+            border-radius: 8px;
+        }}
         QCalendarWidget QAbstractItemView:enabled {{
             selection-background-color: {selection_fill};
             selection-color: {selection_text};
@@ -238,6 +270,10 @@ def apply_theme(app: QApplication, branding: dict) -> None:
             border-radius: 8px;
             background: #ffffff;
             top: -1px;
+        }}
+        QTabWidget#QualityTabs::pane {{
+            background: #f8fbff;
+            border: 1px solid #b8c8da;
         }}
         QTabBar::tab {{
             background: #edf2f8;

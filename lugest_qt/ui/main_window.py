@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QStackedWidget,
     QTableWidget,
@@ -158,11 +160,20 @@ class MainWindow(QMainWindow):
         shell_layout.addLayout(right_col)
         root.addWidget(shell)
 
+        nav_scroll = QScrollArea()
+        nav_scroll.setObjectName("NavBar")
+        nav_scroll.setWidgetResizable(True)
+        nav_scroll.setFrameShape(QFrame.NoFrame)
+        nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        nav_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        nav_scroll.setFixedHeight(58)
+        nav_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         nav_bar = QFrame()
         nav_bar.setObjectName("NavBar")
         nav_layout = QHBoxLayout(nav_bar)
         nav_layout.setContentsMargins(8, 5, 8, 5)
-        nav_layout.setSpacing(5)
+        nav_layout.setSpacing(4)
+        nav_content_width = 16
         for key, label in (
             ("stock_dashboard", "Dashboard"),
             ("materials", "Matéria-Prima"),
@@ -186,14 +197,23 @@ class MainWindow(QMainWindow):
         ):
             button = QToolButton()
             button.setText(label)
+            button.setToolTip(label)
             button.setCheckable(True)
             button.setProperty("nav", "true")
             button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            text_width = button.fontMetrics().horizontalAdvance(label)
+            button_width = max(58, text_width + 26)
+            button.setMinimumWidth(button_width)
+            button.setFixedHeight(34)
+            button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             button.clicked.connect(partial(self.show_page, key))
             nav_layout.addWidget(button)
             self.nav_buttons[key] = button
-        nav_layout.addStretch(1)
-        root.addWidget(nav_bar)
+            nav_content_width += button_width + nav_layout.spacing()
+        nav_bar.setMinimumSize(nav_content_width + 10, 46)
+        nav_bar.resize(nav_content_width + 10, 46)
+        nav_scroll.setWidget(nav_bar)
+        root.addWidget(nav_scroll)
 
         self.alert_bar = QFrame()
         self.alert_bar.setObjectName("Card")

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -27,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..widgets import StatCard
+from ..widgets import CardFrame, StatCard
 
 
 def _table_item(value: Any, *, center: bool = False) -> QTableWidgetItem:
@@ -58,43 +59,61 @@ class QualityPage(QWidget):
         self.link_options: dict[str, list[dict[str, str]]] = {}
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(12)
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(10)
 
         stats = QGridLayout()
-        stats.setHorizontalSpacing(10)
+        stats.setHorizontalSpacing(12)
+        stats.setVerticalSpacing(10)
         self.open_nc_card = StatCard("NC abertas")
         self.overdue_nc_card = StatCard("NC fora prazo")
         self.supplier_nc_card = StatCard("NC fornecedores")
         self.blocked_materials_card = StatCard("Material bloqueado")
         for index, card in enumerate((self.open_nc_card, self.overdue_nc_card, self.supplier_nc_card, self.blocked_materials_card)):
+            card.setMinimumHeight(92)
             stats.addWidget(card, 0, index)
         root.addLayout(stats)
 
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("QualityTabs")
+        self.tabs.setDocumentMode(True)
         root.addWidget(self.tabs, 1)
 
         self.reception_rows: list[dict[str, Any]] = []
         self.reception_filter = QLineEdit()
         self.reception_filter.setPlaceholderText("Filtrar receções a inspecionar")
+        self.reception_filter.setProperty("qualityFilter", "true")
         self.reception_state = QComboBox()
-        self.reception_state.addItems(["Pendentes", "Aprovados", "Rejeitados", "Todos"])
-        self.reception_table = QTableWidget(0, 11)
-        self.reception_table.setHorizontalHeaderLabels(["Tipo", "Ref", "Estado Q.", "Logística", "Fornecedor", "Lote", "NE", "Material", "Esp.", "Descrição", "NC"])
+        self.reception_state.addItems(["Pendentes", "Aprovados", "Rejeitados", "Devolução", "Averiguação", "Todos"])
+        self.reception_table = QTableWidget(0, 13)
+        self.reception_table.setHorizontalHeaderLabels(["Tipo", "Ref", "Estado Q.", "Logística", "Qtd qual.", "Fornecedor", "Lote", "NE", "Material", "Esp.", "Descrição", "NC"])
         self._configure_table(self.reception_table)
+        self.reception_table.setHorizontalHeaderLabels(["Tipo", "Ref", "Estado Q.", "Logística", "Qtd pend.", "Fornecedor", "Lote", "NE", "Material", "Esp.", "Descrição", "NC", "Mov."])
+        self.reception_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        for col, width in ((0, 86), (1, 120), (2, 116), (3, 92), (4, 74), (5, 132), (6, 118), (7, 126), (8, 150), (9, 62), (10, 240), (11, 90)):
+            self.reception_table.setColumnWidth(col, width)
+        self.reception_table.horizontalHeader().setSectionResizeMode(10, QHeaderView.Stretch)
+        self.reception_table.horizontalHeader().setStretchLastSection(True)
+        self.reception_table.setColumnHidden(12, True)
         self.tabs.addTab(self._reception_tab(), "Receção / inspeção")
 
         self.nc_filter = QLineEdit()
         self.nc_filter.setPlaceholderText("Filtrar nao conformidades")
+        self.nc_filter.setProperty("qualityFilter", "true")
         self.nc_state = QComboBox()
         self.nc_state.addItems(["Ativas", "Abertas", "Em tratamento", "Fechadas", "Todos"])
-        self.nc_table = QTableWidget(0, 10)
-        self.nc_table.setHorizontalHeaderLabels(["ID", "Estado", "Grav.", "Entidade", "Referencia", "Origem", "Tipo", "Responsavel", "Prazo", "Descricao"])
+        self.nc_table = QTableWidget(0, 11)
+        self.nc_table.setHorizontalHeaderLabels(["ID", "Estado", "Grav.", "Qtd rej.", "Entidade", "Referencia", "Origem", "Tipo", "Responsavel", "Prazo", "Descricao"])
         self._configure_table(self.nc_table)
+        self.nc_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        for col, width in ((0, 92), (1, 92), (2, 78), (3, 74), (4, 170), (5, 130), (6, 140), (7, 100), (8, 110), (9, 90), (10, 260)):
+            self.nc_table.setColumnWidth(col, width)
+        self.nc_table.horizontalHeader().setStretchLastSection(True)
         self.tabs.addTab(self._nc_tab(), "Nao conformidades")
 
         self.doc_filter = QLineEdit()
         self.doc_filter.setPlaceholderText("Filtrar documentos/evidencias")
+        self.doc_filter.setProperty("qualityFilter", "true")
         self.doc_table = QTableWidget(0, 8)
         self.doc_table.setHorizontalHeaderLabels(["ID", "Titulo", "Tipo", "Entidade", "Referencia", "Versao", "Estado", "Atualizado"])
         self._configure_table(self.doc_table)
@@ -102,6 +121,7 @@ class QualityPage(QWidget):
 
         self.audit_filter = QLineEdit()
         self.audit_filter.setPlaceholderText("Filtrar auditoria")
+        self.audit_filter.setProperty("qualityFilter", "true")
         self.audit_table = QTableWidget(0, 6)
         self.audit_table.setHorizontalHeaderLabels(["Data", "Utilizador", "Acao", "Entidade", "Ref.", "Resumo"])
         self._configure_table(self.audit_table)
@@ -120,6 +140,7 @@ class QualityPage(QWidget):
         self.audit_filter.textChanged.connect(self._refresh_audit)
 
     def _configure_table(self, table: QTableWidget) -> None:
+        table.setObjectName("QualityTable")
         table.verticalHeader().setVisible(False)
         table.setAlternatingRowColors(True)
         table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -127,17 +148,43 @@ class QualityPage(QWidget):
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         table.setSortingEnabled(True)
 
+    def _section_header(self, title: str, subtitle: str = "") -> CardFrame:
+        card = CardFrame()
+        card.setObjectName("QualitySection")
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(12)
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(2)
+        title_label = QLabel(title)
+        title_label.setProperty("role", "section_title")
+        subtitle_label = QLabel(subtitle)
+        subtitle_label.setProperty("role", "section_subtitle")
+        subtitle_label.setWordWrap(True)
+        text_col.addWidget(title_label)
+        if subtitle:
+            text_col.addWidget(subtitle_label)
+        layout.addLayout(text_col, 1)
+        return card
+
     def _reception_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(8, 8, 8, 8)
-        toolbar = QHBoxLayout()
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+        layout.addWidget(self._section_header("Rececao e inspecao", "Entrada fisica separada da libertacao de stock. Aprova, rejeita ou mantem em analise depois de validar a rececao."))
+        toolbar_card = CardFrame()
+        toolbar_card.setObjectName("QualityToolbar")
+        toolbar = QHBoxLayout(toolbar_card)
+        toolbar.setContentsMargins(12, 10, 12, 10)
+        toolbar.setSpacing(8)
         toolbar.addWidget(self.reception_filter, 1)
         toolbar.addWidget(self.reception_state)
         evaluate_btn = QPushButton("Avaliar")
         evaluate_btn.clicked.connect(self._evaluate_selected_reception)
         approve_btn = QPushButton("Aprovar")
-        approve_btn.setProperty("variant", "secondary")
+        approve_btn.setProperty("variant", "success")
         approve_btn.clicked.connect(lambda: self._evaluate_selected_reception(default_status="APROVADO"))
         reject_btn = QPushButton("Rejeitar / NC")
         reject_btn.setProperty("variant", "danger")
@@ -145,7 +192,7 @@ class QualityPage(QWidget):
         toolbar.addWidget(evaluate_btn)
         toolbar.addWidget(approve_btn)
         toolbar.addWidget(reject_btn)
-        layout.addLayout(toolbar)
+        layout.addWidget(toolbar_card)
         note = QLabel("A receção apenas dá entrada física. Nesta lista a qualidade liberta, mantém em inspeção ou rejeita o material/produto recebido.")
         note.setProperty("role", "muted")
         note.setWordWrap(True)
@@ -163,8 +210,14 @@ class QualityPage(QWidget):
     def _nc_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(8, 8, 8, 8)
-        toolbar = QHBoxLayout()
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+        layout.addWidget(self._section_header("Nao conformidades", "Registo de desvios, reclamacoes a fornecedores, devolucoes e acoes corretivas com rastreabilidade por entidade."))
+        toolbar_card = CardFrame()
+        toolbar_card.setObjectName("QualityToolbar")
+        toolbar = QHBoxLayout(toolbar_card)
+        toolbar.setContentsMargins(12, 10, 12, 10)
+        toolbar.setSpacing(8)
         toolbar.addWidget(self.nc_filter, 1)
         toolbar.addWidget(self.nc_state)
         add_btn = QPushButton("Nova NC")
@@ -186,15 +239,21 @@ class QualityPage(QWidget):
         remove_btn.clicked.connect(self._remove_selected_nc)
         for button in (add_btn, edit_btn, close_btn, release_btn, pdf_btn, remove_btn):
             toolbar.addWidget(button)
-        layout.addLayout(toolbar)
+        layout.addWidget(toolbar_card)
         layout.addWidget(self.nc_table, 1)
         return page
 
     def _documents_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(8, 8, 8, 8)
-        toolbar = QHBoxLayout()
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+        layout.addWidget(self._section_header("Documentos e evidencias", "Certificados, fotografias, relatorios e documentos de suporte ligados a material, fornecedor, OPP ou cliente."))
+        toolbar_card = CardFrame()
+        toolbar_card.setObjectName("QualityToolbar")
+        toolbar = QHBoxLayout(toolbar_card)
+        toolbar.setContentsMargins(12, 10, 12, 10)
+        toolbar.setSpacing(8)
         toolbar.addWidget(self.doc_filter, 1)
         add_btn = QPushButton("Novo documento")
         add_btn.clicked.connect(lambda: self._edit_document({}))
@@ -209,39 +268,47 @@ class QualityPage(QWidget):
         remove_btn.clicked.connect(self._remove_selected_document)
         for button in (add_btn, edit_btn, open_btn, remove_btn):
             toolbar.addWidget(button)
-        layout.addLayout(toolbar)
+        layout.addWidget(toolbar_card)
         layout.addWidget(self.doc_table, 1)
         return page
 
     def _audit_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.addWidget(self.audit_filter)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+        layout.addWidget(self._section_header("Auditoria", "Historico de eventos criticos para perceber quem decidiu, quando decidiu e com que referencia."))
+        toolbar_card = CardFrame()
+        toolbar_card.setObjectName("QualityToolbar")
+        toolbar = QHBoxLayout(toolbar_card)
+        toolbar.setContentsMargins(12, 10, 12, 10)
+        toolbar.addWidget(self.audit_filter, 1)
+        layout.addWidget(toolbar_card)
         layout.addWidget(self.audit_table, 1)
         return page
 
     def _checklist_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(8, 8, 8, 8)
-        actions = QHBoxLayout()
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+        layout.addWidget(self._section_header("Checklist ISO", "Pontos de controlo praticos para auditoria interna e acompanhamento do sistema de gestao."))
+        toolbar_card = CardFrame()
+        toolbar_card.setObjectName("QualityToolbar")
+        actions = QHBoxLayout(toolbar_card)
+        actions.setContentsMargins(12, 10, 12, 10)
         dossier_btn = QPushButton("Gerar dossier PDF")
         dossier_btn.clicked.connect(self._open_dossier_pdf)
         actions.addStretch(1)
         actions.addWidget(dossier_btn)
         note = QLabel("Checklist operacional para apoiar auditorias. Nao substitui a interpretacao formal da norma.")
         note.setProperty("role", "muted")
-        layout.addLayout(actions)
+        layout.addWidget(toolbar_card)
         layout.addWidget(note)
         layout.addWidget(self.check_table, 1)
         return page
 
     def refresh(self) -> None:
-        try:
-            self.link_options = dict(self.backend.quality_link_options() or {})
-        except Exception:
-            self.link_options = {}
         summary = dict(self.backend.quality_summary() or {})
         self.open_nc_card.set_data(str(summary.get("open_nc", 0)), "Nao conformidades ainda ativas")
         self.open_nc_card.set_tone("warning" if int(summary.get("open_nc", 0) or 0) else "success")
@@ -271,6 +338,7 @@ class QualityPage(QWidget):
                     row.get("ref", ""),
                     row.get("quality_status", ""),
                     row.get("logistic_status", ""),
+                    row.get("qtd", ""),
                     row.get("fornecedor", ""),
                     row.get("lote", ""),
                     row.get("referencia", ""),
@@ -278,16 +346,54 @@ class QualityPage(QWidget):
                     row.get("espessura", ""),
                     row.get("descricao", ""),
                     row.get("nc_id", ""),
+                    row.get("movement_id", ""),
                 ]
                 for row in self.reception_rows
             ],
             center_from=2,
         )
+        for row_index in range(self.reception_table.rowCount()):
+            movement_item = self.reception_table.item(row_index, 12)
+            movement_id = str(movement_item.text() if movement_item else "").strip()
+            ref_item = self.reception_table.item(row_index, 1)
+            type_item = self.reception_table.item(row_index, 0)
+            ref = str(ref_item.text() if ref_item else "").strip()
+            kind = str(type_item.text() if type_item else "").strip()
+            payload = next(
+                (
+                    dict(row)
+                    for row in self.reception_rows
+                    if (
+                        movement_id
+                        and str(row.get("movement_id", "") or "").strip() == movement_id
+                    )
+                    or (
+                        not movement_id
+                        and str(row.get("ref", "") or "").strip() == ref
+                        and str(row.get("tipo", "") or "").strip() == kind
+                    )
+                ),
+                {},
+            )
+            first_item = self.reception_table.item(row_index, 0)
+            if first_item is not None:
+                first_item.setData(Qt.UserRole, payload)
 
     def _selected_reception(self) -> dict[str, Any]:
         row_index = self.reception_table.currentRow()
         if row_index < 0:
             return {}
+        first_item = self.reception_table.item(row_index, 0)
+        if first_item is not None:
+            payload = first_item.data(Qt.UserRole)
+            if isinstance(payload, dict) and payload:
+                return dict(payload)
+        movement_item = self.reception_table.item(row_index, 12)
+        movement_id = str(movement_item.text() if movement_item else "").strip()
+        if movement_id:
+            for row in self.reception_rows:
+                if str(row.get("movement_id", "") or "").strip() == movement_id:
+                    return dict(row)
         ref_item = self.reception_table.item(row_index, 1)
         type_item = self.reception_table.item(row_index, 0)
         ref = str(ref_item.text() if ref_item else "").strip()
@@ -309,9 +415,25 @@ class QualityPage(QWidget):
         form = QFormLayout()
         entity = QLineEdit(" | ".join(part for part in (str(current.get("tipo", "") or ""), str(current.get("ref", "") or ""), str(current.get("descricao", "") or "")) if part))
         entity.setReadOnly(True)
+        pending_qty = float(current.get("qtd", 0) or 0)
+        received_qty = float(current.get("qtd_recebida", pending_qty) or pending_qty)
+        received = QLineEdit(f"{received_qty:.4f}".rstrip("0").rstrip("."))
+        received.setReadOnly(True)
+        approved_qty = QDoubleSpinBox()
+        approved_qty.setDecimals(4)
+        approved_qty.setRange(0.0, max(0.0, pending_qty))
+        approved_qty.setSingleStep(1.0)
+        rejected_qty = QDoubleSpinBox()
+        rejected_qty.setDecimals(4)
+        rejected_qty.setRange(0.0, max(0.0, pending_qty))
+        rejected_qty.setSingleStep(1.0)
         status = QComboBox()
-        status.addItems(["EM_INSPECAO", "APROVADO", "REJEITADO"])
+        status.addItems(["EM_INSPECAO", "EM_AVERIGUACAO", "APROVADO", "REJEITADO", "DEVOLVER_FORNECEDOR"])
         status.setCurrentText(default_status or str(current.get("quality_status", "") or "EM_INSPECAO"))
+        if status.currentText() == "APROVADO":
+            approved_qty.setValue(pending_qty)
+        elif status.currentText() in {"REJEITADO", "DEVOLVER_FORNECEDOR"}:
+            rejected_qty.setValue(pending_qty)
         defect = QComboBox()
         defect.setEditable(True)
         defect.setInsertPolicy(QComboBox.NoInsert)
@@ -336,13 +458,76 @@ class QualityPage(QWidget):
                 decision.setCurrentText("Libertar para stock")
             elif value == "REJEITADO":
                 decision.setCurrentText("Abrir reclamação fornecedor")
+            elif value == "DEVOLVER_FORNECEDOR":
+                decision.setCurrentText("Devolver ao fornecedor")
+            elif value == "EM_AVERIGUACAO":
+                decision.setCurrentText("Manter em averiguação")
             else:
                 decision.setCurrentText("Manter em inspeção")
 
-        status.currentTextChanged.connect(lambda _text: sync_decision())
+        def sync_quantities_from_status() -> None:
+            value = status.currentText().strip()
+            if value == "APROVADO":
+                approved_qty.setValue(pending_qty)
+                rejected_qty.setValue(0.0)
+            elif value in {"REJEITADO", "DEVOLVER_FORNECEDOR"}:
+                approved_qty.setValue(0.0)
+                rejected_qty.setValue(pending_qty)
+            elif approved_qty.value() + rejected_qty.value() > pending_qty:
+                approved_qty.setValue(0.0)
+                rejected_qty.setValue(0.0)
+
+        def sync_clean_quality_fields(force: bool = False) -> None:
+            value = status.currentText().strip()
+            decision_text = decision.currentText().casefold()
+            if value == "APROVADO":
+                approved_qty.setValue(pending_qty)
+                rejected_qty.setValue(0.0)
+                if force or not decision_text or "devol" in decision_text or "reclam" in decision_text:
+                    decision.setCurrentText("Libertar para stock")
+                if force:
+                    defect.setCurrentText("")
+            elif value == "REJEITADO":
+                approved_qty.setValue(0.0)
+                rejected_qty.setValue(pending_qty)
+                if force or not decision_text or "libert" in decision_text:
+                    decision.setCurrentText("Abrir reclamacao fornecedor")
+            elif value == "DEVOLVER_FORNECEDOR":
+                approved_qty.setValue(0.0)
+                rejected_qty.setValue(pending_qty)
+                if force or not decision_text or "libert" in decision_text:
+                    decision.setCurrentText("Devolver ao fornecedor")
+            elif value == "EM_AVERIGUACAO":
+                if approved_qty.value() + rejected_qty.value() > pending_qty:
+                    approved_qty.setValue(0.0)
+                    rejected_qty.setValue(0.0)
+                if force or not decision_text or "libert" in decision_text:
+                    decision.setCurrentText("Manter em averiguacao")
+            else:
+                if approved_qty.value() + rejected_qty.value() > pending_qty:
+                    approved_qty.setValue(0.0)
+                    rejected_qty.setValue(0.0)
+                if force or not decision_text or "libert" in decision_text:
+                    decision.setCurrentText("Manter em inspecao")
+            defect.setEnabled(value != "APROVADO" or rejected_qty.value() > 0)
+
+        def sync_partial_quality_fields() -> None:
+            if approved_qty.value() + rejected_qty.value() > pending_qty:
+                rejected_qty.setValue(max(0.0, pending_qty - approved_qty.value()))
+            defect.setEnabled(status.currentText().strip() != "APROVADO" or rejected_qty.value() > 0)
+            if rejected_qty.value() > 0 and status.currentText().strip() == "APROVADO":
+                decision.setCurrentText("Aceitar condicionado")
+
+        status.currentTextChanged.connect(lambda _text: (sync_decision(), sync_quantities_from_status(), sync_clean_quality_fields(True)))
+        approved_qty.valueChanged.connect(lambda _value: sync_partial_quality_fields())
+        rejected_qty.valueChanged.connect(lambda _value: sync_partial_quality_fields())
         sync_decision()
+        sync_clean_quality_fields(bool(default_status))
         for label, widget in (
             ("Linha", entity),
+            ("Qtd recebida", received),
+            ("Qtd boa/aprovada", approved_qty),
+            ("Qtd rejeitada", rejected_qty),
             ("Inspeção", status),
             ("Defeito/obs.", defect),
             ("Decisão", decision),
@@ -362,14 +547,23 @@ class QualityPage(QWidget):
         notes_txt = notes.toPlainText().strip()
         if notes_txt:
             defect_txt = f"{defect_txt} | {notes_txt}".strip(" |")
+        if approved_qty.value() + rejected_qty.value() > pending_qty + 1e-9:
+            QMessageBox.warning(self, "Qualidade", "A quantidade boa + rejeitada não pode ultrapassar a quantidade pendente.")
+            return
+        if status.currentText() == "APROVADO" and rejected_qty.value() <= 0:
+            defect_txt = ""
+            decision.setCurrentText("Libertar para stock")
         payload = {
             "tipo": current.get("tipo", ""),
             "id": current.get("id", current.get("ref", "")),
+            "movement_id": current.get("movement_id", ""),
             "referencia": current.get("referencia", ""),
             "quality_status": status.currentText(),
+            "qtd_aprovada": approved_qty.value(),
+            "qtd_rejeitada": rejected_qty.value(),
             "defeito": defect_txt,
             "decisao": decision.currentText(),
-            "create_nc": status.currentText() == "REJEITADO" or bool(defect_txt),
+            "create_nc": rejected_qty.value() > 0 or status.currentText() in {"REJEITADO", "DEVOLVER_FORNECEDOR"} or bool(defect_txt),
         }
         try:
             self.backend.quality_reception_save(payload)
@@ -386,6 +580,7 @@ class QualityPage(QWidget):
                     row.get("id", ""),
                     row.get("estado", ""),
                     row.get("gravidade", ""),
+                    row.get("qtd_rejeitada", ""),
                     row.get("entidade_label", "") or row.get("entidade_id", ""),
                     row.get("referencia", ""),
                     row.get("origem", ""),
@@ -455,6 +650,10 @@ class QualityPage(QWidget):
         self._edit_nc(self._find_nc(nc_id))
 
     def _edit_nc(self, current: dict[str, Any]) -> None:
+        try:
+            self.link_options = dict(self.backend.quality_link_options() or {})
+        except Exception:
+            self.link_options = {}
         dialog = QDialog(self)
         dialog.setWindowTitle("Nao conformidade")
         dialog.resize(760, 620)
@@ -663,6 +862,10 @@ class QualityPage(QWidget):
         self._edit_document(self._find_document(doc_id))
 
     def _edit_document(self, current: dict[str, Any]) -> None:
+        try:
+            self.link_options = dict(self.backend.quality_link_options() or {})
+        except Exception:
+            self.link_options = {}
         dialog = QDialog(self)
         dialog.setWindowTitle("Documento / evidencia")
         dialog.resize(720, 420)

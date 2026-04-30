@@ -2077,8 +2077,6 @@ class LegacyBackend(
             secao_txt = str(preview.get("secao_label", "") or "").strip()
             if secao_txt and secao_txt != "-":
                 tipo = f"{tipo} / {secao_txt}"
-            if quality_status and quality_status != "Aprovado":
-                tipo = f"{tipo} / {quality_status}"
             lote_txt = str(material.get("lote_fornecedor", "") or "").strip()
             origem_lotes = list(material.get("origem_lotes_baixa", []) or [])
             if bool(material.get("is_sobra")) and origem_lotes:
@@ -3462,6 +3460,15 @@ class LegacyBackend(
         for index, prod in enumerate(list(self.ensure_data().get("produtos", []) or [])):
             price_unit = round(self._parse_float(self.desktop_main.produto_preco_unitario(prod), 0), 4)
             qty = self._parse_float(prod.get("qty", 0), 0)
+            quality_status = str(prod.get("quality_status", "") or "").strip()
+            quality_display_status = (
+                "EM_INSPECAO"
+                if self._parse_float(prod.get("quality_pending_qty", 0), 0) > 0
+                else quality_status
+            )
+            quality_blocked = bool(prod.get("quality_blocked")) or (
+                bool(quality_display_status) and not self._quality_status_is_available(quality_display_status)
+            )
             alerta = self._parse_float(prod.get("alerta", 0), 0)
             row = {
                 "codigo": str(prod.get("codigo", "") or "").strip(),
@@ -3481,11 +3488,15 @@ class LegacyBackend(
                 "fabricante": str(prod.get("fabricante", "") or "").strip(),
                 "modelo": str(prod.get("modelo", "") or "").strip(),
                 "obs": str(prod.get("obs", "") or "").strip(),
+                "quality_status": quality_display_status,
+                "quality_pending_qty": round(self._parse_float(prod.get("quality_pending_qty", 0), 0), 4),
                 "updated_at": str(prod.get("atualizado_em", "") or "").strip(),
             }
             if query and not any(query in str(value).lower() for value in row.values()):
                 continue
-            if qty <= 0 or (alerta > 0 and qty <= alerta):
+            if quality_blocked:
+                severity = "warning"
+            elif qty <= 0 or (alerta > 0 and qty <= alerta):
                 severity = "warning"
             else:
                 severity = "ok"
@@ -6803,6 +6814,8 @@ class LegacyBackend(
         kind_txt = str(kind or "").strip().lower()
         if kind_txt == "shortage":
             score = min(100, score + 8)
+        elif kind_txt == "uncativated":
+            score = min(100, score + 6)
         elif kind_txt in {"retalho", "keep_ready"}:
             score = min(100, score + 4)
         elif kind_txt in {"fito_lot", "separate_lot"}:
@@ -6935,13 +6948,15 @@ class LegacyBackend(
                     ),
                     2,
                 )
-                suggested_candidate = dict(standard_pool[min(index - 1, len(standard_pool) - 1)]) if standard_pool else {}
-                if suggested_candidate:
-                    need["preferred_lot"] = str(suggested_candidate.get("lote", "") or "").strip()
-                    need["preferred_material_id"] = str(suggested_candidate.get("material_id", "") or "").strip()
-                    need["preferred_dimensao"] = str(suggested_candidate.get("dimensao", "") or "").strip()
-                    need["preferred_disponivel"] = round(self._parse_float(suggested_candidate.get("disponivel", 0), 0), 2)
+                material_cativado = bool(need.get("material_cativado"))
+                if not material_cativado:
+                    need["preferred_lot"] = ""
+                    need["preferred_material_id"] = ""
+                    need["preferred_dimensao"] = ""
+                    need["preferred_disponivel"] = 0.0
                 else:
+                    need["preferred_lot"] = str(need.get("preferred_lot", "") or "").strip()
+                    need["preferred_material_id"] = str(need.get("preferred_material_id", "") or "").strip()
                     need["preferred_dimensao"] = str(need.get("preferred_dimensao", "") or "").strip()
                     need["preferred_disponivel"] = round(self._parse_float(need.get("preferred_disponivel", 0), 0), 2)
                 need["lot_change_required"] = False
@@ -6961,6 +6976,8 @@ class LegacyBackend(
                 rows.sort(key=lambda row: int(row.get("priority_position", 9999) or 9999))
 
             for need in group_rows:
+                if not bool(need.get("material_cativado")):
+                    continue
                 suggested_lot = str(need.get("preferred_lot", "") or "").strip()
                 current_lot = str(need.get("current_lot", "") or "").strip()
                 if not suggested_lot:
@@ -7108,6 +7125,18 @@ class LegacyBackend(
                     plan_info = upcoming_plan.get(key)
                     next_action_dt = plan_info.get("start_dt") if plan_info else None
                     if next_action_dt is None and delivery_date is not None:
+                        # A folha operacional de separacao nao deve inventar trabalho a partir
+                        # da data de entrega. Sem planeamento laser, reserva ou lote definido,
+                        # a linha fica fora da separacao para evitar instrucoes falsas.
+                        current_lot_probe = str(esp_obj.get("lote_baixa", "") or "").strip()
+                        has_reservation_probe = any(
+                            self.encomendas_actions._norm_material(reserva.get("material")) == self.encomendas_actions._norm_material(mat_name)
+                            and self.encomendas_actions._norm_espessura(reserva.get("espessura")) == self.encomendas_actions._norm_espessura(esp)
+                            for reserva in list(enc.get("reservas", []) or [])
+                            if isinstance(reserva, dict)
+                        )
+                        if not current_lot_probe and not has_reservation_probe:
+                            continue
                         next_action_dt = datetime.combine(delivery_date, datetime.min.time()) + timedelta(hours=8)
                     if next_action_dt is None:
                         continue
@@ -7157,7 +7186,36 @@ class LegacyBackend(
                     )
                     if piece_qty <= 0:
                         piece_qty = float(len(list(esp_obj.get("pecas", []) or [])) or 1)
-                    preferred_standard = dict(standard_candidates[0]) if standard_candidates else {}
+                    chapa_reservada = self._order_reserved_sheet(numero, mat_name, esp)
+                    reserved_lot = next(
+                        (
+                            str(reserva.get("lote", "") or "").strip()
+                            for reserva in matching_reservas
+                            if str(reserva.get("lote", "") or "").strip()
+                        ),
+                        "",
+                    )
+                    reserved_material_id = next(
+                        (
+                            str(reserva.get("material_id", "") or "").strip()
+                            for reserva in matching_reservas
+                            if str(reserva.get("material_id", "") or "").strip()
+                        ),
+                        "",
+                    )
+                    material_cativado = bool(current_lot or matching_reservas)
+                    preferred_standard = {}
+                    if material_cativado:
+                        for row in standard_candidates:
+                            row_lote = str(row.get("lote", "") or "").strip()
+                            row_id = str(row.get("material_id", "") or "").strip()
+                            if (
+                                (current_lot and row_lote.lower() == current_lot.lower())
+                                or (reserved_lot and row_lote.lower() == reserved_lot.lower())
+                                or (reserved_material_id and row_id == reserved_material_id)
+                            ):
+                                preferred_standard = dict(row)
+                                break
                     need = {
                         "key": "|".join(key),
                         "resource_key": self._material_assistant_resource_key(mat_name, esp),
@@ -7185,15 +7243,16 @@ class LegacyBackend(
                         "plan_origin": "Planeamento" if plan_info else "Entrega",
                         "reserved_qty": round(reserved_qty, 2),
                         "reserved_count": len(matching_reservas),
+                        "material_cativado": material_cativado,
                         "current_lot": current_lot,
-                        "preferred_lot": str(preferred_standard.get("lote", "") or "").strip(),
-                        "preferred_material_id": str(preferred_standard.get("material_id", "") or "").strip(),
+                        "preferred_lot": str(current_lot or reserved_lot or preferred_standard.get("lote", "") or "").strip(),
+                        "preferred_material_id": str(reserved_material_id or preferred_standard.get("material_id", "") or "").strip(),
                         "preferred_dimensao": str(preferred_standard.get("dimensao", "") or "").strip(),
                         "preferred_disponivel": round(self._parse_float(preferred_standard.get("disponivel", 0), 0), 2),
                         "retalho_count": len(retalho_candidates),
                         "standard_lot_count": len(standard_candidates),
                         "piece_qty": piece_qty,
-                        "chapa": self._order_reserved_sheet(numero, mat_name, esp),
+                        "chapa": chapa_reservada,
                         "retalho_candidates": retalho_candidates[:4],
                         "standard_candidates": standard_candidates[:4],
                         "stock_options_txt": self._material_assistant_stock_options_text(standard_candidates[:4], retalho_candidates[:4]),
@@ -7219,6 +7278,7 @@ class LegacyBackend(
             reservations = list(need.get("reservation_rows", []) or [])
             current_lot = str(need.get("current_lot", "") or "").strip()
             preferred_lot = str(need.get("preferred_lot", "") or "").strip()
+            material_cativado = bool(need.get("material_cativado"))
 
             def _append_suggestion(kind: str, headline: str, recommendation: str, detail_lines: list[str], *, target_id: str = "") -> None:
                 suggestion_id = "|".join(
@@ -7272,6 +7332,20 @@ class LegacyBackend(
                         f"Cliente: {need.get('cliente', '-')}",
                         f"Próxima ação: {need.get('next_action_label', '-')}",
                         "Ação sugerida: validar compra/abertura de lote antes de libertar para o corte.",
+                    ],
+                )
+                continue
+
+            if not material_cativado:
+                _append_suggestion(
+                    "uncativated",
+                    "Material sem cativação",
+                    f"{numero} precisa de {material} {esp}, mas ainda não existe chapa/lote cativado.",
+                    [
+                        f"Cliente: {need.get('cliente', '-')}",
+                        f"Próxima ação: {need.get('next_action_label', '-')}",
+                        f"Opções disponíveis: {need.get('stock_options_txt', '-') or '-'}",
+                        "Ação obrigatória: cativar a chapa antes de aparecer uma instrução de separação com lote.",
                     ],
                 )
                 continue
@@ -7386,12 +7460,17 @@ class LegacyBackend(
         for need in list(snapshot.get("needs", []) or []):
             current_suggestions = list(suggestions_by_need.get(str(need.get("key", "") or "").strip(), []) or [])
             lead = dict(current_suggestions[0]) if current_suggestions else {}
+            material_cativado = bool(need.get("material_cativado"))
             preferred_lot = str(need.get("preferred_lot", "") or "-").strip() or "-"
-            recommendation = (
-                f"Separar lote {preferred_lot}"
-                if preferred_lot and preferred_lot != "-"
-                else "Validar materia-prima"
-            )
+            if not material_cativado:
+                preferred_lot = "-"
+                recommendation = "Sem material cativado - cativar chapa antes de separar"
+            else:
+                recommendation = (
+                    f"Separar lote {preferred_lot}"
+                    if preferred_lot and preferred_lot != "-"
+                    else "Validar materia-prima cativada"
+                )
             if bool(need.get("lot_change_required")) and preferred_lot and preferred_lot != "-":
                 recommendation = f"Separar lote {preferred_lot} para a encomenda urgente"
             reserved_qty = self._parse_float(need.get("reserved_qty", 0), 0)
@@ -7471,27 +7550,38 @@ class LegacyBackend(
                 )
                 row_key = f"{need_key}|{source_id}|{source_kind}"
                 row_checks = dict(check_map.get(row_key, {}) or {})
-                lote_sugerido = (
-                    str(source_candidate.get("lote", "") or "").strip()
-                    or str(reserva_row.get("lote", "") or "").strip()
-                    or preferred_lot
-                    or "-"
-                )
-                dimensao = (
-                    str(source_candidate.get("dimensao", "") or "").strip()
-                    or str(need.get("preferred_dimensao", "") or "").strip()
-                    or "-"
-                )
+                if not material_cativado and source_kind != "reserva":
+                    lote_sugerido = "-"
+                    dimensao = "-"
+                else:
+                    lote_sugerido = (
+                        str(source_candidate.get("lote", "") or "").strip()
+                        or str(reserva_row.get("lote", "") or "").strip()
+                        or preferred_lot
+                        or "-"
+                    )
+                    dimensao = (
+                        str(source_candidate.get("dimensao", "") or "").strip()
+                        or str(need.get("preferred_dimensao", "") or "").strip()
+                        or "-"
+                    )
                 formato_sort = self.desktop_main.norm_text(dimensao.replace(" ", "")) or "sem-formato"
                 is_retalho = bool(source_candidate.get("is_retalho")) or source_kind == "retalho"
-                reserva_label = "Cativado" if source_kind == "reserva" else ("Retalho sugerido" if is_retalho else "Por separar")
+                if source_kind == "reserva":
+                    reserva_label = "Cativado"
+                elif not material_cativado:
+                    reserva_label = "Sem material cativado"
+                else:
+                    reserva_label = "Retalho sugerido" if is_retalho else "Por separar"
                 action_text = recommendation
                 if source_kind == "reserva":
                     action_text = f"Separar {lote_sugerido} (cativado)"
                 elif is_retalho:
                     action_text = f"Avaliar retalho {lote_sugerido}"
-                elif lote_sugerido and lote_sugerido != "-":
+                elif material_cativado and lote_sugerido and lote_sugerido != "-":
                     action_text = f"Separar lote {lote_sugerido}"
+                parsed_quantity = round(self._parse_float(quantity_value, 0), 2)
+                operational_quantity = parsed_quantity if material_cativado else 0.0
                 return {
                     "numero": str(need.get("numero", "") or "").strip(),
                     "cliente": str(need.get("cliente", "") or "").strip(),
@@ -7499,8 +7589,11 @@ class LegacyBackend(
                     "material": material_label,
                     "espessura": espessura_label,
                     "dimensao": dimensao,
-                    "quantidade": round(self._parse_float(quantity_value, 0), 2),
-                    "disponivel": round(self._parse_float(source_candidate.get("disponivel", need.get("preferred_disponivel", 0)), 0), 2),
+                    "quantidade": operational_quantity,
+                    "quantidade_necessaria": parsed_quantity,
+                    "quantidade_label": self._fmt(operational_quantity) if material_cativado else "-",
+                    "necessidade_label": self._fmt(parsed_quantity),
+                    "disponivel": round(self._parse_float(source_candidate.get("disponivel", need.get("preferred_disponivel", 0)), 0), 2) if material_cativado else 0.0,
                     "data_entrega": str(need.get("data_entrega", "") or "").strip(),
                     "proxima_acao": str(need.get("next_action_label", "") or "-").strip(),
                     "origem_planeamento": str(need.get("plan_origin", "") or "-").strip(),
@@ -7514,12 +7607,13 @@ class LegacyBackend(
                     "alerta_retalho": bool(int(need.get("retalho_count", 0) or 0) > 0),
                     "alerta_texto": "Existe retalho compativel para avaliar" if int(need.get("retalho_count", 0) or 0) > 0 else "",
                     "opcoes_mp": str(need.get("stock_options_txt", "") or "").strip(),
-                    "priority_label": str(lead.get("priority_label", "") or ("Alta" if not bool(need.get("stock_ready")) else "Media")).strip(),
-                    "priority_tone": str(lead.get("priority_tone", "") or ("danger" if not bool(need.get("stock_ready")) else "info")).strip(),
+                    "priority_label": str(lead.get("priority_label", "") or ("Alta" if (not bool(need.get("stock_ready")) or not material_cativado) else "Media")).strip(),
+                    "priority_tone": str(lead.get("priority_tone", "") or ("danger" if not bool(need.get("stock_ready")) else "warning" if not material_cativado else "info")).strip(),
                     "priority_score": int(lead.get("priority_score", 0) or 0),
                     "status_label": str(lead.get("status_label", "") or "Pendente").strip(),
                     "status_key": str(lead.get("status_key", "") or "new").strip(),
                     "stock_ready": bool(need.get("stock_ready")),
+                    "material_cativado": material_cativado,
                     "need_key": need_key,
                     "check_key": row_key,
                     "visto_sep_checked": bool(row_checks.get("sep")),
@@ -7565,7 +7659,7 @@ class LegacyBackend(
                     source_kind="principal",
                     source_index=1,
                     quantity_value=need.get("quantidade_preparar", 0),
-                    source_candidate=dict(standard_candidates[0]) if standard_candidates else {},
+                    source_candidate=dict(standard_candidates[0]) if standard_candidates and material_cativado else {},
                 )
             )
         format_map: dict[str, set[str]] = {}
@@ -7815,6 +7909,8 @@ class LegacyBackend(
                 def draw_group_header(current_y: float, group_rows: list[dict[str, Any]]) -> float:
                     group_ref = dict(group_rows[0] or {})
                     group_qty = sum(self._parse_float(row.get("quantidade", 0), 0) for row in group_rows)
+                    group_need_qty = sum(self._parse_float(row.get("quantidade_necessaria", row.get("quantidade", 0)), 0) for row in group_rows)
+                    all_uncativated = bool(group_rows) and all(not bool(row.get("material_cativado")) for row in group_rows)
                     lotes = {
                         str(row.get("lote_sugerido", row.get("lote_atual", "-")) or "-").strip()
                         for row in group_rows
@@ -7834,6 +7930,11 @@ class LegacyBackend(
                     c.setFont("Helvetica-Bold", 8.2)
                     c.drawString(margin + 8, current_y - 10, pdf_group_label(group_ref))
                     c.setFont("Helvetica", 7.0)
+                    qty_summary = (
+                        f"sem cativacao | nec. {self._fmt(group_need_qty)} un."
+                        if all_uncativated
+                        else f"{self._fmt(group_qty)} un."
+                    )
                     c.drawRightString(
                         width - margin - 8,
                         current_y - 10,
@@ -7841,7 +7942,7 @@ class LegacyBackend(
                             f"{group_ref.get('planeamento_dia', '-')} | "
                             f"{group_ref.get('planeamento_turno', '-')} | "
                             f"{group_ref.get('cliente', '-')} | "
-                            f"{len(formatos)} formatos | {self._fmt(group_qty)} un. | {len(lotes)} lotes"
+                            f"{len(formatos)} formatos | {qty_summary} | {len(lotes)} lotes"
                         ),
                     )
                     return current_y - 24
@@ -7877,7 +7978,7 @@ class LegacyBackend(
                             str(row.get("priority_label", "") or "-"),
                             clip(row.get("lote_sugerido", row.get("lote_atual", "-")), columns[1][1]),
                             clip(row.get("dimensao", "-"), columns[2][1]),
-                            self._fmt(row.get("quantidade", 0)),
+                            str(row.get("quantidade_label", "") or self._fmt(row.get("quantidade", 0))),
                             clip(row.get("planeamento_dia", "-"), columns[4][1]),
                             clip(row.get("planeamento_hora", row.get("proxima_acao", "-")), columns[5][1]),
                             clip(row.get("acao_sugerida", "-"), columns[6][1]),
@@ -8186,7 +8287,8 @@ class LegacyBackend(
         kind_order = {
             "fito_lot": 0,
             "keep_ready": 1,
-            "shortage": 2,
+            "uncativated": 2,
+            "shortage": 3,
         }
         rows.sort(
             key=lambda row: (
@@ -8207,6 +8309,7 @@ class LegacyBackend(
             mapping = {
                 "fito_lot": "Troca por urgencia / FIFO",
                 "keep_ready": "Nao arrumar / manter pronto",
+                "uncativated": "Sem material cativado",
                 "shortage": "Sem stock",
             }
             return mapping.get(kind, "Sugestao operacional")
@@ -8216,6 +8319,7 @@ class LegacyBackend(
             mapping = {
                 "fito_lot": "#0f3d91",
                 "keep_ready": "#b45309",
+                "uncativated": "#b45309",
                 "shortage": "#b91c1c",
             }
             return mapping.get(kind, "#334155")
@@ -10266,7 +10370,7 @@ class LegacyBackend(
             if product is None:
                 shortages.append(f"{code or '-'}: produto nao encontrado")
                 continue
-            if bool(product.get("quality_blocked")) or str(product.get("quality_status", "") or "").strip().lower() in {"bloqueado", "reclamado", "rejeitado", "em inspeção", "em inspecao"}:
+            if bool(product.get("quality_blocked")) or (str(product.get("quality_status", "") or "").strip() and not self._quality_status_is_available(product.get("quality_status", ""))):
                 shortages.append(f"{code}: bloqueado pela qualidade")
                 continue
             available = self._parse_float(product.get("qty", 0), 0)
@@ -10288,7 +10392,7 @@ class LegacyBackend(
                 product = product_map.get(code)
                 if product is None:
                     continue
-                if bool(product.get("quality_blocked")) or str(product.get("quality_status", "") or "").strip().lower() in {"bloqueado", "reclamado", "rejeitado", "em inspeção", "em inspecao"}:
+                if bool(product.get("quality_blocked")) or (str(product.get("quality_status", "") or "").strip() and not self._quality_status_is_available(product.get("quality_status", ""))):
                     raise ValueError(f"Produto {code} bloqueado pela qualidade.")
                 before = self._parse_float(product.get("qty", 0), 0)
                 after = max(0.0, before - pending)
@@ -10789,8 +10893,21 @@ class LegacyBackend(
             due = str(row.get("prazo", "") or "").strip()[:10]
             if due and due < today:
                 overdue += 1
-        supplier_ncs = [row for row in ncs if str(row.get("tipo", "") or "").strip().casefold() == "fornecedor" or str(row.get("fornecedor_id", "") or row.get("fornecedor_nome", "") or "").strip()]
-        blocked_materials = [row for row in list(data.get("materiais", []) or []) if self._material_quality_is_blocked(row)]
+        supplier_ncs = [
+            row
+            for row in open_ncs
+            if str(row.get("tipo", "") or "").strip().casefold() == "fornecedor"
+            or str(row.get("fornecedor_id", "") or row.get("fornecedor_nome", "") or "").strip()
+        ]
+        blocked_materials = [
+            row
+            for row in self._quality_iter_delivery_movements(ensure_ids=False)
+            if str(row.get("entity_type", "") or "") == "Material"
+            and (
+                self._parse_float(row.get("pending_qty", 0), 0) > 0
+                or not self._quality_status_is_available(row.get("status", ""))
+            )
+        ]
         return {
             "open_nc": len(open_ncs),
             "overdue_nc": overdue,
@@ -10803,18 +10920,33 @@ class LegacyBackend(
         }
 
     def quality_data_health(self) -> dict[str, Any]:
-        options = self.quality_link_options()
+        data = self.ensure_data()
+        known: dict[str, set[str]] = {
+            "Encomenda": {str(row.get("numero", "") or "").strip() for row in list(data.get("encomendas", []) or []) if isinstance(row, dict)},
+            "Material": {str(row.get("id", "") or "").strip() for row in list(data.get("materiais", []) or []) if isinstance(row, dict)},
+            "Produto": {str(row.get("codigo", "") or "").strip() for row in list(data.get("produtos", []) or []) if isinstance(row, dict)},
+            "Fornecedor": {
+                str(row.get("id", "") or row.get("nome", "") or "").strip()
+                for row in list(data.get("fornecedores", []) or [])
+                if isinstance(row, dict)
+            },
+            "Cliente": {str(row.get("codigo", "") or row.get("nome", "") or "").strip() for row in list(data.get("clientes", []) or []) if isinstance(row, dict)},
+            "Documento": {str(row.get("id", "") or row.get("titulo", "") or "").strip() for row in list(data.get("quality_documents", []) or []) if isinstance(row, dict)},
+        }
+        reception_keys = self._quality_reception_entity_keys()
         issues: list[dict[str, str]] = []
-        for row in list(self.ensure_data().get("quality_nonconformities", []) or []):
+        for row in list(data.get("quality_nonconformities", []) or []):
             if not isinstance(row, dict):
                 continue
             entity_type = str(row.get("entidade_tipo", "") or "").strip()
             entity_id = str(row.get("entidade_id", "") or "").strip()
             if entity_type and entity_type != "Livre" and entity_id:
-                known = {str(item.get("id", "") or "").strip() for item in list(options.get(entity_type, []) or [])}
-                if entity_id not in known:
+                if entity_type in {"Material", "Produto"} and (entity_type, entity_id) not in reception_keys and str(row.get("origem", "") or "").strip().casefold() == "receção fornecedor":
+                    continue
+                known_ids = known.get(entity_type)
+                if known_ids is not None and entity_id not in known_ids:
                     issues.append({"tipo": "NC", "id": str(row.get("id", "") or ""), "problema": f"Ligacao inexistente: {entity_type} {entity_id}"})
-        for row in list(self.ensure_data().get("quality_documents", []) or []):
+        for row in list(data.get("quality_documents", []) or []):
             if not isinstance(row, dict):
                 continue
             path_txt = str(row.get("caminho", "") or "").strip()
@@ -10822,11 +10954,14 @@ class LegacyBackend(
                 issues.append({"tipo": "Documento", "id": str(row.get("id", "") or ""), "problema": f"Ficheiro nao encontrado: {path_txt}"})
         open_nc_ids = {
             str(row.get("id", "") or "").strip()
-            for row in list(self.ensure_data().get("quality_nonconformities", []) or [])
+            for row in list(data.get("quality_nonconformities", []) or [])
             if isinstance(row, dict) and str(row.get("estado", "") or "Aberta").strip().lower() not in {"fechada", "cancelada"}
         }
-        for material in list(self.ensure_data().get("materiais", []) or []):
+        for material in list(data.get("materiais", []) or []):
             if not isinstance(material, dict) or not self._material_quality_is_blocked(material):
+                continue
+            material_id = str(material.get("id", "") or "").strip()
+            if ("Material", material_id) not in reception_keys:
                 continue
             status_norm = str(material.get("quality_status", "") or material.get("inspection_status", "") or "").strip().casefold()
             if "inspe" in status_norm and not any(token in status_norm for token in ("bloque", "reclam", "rejeit")):
@@ -10839,6 +10974,7 @@ class LegacyBackend(
         return {"issues": issues, "ok": not issues}
 
     def quality_link_options(self) -> dict[str, list[dict[str, str]]]:
+        data = self.ensure_data()
         options: dict[str, list[dict[str, str]]] = {
             "Livre": [{"id": "", "label": ""}],
             "OPP": [],
@@ -10849,66 +10985,53 @@ class LegacyBackend(
             "Cliente": [],
             "Documento": [],
         }
-        try:
-            for row in list(self.opp_rows("", "Todos", "Todos", "Todas", "Todos") or []):
-                opp = str(row.get("opp", "") or "").strip()
-                if not opp:
-                    continue
-                label = " | ".join(
-                    part
-                    for part in (
-                        opp,
-                        str(row.get("encomenda", "") or "").strip(),
-                        str(row.get("ref_interna", "") or "").strip(),
-                        str(row.get("descricao", "") or "").strip(),
-                    )
-                    if part
-                )
-                options["OPP"].append({"id": opp, "label": label})
-        except Exception:
-            pass
-        for enc in list(self.ensure_data().get("encomendas", []) or []):
+        for row in list(data.get("plano", []) or []):
+            if not isinstance(row, dict):
+                continue
+            opp = str(row.get("opp", "") or row.get("OPP", "") or "").strip()
+            if opp:
+                options["OPP"].append({"id": opp, "label": f"{opp} | {str(row.get('encomenda', '') or '').strip()}".strip(" |")})
+        for enc in list(data.get("encomendas", []) or []):
             numero = str((enc or {}).get("numero", "") or "").strip()
             if numero:
                 options["Encomenda"].append({"id": numero, "label": f"{numero} | {str((enc or {}).get('cliente', '') or '').strip()}"})
-        try:
-            for row in list(self.material_rows("") or []):
-                material_id = str(row.get("id", "") or "").strip()
-                if material_id:
-                    options["Material"].append(
-                        {
-                            "id": material_id,
-                            "label": " | ".join(
-                                part
-                                for part in (
-                                    material_id,
-                                    str(row.get("material", "") or "").strip(),
-                                    str(row.get("espessura", "") or "").strip(),
-                                    str(row.get("formato", "") or "").strip(),
-                                )
-                                if part
-                            ),
-                        }
-                    )
-        except Exception:
-            pass
-        for row in list(self.ensure_data().get("produtos", []) or []):
+        for row in list(data.get("materiais", []) or []):
+            if not isinstance(row, dict):
+                continue
+            material_id = str(row.get("id", "") or "").strip()
+            if material_id:
+                options["Material"].append(
+                    {
+                        "id": material_id,
+                        "label": " | ".join(
+                            part
+                            for part in (
+                                material_id,
+                                str(row.get("material", "") or "").strip(),
+                                str(row.get("espessura", "") or "").strip(),
+                                str(row.get("formato", "") or "").strip(),
+                            )
+                            if part
+                        ),
+                    }
+                )
+        for row in list(data.get("produtos", []) or []):
             if not isinstance(row, dict):
                 continue
             code = str(row.get("codigo", "") or "").strip()
             if code:
                 options["Produto"].append({"id": code, "label": f"{code} | {str(row.get('descricao', '') or '').strip()}".strip(" |")})
-        for row in list(self.ensure_data().get("fornecedores", []) or []):
+        for row in list(data.get("fornecedores", []) or []):
             supplier_id = str((row or {}).get("id", "") or "").strip()
             name = str((row or {}).get("nome", "") or "").strip()
             if supplier_id or name:
                 options["Fornecedor"].append({"id": supplier_id or name, "label": f"{supplier_id} | {name}".strip(" |")})
-        for row in list(self.ensure_data().get("clientes", []) or []):
+        for row in list(data.get("clientes", []) or []):
             code = str((row or {}).get("codigo", "") or "").strip()
             name = str((row or {}).get("nome", "") or "").strip()
             if code or name:
                 options["Cliente"].append({"id": code or name, "label": f"{code} | {name}".strip(" |")})
-        for row in list(self.ensure_data().get("quality_documents", []) or []):
+        for row in list(data.get("quality_documents", []) or []):
             doc_id = str((row or {}).get("id", "") or "").strip()
             title = str((row or {}).get("titulo", "") or "").strip()
             if doc_id or title:
@@ -10929,11 +11052,205 @@ class LegacyBackend(
 
     def _quality_status_code(self, value: Any) -> str:
         raw = str(value or "").strip().casefold()
+        if "devol" in raw:
+            return "DEVOLVER_FORNECEDOR"
+        if "averig" in raw or "analise" in raw or "análise" in raw:
+            return "EM_AVERIGUACAO"
         if "rejeit" in raw:
             return "REJEITADO"
         if "aprov" in raw:
             return "APROVADO"
         return "EM_INSPECAO"
+
+    def _quality_status_is_available(self, value: Any) -> bool:
+        return self._quality_status_code(value) == "APROVADO"
+
+    def _quality_quarantine_pending_stock(self, item: dict[str, Any], *, kind: str) -> bool:
+        if not isinstance(item, dict):
+            return False
+        status = self._quality_status_code(item.get("quality_status", item.get("inspection_status", "")))
+        if status == "APROVADO":
+            return False
+        qty_key = "qty" if str(kind or "").casefold().startswith("prod") else "quantidade"
+        current_qty = self._parse_float(item.get(qty_key, 0), 0)
+        pending = self._parse_float(item.get("quality_pending_qty", 0), 0)
+        if current_qty <= 0:
+            return False
+        item["quality_pending_qty"] = pending + current_qty
+        item["quality_received_qty"] = max(self._parse_float(item.get("quality_received_qty", 0), 0), pending + current_qty)
+        item[qty_key] = 0.0
+        item["quality_blocked"] = True
+        item["logistic_status"] = str(item.get("logistic_status", "") or "RECEBIDO").strip()
+        item["atualizado_em"] = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
+        return True
+
+    def _quality_movement_pending_qty(self, movement: dict[str, Any]) -> float:
+        qty = self._parse_float(movement.get("qtd", 0), 0)
+        approved = self._parse_float(movement.get("quality_approved_qty", 0), 0)
+        rejected = self._parse_float(movement.get("quality_rejected_qty", 0), 0)
+        status = self._quality_status_code(movement.get("quality_status", movement.get("inspection_status", "")))
+        if approved <= 0 and rejected <= 0:
+            if status == "APROVADO":
+                approved = qty
+            elif status in {"REJEITADO", "DEVOLVER_FORNECEDOR"}:
+                rejected = qty
+        return max(0.0, qty - approved - rejected)
+
+    def _quality_delivery_movement_id(self, note_number: str, line_index: int, movement_index: int, entity_type: str, entity_id: str) -> str:
+        return "|".join(
+            str(part or "").strip()
+            for part in (
+                note_number,
+                f"L{int(line_index or 0)}",
+                f"M{int(movement_index or 0)}",
+                entity_type,
+                entity_id,
+            )
+        )
+
+    def _quality_reception_entity_keys(self) -> set[tuple[str, str]]:
+        return {
+            (str(row.get("entity_type", "") or "").strip(), str(row.get("entity_id", "") or "").strip())
+            for row in self._quality_iter_delivery_movements(ensure_ids=False)
+            if str(row.get("entity_type", "") or "").strip() and str(row.get("entity_id", "") or "").strip()
+        }
+
+    def _quality_iter_delivery_movements(self, *, ensure_ids: bool = False) -> list[dict[str, Any]]:
+        data = self.ensure_data()
+        rows: list[dict[str, Any]] = []
+        changed = False
+        for note in list(data.get("notas_encomenda", []) or []):
+            if not isinstance(note, dict):
+                continue
+            note_number = str(note.get("numero", "") or "").strip()
+            for line_index, line in enumerate(list(note.get("linhas", []) or [])):
+                if not isinstance(line, dict):
+                    continue
+                entity_type = "Material" if self.desktop_main.origem_is_materia(line.get("origem", "")) else "Produto"
+                fallback_ref = str(line.get("ref", "") or "").strip()
+                for movement_index, movement in enumerate(list(line.get("entregas_linha", []) or [])):
+                    if not isinstance(movement, dict):
+                        continue
+                    entity_id = str(movement.get("stock_ref", "") or fallback_ref).strip()
+                    if not entity_id:
+                        continue
+                    movement_id = str(movement.get("quality_movement_id", "") or "").strip()
+                    if not movement_id:
+                        movement_id = self._quality_delivery_movement_id(note_number, line_index, movement_index, entity_type, entity_id)
+                    status = self._quality_status_code(
+                        movement.get("quality_status", "")
+                        or movement.get("inspection_status", "")
+                        or line.get("quality_status", "")
+                        or line.get("inspection_status", "")
+                        or "EM_INSPECAO"
+                    )
+                    qty = self._parse_float(movement.get("qtd", 0), 0)
+                    approved = self._parse_float(movement.get("quality_approved_qty", 0), 0)
+                    rejected = self._parse_float(movement.get("quality_rejected_qty", 0), 0)
+                    if approved <= 0 and rejected <= 0:
+                        if status == "APROVADO":
+                            approved = qty
+                        elif status in {"REJEITADO", "DEVOLVER_FORNECEDOR"}:
+                            rejected = qty
+                        else:
+                            open_nc = self._quality_find_open_nc(
+                                {
+                                    "origem": "Receção fornecedor",
+                                    "referencia": note_number,
+                                    "entidade_tipo": entity_type,
+                                    "entidade_id": entity_id,
+                                }
+                            )
+                            if open_nc is not None:
+                                approved = min(qty, self._quality_nc_quantity(open_nc, "qtd_aprovada"))
+                                rejected = min(qty - approved, self._quality_nc_quantity(open_nc, "qtd_rejeitada"))
+                                if approved > 0 or rejected > 0:
+                                    pending_guess = max(0.0, qty - approved - rejected)
+                                    status = "EM_INSPECAO" if pending_guess > 0 else ("APROVADO" if approved > 0 else "REJEITADO")
+                    pending = max(0.0, qty - approved - rejected)
+                    rows.append(
+                        {
+                            "movement_id": movement_id,
+                            "note": note,
+                            "line": line,
+                            "movement": movement,
+                            "note_number": note_number,
+                            "line_index": line_index,
+                            "movement_index": movement_index,
+                            "entity_type": entity_type,
+                            "entity_id": entity_id,
+                            "qty": qty,
+                            "approved_qty": approved,
+                            "rejected_qty": rejected,
+                            "pending_qty": pending,
+                            "status": status,
+                        }
+                    )
+        if changed:
+            self._save(force=True, audit=False)
+        return rows
+
+    def _quality_sync_pending_from_delivery_movements(self) -> None:
+        movement_rows = self._quality_iter_delivery_movements(ensure_ids=True)
+        data = self.ensure_data()
+        totals: dict[tuple[str, str], dict[str, float]] = {}
+        for row in movement_rows:
+            key = (str(row.get("entity_type", "") or ""), str(row.get("entity_id", "") or ""))
+            bucket = totals.setdefault(key, {"received": 0.0, "pending": 0.0, "approved": 0.0, "rejected": 0.0})
+            bucket["received"] += self._parse_float(row.get("qty", 0), 0)
+            bucket["pending"] += self._parse_float(row.get("pending_qty", 0), 0)
+            bucket["approved"] += self._parse_float(row.get("approved_qty", 0), 0)
+            bucket["rejected"] += self._parse_float(row.get("rejected_qty", 0), 0)
+        changed = False
+
+        def _apply(item: dict[str, Any], entity_type: str, entity_id: str) -> None:
+            nonlocal changed
+            total = totals.get((entity_type, entity_id))
+            if not total:
+                return
+            pending = round(total["pending"], 4)
+            received = round(total["received"], 4)
+            approved = round(total["approved"], 4)
+            rejected = round(total["rejected"], 4)
+            updates = {
+                "quality_pending_qty": pending,
+                "quality_received_qty": received,
+                "quality_approved_qty": approved,
+                "quality_rejected_qty": rejected,
+            }
+            for key, value in updates.items():
+                if abs(self._parse_float(item.get(key, 0), 0) - value) > 1e-6:
+                    item[key] = value
+                    changed = True
+            current_status = self._quality_status_code(item.get("quality_status", item.get("inspection_status", "")))
+            if pending > 0:
+                target_status = "EM_AVERIGUACAO" if current_status == "EM_AVERIGUACAO" else "EM_INSPECAO"
+                target_blocked = True
+            elif approved > 0:
+                target_status = "APROVADO"
+                target_blocked = False
+            elif rejected > 0:
+                target_status = "REJEITADO"
+                target_blocked = True
+            else:
+                target_status = current_status
+                target_blocked = current_status != "APROVADO"
+            if str(item.get("quality_status", "") or "").strip() != target_status:
+                item["quality_status"] = target_status
+                item["inspection_status"] = target_status
+                changed = True
+            if bool(item.get("quality_blocked")) != target_blocked:
+                item["quality_blocked"] = target_blocked
+                changed = True
+
+        for material in list(data.get("materiais", []) or []):
+            if isinstance(material, dict):
+                _apply(material, "Material", str(material.get("id", "") or "").strip())
+        for product in list(data.get("produtos", []) or []):
+            if isinstance(product, dict):
+                _apply(product, "Produto", str(product.get("codigo", "") or "").strip())
+        if changed:
+            self._save(force=True, audit=False)
 
     def _quality_reference_key(self, value: Any, fallback: Any = "") -> str:
         raw = str(value or fallback or "").strip()
@@ -10972,6 +11289,26 @@ class LegacyBackend(
                 return row
         return None
 
+    def _quality_nc_quantity(self, row: dict[str, Any] | None, field: str) -> float:
+        if not isinstance(row, dict):
+            return 0.0
+        for key in (field, field.replace("qtd_", "quality_"), field.replace("qtd_", "")):
+            if key in row:
+                value = self._parse_float(row.get(key, 0), 0)
+                if value:
+                    return value
+        desc = str(row.get("descricao", "") or "")
+        label = {
+            "qtd_recebida": "recebido",
+            "qtd_aprovada": "aprovado",
+            "qtd_rejeitada": "rejeitado",
+            "qtd_pendente": "pendente",
+        }.get(field, field)
+        match = re.search(rf"{re.escape(label)}\s*:\s*([0-9]+(?:[.,][0-9]+)?)", desc, flags=re.IGNORECASE)
+        if match:
+            return self._parse_float(match.group(1), 0)
+        return 0.0
+
     def _quality_normalize_open_nc_duplicates(self) -> None:
         data = self.ensure_data()
         rows = [row for row in list(data.get("quality_nonconformities", []) or []) if isinstance(row, dict)]
@@ -11002,6 +11339,7 @@ class LegacyBackend(
         query = str(filter_text or "").strip().lower()
         state = str(state_filter or "Pendentes").strip().casefold()
         rows: list[dict[str, Any]] = []
+        changed_quarantine = False
 
         def accept_status(status: str) -> bool:
             code = self._quality_status_code(status)
@@ -11011,89 +11349,92 @@ class LegacyBackend(
                 return code == "APROVADO"
             if "rejeit" in state:
                 return code == "REJEITADO"
+            if "devol" in state:
+                return code == "DEVOLVER_FORNECEDOR"
+            if "averig" in state:
+                return code == "EM_AVERIGUACAO"
             return code == "EM_INSPECAO"
 
-        for material in list(self.ensure_data().get("materiais", []) or []):
-            if not isinstance(material, dict):
+        for movement_row in self._quality_iter_delivery_movements(ensure_ids=True):
+            entity_type = str(movement_row.get("entity_type", "") or "").strip()
+            entity_id = str(movement_row.get("entity_id", "") or "").strip()
+            if not entity_type or not entity_id:
                 continue
-            ne_num = str(material.get("inspection_note_number", "") or material.get("origem_ne", "") or "").strip()
-            quality_status = str(material.get("quality_status", "") or material.get("inspection_status", "") or "").strip()
-            if not (ne_num or quality_status or str(material.get("logistic_status", "") or "").strip()):
+            status = str(movement_row.get("status", "") or "EM_INSPECAO").strip()
+            if not accept_status(status):
                 continue
-            if not accept_status(quality_status or "EM_INSPECAO"):
+            pending_qty = self._parse_float(movement_row.get("pending_qty", 0), 0)
+            if "pend" in state and pending_qty <= 0:
                 continue
-            material_id = str(material.get("id", "") or "").strip()
-            lote = str(material.get("lote_fornecedor", "") or "").strip()
+            target = (
+                self.material_by_id(entity_id)
+                if entity_type == "Material"
+                else next((row for row in list(self.ensure_data().get("produtos", []) or []) if isinstance(row, dict) and str(row.get("codigo", "") or "").strip() == entity_id), None)
+            )
+            target = dict(target or {})
+            line = dict(movement_row.get("line", {}) or {})
+            movement = dict(movement_row.get("movement", {}) or {})
             row = {
-                "tipo": "Material",
-                "id": material_id,
-                "ref": material_id,
-                "referencia": ne_num,
-                "material": str(material.get("material", "") or "").strip(),
-                "espessura": str(material.get("espessura", "") or "").strip(),
-                "descricao": " ".join(part for part in (str(material.get("formato", "") or "").strip(), str(material.get("dimensao", material.get("dimensoes", "")) or "").strip()) if part),
-                "lote": lote,
-                "fornecedor": str(material.get("inspection_supplier_name", "") or material.get("fornecedor", "") or "").strip(),
-                "fornecedor_id": str(material.get("inspection_supplier_id", "") or material.get("fornecedor_id", "") or "").strip(),
-                "logistic_status": str(material.get("logistic_status", "") or "RECEBIDO").strip(),
-                "quality_status": self._quality_status_code(quality_status or "EM_INSPECAO"),
-                "defeito": str(material.get("inspection_defect", "") or "").strip(),
-                "decisao": str(material.get("inspection_decision", "") or "").strip(),
-                "qtd": self._parse_float(material.get("quantidade", 0), 0),
-                "nc_id": str(material.get("quality_nc_id", "") or material.get("supplier_claim_id", "") or "").strip(),
-                "guia": str(material.get("inspection_guia", "") or "").strip(),
-                "fatura": str(material.get("inspection_fatura", "") or "").strip(),
-            }
-            if query and not any(query in str(value).lower() for value in row.values()):
-                continue
-            rows.append(row)
-
-        for product in list(self.ensure_data().get("produtos", []) or []):
-            if not isinstance(product, dict):
-                continue
-            ne_num = str(product.get("inspection_note_number", "") or "").strip()
-            quality_status = str(product.get("quality_status", "") or "").strip()
-            if not (ne_num or quality_status or str(product.get("logistic_status", "") or "").strip()):
-                continue
-            if not accept_status(quality_status or "EM_INSPECAO"):
-                continue
-            code = str(product.get("codigo", "") or "").strip()
-            row = {
-                "tipo": "Produto",
-                "id": code,
-                "ref": code,
-                "referencia": ne_num,
-                "material": str(product.get("categoria", "") or "").strip(),
-                "espessura": "",
-                "descricao": str(product.get("descricao", "") or "").strip(),
-                "lote": "",
-                "fornecedor": str(product.get("inspection_supplier_name", "") or "").strip(),
-                "fornecedor_id": str(product.get("inspection_supplier_id", "") or "").strip(),
-                "logistic_status": str(product.get("logistic_status", "") or "RECEBIDO").strip(),
-                "quality_status": self._quality_status_code(quality_status or "EM_INSPECAO"),
-                "defeito": str(product.get("inspection_defect", "") or "").strip(),
-                "decisao": str(product.get("inspection_decision", "") or "").strip(),
-                "qtd": self._parse_float(product.get("qty", 0), 0),
-                "nc_id": str(product.get("quality_nc_id", "") or "").strip(),
-                "guia": str(product.get("inspection_guia", "") or "").strip(),
-                "fatura": str(product.get("inspection_fatura", "") or "").strip(),
+                "tipo": entity_type,
+                "id": entity_id,
+                "ref": entity_id,
+                "movement_id": str(movement_row.get("movement_id", "") or "").strip(),
+                "referencia": str(movement_row.get("note_number", "") or "").strip(),
+                "material": str(target.get("material", "") or target.get("categoria", "") or line.get("material", "") or line.get("categoria", "") or "").strip(),
+                "espessura": str(target.get("espessura", "") or line.get("espessura", "") or "").strip(),
+                "descricao": str(target.get("descricao", "") or line.get("descricao", "") or "").strip(),
+                "lote": str(movement.get("lote_fornecedor", "") or target.get("lote_fornecedor", "") or "").strip(),
+                "fornecedor": str(target.get("inspection_supplier_name", "") or target.get("fornecedor", "") or "").strip(),
+                "fornecedor_id": str(target.get("inspection_supplier_id", "") or target.get("fornecedor_id", "") or "").strip(),
+                "logistic_status": str(movement.get("logistic_status", "") or target.get("logistic_status", "") or "RECEBIDO").strip(),
+                "quality_status": self._quality_status_code(status),
+                "defeito": str(movement.get("inspection_defect", "") or target.get("inspection_defect", "") or "").strip(),
+                "decisao": str(movement.get("inspection_decision", "") or target.get("inspection_decision", "") or "").strip(),
+                "qtd": round(pending_qty, 4),
+                "qtd_recebida": round(self._parse_float(movement_row.get("qty", 0), 0), 4),
+                "qtd_aprovada": round(self._parse_float(movement_row.get("approved_qty", 0), 0), 4),
+                "qtd_rejeitada": round(self._parse_float(movement_row.get("rejected_qty", 0), 0), 4),
+                "qtd_disponivel": self._parse_float(target.get("qty" if entity_type == "Produto" else "quantidade", 0), 0),
+                "nc_id": str(movement.get("quality_nc_id", "") or target.get("quality_nc_id", "") or target.get("supplier_claim_id", "") or "").strip(),
+                "guia": str(movement.get("guia", "") or target.get("inspection_guia", "") or "").strip(),
+                "fatura": str(movement.get("fatura", "") or target.get("inspection_fatura", "") or "").strip(),
             }
             if query and not any(query in str(value).lower() for value in row.values()):
                 continue
             rows.append(row)
         rows.sort(key=lambda item: (str(item.get("quality_status", "")) == "APROVADO", str(item.get("referencia", "")), str(item.get("ref", ""))))
+        if changed_quarantine:
+            self._save(force=True, audit=False)
         return rows
 
     def quality_reception_save(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._quality_sync_pending_from_delivery_movements()
         data = self.ensure_data()
         item_type = str(payload.get("tipo", payload.get("kind", "")) or "").strip().casefold()
         item_id = str(payload.get("id", payload.get("ref", "")) or "").strip()
+        movement_id = str(payload.get("movement_id", "") or "").strip()
         status = self._quality_status_code(payload.get("quality_status", payload.get("inspection_status", "")))
         defect = str(payload.get("defeito", payload.get("inspection_defect", "")) or "").strip()
         decision = str(payload.get("decisao", payload.get("inspection_decision", "")) or "").strip()
         now = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
         if not item_id:
             raise ValueError("Seleciona uma linha de receção para avaliar.")
+        if not movement_id:
+            raise ValueError("A qualidade só pode avaliar movimentos de receção provenientes de notas de encomenda.")
+
+        movement_ctx = None
+        movement_ctx = next(
+            (
+                row
+                for row in self._quality_iter_delivery_movements(ensure_ids=True)
+                if str(row.get("movement_id", "") or "").strip() == movement_id
+            ),
+            None,
+        )
+        if movement_ctx is None:
+            raise ValueError("Movimento de receção não encontrado.")
+        item_type = str(movement_ctx.get("entity_type", "") or item_type).casefold()
+        item_id = str(movement_ctx.get("entity_id", "") or item_id).strip()
 
         if "prod" in item_type:
             target = next((row for row in list(data.get("produtos", []) or []) if isinstance(row, dict) and str(row.get("codigo", "") or "").strip() == item_id), None)
@@ -11110,16 +11451,74 @@ class LegacyBackend(
         if target is None:
             raise ValueError("Linha de receção não encontrada.")
 
+        self._quality_quarantine_pending_stock(target, kind=entity_type)
         before = copy.deepcopy(target)
+        qty_key = "qty" if entity_type == "Produto" else "quantidade"
+        pending_qty = (
+            self._parse_float((movement_ctx or {}).get("pending_qty", 0), 0)
+            if movement_ctx is not None
+            else self._parse_float(target.get("quality_pending_qty", 0), 0)
+        )
+        received_qty = (
+            self._parse_float((movement_ctx or {}).get("qty", pending_qty), pending_qty)
+            if movement_ctx is not None
+            else self._parse_float(target.get("quality_received_qty", pending_qty), pending_qty)
+        )
+        approved_qty = self._parse_float(payload.get("qtd_aprovada", payload.get("approved_qty", None)), -1)
+        rejected_qty = self._parse_float(payload.get("qtd_rejeitada", payload.get("rejected_qty", None)), -1)
+        if approved_qty < 0 and rejected_qty < 0:
+            approved_qty = pending_qty if status == "APROVADO" else 0.0
+            rejected_qty = pending_qty if status in {"REJEITADO", "DEVOLVER_FORNECEDOR"} else 0.0
+        else:
+            approved_qty = max(0.0, approved_qty)
+            rejected_qty = max(0.0, rejected_qty)
+        if approved_qty + rejected_qty > pending_qty + 1e-9:
+            raise ValueError(
+                "As quantidades aprovadas/rejeitadas não podem ultrapassar a quantidade pendente "
+                f"({self._fmt(pending_qty)})."
+            )
+        if status == "APROVADO" and rejected_qty <= 0:
+            defect = ""
+            decision = decision or "Libertar para stock"
+        remaining_qty = max(0.0, pending_qty - approved_qty - rejected_qty)
+        if status == "APROVADO" and approved_qty <= 0 and pending_qty > 0:
+            raise ValueError("Para aprovar, indica a quantidade boa a libertar para stock.")
+        if status in {"REJEITADO", "DEVOLVER_FORNECEDOR"} and rejected_qty <= 0 and pending_qty > 0:
+            raise ValueError("Para rejeitar/devolver, indica a quantidade rejeitada.")
+        available_before = self._parse_float(target.get(qty_key, 0), 0)
         target["logistic_status"] = str(target.get("logistic_status", "") or "RECEBIDO").strip()
-        target["quality_status"] = status
-        target["inspection_status"] = status
+        effective_status = status
+        if remaining_qty > 0:
+            effective_status = "EM_AVERIGUACAO" if status == "EM_AVERIGUACAO" else "EM_INSPECAO"
+        elif approved_qty > 0:
+            effective_status = "APROVADO"
+        elif rejected_qty > 0:
+            effective_status = status if status in {"REJEITADO", "DEVOLVER_FORNECEDOR"} else "REJEITADO"
+        target["quality_status"] = effective_status
+        target["inspection_status"] = effective_status
         target["inspection_defect"] = defect
-        target["inspection_decision"] = decision or ("Libertar para stock" if status == "APROVADO" else "Aguardar decisão da qualidade")
+        target["inspection_decision"] = decision or ("Libertar para stock" if effective_status == "APROVADO" else "Aguardar decisão da qualidade")
         target["inspection_at"] = now
         target["inspection_by"] = self._current_user_label()
-        target["quality_blocked"] = status != "APROVADO"
+        target["quality_blocked"] = effective_status != "APROVADO"
         target["atualizado_em"] = now
+        target["quality_last_received_qty"] = round(received_qty, 4)
+        target["quality_last_approved_qty"] = round(approved_qty, 4)
+        target["quality_last_rejected_qty"] = round(rejected_qty, 4)
+
+        if movement_ctx is not None:
+            movement = movement_ctx["movement"]
+            movement["inspection_status"] = effective_status
+            movement["quality_status"] = effective_status
+            movement["inspection_defect"] = defect
+            movement["inspection_decision"] = target["inspection_decision"]
+            movement["inspection_at"] = now
+            movement["inspection_by"] = self._current_user_label()
+            movement["quality_movement_id"] = movement_id
+            movement["stock_ref"] = entity_id
+            movement["quality_approved_qty"] = self._parse_float(movement_ctx.get("approved_qty", 0), 0) + approved_qty
+            movement["quality_rejected_qty"] = self._parse_float(movement_ctx.get("rejected_qty", 0), 0) + rejected_qty
+            movement["quality_pending_qty"] = remaining_qty
 
         nc_payload = {
             "origem": "Receção fornecedor",
@@ -11134,6 +11533,7 @@ class LegacyBackend(
             "descricao": (
                 f"Avaliação de receção marcada como {status}. "
                 f"Entidade: {entity_label or entity_id}. "
+                f"Recebido: {self._fmt(received_qty)} | aprovado: {self._fmt(approved_qty)} | rejeitado: {self._fmt(rejected_qty)}. "
                 f"Defeito/observação: {defect or '-'}."
             ),
             "causa": "A apurar com fornecedor/receção.",
@@ -11147,22 +11547,59 @@ class LegacyBackend(
             "guia": str(target.get("inspection_guia", "") or "").strip(),
             "fatura": str(target.get("inspection_fatura", "") or "").strip(),
             "decisao": target["inspection_decision"],
+            "movement_id": movement_id,
+            "qtd_recebida": received_qty,
+            "qtd_aprovada": approved_qty,
+            "qtd_rejeitada": rejected_qty,
+            "qtd_pendente": remaining_qty,
         }
         existing_open = self._quality_find_open_nc(nc_payload)
-        if status == "APROVADO":
+        existing_rejected_total = self._quality_nc_quantity(existing_open, "qtd_rejeitada") if existing_open is not None else 0.0
+        if existing_open is not None:
+            nc_payload["qtd_recebida"] = max(self._quality_nc_quantity(existing_open, "qtd_recebida"), received_qty)
+            nc_payload["qtd_aprovada"] = self._quality_nc_quantity(existing_open, "qtd_aprovada") + approved_qty
+            nc_payload["qtd_rejeitada"] = self._quality_nc_quantity(existing_open, "qtd_rejeitada") + rejected_qty
+            nc_payload["qtd_pendente"] = remaining_qty
+        if approved_qty > 0:
+                target[qty_key] = available_before + approved_qty
+                target["quality_approved_qty"] = self._parse_float(target.get("quality_approved_qty", 0), 0) + approved_qty
+                if entity_type == "Produto":
+                    self.desktop_main.add_produto_mov(
+                        data,
+                        tipo="Entrada",
+                        operador=self._current_user_label(),
+                        codigo=entity_id,
+                        descricao=str(target.get("descricao", "") or "").strip(),
+                        qtd=approved_qty,
+                        antes=available_before,
+                        depois=target[qty_key],
+                        obs=f"Aprovado pela qualidade | {reference}",
+                        origem="Qualidade",
+                        ref_doc=reference,
+                    )
+                else:
+                    self.desktop_main.log_stock(data, "ENTRADA_QUALIDADE", f"{entity_id} qtd={approved_qty} ref={reference}")
+        if effective_status == "APROVADO" and rejected_qty <= 0 and existing_rejected_total <= 0:
             if existing_open is not None:
                 self.quality_nc_close(str(existing_open.get("id", "") or ""), target["inspection_decision"])
             if entity_type == "Material":
-                target["supplier_claim_id"] = str(target.get("supplier_claim_id", "") or "").strip()
+                target["supplier_claim_id"] = ""
+            target["quality_nc_id"] = ""
             self._append_audit_event(data, action="Receção aprovada", entity_type=entity_type, entity_id=entity_id, summary=target["inspection_decision"], before=before, after=target)
         else:
-            if status == "REJEITADO" or defect or bool(payload.get("create_nc")):
+            if rejected_qty > 0 or (existing_rejected_total > 0 and approved_qty > 0) or status in {"REJEITADO", "DEVOLVER_FORNECEDOR"} or defect or bool(payload.get("create_nc")):
                 if existing_open is not None:
                     nc_payload["id"] = str(existing_open.get("id", "") or "").strip()
                 nc = self.quality_nc_save(nc_payload)
                 target["quality_nc_id"] = str(nc.get("id", "") or "").strip()
+                if movement_ctx is not None:
+                    movement_ctx["movement"]["quality_nc_id"] = target["quality_nc_id"]
                 if entity_type == "Material":
                     target["supplier_claim_id"] = target["quality_nc_id"]
+            if status == "DEVOLVER_FORNECEDOR" or "devol" in target["inspection_decision"].casefold():
+                doc = self._quality_return_document(target, entity_type=entity_type, entity_id=entity_id, reference=reference, nc_id=str(target.get("quality_nc_id", "") or ""))
+                if doc:
+                    target["quality_return_document_id"] = str(doc.get("id", "") or "").strip()
             self._append_audit_event(data, action="Receção em inspeção", entity_type=entity_type, entity_id=entity_id, summary=target["inspection_decision"], before=before, after=target)
 
         for note in list(data.get("notas_encomenda", []) or []):
@@ -11179,9 +11616,94 @@ class LegacyBackend(
                 line["inspection_defect"] = defect
                 line["inspection_decision"] = target["inspection_decision"]
                 line["quality_nc_id"] = str(target.get("quality_nc_id", "") or "").strip()
+                line["_stock_in"] = effective_status == "APROVADO"
+                for movement in list(line.get("entregas_linha", []) or []):
+                    if not isinstance(movement, dict):
+                        continue
+                    movement_matches = (
+                        movement_id
+                        and str(movement.get("quality_movement_id", "") or "").strip() == movement_id
+                    ) or (
+                        not movement_id
+                        and str(movement.get("stock_ref", "") or line_ref).strip() == entity_id
+                    )
+                    if movement_matches:
+                        movement["quality_status"] = effective_status
+                        movement["quality_nc_id"] = line["quality_nc_id"]
+                line_movements = [mv for mv in list(line.get("entregas_linha", []) or []) if isinstance(mv, dict)]
+                if line_movements:
+                    pending_line = sum(self._quality_movement_pending_qty(mv) for mv in line_movements)
+                    approved_line = sum(self._parse_float(mv.get("quality_approved_qty", 0), 0) for mv in line_movements)
+                    rejected_line = sum(self._parse_float(mv.get("quality_rejected_qty", 0), 0) for mv in line_movements)
+                    if pending_line > 0:
+                        line_status = "EM_INSPECAO"
+                    elif approved_line > 0:
+                        line_status = "APROVADO"
+                    elif rejected_line > 0:
+                        line_status = "REJEITADO"
+                    else:
+                        line_status = effective_status
+                    line["quality_status"] = line_status
+                    line["inspection_status"] = line_status
+                    line["_stock_in"] = line_status == "APROVADO"
         self._sync_ne_from_materia()
+        self._quality_sync_pending_from_delivery_movements()
         self._save(force=True, audit=False)
-        return {"tipo": entity_type, "id": entity_id, "quality_status": status, "quality_nc_id": str(target.get("quality_nc_id", "") or "").strip()}
+        return {"tipo": entity_type, "id": entity_id, "quality_status": effective_status, "quality_nc_id": str(target.get("quality_nc_id", "") or "").strip()}
+
+    def _quality_return_document(
+        self,
+        target: dict[str, Any],
+        *,
+        entity_type: str,
+        entity_id: str,
+        reference: str,
+        nc_id: str = "",
+    ) -> dict[str, Any] | None:
+        data = self.ensure_data()
+        docs = data.setdefault("quality_documents", [])
+        existing_id = str(target.get("quality_return_document_id", "") or "").strip()
+        if existing_id:
+            existing = next((row for row in docs if isinstance(row, dict) and str(row.get("id", "") or "").strip() == existing_id), None)
+            if isinstance(existing, dict):
+                return existing
+        now = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
+        doc_id = self._next_prefixed_id(docs, "DEV")
+        qty_key = "qty" if entity_type == "Produto" else "quantidade"
+        pending_qty = self._parse_float(target.get("quality_pending_qty", 0), 0)
+        description = " | ".join(
+            part
+            for part in (
+                f"{entity_type} {entity_id}",
+                str(target.get("material", "") or target.get("descricao", "") or "").strip(),
+                f"Qtd a devolver {self._fmt(pending_qty)}",
+                f"Fornecedor {str(target.get('inspection_supplier_name', '') or target.get('fornecedor', '') or '-').strip()}",
+                f"NC {nc_id}" if nc_id else "",
+            )
+            if part
+        )
+        doc = {
+            "id": doc_id,
+            "titulo": f"Nota devolução fornecedor {reference or entity_id}",
+            "tipo": "Nota devolução fornecedor",
+            "entidade": entity_type,
+            "entidade_tipo": entity_type,
+            "referencia": reference,
+            "entidade_id": entity_id,
+            "versao": "1",
+            "estado": "Rascunho",
+            "responsavel": "Qualidade",
+            "caminho": "",
+            "obs": description,
+            "created_at": now,
+            "updated_at": now,
+            "created_by": self._current_user_label(),
+            "nc_id": nc_id,
+            "qtd": pending_qty,
+            "qtd_stock": self._parse_float(target.get(qty_key, 0), 0),
+        }
+        docs.append(doc)
+        return doc
 
     def quality_nc_rows(self, filter_text: str = "", state_filter: str = "Ativas") -> list[dict[str, Any]]:
         self._quality_normalize_open_nc_duplicates()
@@ -11225,6 +11747,11 @@ class LegacyBackend(
                 "lote_fornecedor": str(row.get("lote_fornecedor", "") or "").strip(),
                 "ne_numero": str(row.get("ne_numero", "") or "").strip(),
                 "decisao": str(row.get("decisao", "") or "").strip(),
+                "movement_id": str(row.get("movement_id", "") or "").strip(),
+                "qtd_recebida": round(self._quality_nc_quantity(row, "qtd_recebida"), 4),
+                "qtd_aprovada": round(self._quality_nc_quantity(row, "qtd_aprovada"), 4),
+                "qtd_rejeitada": round(self._quality_nc_quantity(row, "qtd_rejeitada"), 4),
+                "qtd_pendente": round(self._quality_nc_quantity(row, "qtd_pendente"), 4),
                 "created_at": str(row.get("created_at", "") or "").strip(),
                 "closed_at": str(row.get("closed_at", "") or "").strip(),
             }
@@ -11266,6 +11793,11 @@ class LegacyBackend(
             "guia": str(payload.get("guia", (existing or {}).get("guia", "")) or "").strip(),
             "fatura": str(payload.get("fatura", (existing or {}).get("fatura", "")) or "").strip(),
             "decisao": str(payload.get("decisao", (existing or {}).get("decisao", "")) or "").strip(),
+            "movement_id": str(payload.get("movement_id", (existing or {}).get("movement_id", "")) or "").strip(),
+            "qtd_recebida": round(self._parse_float(payload.get("qtd_recebida", (existing or {}).get("qtd_recebida", 0)), 0), 4),
+            "qtd_aprovada": round(self._parse_float(payload.get("qtd_aprovada", (existing or {}).get("qtd_aprovada", 0)), 0), 4),
+            "qtd_rejeitada": round(self._parse_float(payload.get("qtd_rejeitada", (existing or {}).get("qtd_rejeitada", 0)), 0), 4),
+            "qtd_pendente": round(self._parse_float(payload.get("qtd_pendente", (existing or {}).get("qtd_pendente", 0)), 0), 4),
             "created_at": str((existing or {}).get("created_at", "") or now),
             "updated_at": now,
             "created_by": str((existing or {}).get("created_by", "") or self._current_user_label()),
@@ -11333,15 +11865,28 @@ class LegacyBackend(
             raise ValueError("Material ligado a NC nao encontrado.")
         before_material = copy.deepcopy(material)
         now = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
-        material["quality_status"] = "Aprovado"
-        material["inspection_status"] = "Aprovado"
+        self._quality_quarantine_pending_stock(material, kind="Material")
+        pending_qty = self._parse_float(material.get("quality_pending_qty", 0), 0)
+        before_qty = self._parse_float(material.get("quantidade", 0), 0)
+        if pending_qty > 0:
+            material["quantidade"] = before_qty + pending_qty
+            material["quality_pending_qty"] = 0.0
+            material["quality_approved_qty"] = self._parse_float(material.get("quality_approved_qty", 0), 0) + pending_qty
+            self.desktop_main.log_stock(data, "ENTRADA_QUALIDADE", f"{material_id} qtd={pending_qty} NC={nc_id_txt}")
+        material["quality_status"] = "APROVADO"
+        material["inspection_status"] = "APROVADO"
         material["quality_blocked"] = False
         material["inspection_decision"] = str(decision or "Aprovado pela qualidade").strip()
+        material["quality_nc_id"] = ""
+        material["supplier_claim_id"] = ""
         material["quality_released_at"] = now
         material["quality_released_by"] = self._current_user_label()
         material["atualizado_em"] = now
         target["decisao"] = str(decision or "Aprovado pela qualidade").strip()
         target["acao"] = (str(target.get("acao", "") or "").strip() + f"\nLibertacao de material: {material['inspection_decision']}").strip()
+        target["estado"] = "Fechada"
+        target["closed_at"] = now
+        target["closed_by"] = self._current_user_label()
         target["updated_at"] = now
         target["updated_by"] = self._current_user_label()
         self._append_audit_event(
@@ -11355,7 +11900,7 @@ class LegacyBackend(
         )
         self._sync_ne_from_materia()
         self._save(force=True, audit=False)
-        return {"material_id": material_id, "quality_status": "Aprovado", "nc_id": nc_id_txt}
+        return {"material_id": material_id, "quality_status": "APROVADO", "nc_id": nc_id_txt}
 
     def quality_nc_remove(self, nc_id: str) -> None:
         data = self.ensure_data()

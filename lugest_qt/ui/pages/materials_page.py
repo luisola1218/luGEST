@@ -1026,8 +1026,8 @@ class MaterialsPage(QWidget):
         self._combo_keys = ("formato", "material", "material_familia", "espessura", "local")
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(12)
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(10)
 
         form_card = CardFrame()
         form_card.setStyleSheet(
@@ -1055,7 +1055,7 @@ class MaterialsPage(QWidget):
         top.addLayout(ttl_wrap, 1)
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Pesquisar material, lote, dimensão, local...")
-        self.filter_edit.setMaximumWidth(280)
+        self.filter_edit.setMaximumWidth(360)
         self.filter_edit.textChanged.connect(self.refresh)
         top.addWidget(self.filter_edit)
         form_layout.addLayout(top)
@@ -1250,9 +1250,19 @@ class MaterialsPage(QWidget):
 
         table_card = CardFrame()
         table_layout = QVBoxLayout(table_card)
-        table_layout.setContentsMargins(16, 14, 16, 14)
-        table_layout.setSpacing(10)
-        self.table = QTableWidget(0, 16)
+        table_layout.setContentsMargins(14, 12, 14, 12)
+        table_layout.setSpacing(8)
+        table_header = QHBoxLayout()
+        table_title = QLabel("Stock de matéria-prima")
+        table_title.setStyleSheet("font-size: 15px; font-weight: 900; color: #10253d;")
+        self.table_count_label = QLabel("-")
+        self.table_count_label.setProperty("role", "muted")
+        table_header.addWidget(table_title)
+        table_header.addStretch(1)
+        table_header.addWidget(self.table_count_label)
+        table_layout.addLayout(table_header)
+        self.table = QTableWidget(0, 17)
+        self.table.setObjectName("StockTable")
         self.table.setStyleSheet(
             "QTableWidget {"
             " gridline-color: #d8e3f2;"
@@ -1285,6 +1295,7 @@ class MaterialsPage(QWidget):
                 "Tipo",
                 "Localização",
                 "ID",
+                "Estado",
             ]
         )
         self.table.verticalHeader().setVisible(False)
@@ -1296,10 +1307,32 @@ class MaterialsPage(QWidget):
         self.table.setWordWrap(False)
         self.table.itemSelectionChanged.connect(self.on_selection_changed)
         self.table.itemDoubleClicked.connect(lambda *_args: self.edit_material())
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        for col in range(2, 16):
-            self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(48)
+        column_specs = [
+            (0, QHeaderView.Interactive, 126),  # Lote
+            (1, QHeaderView.Interactive, 280),  # Material
+            (2, QHeaderView.Fixed, 72),         # Dim. A
+            (3, QHeaderView.Fixed, 72),         # Dim. B
+            (4, QHeaderView.Fixed, 78),         # Espessura
+            (5, QHeaderView.Fixed, 86),         # Quantidade
+            (6, QHeaderView.Fixed, 72),         # Reserva
+            (7, QHeaderView.Fixed, 92),         # Formato
+            (8, QHeaderView.Fixed, 92),         # Metros
+            (9, QHeaderView.Interactive, 112),  # Peso/Un.
+            (10, QHeaderView.Fixed, 104),       # Compra
+            (11, QHeaderView.Fixed, 104),       # Preço
+            (12, QHeaderView.Fixed, 104),       # Disponível
+            (13, QHeaderView.Interactive, 210), # Tipo
+            (14, QHeaderView.Interactive, 132), # Localização
+            (15, QHeaderView.Fixed, 86),        # ID
+            (16, QHeaderView.Interactive, 118), # Estado
+        ]
+        for column, mode, width in column_specs:
+            header.setSectionResizeMode(column, mode)
+            if mode != QHeaderView.Stretch:
+                header.resizeSection(column, width)
         table_layout.addWidget(self.table)
         root.addWidget(table_card, 1)
 
@@ -1625,7 +1658,7 @@ class MaterialsPage(QWidget):
         self.preco_unit_edit.setToolTip(" | ".join(tooltip_bits))
 
     def _apply_row_colors(self, row_index: int, severity: str, band: str) -> None:
-        background = QColor("#eef2f8" if band == "even" else "#e6ecf5")
+        background = QColor("#ffffff" if band == "even" else "#f6f9fd")
         foreground = QColor("#0f172a")
         for col in range(self.table.columnCount()):
             item = self.table.item(row_index, col)
@@ -1650,6 +1683,35 @@ class MaterialsPage(QWidget):
             available_item.setToolTip("Última unidade em stock.")
         else:
             available_item.setToolTip("")
+
+    def _stock_state_label(self, record: dict[str, object] | None, severity: str) -> str:
+        if isinstance(record, dict):
+            q_status = str(record.get("quality_status", record.get("inspection_status", "")) or "").strip()
+            if q_status and q_status != "APROVADO":
+                return q_status
+        if severity == "critical":
+            return "Crítico"
+        if severity == "warning":
+            return "Baixo"
+        if severity == "one":
+            return "Última unid."
+        return "Disponível"
+
+    def _apply_state_cell_style(self, row_index: int, severity: str, state_label: str) -> None:
+        item = self.table.item(row_index, 16)
+        if item is None:
+            return
+        state_norm = state_label.casefold()
+        if any(token in state_norm for token in ("rejeit", "devol", "bloque")):
+            bg, fg = "#fee4e2", "#b42318"
+        elif any(token in state_norm for token in ("inspec", "averig", "baixo")) or severity == "warning":
+            bg, fg = "#fff7ed", "#9a3412"
+        elif severity == "critical":
+            bg, fg = "#fee4e2", "#b42318"
+        else:
+            bg, fg = "#ecfdf3", "#027a48"
+        item.setBackground(QBrush(QColor(bg)))
+        item.setForeground(QBrush(QColor(fg)))
 
     def _selected_material_id(self) -> str:
         selection_model = self.table.selectionModel()
@@ -1688,11 +1750,13 @@ class MaterialsPage(QWidget):
 
         rows = self.backend.material_rows(self.filter_edit.text())
         selected_id = self.current_material_id or self._selected_material_id()
+        self.table_count_label.setText(f"{len(rows)} registos")
         self.table.setSortingEnabled(False)
         self.table.setUpdatesEnabled(False)
         self.table.setRowCount(len(rows))
         for row_index, payload in enumerate(rows):
             values = payload["row"]
+            state_label = self._stock_state_label(payload.get("record"), str(payload.get("severity", "ok")))
             columns = [
                 values["lote"],
                 values["material"],
@@ -1710,15 +1774,18 @@ class MaterialsPage(QWidget):
                 values["tipo"],
                 values["local"],
                 values["id"],
+                state_label,
             ]
             for col_index, value in enumerate(columns):
                 item = QTableWidgetItem(str(value))
+                item.setToolTip(str(value))
                 if col_index not in (0, 1, 13, 14, 15):
                     item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
                 self.table.setItem(row_index, col_index, item)
             self._apply_row_colors(row_index, payload["severity"], payload["band"])
+            self._apply_state_cell_style(row_index, str(payload.get("severity", "ok")), state_label)
             try:
-                available_value = float(values.get("disponivel", 0) or 0)
+                available_value = self.backend._parse_float(values.get("disponivel", 0), 0)
             except Exception:
                 available_value = 0.0
             if available_value <= 0:

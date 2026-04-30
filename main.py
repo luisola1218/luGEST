@@ -2136,6 +2136,10 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "materiais", "logistic_status", "VARCHAR(30) NULL")
         _mysql_ensure_column(cur, "materiais", "quality_status", "VARCHAR(40) NULL")
         _mysql_ensure_column(cur, "materiais", "quality_blocked", "BOOLEAN NULL")
+        _mysql_ensure_column(cur, "materiais", "quality_pending_qty", "DECIMAL(10,2) NULL")
+        _mysql_ensure_column(cur, "materiais", "quality_received_qty", "DECIMAL(10,2) NULL")
+        _mysql_ensure_column(cur, "materiais", "quality_approved_qty", "DECIMAL(10,2) NULL")
+        _mysql_ensure_column(cur, "materiais", "quality_return_document_id", "VARCHAR(30) NULL")
         _mysql_ensure_column(cur, "materiais", "inspection_status", "VARCHAR(40) NULL")
         _mysql_ensure_column(cur, "materiais", "inspection_defect", "VARCHAR(255) NULL")
         _mysql_ensure_column(cur, "materiais", "inspection_decision", "VARCHAR(255) NULL")
@@ -2152,6 +2156,10 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "produtos", "logistic_status", "VARCHAR(30) NULL")
         _mysql_ensure_column(cur, "produtos", "quality_status", "VARCHAR(40) NULL")
         _mysql_ensure_column(cur, "produtos", "quality_blocked", "BOOLEAN NULL")
+        _mysql_ensure_column(cur, "produtos", "quality_pending_qty", "DECIMAL(10,2) NULL")
+        _mysql_ensure_column(cur, "produtos", "quality_received_qty", "DECIMAL(10,2) NULL")
+        _mysql_ensure_column(cur, "produtos", "quality_approved_qty", "DECIMAL(10,2) NULL")
+        _mysql_ensure_column(cur, "produtos", "quality_return_document_id", "VARCHAR(30) NULL")
         _mysql_ensure_column(cur, "produtos", "inspection_defect", "VARCHAR(255) NULL")
         _mysql_ensure_column(cur, "produtos", "inspection_decision", "VARCHAR(255) NULL")
         _mysql_ensure_column(cur, "produtos", "inspection_note_number", "VARCHAR(30) NULL")
@@ -2942,9 +2950,10 @@ def _mysql_sync_relational_schema(cur, data):
                 INSERT INTO materiais (
                     id, lote_fornecedor, formato, material, material_familia, espessura, comprimento, largura, altura, diametro, metros, kg_m, peso_unid, p_compra, preco_unid,
                     quantidade, reservado, tipo, localizacao, is_sobra, atualizado_em, origem_lote, origem_encomenda, secao_tipo, logistic_status,
-                    quality_status, quality_blocked, inspection_status, inspection_defect, inspection_decision, inspection_at, inspection_by,
+                    quality_status, quality_blocked, quality_pending_qty, quality_received_qty, quality_approved_qty, quality_return_document_id,
+                    inspection_status, inspection_defect, inspection_decision, inspection_at, inspection_by,
                     inspection_note_number, inspection_supplier_id, inspection_supplier_name, inspection_guia, inspection_fatura, quality_nc_id, supplier_claim_id
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     mid,
@@ -2974,6 +2983,10 @@ def _mysql_sync_relational_schema(cur, data):
                     _clip(m.get("logistic_status"), 30),
                     _clip(m.get("quality_status"), 40),
                     1 if _to_bool(m.get("quality_blocked")) else 0,
+                    _to_num(m.get("quality_pending_qty")),
+                    _to_num(m.get("quality_received_qty")),
+                    _to_num(m.get("quality_approved_qty")),
+                    _clip(m.get("quality_return_document_id"), 30),
                     _clip(m.get("inspection_status"), 40),
                     _clip(m.get("inspection_defect"), 255),
                     _clip(m.get("inspection_decision"), 255),
@@ -2998,8 +3011,9 @@ def _mysql_sync_relational_schema(cur, data):
                 """
                 INSERT INTO produtos (
                     codigo, descricao, categoria, subcat, tipo, unid, qty, alerta, p_compra, atualizado_em,
-                    logistic_status, quality_status, quality_blocked, inspection_defect, inspection_decision, inspection_note_number, quality_nc_id
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    logistic_status, quality_status, quality_blocked, quality_pending_qty, quality_received_qty, quality_approved_qty, quality_return_document_id,
+                    inspection_defect, inspection_decision, inspection_note_number, quality_nc_id
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     codigo,
@@ -3015,6 +3029,10 @@ def _mysql_sync_relational_schema(cur, data):
                     _clip(p.get("logistic_status"), 30),
                     _clip(p.get("quality_status"), 40),
                     1 if _to_bool(p.get("quality_blocked")) else 0,
+                    _to_num(p.get("quality_pending_qty")),
+                    _to_num(p.get("quality_received_qty")),
+                    _to_num(p.get("quality_approved_qty")),
+                    _clip(p.get("quality_return_document_id"), 30),
                     _clip(p.get("inspection_defect"), 255),
                     _clip(p.get("inspection_decision"), 255),
                     _clip(p.get("inspection_note_number"), 30),
@@ -4404,6 +4422,10 @@ def _mysql_load_relational_data():
                         "logistic_status": str(r.get("logistic_status", "") or ""),
                         "quality_status": str(r.get("quality_status", "") or ""),
                         "quality_blocked": bool(r.get("quality_blocked")),
+                        "quality_pending_qty": _to_num(r.get("quality_pending_qty")) or 0.0,
+                        "quality_received_qty": _to_num(r.get("quality_received_qty")) or 0.0,
+                        "quality_approved_qty": _to_num(r.get("quality_approved_qty")) or 0.0,
+                        "quality_return_document_id": str(r.get("quality_return_document_id", "") or ""),
                         "inspection_status": str(r.get("inspection_status", "") or ""),
                         "inspection_defect": str(r.get("inspection_defect", "") or ""),
                         "inspection_decision": str(r.get("inspection_decision", "") or ""),
@@ -4447,6 +4469,10 @@ def _mysql_load_relational_data():
                         "logistic_status": str(r.get("logistic_status", "") or ""),
                         "quality_status": str(r.get("quality_status", "") or ""),
                         "quality_blocked": bool(r.get("quality_blocked")),
+                        "quality_pending_qty": _to_num(r.get("quality_pending_qty")) or 0.0,
+                        "quality_received_qty": _to_num(r.get("quality_received_qty")) or 0.0,
+                        "quality_approved_qty": _to_num(r.get("quality_approved_qty")) or 0.0,
+                        "quality_return_document_id": str(r.get("quality_return_document_id", "") or ""),
                         "inspection_defect": str(r.get("inspection_defect", "") or ""),
                         "inspection_decision": str(r.get("inspection_decision", "") or ""),
                         "inspection_note_number": str(r.get("inspection_note_number", "") or ""),

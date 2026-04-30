@@ -8122,19 +8122,19 @@ class OrdersPage(QWidget):
             f"QTableWidget {{ font-size: {LIST_TABLE_FONT_PX}px; }}"
             f" QHeaderView::section {{ font-size: {LIST_TABLE_FONT_PX}px; padding: 8px 10px; font-weight: 800; }}"
         )
-        self.table.verticalHeader().setDefaultSectionSize(LIST_TABLE_ROW_PX)
+        self.table.verticalHeader().setDefaultSectionSize(38)
         _configure_table(self.table, stretch=(2,), contents=(3, 4, 5, 6, 7))
         _set_table_columns(
             self.table,
             [
-                (0, "fixed", 250),
-                (1, "fixed", 220),
+                (0, "fixed", 245),
+                (1, "fixed", 280),
                 (2, "stretch", 0),
-                (3, "fixed", 132),
-                (4, "fixed", 82),
-                (5, "fixed", 126),
-                (6, "fixed", 98),
-                (7, "fixed", 102),
+                (3, "fixed", 148),
+                (4, "fixed", 92),
+                (5, "fixed", 142),
+                (6, "fixed", 112),
+                (7, "fixed", 116),
             ],
         )
         self.table.itemSelectionChanged.connect(self._on_order_selected)
@@ -9720,10 +9720,23 @@ class LegacyOrdersPage(OrdersPage):
 
     def __init__(self, backend, parent=None) -> None:
         super().__init__(backend, parent)
-        self.table.verticalHeader().setDefaultSectionSize(24)
-        self.materials_table.verticalHeader().setDefaultSectionSize(24)
-        self.esp_table.verticalHeader().setDefaultSectionSize(24)
-        self.pieces_table.verticalHeader().setDefaultSectionSize(24)
+        self.table.verticalHeader().setDefaultSectionSize(38)
+        self.materials_table.verticalHeader().setDefaultSectionSize(28)
+        self.esp_table.verticalHeader().setDefaultSectionSize(28)
+        self.pieces_table.verticalHeader().setDefaultSectionSize(28)
+        _set_table_columns(
+            self.table,
+            [
+                (0, "fixed", 245),
+                (1, "fixed", 280),
+                (2, "stretch", 0),
+                (3, "fixed", 148),
+                (4, "fixed", 92),
+                (5, "fixed", 142),
+                (6, "fixed", 112),
+                (7, "fixed", 116),
+            ],
+        )
         root = self.layout()
         sections = _take_layout_items(root)
         filters_item = sections[0] if len(sections) > 0 else None
