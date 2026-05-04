@@ -369,8 +369,88 @@ CREATE TABLE IF NOT EXISTS `stock_log` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `data` datetime DEFAULT NULL,
   `acao` varchar(50) DEFAULT NULL,
+  `operador` varchar(120) DEFAULT NULL,
   `detalhes` text,
   PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+CREATE TABLE IF NOT EXISTS `quality_nonconformities` (
+  `id` varchar(30) NOT NULL,
+  `origem` varchar(120) DEFAULT NULL,
+  `referencia` varchar(120) DEFAULT NULL,
+  `entidade_tipo` varchar(60) DEFAULT NULL,
+  `entidade_id` varchar(120) DEFAULT NULL,
+  `entidade_label` varchar(255) DEFAULT NULL,
+  `tipo` varchar(60) DEFAULT NULL,
+  `gravidade` varchar(40) DEFAULT NULL,
+  `estado` varchar(40) DEFAULT NULL,
+  `responsavel` varchar(120) DEFAULT NULL,
+  `prazo` date DEFAULT NULL,
+  `descricao` text,
+  `causa` text,
+  `acao` text,
+  `eficacia` text,
+  `fornecedor_id` varchar(30) DEFAULT NULL,
+  `fornecedor_nome` varchar(150) DEFAULT NULL,
+  `material_id` varchar(30) DEFAULT NULL,
+  `lote_fornecedor` varchar(100) DEFAULT NULL,
+  `ne_numero` varchar(30) DEFAULT NULL,
+  `guia` varchar(60) DEFAULT NULL,
+  `fatura` varchar(60) DEFAULT NULL,
+  `decisao` varchar(255) DEFAULT NULL,
+  `movement_id` varchar(255) DEFAULT NULL,
+  `qtd_recebida` decimal(10,2) DEFAULT NULL,
+  `qtd_aprovada` decimal(10,2) DEFAULT NULL,
+  `qtd_rejeitada` decimal(10,2) DEFAULT NULL,
+  `qtd_pendente` decimal(10,2) DEFAULT NULL,
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  `created_by` varchar(120) DEFAULT NULL,
+  `updated_by` varchar(120) DEFAULT NULL,
+  `closed_at` datetime DEFAULT NULL,
+  `closed_by` varchar(120) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_quality_nc_estado` (`estado`),
+  KEY `idx_quality_nc_entidade` (`entidade_tipo`,`entidade_id`),
+  KEY `idx_quality_nc_referencia` (`referencia`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+CREATE TABLE IF NOT EXISTS `quality_documents` (
+  `id` varchar(30) NOT NULL,
+  `titulo` varchar(180) NOT NULL,
+  `tipo` varchar(80) DEFAULT NULL,
+  `entidade` varchar(80) DEFAULT NULL,
+  `referencia` varchar(120) DEFAULT NULL,
+  `entidade_tipo` varchar(60) DEFAULT NULL,
+  `entidade_id` varchar(120) DEFAULT NULL,
+  `versao` varchar(30) DEFAULT NULL,
+  `estado` varchar(40) DEFAULT NULL,
+  `responsavel` varchar(120) DEFAULT NULL,
+  `caminho` varchar(512) DEFAULT NULL,
+  `obs` text,
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  `created_by` varchar(120) DEFAULT NULL,
+  `updated_by` varchar(120) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_quality_doc_entidade` (`entidade_tipo`,`entidade_id`),
+  KEY `idx_quality_doc_tipo` (`tipo`),
+  KEY `idx_quality_doc_estado` (`estado`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+CREATE TABLE IF NOT EXISTS `quality_audit_log` (
+  `id` varchar(80) NOT NULL,
+  `created_at` datetime DEFAULT NULL,
+  `user_name` varchar(120) DEFAULT NULL,
+  `action` varchar(120) DEFAULT NULL,
+  `entity_type` varchar(80) DEFAULT NULL,
+  `entity_id` varchar(120) DEFAULT NULL,
+  `summary` text,
+  `before_json` longtext,
+  `after_json` longtext,
+  PRIMARY KEY (`id`),
+  KEY `idx_quality_audit_created` (`created_at`),
+  KEY `idx_quality_audit_entity` (`entity_type`,`entity_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 CREATE TABLE IF NOT EXISTS `users` (

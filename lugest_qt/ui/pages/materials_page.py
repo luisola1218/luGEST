@@ -538,14 +538,15 @@ class _HistoryDialog(QDialog):
         self.setWindowTitle(title)
         self.resize(980, 560)
         layout = QVBoxLayout(self)
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Data", "Acao", "Detalhes"])
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Data", "Operador", "Acao", "Detalhes"])
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         layout.addWidget(self.table)
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         buttons.rejected.connect(self.reject)
@@ -556,9 +557,9 @@ class _HistoryDialog(QDialog):
     def set_rows(self, rows: list[dict[str, str]]) -> None:
         self.table.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
-            for col_index, key in enumerate(("data", "acao", "detalhes")):
+            for col_index, key in enumerate(("data", "operador", "acao", "detalhes")):
                 item = QTableWidgetItem(str(row.get(key, "") or ""))
-                if col_index < 2:
+                if col_index < 3:
                     item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
                 self.table.setItem(row_index, col_index, item)
 
@@ -1058,6 +1059,10 @@ class MaterialsPage(QWidget):
         self.filter_edit.setMaximumWidth(360)
         self.filter_edit.textChanged.connect(self.refresh)
         top.addWidget(self.filter_edit)
+        self.only_stock_check = QCheckBox("Mostrar apenas com stock")
+        self.only_stock_check.setChecked(False)
+        self.only_stock_check.toggled.connect(self.refresh)
+        top.addWidget(self.only_stock_check)
         form_layout.addLayout(top)
 
         info_row = QHBoxLayout()
@@ -1748,7 +1753,7 @@ class MaterialsPage(QWidget):
         self._refresh_form_state()
         self._refresh_price_preview()
 
-        rows = self.backend.material_rows(self.filter_edit.text())
+        rows = self.backend.material_rows(self.filter_edit.text(), in_stock_only=self.only_stock_check.isChecked())
         selected_id = self.current_material_id or self._selected_material_id()
         self.table_count_label.setText(f"{len(rows)} registos")
         self.table.setSortingEnabled(False)

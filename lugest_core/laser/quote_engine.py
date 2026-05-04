@@ -25,16 +25,128 @@ DXF_BINARY_SIGNATURE = b"AutoCAD Binary DXF"
 DXF_SNAP_TOLERANCE_MM = 0.05
 MATERIAL_FAMILY_ALIASES = {
     "FERRO": "Aco carbono",
+    "ACO": "Aco carbono",
     "ACOCARBONO": "Aco carbono",
     "CARBONSTEEL": "Aco carbono",
     "INOX": "Aco inox",
     "ACOINOX": "Aco inox",
     "STAINLESS": "Aco inox",
+    "ALUMINIO": "Aluminio",
+    "ALUMINUM": "Aluminio",
+    "ALU": "Aluminio",
 }
 MATERIAL_FAMILY_LABELS = {
     "Aco carbono": "Ferro",
     "Aco inox": "INOX",
+    "Aluminio": "Aluminio",
 }
+
+TRUMPF_5030_STEEL_O2_ROWS = [
+    (0.5, 30.0, 45.0, 0.6, 1.0, 0.8, 0.8, 0.0, 100.0, 100.0),
+    (0.8, 25.0, 40.0, 0.6, 1.0, 0.8, 0.8, 0.0, 100.0, 100.0),
+    (1.0, 20.0, 30.0, 0.6, 1.2, 0.8, 1.0, 0.0, 100.0, 100.0),
+    (1.2, 18.0, 28.0, 0.6, 1.2, 0.8, 1.0, 0.0, 100.0, 100.0),
+    (1.5, 16.0, 26.0, 0.6, 1.2, 0.8, 1.0, 0.0, 100.0, 100.0),
+    (2.0, 14.0, 22.0, 0.6, 1.2, 0.8, 1.2, 0.0, 100.0, 100.0),
+    (2.5, 11.0, 18.0, 0.8, 1.5, 0.9, 1.2, 0.0, 100.0, 100.0),
+    (3.0, 9.0, 14.0, 0.8, 1.5, 0.9, 1.4, 0.0, 100.0, 100.0),
+    (4.0, 7.0, 11.0, 1.0, 1.8, 0.9, 1.5, 0.5, 100.0, 100.0),
+    (5.0, 5.0, 9.0, 1.0, 2.0, 0.9, 1.6, 0.5, 100.0, 100.0),
+    (6.0, 4.0, 7.0, 1.0, 2.0, 1.1, 1.8, 0.8, 100.0, 100.0),
+    (7.0, 3.5, 6.0, 1.2, 2.2, 1.1, 1.8, 1.0, 100.0, 100.0),
+    (8.0, 2.8, 4.5, 1.5, 2.5, 1.1, 2.0, 1.0, 100.0, 100.0),
+    (10.0, 2.0, 3.2, 2.0, 3.0, 1.1, 2.2, 1.5, 100.0, 100.0),
+    (12.0, 1.5, 2.5, 2.0, 3.5, 1.3, 2.5, 2.0, 100.0, 100.0),
+    (15.0, 1.1, 2.0, 2.5, 4.0, 1.3, 2.8, 2.5, 100.0, 100.0),
+    (16.0, 1.0, 1.8, 2.5, 4.0, 1.3, 2.8, 2.5, 100.0, 100.0),
+    (18.0, 0.8, 1.5, 2.5, 4.5, 1.3, 3.0, 2.8, 100.0, 100.0),
+    (20.0, 0.7, 1.3, 3.0, 5.0, 1.3, 3.0, 3.0, 100.0, 100.0),
+    (25.0, 0.4, 0.9, 3.0, 5.0, 1.7, 3.5, 3.5, 100.0, 100.0),
+    (30.0, 0.3, 0.7, 3.0, 6.0, 1.7, 4.0, 4.0, 100.0, 100.0),
+    (35.0, 0.2, 0.5, 4.0, 6.0, 1.7, 4.5, 4.5, 100.0, 100.0),
+    (40.0, 0.15, 0.4, 4.0, 6.0, 1.7, 5.0, 5.0, 100.0, 100.0),
+]
+
+TRUMPF_5030_STEEL_N2_ROWS = [
+    (0.5, 40.0, 65.0, 18.0, 22.0, 0.8, 0.8, 0.0, 100.0, 100.0),
+    (0.8, 35.0, 55.0, 18.0, 22.0, 0.8, 0.8, 0.0, 100.0, 100.0),
+    (1.0, 30.0, 50.0, 18.0, 22.0, 0.8, 1.0, 0.0, 100.0, 100.0),
+    (1.2, 28.0, 45.0, 18.0, 22.0, 0.8, 1.0, 0.0, 100.0, 100.0),
+    (1.5, 25.0, 42.0, 18.0, 22.0, 0.8, 1.0, 0.0, 100.0, 100.0),
+    (2.0, 20.0, 35.0, 18.0, 22.0, 0.8, 1.2, 0.0, 100.0, 100.0),
+    (2.5, 18.0, 32.0, 18.0, 22.0, 0.9, 1.2, 0.0, 100.0, 100.0),
+    (3.0, 15.0, 28.0, 18.0, 22.0, 0.9, 1.4, 0.0, 100.0, 100.0),
+    (4.0, 12.0, 22.0, 18.0, 22.0, 0.9, 1.6, 0.3, 100.0, 100.0),
+    (5.0, 9.0, 18.0, 18.0, 22.0, 0.9, 1.8, 0.5, 100.0, 100.0),
+    (6.0, 7.0, 14.0, 20.0, 24.0, 1.1, 1.8, 0.8, 100.0, 100.0),
+    (7.0, 6.0, 12.0, 20.0, 24.0, 1.1, 1.8, 1.0, 100.0, 100.0),
+    (8.0, 5.0, 10.0, 22.0, 25.0, 1.1, 2.0, 1.0, 100.0, 100.0),
+    (10.0, 3.5, 7.0, 22.0, 26.0, 1.1, 2.2, 1.5, 100.0, 100.0),
+    (12.0, 2.5, 5.0, 24.0, 28.0, 1.3, 2.5, 2.0, 100.0, 100.0),
+    (15.0, 1.5, 3.0, 25.0, 30.0, 1.3, 2.8, 2.5, 100.0, 100.0),
+    (16.0, 1.3, 2.8, 25.0, 30.0, 1.3, 2.8, 2.5, 100.0, 100.0),
+    (18.0, 1.1, 2.5, 25.0, 30.0, 1.3, 3.0, 2.8, 100.0, 100.0),
+    (20.0, 0.9, 2.0, 25.0, 30.0, 1.3, 3.0, 3.0, 100.0, 100.0),
+]
+
+TRUMPF_5030_INOX_N2_ROWS = [
+    (0.5, 45.0, 65.0, 18.0, 22.0, 0.8, 0.8, 0.0, 100.0, 100.0),
+    (0.8, 40.0, 60.0, 18.0, 22.0, 0.8, 0.8, 0.0, 100.0, 100.0),
+    (1.0, 40.0, 55.0, 18.0, 22.0, 0.8, 1.0, 0.0, 100.0, 100.0),
+    (1.5, 35.0, 50.0, 18.0, 22.0, 0.8, 1.0, 0.0, 100.0, 100.0),
+    (2.0, 30.0, 45.0, 18.0, 22.0, 0.8, 1.2, 0.0, 100.0, 100.0),
+    (2.5, 26.0, 40.0, 18.0, 22.0, 0.9, 1.2, 0.0, 100.0, 100.0),
+    (3.0, 22.0, 35.0, 18.0, 22.0, 0.9, 1.4, 0.0, 100.0, 100.0),
+    (4.0, 17.0, 26.0, 18.0, 22.0, 0.9, 1.6, 0.3, 100.0, 100.0),
+    (5.0, 13.0, 20.0, 18.0, 22.0, 0.9, 1.8, 0.5, 100.0, 100.0),
+    (6.0, 10.0, 16.0, 20.0, 24.0, 1.1, 1.8, 0.8, 100.0, 100.0),
+    (7.0, 8.0, 14.0, 20.0, 24.0, 1.1, 1.8, 1.0, 100.0, 100.0),
+    (8.0, 6.0, 11.0, 22.0, 25.0, 1.1, 2.0, 1.0, 100.0, 100.0),
+    (10.0, 3.5, 7.0, 22.0, 26.0, 1.1, 2.2, 1.5, 100.0, 100.0),
+    (12.0, 2.5, 5.0, 24.0, 28.0, 1.3, 2.5, 2.0, 100.0, 100.0),
+    (15.0, 1.5, 3.0, 25.0, 30.0, 1.3, 2.8, 2.5, 100.0, 100.0),
+    (16.0, 1.3, 2.8, 25.0, 30.0, 1.3, 2.8, 2.5, 100.0, 100.0),
+    (18.0, 1.1, 2.5, 25.0, 30.0, 1.3, 3.0, 2.8, 100.0, 100.0),
+    (20.0, 0.8, 1.8, 25.0, 30.0, 1.3, 3.0, 3.0, 100.0, 100.0),
+]
+
+TRUMPF_5030_ALUMINUM_N2_ROWS = [
+    (0.5, 50.0, 70.0, 18.0, 22.0, 0.8, 0.8, 0.0, 100.0, 100.0),
+    (0.8, 45.0, 65.0, 18.0, 22.0, 0.8, 0.8, 0.0, 100.0, 100.0),
+    (1.0, 45.0, 60.0, 18.0, 22.0, 0.8, 1.0, 0.0, 100.0, 100.0),
+    (1.5, 40.0, 55.0, 18.0, 22.0, 0.8, 1.0, 0.0, 100.0, 100.0),
+    (2.0, 35.0, 50.0, 18.0, 22.0, 0.8, 1.2, 0.0, 100.0, 100.0),
+    (2.5, 30.0, 45.0, 18.0, 22.0, 0.9, 1.2, 0.0, 100.0, 100.0),
+    (3.0, 25.0, 40.0, 18.0, 22.0, 0.9, 1.4, 0.0, 100.0, 100.0),
+    (4.0, 20.0, 30.0, 18.0, 22.0, 0.9, 1.6, 0.3, 100.0, 100.0),
+    (5.0, 15.0, 25.0, 20.0, 24.0, 0.9, 1.8, 0.5, 100.0, 100.0),
+    (6.0, 12.0, 20.0, 20.0, 24.0, 1.1, 1.8, 0.8, 100.0, 100.0),
+    (8.0, 8.0, 15.0, 22.0, 26.0, 1.1, 2.0, 1.0, 100.0, 100.0),
+    (10.0, 5.0, 10.0, 24.0, 28.0, 1.1, 2.2, 1.5, 100.0, 100.0),
+    (12.0, 3.5, 7.0, 24.0, 28.0, 1.3, 2.5, 2.0, 100.0, 100.0),
+    (15.0, 2.0, 5.0, 25.0, 30.0, 1.3, 2.8, 2.5, 100.0, 100.0),
+]
+
+
+def _cut_rows_from_values(values: list[tuple[float, ...]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in values:
+        thickness, speed_min, speed_max, gas_min, gas_max, nozzle_distance, nozzle, focus, power_pct, duty = item
+        rows.append(
+            {
+                "thickness_mm": thickness,
+                "speed_min_m_min": speed_min,
+                "speed_max_m_min": speed_max,
+                "gas_pressure_bar_min": gas_min,
+                "gas_pressure_bar_max": gas_max,
+                "nozzle_distance_mm": nozzle_distance,
+                "nozzle": str(nozzle),
+                "focus_mm": focus,
+                "power_pct": power_pct,
+                "duty_pct": duty,
+            }
+        )
+    return rows
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
@@ -246,6 +358,15 @@ def _display_material_family(value: Any) -> str:
     if not canonical:
         return ""
     return MATERIAL_FAMILY_LABELS.get(canonical, canonical)
+
+
+def _canonical_gas_name(value: Any) -> str:
+    token = _norm_material_token(value)
+    if token in {"O2", "OXIGENIO", "OXIGENIO", "OXYGEN"}:
+        return "Oxigenio"
+    if token in {"N2", "AZOTO", "NITROGENIO", "NITROGENIO", "NITROGEN"}:
+        return "Nitrogenio"
+    return str(value or "").strip()
 
 
 def _profile_section_perimeter_mm(section: Any, family: Any = "") -> float:
@@ -554,6 +675,25 @@ def default_laser_quote_settings() -> dict[str, Any]:
         {"thickness_mm": 25, "speed_min_m_min": 0.7, "speed_max_m_min": 1.1, "nozzle_distance_mm": 0.8, "gas_pressure_bar_min": 7.0, "gas_pressure_bar_max": 7.0, "focus_mm": -15.0, "nozzle": "7.0", "power_w": 12000, "duty_pct": 100.0, "frequency_hz": 5000.0},
         {"thickness_mm": 30, "speed_min_m_min": 0.5, "speed_max_m_min": 0.6, "nozzle_distance_mm": 0.8, "gas_pressure_bar_min": 7.0, "gas_pressure_bar_max": 7.0, "focus_mm": -17.0, "nozzle": "7.0", "power_w": 12000, "duty_pct": 100.0, "frequency_hz": 5000.0},
     ]
+    trumpf_steel_o2_rows = _cut_rows_from_values(TRUMPF_5030_STEEL_O2_ROWS)
+    trumpf_steel_n2_rows = _cut_rows_from_values(TRUMPF_5030_STEEL_N2_ROWS)
+    trumpf_inox_n2_rows = _cut_rows_from_values(TRUMPF_5030_INOX_N2_ROWS)
+    trumpf_aluminum_n2_rows = _cut_rows_from_values(TRUMPF_5030_ALUMINUM_N2_ROWS)
+    trumpf_motion = {
+        "rapid_speed_mm_s": 2800.0,
+        "travel_acc_mm_s2": 2000.0,
+        "cut_acc_mm_s2": 2000.0,
+        "mark_speed_m_min": 25.0,
+        "effective_speed_factor_pct": 90.0,
+        "lead_in_mm": 2.0,
+        "lead_out_mm": 2.0,
+        "lead_move_speed_mm_s": 5.0,
+        "pierce_base_ms": 350.0,
+        "pierce_per_mm_ms": 30.0,
+        "first_gas_delay_ms": 250.0,
+        "gas_delay_ms": 50.0,
+        "motion_overhead_pct": 5.0,
+    }
     return {
         "active_machine": "BLT641 12kW",
         "active_commercial": "Laser Oficina",
@@ -584,6 +724,8 @@ def default_laser_quote_settings() -> dict[str, Any]:
         "machine_profiles": {
             "BLT641 12kW": {
                 "name": "BLT641 12kW",
+                "type": "Fibra",
+                "power_w": 12000,
                 "motion": {
                     "rapid_speed_mm_s": 200.0,
                     "travel_acc_mm_s2": 2000.0,
@@ -601,26 +743,68 @@ def default_laser_quote_settings() -> dict[str, Any]:
                 },
                 "materials": {
                     "Aco carbono": {
-                        "density_kg_m3": 7800.0,
+                        "density_kg_m3": 7850.0,
                         "default_gas": "Oxigenio",
                         "gases": {
                             "Oxigenio": {
                                 "rows": thickness_rows,
+                            },
+                            "Nitrogenio": {
+                                "rows": trumpf_steel_n2_rows,
                             }
                         },
                     },
                     "Aco inox": {
-                        "density_kg_m3": 7930.0,
-                        "default_gas": "Azoto",
+                        "density_kg_m3": 8000.0,
+                        "default_gas": "Nitrogenio",
                         "gases": {
-                            "Azoto": {
+                            "Nitrogenio": {
                                 "rows": inox_nitrogen_rows,
                             },
                             "Ar comprimido": {
                                 "rows": inox_air_rows,
                             },
                         },
-                    }
+                    },
+                    "Aluminio": {
+                        "density_kg_m3": 2700.0,
+                        "default_gas": "Nitrogenio",
+                        "gases": {
+                            "Nitrogenio": {
+                                "rows": trumpf_aluminum_n2_rows,
+                            }
+                        },
+                    },
+                },
+            },
+            "TRUMPF TruLaser 5030 12kW": {
+                "name": "TRUMPF TruLaser 5030 12kW",
+                "type": "Fibra",
+                "power_w": 12000,
+                "motion": trumpf_motion,
+                "materials": {
+                    "Aco carbono": {
+                        "density_kg_m3": 7850.0,
+                        "default_gas": "Oxigenio",
+                        "gases": {
+                            "Oxigenio": {"rows": trumpf_steel_o2_rows},
+                            "Nitrogenio": {"rows": trumpf_steel_n2_rows},
+                        },
+                    },
+                    "Aco inox": {
+                        "density_kg_m3": 8000.0,
+                        "default_gas": "Nitrogenio",
+                        "gases": {
+                            "Nitrogenio": {"rows": trumpf_inox_n2_rows},
+                        },
+                    },
+                    "Aluminio": {
+                        "density_kg_m3": 2700.0,
+                        "default_gas": "Nitrogenio",
+                        "gases": {
+                            "Nitrogenio": {"rows": trumpf_aluminum_n2_rows},
+                        },
+                    },
                 },
             }
         },
@@ -650,19 +834,24 @@ def default_laser_quote_settings() -> dict[str, Any]:
                 },
                 "materials": {
                     "Aco carbono": {
-                        "density_kg_m3": 7800.0,
+                        "density_kg_m3": 7850.0,
                         "price_per_kg": 1.30,
                         "scrap_credit_per_kg": 1.20,
                     },
                     "Aco inox": {
-                        "density_kg_m3": 7930.0,
+                        "density_kg_m3": 8000.0,
+                        "price_per_kg": 0.0,
+                        "scrap_credit_per_kg": 0.0,
+                    },
+                    "Aluminio": {
+                        "density_kg_m3": 2700.0,
                         "price_per_kg": 0.0,
                         "scrap_credit_per_kg": 0.0,
                     }
                 },
                 "material_catalog": {
                     "Aco carbono": {
-                        "S235JR": {"price_per_kg": 1.30, "scrap_credit_per_kg": 1.20},
+                        "S235JR": {"price_per_kg": 1.30, "density_kg_m3": 7850.0, "scrap_credit_per_kg": 1.20},
                         "S275JR": {"price_per_kg": 1.30, "scrap_credit_per_kg": 1.20},
                         "S355JR": {"price_per_kg": 1.30, "scrap_credit_per_kg": 1.20},
                         "S355J2+N": {"price_per_kg": 1.30, "scrap_credit_per_kg": 1.20},
@@ -674,8 +863,8 @@ def default_laser_quote_settings() -> dict[str, Any]:
                         "DC01": {"price_per_kg": 1.30, "scrap_credit_per_kg": 1.20},
                         "CORTEN": {"price_per_kg": 1.30, "scrap_credit_per_kg": 1.20},
                         "S355JOW": {"price_per_kg": 1.30, "scrap_credit_per_kg": 1.20},
-                        "HARDOX 400": {"price_per_kg": 1.30, "scrap_credit_per_kg": 1.20},
-                        "HARDOX 450": {"price_per_kg": 1.30, "scrap_credit_per_kg": 1.20},
+                        "HARDOX 400": {"price_per_kg": 1.30, "density_kg_m3": 7850.0, "scrap_credit_per_kg": 1.20},
+                        "HARDOX 450": {"price_per_kg": 1.30, "density_kg_m3": 7850.0, "scrap_credit_per_kg": 1.20},
                     },
                     "Aco inox": {
                         "INOX304 2B": {"price_per_kg": 0.0, "scrap_credit_per_kg": 0.0},
@@ -688,7 +877,7 @@ def default_laser_quote_settings() -> dict[str, Any]:
                         "INOX430 2B": {"price_per_kg": 0.0, "scrap_credit_per_kg": 0.0},
                         "INOX430 BA": {"price_per_kg": 0.0, "scrap_credit_per_kg": 0.0},
                         "AISI304": {"price_per_kg": 0.0, "scrap_credit_per_kg": 0.0},
-                        "AISI304L": {"price_per_kg": 0.0, "scrap_credit_per_kg": 0.0},
+                        "AISI304L": {"price_per_kg": 0.0, "density_kg_m3": 8000.0, "scrap_credit_per_kg": 0.0},
                         "AISI316": {"price_per_kg": 0.0, "scrap_credit_per_kg": 0.0},
                         "AISI316L": {"price_per_kg": 0.0, "scrap_credit_per_kg": 0.0},
                         "1.4301": {"price_per_kg": 0.0, "scrap_credit_per_kg": 0.0},
@@ -696,6 +885,11 @@ def default_laser_quote_settings() -> dict[str, Any]:
                         "1.4401": {"price_per_kg": 0.0, "scrap_credit_per_kg": 0.0},
                         "1.4404": {"price_per_kg": 0.0, "scrap_credit_per_kg": 0.0},
                         "1.4016": {"price_per_kg": 0.0, "scrap_credit_per_kg": 0.0},
+                    },
+                    "Aluminio": {
+                        "Aluminio 5083": {"price_per_kg": 0.0, "density_kg_m3": 2660.0, "scrap_credit_per_kg": 0.0},
+                        "Aluminio 5754": {"price_per_kg": 0.0, "density_kg_m3": 2680.0, "scrap_credit_per_kg": 0.0},
+                        "Aluminio 6082": {"price_per_kg": 0.0, "density_kg_m3": 2700.0, "scrap_credit_per_kg": 0.0},
                     },
                 },
                 "rates": {
@@ -748,6 +942,11 @@ def default_laser_quote_settings() -> dict[str, Any]:
                 "1.4401",
                 "1.4404",
                 "1.4016",
+            ],
+            "Aluminio": [
+                "Aluminio 5083",
+                "Aluminio 5754",
+                "Aluminio 6082",
             ],
         },
     }
@@ -1651,9 +1850,15 @@ def _pick_series_tier(profile: dict[str, Any], quantity: int) -> dict[str, Any]:
 def _gas_rows(machine_profile: dict[str, Any], material_name: str, gas_name: str, material_subtype: str = "") -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     material_profile = _machine_material(machine_profile, material_name, material_subtype)
     gases = dict((material_profile.get("gases") or {}))
-    selected_gas = str(gas_name or material_profile.get("default_gas", "") or "").strip()
+    selected_gas = _canonical_gas_name(gas_name or material_profile.get("default_gas", "") or "")
     if selected_gas and selected_gas in gases:
         return selected_gas, list(dict(gases.get(selected_gas, {}) or {}).get("rows", []) or []), material_profile
+    selected_token = _norm_material_token(selected_gas)
+    if selected_token:
+        for gas_key, gas_payload in gases.items():
+            if _norm_material_token(_canonical_gas_name(gas_key)) == selected_token:
+                clean_key = str(gas_key or "").strip()
+                return clean_key, list(dict(gas_payload or {}).get("rows", []) or []), material_profile
     if gases:
         selected_gas = next(iter(gases.keys()))
         return selected_gas, list(dict(gases.get(selected_gas, {}) or {}).get("rows", []) or []), material_profile
@@ -1698,6 +1903,7 @@ def _lookup_cut_row(rows: list[dict[str, Any]], thickness_mm: float) -> dict[str
         "duty_pct",
         "frequency_hz",
         "power_w",
+        "power_pct",
     }
     for key in numeric_keys:
         out[key] = round(
@@ -1795,6 +2001,46 @@ def _build_profile_description(
     ).strip()
 
 
+def _laser_quote_snapshot(
+    *,
+    machine_profile: dict[str, Any],
+    commercial_profile: dict[str, Any],
+    material_family: str,
+    material_subtype: str,
+    density_kg_m3: float,
+    material_price_per_kg: float,
+    scrap_credit_per_kg: float,
+    gas_name: str,
+    thickness_mm: float,
+    cut_row: dict[str, Any],
+    motion_cfg: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "machine": {
+            "name": str(machine_profile.get("name", "") or ""),
+            "type": str(machine_profile.get("type", "") or ""),
+            "power_w": _as_float(machine_profile.get("power_w", 0.0), 0.0),
+            "motion": copy.deepcopy(dict(motion_cfg or {})),
+        },
+        "commercial": {
+            "name": str(commercial_profile.get("name", "") or ""),
+            "currency": str(commercial_profile.get("currency", "EUR") or "EUR"),
+        },
+        "material": {
+            "family": material_family,
+            "subtype": material_subtype,
+            "density_kg_m3": round(density_kg_m3, 3),
+            "price_per_kg": round(material_price_per_kg, 4),
+            "scrap_credit_per_kg": round(scrap_credit_per_kg, 4),
+        },
+        "cutting": {
+            "gas": gas_name,
+            "thickness_mm": round(thickness_mm, 3),
+            "parameters": copy.deepcopy(dict(cut_row or {})),
+        },
+    }
+
+
 def estimate_laser_quote(payload: dict[str, Any], settings: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = dict(payload or {})
     merged_settings = merge_laser_quote_settings(settings)
@@ -1808,6 +2054,8 @@ def estimate_laser_quote(payload: dict[str, Any], settings: dict[str, Any] | Non
     requested_material_subtype = str(payload.get("material_subtype", "") or "").strip()
     material_family, material_subtype = _infer_material_family_and_subtype(merged_settings, requested_material_family, requested_material_subtype)
     material_family = _canonical_material_family(material_family) or "Aco carbono"
+    if not str(material_subtype or "").strip():
+        raise ValueError("Seleciona um subtipo/material real antes de orcamentar.")
     display_material_family = _display_material_family(material_family)
     display_material = material_subtype or display_material_family
     material_supplied_by_client = bool(
@@ -1840,13 +2088,25 @@ def estimate_laser_quote(payload: dict[str, Any], settings: dict[str, Any] | Non
     density_kg_m3 = max(
         1.0,
         _as_float(
-            payload.get("density_kg_m3", pricing_material.get("density_kg_m3", machine_material.get("density_kg_m3", 7800.0))),
+            payload.get(
+                "density_kg_m3",
+                dict(commercial_subtype_override or {}).get(
+                    "density_kg_m3",
+                    dict(commercial_material or {}).get("density_kg_m3", machine_material.get("density_kg_m3", 7800.0)),
+                ),
+            ),
             7800.0,
         ),
     )
-    material_price_source = "subtype" if commercial_subtype_override else "family"
-    configured_material_price_per_kg = max(0.0, _as_float(payload.get("material_price_per_kg", pricing_material.get("price_per_kg", 0.0)), 0.0))
-    configured_scrap_credit_per_kg = max(0.0, _as_float(payload.get("scrap_credit_per_kg", pricing_material.get("scrap_credit_per_kg", 0.0)), 0.0))
+    material_price_source = "payload" if "material_price_per_kg" in payload else ("subtype" if commercial_subtype_override else "subtype_missing")
+    configured_material_price_per_kg = max(
+        0.0,
+        _as_float(payload.get("material_price_per_kg", dict(commercial_subtype_override or {}).get("price_per_kg", 0.0)), 0.0),
+    )
+    configured_scrap_credit_per_kg = max(
+        0.0,
+        _as_float(payload.get("scrap_credit_per_kg", dict(commercial_subtype_override or {}).get("scrap_credit_per_kg", 0.0)), 0.0),
+    )
     material_price_per_kg = 0.0 if material_supplied_by_client else configured_material_price_per_kg
     scrap_credit_per_kg = 0.0 if material_supplied_by_client else configured_scrap_credit_per_kg
     utilization_pct = max(1.0, _as_float(payload.get("material_utilization_pct", commercial_profile.get("material_utilization_pct", 82.0)), 82.0))
@@ -1950,6 +2210,19 @@ def estimate_laser_quote(payload: dict[str, Any], settings: dict[str, Any] | Non
         warnings.append("Materia-prima fornecida pelo cliente: o orcamento considera apenas trabalho e processo.")
     elif configured_material_price_per_kg <= 0.0:
         warnings.append(f"Sem preco comercial configurado para {display_material}. Define EUR/kg no perfil comercial antes de usar este valor como orçamento final.")
+    snapshot = _laser_quote_snapshot(
+        machine_profile=machine_profile,
+        commercial_profile=commercial_profile,
+        material_family=material_family,
+        material_subtype=material_subtype,
+        density_kg_m3=density_kg_m3,
+        material_price_per_kg=material_price_per_kg,
+        scrap_credit_per_kg=scrap_credit_per_kg,
+        gas_name=gas_name,
+        thickness_mm=thickness_mm,
+        cut_row=cut_row,
+        motion_cfg=motion_cfg,
+    )
     return {
         "file_path": file_path,
         "geometry": geometry,
@@ -2010,6 +2283,7 @@ def estimate_laser_quote(payload: dict[str, Any], settings: dict[str, Any] | Non
             "machine_total_sec": round(machine_time_total_unit, 3),
             "machine_total_min": round(machine_time_total_unit / 60.0, 3),
         },
+        "snapshot": snapshot,
         "pricing": {
             "material_cost_unit": _round_money(material_net_cost_unit, 4),
             "material_gross_cost_unit": _round_money(material_cost_unit, 4),
@@ -2036,6 +2310,12 @@ def estimate_laser_quote(payload: dict[str, Any], settings: dict[str, Any] | Non
             "material": display_material,
             "material_family": material_family,
             "material_subtype": material_subtype,
+            "machine": str(machine_profile.get("name", "") or merged_settings.get("active_machine", "")),
+            "laser_machine": str(machine_profile.get("name", "") or merged_settings.get("active_machine", "")),
+            "gas": gas_name,
+            "density_kg_m3": round(density_kg_m3, 3),
+            "material_price_per_kg": round(material_price_per_kg, 4),
+            "laser_snapshot": snapshot,
             "material_supplied_by_client": material_supplied_by_client,
             "material_fornecido_cliente": material_supplied_by_client,
             "material_cost_included": material_cost_included,
@@ -2079,6 +2359,8 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
     requested_material_subtype = str(payload.get("material_subtype", "") or "").strip()
     material_family, material_subtype = _infer_material_family_and_subtype(merged_settings, requested_material_family, requested_material_subtype)
     material_family = _canonical_material_family(material_family) or "Aco carbono"
+    if not str(material_subtype or "").strip():
+        raise ValueError("Seleciona um subtipo/material real antes de orcamentar.")
     display_material_family = _display_material_family(material_family)
     display_material = material_subtype or display_material_family
     if any(key in payload for key in ("material_supplied_by_client", "material_fornecido_cliente", "exclude_material_cost")):
@@ -2151,13 +2433,25 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
     density_kg_m3 = max(
         1.0,
         _as_float(
-            payload.get("density_kg_m3", pricing_material.get("density_kg_m3", machine_material.get("density_kg_m3", 7800.0))),
+            payload.get(
+                "density_kg_m3",
+                dict(commercial_subtype_override or {}).get(
+                    "density_kg_m3",
+                    dict(commercial_material or {}).get("density_kg_m3", machine_material.get("density_kg_m3", 7800.0)),
+                ),
+            ),
             7800.0,
         ),
     )
-    material_price_source = "subtype" if commercial_subtype_override else "family"
-    configured_material_price_per_kg = max(0.0, _as_float(payload.get("material_price_per_kg", pricing_material.get("price_per_kg", 0.0)), 0.0))
-    configured_scrap_credit_per_kg = max(0.0, _as_float(payload.get("scrap_credit_per_kg", pricing_material.get("scrap_credit_per_kg", 0.0)), 0.0))
+    material_price_source = "payload" if "material_price_per_kg" in payload else ("subtype" if commercial_subtype_override else "subtype_missing")
+    configured_material_price_per_kg = max(
+        0.0,
+        _as_float(payload.get("material_price_per_kg", dict(commercial_subtype_override or {}).get("price_per_kg", 0.0)), 0.0),
+    )
+    configured_scrap_credit_per_kg = max(
+        0.0,
+        _as_float(payload.get("scrap_credit_per_kg", dict(commercial_subtype_override or {}).get("scrap_credit_per_kg", 0.0)), 0.0),
+    )
     material_price_per_kg = 0.0 if material_supplied_by_client else configured_material_price_per_kg
     scrap_credit_per_kg = 0.0 if material_supplied_by_client else configured_scrap_credit_per_kg
     utilization_pct = max(1.0, _as_float(payload.get("material_utilization_pct", commercial_profile.get("material_utilization_pct", 82.0)), 82.0))
@@ -2347,6 +2641,19 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
     analysis_note = str(analyzed_metrics.get("note", "") or "").strip()
     if analysis_note:
         warnings.append(analysis_note)
+    snapshot = _laser_quote_snapshot(
+        machine_profile=machine_profile,
+        commercial_profile=commercial_profile,
+        material_family=material_family,
+        material_subtype=material_subtype,
+        density_kg_m3=density_kg_m3,
+        material_price_per_kg=material_price_per_kg,
+        scrap_credit_per_kg=scrap_credit_per_kg,
+        gas_name=gas_name,
+        thickness_mm=thickness_mm,
+        cut_row=cut_row,
+        motion_cfg=motion_cfg,
+    )
     return {
         "file_path": file_path,
         "geometry": {
@@ -2429,6 +2736,7 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
             "machine_total_sec": round(machine_time_total_unit, 3),
             "machine_total_min": round(machine_time_total_unit / 60.0, 3),
         },
+        "snapshot": snapshot,
         "pricing": {
             "material_cost_unit": _round_money(material_net_cost_unit, 4),
             "material_gross_cost_unit": _round_money(material_cost_unit, 4),
@@ -2466,6 +2774,12 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
             "material": display_material,
             "material_family": material_family,
             "material_subtype": material_subtype,
+            "machine": str(machine_profile.get("name", "") or merged_settings.get("active_machine", "")),
+            "laser_machine": str(machine_profile.get("name", "") or merged_settings.get("active_machine", "")),
+            "gas": gas_name,
+            "density_kg_m3": round(density_kg_m3, 3),
+            "material_price_per_kg": round(material_price_per_kg, 4),
+            "laser_snapshot": snapshot,
             "material_supplied_by_client": material_supplied_by_client,
             "material_fornecido_cliente": material_supplied_by_client,
             "material_cost_included": material_cost_included,

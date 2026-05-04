@@ -198,7 +198,12 @@ def mobile_planning_pdf(
 ) -> FileResponse:
     path = build_planning_pdf(year=year, week_start=week_start)
     filename = f"lugest_planeamento_{str(year or 'atual').strip() or 'atual'}.pdf"
-    return FileResponse(path=path, media_type="application/pdf", filename=filename)
+    return FileResponse(
+        path=path,
+        media_type="application/pdf",
+        filename=filename,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
 
 
 @app.get("/api/v1/mobile/material-separation")
@@ -224,7 +229,12 @@ def mobile_material_separation_pdf(
 ) -> FileResponse:
     path = build_material_separation_pdf(horizon_days=horizon_days)
     filename = f"lugest_separacao_mp_{int(horizon_days or 4)}d.pdf"
-    return FileResponse(path=path, media_type="application/pdf", filename=filename)
+    return FileResponse(
+        path=path,
+        media_type="application/pdf",
+        filename=filename,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
 
 
 @app.post("/api/v1/pulse/plan-delay/reason")

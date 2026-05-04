@@ -1999,6 +1999,91 @@ def _mysql_sync_relational_schema(cur, data):
             )
             """
         )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quality_nonconformities (
+            id VARCHAR(30) PRIMARY KEY,
+            origem VARCHAR(120) NULL,
+            referencia VARCHAR(120) NULL,
+            entidade_tipo VARCHAR(60) NULL,
+            entidade_id VARCHAR(120) NULL,
+            entidade_label VARCHAR(255) NULL,
+            tipo VARCHAR(60) NULL,
+            gravidade VARCHAR(40) NULL,
+            estado VARCHAR(40) NULL,
+            responsavel VARCHAR(120) NULL,
+            prazo DATE NULL,
+            descricao TEXT NULL,
+            causa TEXT NULL,
+            acao TEXT NULL,
+            eficacia TEXT NULL,
+            fornecedor_id VARCHAR(30) NULL,
+            fornecedor_nome VARCHAR(150) NULL,
+            material_id VARCHAR(30) NULL,
+            lote_fornecedor VARCHAR(100) NULL,
+            ne_numero VARCHAR(30) NULL,
+            guia VARCHAR(60) NULL,
+            fatura VARCHAR(60) NULL,
+            decisao VARCHAR(255) NULL,
+            movement_id VARCHAR(255) NULL,
+            qtd_recebida DECIMAL(10,2) NULL,
+            qtd_aprovada DECIMAL(10,2) NULL,
+            qtd_rejeitada DECIMAL(10,2) NULL,
+            qtd_pendente DECIMAL(10,2) NULL,
+            created_at DATETIME NULL,
+            updated_at DATETIME NULL,
+            created_by VARCHAR(120) NULL,
+            updated_by VARCHAR(120) NULL,
+            closed_at DATETIME NULL,
+            closed_by VARCHAR(120) NULL,
+            INDEX idx_quality_nc_estado (estado),
+            INDEX idx_quality_nc_entidade (entidade_tipo, entidade_id),
+            INDEX idx_quality_nc_referencia (referencia)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quality_documents (
+            id VARCHAR(30) PRIMARY KEY,
+            titulo VARCHAR(180) NOT NULL,
+            tipo VARCHAR(80) NULL,
+            entidade VARCHAR(80) NULL,
+            referencia VARCHAR(120) NULL,
+            entidade_tipo VARCHAR(60) NULL,
+            entidade_id VARCHAR(120) NULL,
+            versao VARCHAR(30) NULL,
+            estado VARCHAR(40) NULL,
+            responsavel VARCHAR(120) NULL,
+            caminho VARCHAR(512) NULL,
+            obs TEXT NULL,
+            created_at DATETIME NULL,
+            updated_at DATETIME NULL,
+            created_by VARCHAR(120) NULL,
+            updated_by VARCHAR(120) NULL,
+            INDEX idx_quality_doc_entidade (entidade_tipo, entidade_id),
+            INDEX idx_quality_doc_tipo (tipo),
+            INDEX idx_quality_doc_estado (estado)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quality_audit_log (
+            id VARCHAR(80) PRIMARY KEY,
+            created_at DATETIME NULL,
+            user_name VARCHAR(120) NULL,
+            action VARCHAR(120) NULL,
+            entity_type VARCHAR(80) NULL,
+            entity_id VARCHAR(120) NULL,
+            summary TEXT NULL,
+            before_json LONGTEXT NULL,
+            after_json LONGTEXT NULL,
+            INDEX idx_quality_audit_created (created_at),
+            INDEX idx_quality_audit_entity (entity_type, entity_id)
+        )
+        """
+    )
     if "conjuntos_modelo" not in tables:
         cur.execute(
             """
@@ -2540,6 +2625,79 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "produtos_mov", "obs", "TEXT NULL")
         _mysql_ensure_column(cur, "produtos_mov", "origem", "VARCHAR(80) NULL")
         _mysql_ensure_column(cur, "produtos_mov", "ref_doc", "VARCHAR(50) NULL")
+    if "stock_log" in tables:
+        _mysql_ensure_column(cur, "stock_log", "operador", "VARCHAR(120) NULL")
+    tables = _mysql_existing_tables(cur, force=True)
+    if "quality_nonconformities" in tables:
+        for name, definition in {
+            "origem": "VARCHAR(120) NULL",
+            "referencia": "VARCHAR(120) NULL",
+            "entidade_tipo": "VARCHAR(60) NULL",
+            "entidade_id": "VARCHAR(120) NULL",
+            "entidade_label": "VARCHAR(255) NULL",
+            "tipo": "VARCHAR(60) NULL",
+            "gravidade": "VARCHAR(40) NULL",
+            "estado": "VARCHAR(40) NULL",
+            "responsavel": "VARCHAR(120) NULL",
+            "prazo": "DATE NULL",
+            "descricao": "TEXT NULL",
+            "causa": "TEXT NULL",
+            "acao": "TEXT NULL",
+            "eficacia": "TEXT NULL",
+            "fornecedor_id": "VARCHAR(30) NULL",
+            "fornecedor_nome": "VARCHAR(150) NULL",
+            "material_id": "VARCHAR(30) NULL",
+            "lote_fornecedor": "VARCHAR(100) NULL",
+            "ne_numero": "VARCHAR(30) NULL",
+            "guia": "VARCHAR(60) NULL",
+            "fatura": "VARCHAR(60) NULL",
+            "decisao": "VARCHAR(255) NULL",
+            "movement_id": "VARCHAR(255) NULL",
+            "qtd_recebida": "DECIMAL(10,2) NULL",
+            "qtd_aprovada": "DECIMAL(10,2) NULL",
+            "qtd_rejeitada": "DECIMAL(10,2) NULL",
+            "qtd_pendente": "DECIMAL(10,2) NULL",
+            "created_at": "DATETIME NULL",
+            "updated_at": "DATETIME NULL",
+            "created_by": "VARCHAR(120) NULL",
+            "updated_by": "VARCHAR(120) NULL",
+            "closed_at": "DATETIME NULL",
+            "closed_by": "VARCHAR(120) NULL",
+        }.items():
+            _mysql_ensure_column(cur, "quality_nonconformities", name, definition)
+    if "quality_documents" in tables:
+        for name, definition in {
+            "titulo": "VARCHAR(180) NOT NULL",
+            "tipo": "VARCHAR(80) NULL",
+            "entidade": "VARCHAR(80) NULL",
+            "referencia": "VARCHAR(120) NULL",
+            "entidade_tipo": "VARCHAR(60) NULL",
+            "entidade_id": "VARCHAR(120) NULL",
+            "versao": "VARCHAR(30) NULL",
+            "estado": "VARCHAR(40) NULL",
+            "responsavel": "VARCHAR(120) NULL",
+            "caminho": "VARCHAR(512) NULL",
+            "obs": "TEXT NULL",
+            "created_at": "DATETIME NULL",
+            "updated_at": "DATETIME NULL",
+            "created_by": "VARCHAR(120) NULL",
+            "updated_by": "VARCHAR(120) NULL",
+        }.items():
+            _mysql_ensure_column(cur, "quality_documents", name, definition)
+    if "quality_audit_log" in tables:
+        for name, definition in {
+            "created_at": "DATETIME NULL",
+            "user_name": "VARCHAR(120) NULL",
+            "action": "VARCHAR(120) NULL",
+            "entity_type": "VARCHAR(80) NULL",
+            "entity_id": "VARCHAR(120) NULL",
+            "summary": "TEXT NULL",
+            "before_json": "LONGTEXT NULL",
+            "after_json": "LONGTEXT NULL",
+        }.items():
+            _mysql_ensure_column(cur, "quality_audit_log", name, definition)
+    if "app_config" in tables:
+        cur.execute("DELETE FROM app_config WHERE ckey=%s", ("quality_runtime",))
     if "conjuntos_modelo" in tables:
         _mysql_ensure_column(cur, "conjuntos_modelo", "descricao", "VARCHAR(150) NOT NULL")
         _mysql_ensure_column(cur, "conjuntos_modelo", "notas", "TEXT NULL")
@@ -2790,6 +2948,9 @@ def _mysql_sync_relational_schema(cur, data):
         "notas_encomenda_documentos",
         "notas_encomenda_entregas",
         "notas_encomenda_linhas",
+        "quality_audit_log",
+        "quality_documents",
+        "quality_nonconformities",
         "stock_log",
         "produtos_mov",
         "orcamentos",
@@ -4123,10 +4284,11 @@ def _mysql_sync_relational_schema(cur, data):
     if "stock_log" in tables:
         for s in data.get("stock_log", []):
             cur.execute(
-                "INSERT INTO stock_log (data, acao, detalhes) VALUES (%s, %s, %s)",
+                "INSERT INTO stock_log (data, acao, operador, detalhes) VALUES (%s, %s, %s, %s)",
                 (
                     _to_mysql_datetime(s.get("data")),
                     _clip(s.get("acao"), 50),
+                    _clip(s.get("operador"), 120),
                     s.get("detalhes"),
                 ),
             )
@@ -4154,6 +4316,115 @@ def _mysql_sync_relational_schema(cur, data):
                     mov.get("obs"),
                     _clip(mov.get("origem"), 80),
                     _clip(mov.get("ref_doc"), 50),
+                ),
+            )
+
+    if "quality_nonconformities" in tables:
+        for row in data.get("quality_nonconformities", []):
+            if not isinstance(row, dict) or not str(row.get("id", "") or "").strip():
+                continue
+            cur.execute(
+                """
+                INSERT INTO quality_nonconformities (
+                    id, origem, referencia, entidade_tipo, entidade_id, entidade_label, tipo, gravidade,
+                    estado, responsavel, prazo, descricao, causa, acao, eficacia, fornecedor_id,
+                    fornecedor_nome, material_id, lote_fornecedor, ne_numero, guia, fatura, decisao,
+                    movement_id, qtd_recebida, qtd_aprovada, qtd_rejeitada, qtd_pendente,
+                    created_at, updated_at, created_by, updated_by, closed_at, closed_by
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                """,
+                (
+                    _clip(row.get("id"), 30),
+                    _clip(row.get("origem"), 120),
+                    _clip(row.get("referencia"), 120),
+                    _clip(row.get("entidade_tipo"), 60),
+                    _clip(row.get("entidade_id"), 120),
+                    _clip(row.get("entidade_label"), 255),
+                    _clip(row.get("tipo"), 60),
+                    _clip(row.get("gravidade"), 40),
+                    _clip(row.get("estado"), 40),
+                    _clip(row.get("responsavel"), 120),
+                    _to_mysql_date(row.get("prazo")),
+                    row.get("descricao"),
+                    row.get("causa"),
+                    row.get("acao"),
+                    row.get("eficacia"),
+                    _clip(row.get("fornecedor_id"), 30),
+                    _clip(row.get("fornecedor_nome"), 150),
+                    _clip(row.get("material_id"), 30),
+                    _clip(row.get("lote_fornecedor"), 100),
+                    _clip(row.get("ne_numero"), 30),
+                    _clip(row.get("guia"), 60),
+                    _clip(row.get("fatura"), 60),
+                    _clip(row.get("decisao"), 255),
+                    _clip(row.get("movement_id"), 255),
+                    _to_num(row.get("qtd_recebida")),
+                    _to_num(row.get("qtd_aprovada")),
+                    _to_num(row.get("qtd_rejeitada")),
+                    _to_num(row.get("qtd_pendente")),
+                    _to_mysql_datetime(row.get("created_at")),
+                    _to_mysql_datetime(row.get("updated_at")),
+                    _clip(row.get("created_by"), 120),
+                    _clip(row.get("updated_by"), 120),
+                    _to_mysql_datetime(row.get("closed_at")),
+                    _clip(row.get("closed_by"), 120),
+                ),
+            )
+
+    if "quality_documents" in tables:
+        for row in data.get("quality_documents", []):
+            if not isinstance(row, dict) or not str(row.get("id", "") or "").strip():
+                continue
+            cur.execute(
+                """
+                INSERT INTO quality_documents (
+                    id, titulo, tipo, entidade, referencia, entidade_tipo, entidade_id, versao,
+                    estado, responsavel, caminho, obs, created_at, updated_at, created_by, updated_by
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    _clip(row.get("id"), 30),
+                    _clip(row.get("titulo"), 180),
+                    _clip(row.get("tipo"), 80),
+                    _clip(row.get("entidade"), 80),
+                    _clip(row.get("referencia"), 120),
+                    _clip(row.get("entidade_tipo"), 60),
+                    _clip(row.get("entidade_id"), 120),
+                    _clip(row.get("versao"), 30),
+                    _clip(row.get("estado"), 40),
+                    _clip(row.get("responsavel"), 120),
+                    _clip(row.get("caminho"), 512),
+                    row.get("obs"),
+                    _to_mysql_datetime(row.get("created_at")),
+                    _to_mysql_datetime(row.get("updated_at")),
+                    _clip(row.get("created_by"), 120),
+                    _clip(row.get("updated_by"), 120),
+                ),
+            )
+
+    if "quality_audit_log" in tables:
+        for row in data.get("audit_log", []):
+            if not isinstance(row, dict) or not str(row.get("id", "") or "").strip():
+                continue
+            cur.execute(
+                """
+                INSERT INTO quality_audit_log (
+                    id, created_at, user_name, action, entity_type, entity_id, summary, before_json, after_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    _clip(row.get("id"), 80),
+                    _to_mysql_datetime(row.get("created_at")),
+                    _clip(row.get("user"), 120),
+                    _clip(row.get("action"), 120),
+                    _clip(row.get("entity_type"), 80),
+                    _clip(row.get("entity_id"), 120),
+                    row.get("summary"),
+                    json.dumps(row.get("before"), ensure_ascii=False, default=str) if "before" in row else None,
+                    json.dumps(row.get("after"), ensure_ascii=False, default=str) if "after" in row else None,
                 ),
             )
 
@@ -5535,6 +5806,7 @@ def _mysql_load_relational_data():
                     {
                         "data": _db_to_iso(s.get("data")),
                         "acao": str(s.get("acao", "") or ""),
+                        "operador": str(s.get("operador", "") or ""),
                         "detalhes": str(s.get("detalhes", "") or ""),
                     }
                 )
@@ -5557,6 +5829,87 @@ def _mysql_load_relational_data():
                 )
                 if mov:
                     data["produtos_mov"].append(mov)
+
+            for row in fetch_all("quality_nonconformities", "created_at, id"):
+                data["quality_nonconformities"].append(
+                    {
+                        "id": str(row.get("id", "") or ""),
+                        "origem": str(row.get("origem", "") or ""),
+                        "referencia": str(row.get("referencia", "") or ""),
+                        "entidade_tipo": str(row.get("entidade_tipo", "") or ""),
+                        "entidade_id": str(row.get("entidade_id", "") or ""),
+                        "entidade_label": str(row.get("entidade_label", "") or ""),
+                        "tipo": str(row.get("tipo", "") or ""),
+                        "gravidade": str(row.get("gravidade", "") or ""),
+                        "estado": str(row.get("estado", "") or ""),
+                        "responsavel": str(row.get("responsavel", "") or ""),
+                        "prazo": _db_to_iso(row.get("prazo"))[:10],
+                        "descricao": str(row.get("descricao", "") or ""),
+                        "causa": str(row.get("causa", "") or ""),
+                        "acao": str(row.get("acao", "") or ""),
+                        "eficacia": str(row.get("eficacia", "") or ""),
+                        "fornecedor_id": str(row.get("fornecedor_id", "") or ""),
+                        "fornecedor_nome": str(row.get("fornecedor_nome", "") or ""),
+                        "material_id": str(row.get("material_id", "") or ""),
+                        "lote_fornecedor": str(row.get("lote_fornecedor", "") or ""),
+                        "ne_numero": str(row.get("ne_numero", "") or ""),
+                        "guia": str(row.get("guia", "") or ""),
+                        "fatura": str(row.get("fatura", "") or ""),
+                        "decisao": str(row.get("decisao", "") or ""),
+                        "movement_id": str(row.get("movement_id", "") or ""),
+                        "qtd_recebida": _to_num(row.get("qtd_recebida")) or 0.0,
+                        "qtd_aprovada": _to_num(row.get("qtd_aprovada")) or 0.0,
+                        "qtd_rejeitada": _to_num(row.get("qtd_rejeitada")) or 0.0,
+                        "qtd_pendente": _to_num(row.get("qtd_pendente")) or 0.0,
+                        "created_at": _db_to_iso(row.get("created_at")),
+                        "updated_at": _db_to_iso(row.get("updated_at")),
+                        "created_by": str(row.get("created_by", "") or ""),
+                        "updated_by": str(row.get("updated_by", "") or ""),
+                        "closed_at": _db_to_iso(row.get("closed_at")),
+                        "closed_by": str(row.get("closed_by", "") or ""),
+                    }
+                )
+
+            for row in fetch_all("quality_documents", "tipo, titulo, id"):
+                data["quality_documents"].append(
+                    {
+                        "id": str(row.get("id", "") or ""),
+                        "titulo": str(row.get("titulo", "") or ""),
+                        "tipo": str(row.get("tipo", "") or ""),
+                        "entidade": str(row.get("entidade", "") or ""),
+                        "referencia": str(row.get("referencia", "") or ""),
+                        "entidade_tipo": str(row.get("entidade_tipo", "") or ""),
+                        "entidade_id": str(row.get("entidade_id", "") or ""),
+                        "versao": str(row.get("versao", "") or ""),
+                        "estado": str(row.get("estado", "") or ""),
+                        "responsavel": str(row.get("responsavel", "") or ""),
+                        "caminho": str(row.get("caminho", "") or ""),
+                        "obs": str(row.get("obs", "") or ""),
+                        "created_at": _db_to_iso(row.get("created_at")),
+                        "updated_at": _db_to_iso(row.get("updated_at")),
+                        "created_by": str(row.get("created_by", "") or ""),
+                        "updated_by": str(row.get("updated_by", "") or ""),
+                    }
+                )
+
+            for row in fetch_all("quality_audit_log", "created_at, id"):
+                event = {
+                    "id": str(row.get("id", "") or ""),
+                    "created_at": _db_to_iso(row.get("created_at")),
+                    "user": str(row.get("user_name", "") or ""),
+                    "action": str(row.get("action", "") or ""),
+                    "entity_type": str(row.get("entity_type", "") or ""),
+                    "entity_id": str(row.get("entity_id", "") or ""),
+                    "summary": str(row.get("summary", "") or ""),
+                }
+                for source_key, target_key in (("before_json", "before"), ("after_json", "after")):
+                    raw = row.get(source_key)
+                    if raw:
+                        try:
+                            event[target_key] = json.loads(str(raw))
+                        except Exception:
+                            event[target_key] = str(raw)
+                data["audit_log"].append(event)
 
             for ev in fetch_all("op_eventos", "id"):
                 data["op_eventos"].append(
@@ -5643,12 +5996,6 @@ def _mysql_save_relational_data(data, conn=None):
                     RUNTIME_STATE_CONFIG_KEY,
                     RUNTIME_STATE_CONFIG_FILE,
                     _runtime_state_payload(data),
-                    conn=active_conn,
-                )
-                _app_config_save_json(
-                    QUALITY_RUNTIME_CONFIG_KEY,
-                    QUALITY_RUNTIME_CONFIG_FILE,
-                    _quality_runtime_payload(data),
                     conn=active_conn,
                 )
                 _MYSQL_SCHEMA_SYNCED = True
@@ -6601,8 +6948,6 @@ RUNTIME_STATE_CONFIG_DEFAULTS = {
     "workcenter_catalog": [],
     "plano_bloqueios": [],
 }
-QUALITY_RUNTIME_CONFIG_FILE = "lugest_quality_runtime.json"
-QUALITY_RUNTIME_CONFIG_KEY = "quality_runtime"
 QUALITY_RUNTIME_CONFIG_DEFAULTS = {
     "quality_nonconformities": [],
     "quality_documents": [],
@@ -6727,24 +7072,11 @@ def _runtime_state_payload(data):
         return clean
 
 
-def _quality_runtime_payload(data):
-    payload = {}
-    source = dict(data or {})
-    for key, default in QUALITY_RUNTIME_CONFIG_DEFAULTS.items():
-        value = copy.deepcopy(source.get(key, default))
-        payload[key] = value if isinstance(value, list) else copy.deepcopy(default)
-    try:
-        return json.loads(json.dumps(payload, ensure_ascii=False, default=str))
-    except Exception:
-        return copy.deepcopy(QUALITY_RUNTIME_CONFIG_DEFAULTS)
-
-
 def _apply_quality_runtime_payload(data, payload=None):
     if not isinstance(data, dict):
         return data
-    source = payload if isinstance(payload, dict) else _app_config_load_json(QUALITY_RUNTIME_CONFIG_KEY, QUALITY_RUNTIME_CONFIG_FILE)
     for key, default in QUALITY_RUNTIME_CONFIG_DEFAULTS.items():
-        value = copy.deepcopy((source or {}).get(key, data.get(key, default)))
+        value = copy.deepcopy(data.get(key, default))
         data[key] = value if isinstance(value, list) else copy.deepcopy(default)
     return data
 
@@ -8513,11 +8845,12 @@ def push_unique(lst, value):
         lst.append(v)
 
 
-def log_stock(data, action, details):
+def log_stock(data, action, details, operador=""):
     details = format_stock_detail(data, details)
     data.setdefault("stock_log", []).append({
         "data": now_iso(),
         "acao": action,
+        "operador": str(operador or "").strip(),
         "detalhes": details,
     })
 

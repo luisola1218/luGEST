@@ -2054,7 +2054,7 @@ class LegacyBackend(
             **geometry,
         }
 
-    def material_rows(self, filter_text: str = "") -> list[dict[str, Any]]:
+    def material_rows(self, filter_text: str = "", in_stock_only: bool = False) -> list[dict[str, Any]]:
         data = self.ensure_data()
         query = str(filter_text or "").strip().lower()
         rows: list[dict[str, Any]] = []
@@ -2064,6 +2064,8 @@ class LegacyBackend(
             preview = self.material_price_preview(material)
             material["preco_unid"] = float(preview.get("preco_unid", 0.0) or 0.0)
             disponivel = self._parse_float(material.get("quantidade", 0), 0) - self._parse_float(material.get("reservado", 0), 0)
+            if in_stock_only and disponivel <= 0:
+                continue
             formato = str(material.get("formato") or self.desktop_main.detect_materia_formato(material) or "Chapa").strip()
             quality_blocked = self._material_quality_is_blocked(material)
             quality_status = str(material.get("quality_status", "") or material.get("inspection_status", "") or "").strip()
@@ -2375,7 +2377,12 @@ class LegacyBackend(
         self.desktop_main.push_unique(data.setdefault("materiais_hist", []), values["material"])
         if values["espessura"]:
             self.desktop_main.push_unique(data.setdefault("espessuras_hist", []), values["espessura"])
-        self.desktop_main.log_stock(data, "ADICIONAR", f"{values['material']} {values['espessura']} qtd={values['quantidade']}")
+        self.desktop_main.log_stock(
+            data,
+            "ADICIONAR",
+            f"{values['material']} {values['espessura']} qtd={values['quantidade']}",
+            operador=self._current_user_label(),
+        )
         self._sync_ne_from_materia()
         self._save(force=True)
         return record
@@ -2416,6 +2423,7 @@ class LegacyBackend(
             data,
             "EDITAR",
             f"{record.get('id')} qtd={record.get('quantidade', 0)} reservado={record.get('reservado', 0)}",
+            operador=self._current_user_label(),
         )
         self._sync_ne_from_materia()
         self._save(force=True)
@@ -2431,6 +2439,7 @@ class LegacyBackend(
             data,
             "REMOVER",
             f"{record.get('id')} qtd={record.get('quantidade', 0)} reservado={record.get('reservado', 0)}",
+            operador=self._current_user_label(),
         )
         self._save(force=True)
 
@@ -2449,7 +2458,12 @@ class LegacyBackend(
         record["metros"] = met
         record["preco_unid"] = float(self.materia_actions._materia_preco_unid_record(record))
         record["atualizado_em"] = self.desktop_main.now_iso()
-        self.desktop_main.log_stock(data, "CORRIGIR", f"{record.get('id')} qtd={qtd} reservado={res}")
+        self.desktop_main.log_stock(
+            data,
+            "CORRIGIR",
+            f"{record.get('id')} qtd={qtd} reservado={res}",
+            operador=self._current_user_label(),
+        )
         self._sync_ne_from_materia()
         self._save(force=True)
         return record
@@ -2506,10 +2520,15 @@ class LegacyBackend(
             self.materia_actions._hydrate_retalho_record(data, retalho_row, template=record)
         record["quantidade"] = self._parse_float(record.get("quantidade", 0), 0) - qtd
         record["atualizado_em"] = self.desktop_main.now_iso()
-        self.desktop_main.log_stock(data, "BAIXA", f"{record.get('id')} qtd={qtd}")
+        self.desktop_main.log_stock(data, "BAIXA", f"{record.get('id')} qtd={qtd}", operador=self._current_user_label())
         if retalho_row is not None:
             data.setdefault("materiais", []).append(retalho_row)
-            self.desktop_main.log_stock(data, "RETALHO", f"{record.get('id')} qtd={retalho_row.get('quantidade', 0)}")
+            self.desktop_main.log_stock(
+                data,
+                "RETALHO",
+                f"{record.get('id')} qtd={retalho_row.get('quantidade', 0)}",
+                operador=self._current_user_label(),
+            )
         self._sync_ne_from_materia()
         self._save(force=True)
         return record
@@ -2640,7 +2659,12 @@ class LegacyBackend(
         record["p_compra"] = base_value
         record["preco_unid"] = float(self.materia_actions._materia_preco_unid_record(record))
         record["atualizado_em"] = self.desktop_main.now_iso()
-        self.desktop_main.log_stock(data, "PRECO", f"{record.get('id')} base={base_value} price_kg={price_kg_value}")
+        self.desktop_main.log_stock(
+            data,
+            "PRECO",
+            f"{record.get('id')} base={base_value} price_kg={price_kg_value}",
+            operador=self._current_user_label(),
+        )
         self._sync_ne_from_materia()
         self._save(force=True)
         updated_preview = dict(self.material_price_preview(record) or {})
@@ -2750,7 +2774,7 @@ class LegacyBackend(
             obs = f"{stock.get('id', '')} qtd={qty}"
             if reason:
                 obs = f"{obs} motivo={reason}"
-            self.desktop_main.log_stock(data, "BAIXA", obs)
+            self.desktop_main.log_stock(data, "BAIXA", obs, operador=self._current_user_label())
 
         created_retalho = None
         if has_retalho and source_stock is not None:
@@ -2793,7 +2817,7 @@ class LegacyBackend(
             log_msg = f"{source_stock.get('id', '')} qtd={created_retalho.get('quantidade', 0)}"
             if reason:
                 log_msg = f"{log_msg} motivo={reason}"
-            self.desktop_main.log_stock(data, "RETALHO", log_msg)
+            self.desktop_main.log_stock(data, "RETALHO", log_msg, operador=self._current_user_label())
         self._sync_ne_from_materia()
         self._save(force=True)
         return {
@@ -2858,6 +2882,7 @@ class LegacyBackend(
                 {
                     "data": str(entry.get("data", "")),
                     "acao": str(entry.get("acao", "")),
+                    "operador": str(entry.get("operador", "") or "").strip(),
                     "detalhes": str(entry.get("detalhes", "")),
                 }
             )
@@ -2877,6 +2902,7 @@ class LegacyBackend(
                 {
                     "data": str(entry.get("data", "") or "").replace("T", " ")[:19],
                     "acao": str(entry.get("acao", "") or "").strip(),
+                    "operador": str(entry.get("operador", "") or "").strip(),
                     "detalhes": detalhes,
                 }
             )
@@ -3454,12 +3480,15 @@ class LegacyBackend(
         prod["preco_unid"] = round(self._parse_float(self.desktop_main.produto_preco_unitario(prod), 0), 4)
         return prod
 
-    def product_rows(self, filter_text: str = "") -> list[dict[str, Any]]:
+    def product_rows(self, filter_text: str = "", in_stock_only: bool = False) -> list[dict[str, Any]]:
         query = str(filter_text or "").strip().lower()
         rows = []
         for index, prod in enumerate(list(self.ensure_data().get("produtos", []) or [])):
             price_unit = round(self._parse_float(self.desktop_main.produto_preco_unitario(prod), 0), 4)
             qty = self._parse_float(prod.get("qty", 0), 0)
+            physical_qty = qty + max(0.0, self._parse_float(prod.get("quality_pending_qty", 0), 0))
+            if in_stock_only and qty <= 0:
+                continue
             quality_status = str(prod.get("quality_status", "") or "").strip()
             quality_display_status = (
                 "EM_INSPECAO"
@@ -3478,11 +3507,12 @@ class LegacyBackend(
                 "tipo": str(prod.get("tipo", "") or "").strip(),
                 "dimensoes": self._product_dimensoes(prod),
                 "unid": str(prod.get("unid", "UN") or "UN").strip() or "UN",
-                "qty": qty,
+                "qty": physical_qty,
+                "available_qty": qty,
                 "alerta": alerta,
                 "p_compra": round(self._parse_float(prod.get("p_compra", 0), 0), 4),
                 "preco_unid": price_unit,
-                "valor_stock": round(qty * price_unit, 2),
+                "valor_stock": round(physical_qty * price_unit, 2),
                 "metros_unidade": round(self._parse_float(prod.get("metros_unidade", prod.get("metros", 0)), 0), 4),
                 "peso_unid": round(self._parse_float(prod.get("peso_unid", 0), 0), 4),
                 "fabricante": str(prod.get("fabricante", "") or "").strip(),
@@ -4913,7 +4943,12 @@ class LegacyBackend(
             if not lote_sel:
                 lote_sel = str(stock.get("lote_fornecedor", "") or "").strip()
             reserved_consumed += qty_res
-            self.desktop_main.log_stock(self.ensure_data(), "BAIXA CATIVADA", f"{stock.get('id', '')} qtd={qty_res} encomenda={enc.get('numero', '')}")
+            self.desktop_main.log_stock(
+                self.ensure_data(),
+                "BAIXA CATIVADA",
+                f"{stock.get('id', '')} qtd={qty_res} encomenda={enc.get('numero', '')}",
+                operador=self._current_user_label(),
+            )
         enc["reservas"] = keep_reservas
         enc["cativar"] = bool(keep_reservas)
 
@@ -4940,7 +4975,12 @@ class LegacyBackend(
             if not lote_sel:
                 lote_sel = str(stock.get("lote_fornecedor", "") or "").strip()
             extra_consumed = extra_qty
-            self.desktop_main.log_stock(self.ensure_data(), "BAIXA", f"{stock_id} qtd={extra_qty} encomenda={enc.get('numero', '')}")
+            self.desktop_main.log_stock(
+                self.ensure_data(),
+                "BAIXA",
+                f"{stock_id} qtd={extra_qty} encomenda={enc.get('numero', '')}",
+                operador=self._current_user_label(),
+            )
 
         consumed_total = round(reserved_consumed + extra_consumed, 1)
         manual_stock_required = reserved_consumed <= 1e-9
@@ -4951,6 +4991,7 @@ class LegacyBackend(
                 self.ensure_data(),
                 "SEM_BAIXA",
                 f"encomenda={enc.get('numero', '')} mat={material} esp={espessura} motivo=laser_sem_stock_qt",
+                operador=self._current_user_label(),
             )
         created_retalho = None
         if has_retalho:
@@ -4999,6 +5040,7 @@ class LegacyBackend(
                 self.ensure_data(),
                 "RETALHO",
                 f"{source_stock.get('id', '')} qtd={created_retalho.get('quantidade', 0)} encomenda={enc.get('numero', '')} motivo=fecho_laser_qt",
+                operador=self._current_user_label(),
             )
         if lote_sel:
             esp_obj["lote_baixa"] = lote_sel
@@ -10294,7 +10336,12 @@ class LegacyBackend(
                     "quantidade": quantidade,
                 }
             )
-            self.desktop_main.log_stock(self.ensure_data(), "CATIVAR", f"{material_id} qtd={quantidade} encomenda={enc.get('numero', '')}")
+            self.desktop_main.log_stock(
+                self.ensure_data(),
+                "CATIVAR",
+                f"{material_id} qtd={quantidade} encomenda={enc.get('numero', '')}",
+                operador=self._current_user_label(),
+            )
             any_saved = True
         if not any_saved:
             raise ValueError("Nenhuma quantidade definida.")
@@ -10316,7 +10363,12 @@ class LegacyBackend(
         if not target:
             raise ValueError(f"Sem reservas para {material} esp. {espessura}.")
         for row in target:
-            self.desktop_main.log_stock(self.ensure_data(), "LIBERTAR", f"{row.get('material_id', '')} qtd={row.get('quantidade', 0)} encomenda={enc.get('numero', '')}")
+            self.desktop_main.log_stock(
+                self.ensure_data(),
+                "LIBERTAR",
+                f"{row.get('material_id', '')} qtd={row.get('quantidade', 0)} encomenda={enc.get('numero', '')}",
+                operador=self._current_user_label(),
+            )
         self.desktop_main.aplicar_reserva_em_stock(self.ensure_data(), target, -1)
         enc["reservas"] = keep
         enc["cativar"] = bool(enc.get("reservas"))
@@ -11065,7 +11117,7 @@ class LegacyBackend(
     def _quality_status_is_available(self, value: Any) -> bool:
         return self._quality_status_code(value) == "APROVADO"
 
-    def _quality_quarantine_pending_stock(self, item: dict[str, Any], *, kind: str) -> bool:
+    def _quality_quarantine_pending_stock(self, item: dict[str, Any], *, kind: str, max_qty: float | None = None) -> bool:
         if not isinstance(item, dict):
             return False
         status = self._quality_status_code(item.get("quality_status", item.get("inspection_status", "")))
@@ -11076,9 +11128,14 @@ class LegacyBackend(
         pending = self._parse_float(item.get("quality_pending_qty", 0), 0)
         if current_qty <= 0:
             return False
-        item["quality_pending_qty"] = pending + current_qty
-        item["quality_received_qty"] = max(self._parse_float(item.get("quality_received_qty", 0), 0), pending + current_qty)
-        item[qty_key] = 0.0
+        quarantine_qty = current_qty
+        if max_qty is not None:
+            quarantine_qty = min(current_qty, max(0.0, self._parse_float(max_qty, 0) - pending))
+        if quarantine_qty <= 0:
+            return False
+        item["quality_pending_qty"] = pending + quarantine_qty
+        item["quality_received_qty"] = max(self._parse_float(item.get("quality_received_qty", 0), 0), pending + quarantine_qty)
+        item[qty_key] = max(0.0, current_qty - quarantine_qty)
         item["quality_blocked"] = True
         item["logistic_status"] = str(item.get("logistic_status", "") or "RECEBIDO").strip()
         item["atualizado_em"] = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
@@ -11451,7 +11508,11 @@ class LegacyBackend(
         if target is None:
             raise ValueError("Linha de receção não encontrada.")
 
-        self._quality_quarantine_pending_stock(target, kind=entity_type)
+        self._quality_quarantine_pending_stock(
+            target,
+            kind=entity_type,
+            max_qty=self._parse_float((movement_ctx or {}).get("pending_qty", 0), 0) if movement_ctx is not None else None,
+        )
         before = copy.deepcopy(target)
         qty_key = "qty" if entity_type == "Produto" else "quantidade"
         pending_qty = (
@@ -11578,7 +11639,12 @@ class LegacyBackend(
                         ref_doc=reference,
                     )
                 else:
-                    self.desktop_main.log_stock(data, "ENTRADA_QUALIDADE", f"{entity_id} qtd={approved_qty} ref={reference}")
+                    self.desktop_main.log_stock(
+                        data,
+                        "ENTRADA_QUALIDADE",
+                        f"{entity_id} qtd={approved_qty} ref={reference}",
+                        operador=self._current_user_label(),
+                    )
         if effective_status == "APROVADO" and rejected_qty <= 0 and existing_rejected_total <= 0:
             if existing_open is not None:
                 self.quality_nc_close(str(existing_open.get("id", "") or ""), target["inspection_decision"])
@@ -11872,7 +11938,12 @@ class LegacyBackend(
             material["quantidade"] = before_qty + pending_qty
             material["quality_pending_qty"] = 0.0
             material["quality_approved_qty"] = self._parse_float(material.get("quality_approved_qty", 0), 0) + pending_qty
-            self.desktop_main.log_stock(data, "ENTRADA_QUALIDADE", f"{material_id} qtd={pending_qty} NC={nc_id_txt}")
+            self.desktop_main.log_stock(
+                data,
+                "ENTRADA_QUALIDADE",
+                f"{material_id} qtd={pending_qty} NC={nc_id_txt}",
+                operador=self._current_user_label(),
+            )
         material["quality_status"] = "APROVADO"
         material["inspection_status"] = "APROVADO"
         material["quality_blocked"] = False

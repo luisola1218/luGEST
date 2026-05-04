@@ -64,7 +64,10 @@ REQUIRED = {
     "plano": {"bloco_id", "encomenda_numero", "data_planeada", "inicio", "duracao_min"},
     "produtos": {"codigo", "descricao", "qty"},
     "produtos_mov": {"codigo", "tipo", "qtd", "data"},
-    "stock_log": {"acao", "data"},
+    "stock_log": {"acao", "data", "operador"},
+    "quality_nonconformities": {"id", "estado", "descricao", "created_at", "updated_at", "entidade_tipo", "entidade_id"},
+    "quality_documents": {"id", "titulo", "tipo", "estado", "caminho", "updated_at"},
+    "quality_audit_log": {"id", "created_at", "user_name", "action", "entity_type", "entity_id"},
     "users": {"username", "password", "role"},
 }
 

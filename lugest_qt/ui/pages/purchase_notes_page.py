@@ -3365,6 +3365,9 @@ class PurchaseNotesPage(QWidget):
         layout.addWidget(send_now_check)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        preview_btn = buttons.addButton("Pre-visualizar PDF", QDialogButtonBox.ActionRole)
+        if preview_btn is not None:
+            preview_btn.setToolTip("Abrir o PDF gerado antes de preparar o email; o visualizador permite guardar e imprimir.")
         ok_btn = buttons.button(QDialogButtonBox.Ok)
         cancel_btn = buttons.button(QDialogButtonBox.Cancel)
         if ok_btn is not None:
@@ -3390,6 +3393,8 @@ class PurchaseNotesPage(QWidget):
             dialog.accept()
 
         send_now_check.toggled.connect(_sync_ok_text)
+        if preview_btn is not None:
+            preview_btn.clicked.connect(lambda: self._preview_note_pdf_from_dialog(dialog, detail, quote=True))
         _sync_ok_text()
         buttons.accepted.connect(_accept)
         buttons.rejected.connect(dialog.reject)
@@ -3410,6 +3415,20 @@ class PurchaseNotesPage(QWidget):
             "body_plain": body_edit.toPlainText().strip(),
             "send_now": bool(send_now_check.isChecked()),
         }
+
+    def _preview_note_pdf_from_dialog(self, dialog: QDialog, detail: dict[str, object], *, quote: bool) -> None:
+        numero = str((detail or {}).get("numero", "") or self.current_number or "").strip()
+        if not numero:
+            QMessageBox.warning(dialog, "Notas Encomenda", "Guarda primeiro a nota antes de gerar o PDF.")
+            return
+        safe_number = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in numero)[:48] or "nota"
+        prefix = "Pedido_Cotacao" if quote else "Encomenda"
+        target = Path(tempfile.gettempdir()) / f"{prefix}_{safe_number}_preview.pdf"
+        try:
+            self.backend.ne_render_pdf(numero, quote=quote, output_path=target)
+            os.startfile(str(target))
+        except Exception as exc:
+            QMessageBox.critical(dialog, "Pre-visualizar PDF", str(exc))
 
     def _open_note_quote_email_draft(self, detail: dict[str, object], mail_payload: dict[str, object]) -> None:
         payload = dict(detail or {})
@@ -3629,6 +3648,9 @@ class PurchaseNotesPage(QWidget):
         layout.addWidget(send_now_check)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        preview_btn = buttons.addButton("Pre-visualizar PDF", QDialogButtonBox.ActionRole)
+        if preview_btn is not None:
+            preview_btn.setToolTip("Abrir o PDF gerado antes de preparar o email; o visualizador permite guardar e imprimir.")
         ok_btn = buttons.button(QDialogButtonBox.Ok)
         cancel_btn = buttons.button(QDialogButtonBox.Cancel)
         if ok_btn is not None:
@@ -3653,6 +3675,8 @@ class PurchaseNotesPage(QWidget):
             dialog.accept()
 
         send_now_check.toggled.connect(_sync_ok_text)
+        if preview_btn is not None:
+            preview_btn.clicked.connect(lambda: self._preview_note_pdf_from_dialog(dialog, detail, quote=False))
         _sync_ok_text()
         buttons.accepted.connect(_accept)
         buttons.rejected.connect(dialog.reject)

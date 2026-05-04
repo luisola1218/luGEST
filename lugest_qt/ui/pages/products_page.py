@@ -5,6 +5,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -128,6 +129,10 @@ class ProductsPage(QWidget):
         self.filter_edit.textChanged.connect(self.refresh)
         self.filter_edit.setMaximumWidth(420)
         top_bar.addWidget(self.filter_edit)
+        self.only_stock_check = QCheckBox("Mostrar apenas com stock")
+        self.only_stock_check.setChecked(False)
+        self.only_stock_check.toggled.connect(self.refresh)
+        top_bar.addWidget(self.only_stock_check)
         top_layout.addLayout(top_bar)
 
         summary = QHBoxLayout()
@@ -542,7 +547,7 @@ class ProductsPage(QWidget):
 
     def refresh(self) -> None:
         self._load_presets()
-        rows = self.backend.product_rows(self.filter_edit.text().strip())
+        rows = self.backend.product_rows(self.filter_edit.text().strip(), in_stock_only=self.only_stock_check.isChecked())
         self.table_count_label.setText(f"{len(rows)} registos")
         self.table.setRowCount(len(rows))
         for row_index, row in enumerate(rows):

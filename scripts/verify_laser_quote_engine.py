@@ -86,6 +86,7 @@ def main() -> int:
             {
                 "path": str(path),
                 "material": "Aco carbono",
+                "material_subtype": "S235JR",
                 "gas": "Oxigenio",
                 "thickness_mm": 8,
                 "qtd": 2,
@@ -100,6 +101,7 @@ def main() -> int:
         profile_payload = {
             "path": str(Path(tmp_dir) / "cantoneira.step"),
             "material": "Aco carbono",
+            "material_subtype": "S235JR",
             "gas": "Oxigenio",
             "qtd": 1,
             "profile_family": "Cantoneira",

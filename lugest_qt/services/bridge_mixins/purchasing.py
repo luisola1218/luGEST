@@ -594,7 +594,12 @@ class PurchasingBridgeMixin:
         if str(record.get("espessura", "") or "").strip():
             self.desktop_main.push_unique(data.setdefault("espessuras_hist", []), str(record.get("espessura", "") or "").strip())
         if self._parse_float(record.get("quantidade", 0), 0) > 0:
-            self.desktop_main.log_stock(data, "CRIAR_NE", f"{record.get('id', '')} via {note_number}")
+            self.desktop_main.log_stock(
+                data,
+                "CRIAR_NE",
+                f"{record.get('id', '')} via {note_number}",
+                operador=self._current_user_label(),
+            )
         return record
 
     def _delivery_inspection_payload(self, update: dict[str, Any]) -> dict[str, str]:

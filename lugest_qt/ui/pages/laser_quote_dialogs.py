@@ -32,15 +32,20 @@ from lugest_core.laser.quote_engine import default_laser_quote_settings
 
 MATERIAL_FAMILY_ALIASES = {
     "FERRO": "Aco carbono",
+    "ACO": "Aco carbono",
     "ACOCARBONO": "Aco carbono",
     "CARBONSTEEL": "Aco carbono",
     "INOX": "Aco inox",
     "ACOINOX": "Aco inox",
     "STAINLESS": "Aco inox",
+    "ALUMINIO": "Aluminio",
+    "ALUMINUM": "Aluminio",
+    "ALU": "Aluminio",
 }
 MATERIAL_FAMILY_LABELS = {
     "Aco carbono": "Ferro",
     "Aco inox": "INOX",
+    "Aluminio": "Aluminio",
 }
 
 
@@ -127,9 +132,12 @@ def _guess_material_family(value: Any) -> str:
     if not token:
         return ""
     inox_markers = ("INOX", "AISI", "14301", "14307", "14404", "14571", "304", "304L", "316", "316L", "430")
-    carbono_markers = ("ACOCARBONO", "S235", "S275", "S355", "CORTEN", "HARDOX", "DX51", "GALV")
+    aluminio_markers = ("ALUMINIO", "ALUMINUM", "ALU", "5083", "5754", "6082")
+    carbono_markers = ("ACO", "ACOCARBONO", "S235", "S275", "S355", "CORTEN", "HARDOX", "DX51", "GALV")
     if any(marker in token for marker in inox_markers):
         return "INOX"
+    if any(marker in token for marker in aluminio_markers):
+        return "Aluminio"
     if any(marker in token for marker in carbono_markers):
         return "Ferro"
     return ""
@@ -174,7 +182,7 @@ def _settings_material_subtypes(settings: dict[str, Any], material_name: str, ex
             clean = str(subtype or "").strip()
             if clean and clean not in catalog_values:
                 catalog_values.append(clean)
-    values = [""] + configured + catalog_values + list(extra_values or [])
+    values = configured + catalog_values + list(extra_values or [])
     out: list[str] = []
     for value in values:
         clean = str(value or "").strip()
@@ -183,7 +191,7 @@ def _settings_material_subtypes(settings: dict[str, Any], material_name: str, ex
         if not clean and out:
             continue
         out.append(clean)
-    return out or [""]
+    return out
 
 
 class MaterialSubtypeCatalogDialog(QDialog):
@@ -221,14 +229,15 @@ class MaterialSubtypeCatalogDialog(QDialog):
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(12, 10, 12, 10)
         table_layout.setSpacing(8)
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Subtipo", "Preco material (EUR/kg)", "Valor sucata (EUR/kg)"])
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Subtipo", "Preco material (EUR/kg)", "Densidade (kg/m3)", "Valor sucata (EUR/kg)"])
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         table_layout.addWidget(self.table, 1)
         table_actions = QHBoxLayout()
         self.add_btn = QPushButton("Adicionar subtipo")
@@ -262,14 +271,16 @@ class MaterialSubtypeCatalogDialog(QDialog):
         for row_index, (subtype, payload) in enumerate(rows):
             self.table.setItem(row_index, 0, _table_text_item(subtype))
             self.table.setItem(row_index, 1, _table_number_item(payload.get("price_per_kg", self.fallback_price_per_kg), 3))
-            self.table.setItem(row_index, 2, _table_number_item(payload.get("scrap_credit_per_kg", self.fallback_scrap_credit_per_kg), 3))
+            self.table.setItem(row_index, 2, _table_number_item(payload.get("density_kg_m3", 0.0), 1))
+            self.table.setItem(row_index, 3, _table_number_item(payload.get("scrap_credit_per_kg", self.fallback_scrap_credit_per_kg), 3))
 
     def _add_row(self) -> None:
         row_index = self.table.rowCount()
         self.table.insertRow(row_index)
         self.table.setItem(row_index, 0, _table_text_item(""))
         self.table.setItem(row_index, 1, _table_number_item(self.fallback_price_per_kg, 3))
-        self.table.setItem(row_index, 2, _table_number_item(self.fallback_scrap_credit_per_kg, 3))
+        self.table.setItem(row_index, 2, _table_number_item(0.0, 1))
+        self.table.setItem(row_index, 3, _table_number_item(self.fallback_scrap_credit_per_kg, 3))
         self.table.setCurrentCell(row_index, 0)
         item = self.table.item(row_index, 0)
         if item is not None:
@@ -290,19 +301,27 @@ class MaterialSubtypeCatalogDialog(QDialog):
             if not subtype:
                 continue
             price_item = self.table.item(row_index, 1)
-            scrap_item = self.table.item(row_index, 2)
+            density_item = self.table.item(row_index, 2)
+            scrap_item = self.table.item(row_index, 3)
             try:
                 price_per_kg = float(str(price_item.text() if price_item is not None else "0").strip().replace(",", ".") or 0.0)
             except Exception:
                 price_per_kg = 0.0
             try:
+                density_kg_m3 = float(str(density_item.text() if density_item is not None else "0").strip().replace(",", ".") or 0.0)
+            except Exception:
+                density_kg_m3 = 0.0
+            try:
                 scrap_credit_per_kg = float(str(scrap_item.text() if scrap_item is not None else "0").strip().replace(",", ".") or 0.0)
             except Exception:
                 scrap_credit_per_kg = 0.0
-            catalog[subtype] = {
+            payload = {
                 "price_per_kg": max(0.0, price_per_kg),
                 "scrap_credit_per_kg": max(0.0, scrap_credit_per_kg),
             }
+            if density_kg_m3 > 0.0:
+                payload["density_kg_m3"] = density_kg_m3
+            catalog[subtype] = payload
         return catalog
 
 
