@@ -27,7 +27,7 @@ load_env_candidates(
 )
 
 
-MIGRATION_FILES = sorted(BASE_DIR.glob("patch_*.sql"))
+MIGRATION_FILES = sorted([*BASE_DIR.glob("patch_*.sql"), *(BASE_DIR / "Migracoes").glob("patch_*.sql")])
 MIGRATION_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS `schema_migrations` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,

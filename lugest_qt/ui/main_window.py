@@ -250,6 +250,7 @@ class MainWindow(QMainWindow):
             self.show_page(landing_key)
         else:
             self.status_label.setText("Sem menus disponiveis")
+        QTimer.singleShot(3500, self._auto_check_updates)
 
     def _fit_to_available_screen(self) -> None:
         screen = self.screen()
@@ -271,6 +272,24 @@ class MainWindow(QMainWindow):
         if not self._screen_fitted:
             self._screen_fitted = True
             QTimer.singleShot(0, self._fit_to_available_screen)
+
+    def _auto_check_updates(self) -> None:
+        try:
+            settings = dict(self.backend.update_settings() or {})
+            if not bool(settings.get("auto_check", False)):
+                return
+            result = dict(self.backend.update_check() or {})
+        except Exception:
+            return
+        if not bool(result.get("update_available", False)):
+            return
+        self.status_label.setText(f"Atualizacao disponivel: {result.get('latest_version', '-')}")
+        if QMessageBox.question(
+            self,
+            "Atualizacoes",
+            f"Existe uma nova versao disponivel: {result.get('latest_version', '-')}\n\nQueres abrir o painel de atualizacoes?",
+        ) == QMessageBox.Yes:
+            self._open_updates_dialog()
 
     def _ensure_page(self, key: str) -> QWidget:
         if key in self.pages:
@@ -569,6 +588,118 @@ class MainWindow(QMainWindow):
             self._logout_in_progress = False
             QMessageBox.warning(self, "Logout", str(exc))
 
+    def _open_updates_dialog(self) -> None:
+        try:
+            settings = dict(self.backend.update_settings() or {})
+        except Exception as exc:
+            QMessageBox.critical(self, "Atualizacoes", str(exc))
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Atualizacoes LuisGEST")
+        dialog.resize(720, 460)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        title = QLabel("Atualizacoes do software")
+        title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
+        layout.addWidget(title)
+        hint = QLabel("Usa um manifest latest.json em pasta partilhada, GitHub privado ou servidor proprio. O instalador faz backup antes de trocar os ficheiros.")
+        hint.setWordWrap(True)
+        hint.setProperty("role", "muted")
+        layout.addWidget(hint)
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(8)
+        version_label = QLabel(str(settings.get("current_version", "-") or "-"))
+        manifest_edit = QLineEdit(str(settings.get("manifest_url", "") or ""))
+        manifest_edit.setPlaceholderText(r"..\Atualizacoes\latest.json ou https://servidor/latest.json")
+        token_edit = QLineEdit(str(settings.get("github_token", "") or ""))
+        token_edit.setEchoMode(QLineEdit.Password)
+        token_edit.setPlaceholderText("Opcional para GitHub privado")
+        auto_check_box = QCheckBox("Verificar automaticamente no arranque")
+        auto_check_box.setChecked(bool(settings.get("auto_check", False)))
+        form.addRow("Versao instalada", version_label)
+        form.addRow("Manifest", manifest_edit)
+        form.addRow("Token GitHub", token_edit)
+        form.addRow("", auto_check_box)
+        layout.addLayout(form)
+
+        status = QTextEdit()
+        status.setReadOnly(True)
+        status.setMinimumHeight(150)
+        status.setPlainText("Pronto para verificar atualizacoes.")
+        layout.addWidget(status, 1)
+
+        def save_settings() -> dict:
+            payload = {
+                "manifest_url": manifest_edit.text().strip(),
+                "github_token": token_edit.text().strip(),
+                "auto_check": auto_check_box.isChecked(),
+            }
+            saved = dict(self.backend.update_save_settings(payload) or {})
+            version_label.setText(str(saved.get("current_version", "-") or "-"))
+            return saved
+
+        def check_updates() -> dict | None:
+            try:
+                save_settings()
+                result = dict(self.backend.update_check() or {})
+            except Exception as exc:
+                status.setPlainText(f"Erro ao verificar:\n{exc}")
+                return None
+            lines = [
+                f"Versao instalada: {result.get('current_version', '-')}",
+                f"Versao disponivel: {result.get('latest_version', '-')}",
+                f"Canal: {result.get('channel', '-')}",
+                f"Atualizacao disponivel: {'Sim' if result.get('update_available') else 'Nao'}",
+                "",
+                f"Pacote: {result.get('package_url', '-')}",
+                f"SHA256: {result.get('sha256', '-') or '-'}",
+                "",
+                str(result.get("notes", "") or ""),
+            ]
+            status.setPlainText("\n".join(lines).strip())
+            return result
+
+        def start_update() -> None:
+            result = check_updates()
+            if not result:
+                return
+            if not bool(result.get("update_available", False)):
+                QMessageBox.information(dialog, "Atualizacoes", "Nao existem atualizacoes novas.")
+                return
+            if QMessageBox.question(
+                dialog,
+                "Atualizacoes",
+                "O atualizador vai abrir numa janela externa. Fecha o LuisGEST quando ele pedir para poder substituir os ficheiros.\n\nContinuar?",
+            ) != QMessageBox.Yes:
+                return
+            try:
+                self.backend.update_start_installer()
+            except Exception as exc:
+                QMessageBox.critical(dialog, "Atualizacoes", str(exc))
+                return
+            QMessageBox.information(dialog, "Atualizacoes", "Atualizador iniciado. Segue as instrucoes da janela externa.")
+
+        buttons = QHBoxLayout()
+        save_btn = QPushButton("Guardar")
+        check_btn = QPushButton("Verificar")
+        update_btn = QPushButton("Atualizar agora")
+        update_btn.setProperty("variant", "primary")
+        close_btn = QPushButton("Fechar")
+        close_btn.setProperty("variant", "secondary")
+        buttons.addStretch(1)
+        for button in (save_btn, check_btn, update_btn, close_btn):
+            buttons.addWidget(button)
+        layout.addLayout(buttons)
+        save_btn.clicked.connect(lambda: (save_settings(), status.setPlainText("Configuracao guardada.")))
+        check_btn.clicked.connect(check_updates)
+        update_btn.clicked.connect(start_update)
+        close_btn.clicked.connect(dialog.accept)
+        dialog.exec()
+
     def _open_admin_extras(self) -> None:
         user = dict(self.backend.user or {})
         if str(user.get("role", "") or "").strip().lower() != "admin":
@@ -607,6 +738,9 @@ class MainWindow(QMainWindow):
         operations_btn = QPushButton("Operacoes")
         operations_btn.setProperty("variant", "secondary")
         tools_row.addWidget(operations_btn)
+        updates_btn = QPushButton("Atualizacoes")
+        updates_btn.setProperty("variant", "secondary")
+        tools_row.addWidget(updates_btn)
         trial_manage_allowed = bool(getattr(self.backend, "is_owner_session", lambda: False)())
         trial_btn = None
         if trial_manage_allowed:
@@ -1983,6 +2117,7 @@ class MainWindow(QMainWindow):
         company_btn.clicked.connect(open_company_dialog)
         operations_btn.clicked.connect(open_operations_dialog)
         workcenters_btn.clicked.connect(open_workcenters_dialog)
+        updates_btn.clicked.connect(self._open_updates_dialog)
         if trial_btn is not None:
             trial_btn.clicked.connect(open_trial_dialog)
         password_toggle.toggled.connect(sync_password_echo)

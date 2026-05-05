@@ -154,7 +154,13 @@ def audit(fix_safe: bool = False) -> dict[str, Any]:
         else:
             refs_dup.append(payload)
     opp_dup = sorted([key for key, count in Counter(row["opp"] for row in pieces if row["opp"]).items() if count > 1])
-    of_dup = sorted([key for key, count in Counter(row["of"] for row in pieces if row["of"]).items() if count > 1])
+    of_orders: dict[str, set[str]] = {}
+    for row in pieces:
+        of_txt = str(row.get("of", "") or "").strip()
+        enc_txt = str(row.get("encomenda", "") or "").strip()
+        if of_txt:
+            of_orders.setdefault(of_txt, set()).add(enc_txt)
+    of_dup = sorted([key for key, orders in of_orders.items() if len({order for order in orders if order}) > 1])
 
     prefix_mismatch: list[dict[str, Any]] = []
     duplicated_ref_externa: list[dict[str, Any]] = []

@@ -16,6 +16,7 @@
 - [Conjuntos e montagem](plans/CONJUNTOS_MONTAGEM_PLAN.md)
 - [Faturacao](plans/FATURACAO_PLAN.md)
 - [Seguranca e testes](plans/SECURITY_TEST_PLAN.md)
+- [Prontidao para cliente](plans/PRODUCTION_READINESS_PLAN.md)
 
 ## Arquitetura
 

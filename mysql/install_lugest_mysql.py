@@ -9,7 +9,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 BASE_SCHEMA_PATH = BASE_DIR / "lugest.sql"
-PATCH_FILES = sorted(BASE_DIR.glob("patch_*.sql"))
+PATCH_FILES = sorted([*BASE_DIR.glob("patch_*.sql"), *(BASE_DIR / "Migracoes").glob("patch_*.sql")])
 
 REQUIRED = {
     "app_config": {"ckey", "cvalue"},

@@ -2985,5 +2985,11 @@
         }
       }
     }
+  },
+  "update_settings": {
+    "manifest_url": "..\\Atualizacoes\\latest.json",
+    "github_token": "",
+    "auto_check": false,
+    "current_version": "2026.05.05.1"
   }
 }

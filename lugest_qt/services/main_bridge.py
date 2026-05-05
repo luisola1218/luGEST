@@ -6,8 +6,11 @@ import json
 import math
 import os
 import re
+import subprocess
 import tempfile
 import time
+import urllib.parse
+import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -10098,7 +10101,24 @@ class LegacyBackend(
         )
         return rows
 
+    def _order_sequence_from_numero(self, numero: str) -> str:
+        numero_txt = str(numero or "").strip()
+        match = re.search(r"(\d+)$", numero_txt)
+        if not match:
+            return ""
+        return match.group(1).zfill(4)[-4:]
+
+    def _order_expected_of_code(self, enc: dict[str, Any]) -> str:
+        seq = self._order_sequence_from_numero(str((enc or {}).get("numero", "") or ""))
+        if not seq:
+            return ""
+        year_txt = str((enc or {}).get("data_criacao", "") or self.desktop_main.now_iso()).strip()[:4]
+        if not (len(year_txt) == 4 and year_txt.isdigit()):
+            year_txt = str(datetime.now().year)
+        return f"OF-{year_txt}-{seq}"
+
     def _order_of_code(self, enc: dict[str, Any], *, create: bool = True) -> str:
+        expected_code = self._order_expected_of_code(enc)
         code = str(enc.get("of_codigo", "") or "").strip()
         if not code:
             ordem = enc.get("ordem_fabrico", {})
@@ -10109,8 +10129,10 @@ class LegacyBackend(
                 code = str(piece.get("of", "") or "").strip()
                 if code:
                     break
+        if expected_code and (not code or re.fullmatch(r"OF-\d{4}-\d{4,}", code, flags=re.IGNORECASE)):
+            code = expected_code
         if not code and create:
-            code = str(self.desktop_main.next_of_numero(self.ensure_data()) or "").strip()
+            code = expected_code or str(self.desktop_main.next_of_numero(self.ensure_data()) or "").strip()
         if code:
             enc["of_codigo"] = code
             enc["ordem_fabrico"] = {
@@ -10140,8 +10162,11 @@ class LegacyBackend(
 
     def _ensure_order_fabrication_order(self, enc: dict[str, Any], *, sync_existing: bool = False) -> bool:
         changed = False
+        previous_of = str(enc.get("of_codigo", "") or "").strip()
         of_code = self._order_of_code(enc, create=True)
-        if of_code and enc.get("of_codigo") != of_code:
+        if of_code and previous_of != of_code:
+            changed = True
+        if of_code and str(enc.get("of_codigo", "") or "").strip() != of_code:
             enc["of_codigo"] = of_code
             changed = True
         if of_code:
@@ -10154,11 +10179,18 @@ class LegacyBackend(
             if dict(enc.get("ordem_fabrico", {}) or {}) != ordem:
                 enc["ordem_fabrico"] = ordem
                 changed = True
+        previous_opp_prefix = ""
+        if previous_of and previous_of != of_code and previous_of.startswith("OF-"):
+            previous_opp_prefix = "OPP-" + previous_of.split("-", 1)[1]
         for piece in list(self.desktop_main.encomenda_pecas(enc) or []):
-            if of_code and (sync_existing or not str(piece.get("of", "") or "").strip()) and str(piece.get("of", "") or "").strip() != of_code:
+            piece_of = str(piece.get("of", "") or "").strip()
+            should_sync_piece_of = sync_existing or not piece_of or (previous_of and piece_of == previous_of)
+            if of_code and should_sync_piece_of and piece_of != of_code:
                 piece["of"] = of_code
                 changed = True
-            if not str(piece.get("opp", "") or "").strip():
+            piece_opp = str(piece.get("opp", "") or "").strip()
+            should_regen_opp = not piece_opp or bool(previous_opp_prefix and piece_opp.startswith(previous_opp_prefix + "-"))
+            if should_regen_opp:
                 piece["opp"] = self._next_order_opp_codigo(enc)
                 changed = True
         return changed
@@ -10200,7 +10232,6 @@ class LegacyBackend(
             raise ValueError("Tempo estimado inv?lido.") from exc
         if enc is None:
             numero = self.desktop_main.next_encomenda_numero(data)
-            of_code = str(self.desktop_main.next_of_numero(data) or "").strip()
             enc = {
                 "id": f"ENC{len(list(data.get('encomendas', []) or [])) + 1:05d}",
                 "numero": numero,
@@ -10234,14 +10265,10 @@ class LegacyBackend(
                 "espessuras": [],
                 "numero_orcamento": "",
                 "tipo_encomenda": "Cliente",
-                "of_codigo": of_code,
-                "ordem_fabrico": {
-                    "id": of_code,
-                    "encomenda_id": numero,
-                    "estado": "Preparacao",
-                    "data": self.desktop_main.now_iso()[:10],
-                },
+                "of_codigo": "",
+                "ordem_fabrico": {},
             }
+            of_code = self._order_of_code(enc, create=True)
             data.setdefault("encomendas", []).append(enc)
 
         enc["cliente"] = cliente
@@ -11286,6 +11313,133 @@ class LegacyBackend(
         cfg["ui_options"] = options
         self._save_qt_config(cfg)
         return self.ui_options()
+
+    def app_version(self) -> str:
+        candidates = [
+            self.base_dir / "VERSION",
+            Path.cwd() / "VERSION",
+        ]
+        for path in candidates:
+            try:
+                if path.exists():
+                    value = path.read_text(encoding="utf-8").strip()
+                    if value:
+                        return value
+            except Exception:
+                continue
+        return "0.0.0"
+
+    def update_settings(self) -> dict[str, Any]:
+        cfg = self._load_qt_config()
+        stored = dict(cfg.get("update_settings", {}) or {})
+        manifest_env = str(os.environ.get("LUGEST_UPDATE_MANIFEST_URL", "") or "").strip()
+        defaults = {
+            "current_version": self.app_version(),
+            "manifest_url": manifest_env or "..\\Atualizacoes\\latest.json",
+            "channel": "stable",
+            "github_token": "",
+            "auto_check": False,
+        }
+        return {**defaults, **stored, "current_version": self.app_version()}
+
+    def update_save_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        cfg = self._load_qt_config()
+        current = dict(cfg.get("update_settings", {}) or {})
+        for key in ("manifest_url", "channel", "github_token", "auto_check"):
+            if key in dict(payload or {}):
+                current[key] = payload.get(key)
+        current["current_version"] = self.app_version()
+        cfg["update_settings"] = current
+        self._save_qt_config(cfg)
+        return self.update_settings()
+
+    def _update_version_parts(self, value: Any) -> tuple[int, int, int, int]:
+        parts = [int(match.group(0)) for match in re.finditer(r"\d+", str(value or ""))]
+        while len(parts) < 4:
+            parts.append(0)
+        return tuple(parts[:4])
+
+    def _update_resolve_ref(self, value: Any, base: Path | None = None) -> str:
+        txt = str(value or "").strip()
+        if not txt:
+            return ""
+        if re.match(r"^https?://", txt, flags=re.IGNORECASE):
+            return txt
+        parsed = urllib.parse.urlparse(txt)
+        if parsed.scheme.lower() == "file":
+            return urllib.request.url2pathname(parsed.path)
+        path = Path(txt)
+        if path.is_absolute():
+            return str(path)
+        return str((base or self.base_dir) / path)
+
+    def _update_read_json_ref(self, ref: str) -> tuple[dict[str, Any], Path | None]:
+        resolved = self._update_resolve_ref(ref)
+        if not resolved:
+            raise ValueError("Configura o URL/caminho do manifest de atualizacao.")
+        if re.match(r"^https?://", resolved, flags=re.IGNORECASE):
+            settings = self.update_settings()
+            headers = {}
+            token = str(settings.get("github_token", "") or "").strip()
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            request = urllib.request.Request(resolved, headers=headers)
+            with urllib.request.urlopen(request, timeout=12) as response:
+                payload = json.loads(response.read().decode("utf-8", errors="ignore"))
+            return (payload if isinstance(payload, dict) else {}, None)
+        path = Path(resolved)
+        if not path.exists():
+            raise ValueError(f"Manifest nao encontrado: {path}")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return (payload if isinstance(payload, dict) else {}, path)
+
+    def update_check(self) -> dict[str, Any]:
+        settings = self.update_settings()
+        current_version = self.app_version()
+        manifest, manifest_path = self._update_read_json_ref(str(settings.get("manifest_url", "") or ""))
+        latest_version = str(manifest.get("version", "") or "").strip()
+        if not latest_version:
+            raise ValueError("Manifest sem campo 'version'.")
+        package_url = str(manifest.get("package_url", "") or "").strip()
+        if not package_url:
+            raise ValueError("Manifest sem campo 'package_url'.")
+        available = self._update_version_parts(latest_version) > self._update_version_parts(current_version)
+        return {
+            "current_version": current_version,
+            "latest_version": latest_version,
+            "update_available": available,
+            "manifest_url": str(settings.get("manifest_url", "") or ""),
+            "manifest_path": str(manifest_path or ""),
+            "package_url": package_url,
+            "sha256": str(manifest.get("sha256", "") or ""),
+            "notes": str(manifest.get("notes", "") or ""),
+            "channel": str(manifest.get("channel", settings.get("channel", "stable")) or "stable"),
+        }
+
+    def update_installer_command(self) -> list[str]:
+        script_candidates = [
+            self.base_dir / "Atualizar LuisGEST.ps1",
+            self.base_dir / "scripts" / "lugest_update.ps1",
+            Path.cwd() / "scripts" / "lugest_update.ps1",
+        ]
+        script = next((path for path in script_candidates if path.exists()), None)
+        if script is None:
+            raise ValueError("Script de atualizacao nao encontrado.")
+        return [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script),
+            "-AppDir",
+            str(self.base_dir),
+        ]
+
+    def update_start_installer(self) -> dict[str, Any]:
+        command = self.update_installer_command()
+        subprocess.Popen(command, cwd=str(self.base_dir), close_fds=True)
+        return {"started": True, "command": command}
 
     def verify_supervisor_password(self, password: str) -> bool:
         stored = str(dict(self._load_qt_config().get("ui_options", {}) or {}).get("operator_supervisor_password", "") or "").strip()

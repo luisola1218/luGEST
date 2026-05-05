@@ -1396,6 +1396,8 @@ def get_operator_board(year: str | None = None, username: str = "", role: str = 
         client_meta = _resolve_client_identity(enc, client_lookup)
         cliente_txt = str(client_meta.get("cliente_display", "") or "").strip()
         enc_estado = str(enc.get("estado", "") or "").strip()
+        ordem = enc.get("ordem_fabrico", {}) if isinstance(enc.get("ordem_fabrico", {}), dict) else {}
+        of_codigo = str(enc.get("of_codigo", "") or ordem.get("id", "") or ordem.get("codigo", "") or "").strip()
         entrega = str(enc.get("data_entrega", "") or "").strip()
         for mat in list(enc.get("materiais", []) or []):
             mat_nome = str(mat.get("material", "") or "-").strip() or "-"
@@ -1470,6 +1472,7 @@ def get_operator_board(year: str | None = None, username: str = "", role: str = 
                     pieces.append(
                         {
                             "id": piece_id,
+                            "of": str(p.get("of", "") or of_codigo).strip(),
                             "ref_interna": str(p.get("ref_interna", "") or "-").strip() or "-",
                             "ref_externa": str(p.get("ref_externa", "") or "-").strip() or "-",
                             "estado": piece_state,
@@ -1497,6 +1500,8 @@ def get_operator_board(year: str | None = None, username: str = "", role: str = 
                 items.append(
                     {
                         "encomenda": enc_num,
+                        "of": of_codigo,
+                        "of_codigo": of_codigo,
                         "cliente": str(client_meta.get("cliente", "") or "").strip(),
                         "cliente_nome": str(client_meta.get("cliente_nome", "") or "").strip(),
                         "cliente_display": cliente_txt,

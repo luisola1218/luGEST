@@ -279,19 +279,20 @@ def main() -> int:
             tempo_min=30,
         )
         created_orders.extend([pack_num_late, pack_num_early])
+        pack_resource = backend.workcenter_default_resource("Embalamento") or "Embalamento"
         backend.order_espessura_set_operation_times(
             pack_num_late,
             pack_mat_late,
             pack_esp_late,
             {"Corte Laser": 30, "Embalamento": 30},
-            {"Corte Laser": "Maquina 3030", "Embalamento": "Embalamento"},
+            {"Corte Laser": "Maquina 3030", "Embalamento": pack_resource},
         )
         backend.order_espessura_set_operation_times(
             pack_num_early,
             pack_mat_early,
             pack_esp_early,
             {"Corte Laser": 30, "Embalamento": 30},
-            {"Corte Laser": "Maquina 5030", "Embalamento": "Embalamento"},
+            {"Corte Laser": "Maquina 5030", "Embalamento": pack_resource},
         )
         pack_dates = [packaging_week_start + timedelta(days=i) for i in range(6)]
         pack_anchor = backend._planning_slot_datetime(packaging_week_start.isoformat(), 480)
@@ -304,7 +305,7 @@ def main() -> int:
                     "sequence": ["Embalamento"],
                     "index": 0,
                     "anchor_dt": pack_anchor,
-                    "resource": "Embalamento",
+                    "resource": pack_resource,
                     "data_entrega": "2032-01-31",
                 },
                 {
@@ -314,7 +315,7 @@ def main() -> int:
                     "sequence": ["Embalamento"],
                     "index": 0,
                     "anchor_dt": pack_anchor,
-                    "resource": "Embalamento",
+                    "resource": pack_resource,
                     "data_entrega": "2032-01-25",
                 },
             ],

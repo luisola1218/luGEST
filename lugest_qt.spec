@@ -13,6 +13,7 @@ a = Analysis(
     datas=[
         ('app.ico', '.'),
         ('lugest_branding.json', '.'),
+        ('VERSION', '.'),
         ('logo.jpg', '.'),
         ('Logos/logo.png', 'Logos'),
         ('Logos/image (1).jpg', 'Logos'),

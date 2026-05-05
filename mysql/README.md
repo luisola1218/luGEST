@@ -5,9 +5,8 @@ O runtime atual do LuGEST trabalha apenas com MySQL como fonte de verdade.
 ## Ficheiros principais
 - `lugest.sql`: schema atual completo e consolidado para instalacao nova.
 - `lugest_instalacao_unica.sql`: SQL unico com schema atual + utilizadores iniciais minimos.
-- `patch_*.sql`: patches incrementais para ambientes mais antigos.
-- `patch_faturacao.sql`: adiciona o novo menu de faturacao (registos, faturas e pagamentos) em bases antigas.
-- `export_current_schema_sql.py`: regenera o `lugest.sql` a partir da base MySQL atual.
+- `IMPORTAR_NO_HEIDI.sql`: copia clara do SQL de instalacao nova para importar diretamente no HeidiSQL.
+- `Migracoes\patch_*.sql`: patches incrementais para ambientes mais antigos.
 - `install_lugest_mysql.py`: instalador/validador MySQL com suporte a `DryRun`.
 - `install_lugest_mysql.ps1`: wrapper PowerShell para Windows Server.
 - `apply_lugest_migrations.py`: aplica migracoes incrementais com registo em `schema_migrations`.
@@ -24,6 +23,15 @@ O runtime atual do LuGEST trabalha apenas com MySQL como fonte de verdade.
 - `restaurar_lugest_mysql_admin.bat`: atalho para restauro em Windows.
 
 ## Instalacao recomendada
+
+Se preferires usar HeidiSQL numa instalacao nova:
+
+1. Criar/abrir a ligacao ao servidor MySQL.
+2. Abrir o ficheiro `IMPORTAR_NO_HEIDI.sql`.
+3. Executar o script completo.
+4. Configurar o `lugest.env` do Desktop App com os mesmos dados da base.
+
+O ficheiro `IMPORTAR_NO_HEIDI.sql` e para instalacao nova. Nao usar por cima de uma base de cliente com dados reais.
 
 Em Windows/PowerShell:
 
@@ -89,12 +97,12 @@ powershell -ExecutionPolicy Bypass -File .\apply_lugest_migrations.ps1 `
 
 Isto:
 - cria a tabela `schema_migrations`
-- regista os `patch_*.sql` atuais como baseline
+- regista os `Migracoes\patch_*.sql` atuais como baseline
 - nao executa SQL de alteracao
 
 ## Base antiga sem historico e com patches por aplicar
 
-Se tens uma base antiga e ainda precisas mesmo de correr todos os `patch_*.sql`, faz backup primeiro e usa:
+Se tens uma base antiga e ainda precisas mesmo de correr todos os `Migracoes\patch_*.sql`, faz backup primeiro e usa:
 
 ```powershell
 cd 'Base de Dados\mysql'
@@ -108,7 +116,7 @@ powershell -ExecutionPolicy Bypass -File .\apply_lugest_migrations.ps1 `
 ```
 
 Este modo:
-- executa todos os `patch_*.sql` de forma tolerante
+- executa todos os `Migracoes\patch_*.sql` de forma tolerante
 - regista cada patch em `schema_migrations`
 - deve ser usado so depois de backup
 
@@ -201,9 +209,8 @@ Notas:
 - Em instalacoes novas, o ficheiro principal a importar manualmente e `lugest.sql`.
 - Se quiseres um arranque rapido com login imediato, importa `lugest_instalacao_unica.sql`.
 - O menu `Faturacao` ja segue incluido em `lugest.sql` e `lugest_instalacao_unica.sql`.
-- `patch_faturacao.sql` fica reservado para upgrades de bases mais antigas.
 - Logins temporarios da instalacao unica: `admin`, `operador`, `orcamentista`, `planeamento`.
 - O login `OWNER` do `lugest.env` nao substitui o `admin` local da aplicacao.
 - Em instalacoes finais, recomenda-se repor logo o admin com o script `Criar Administrador Inicial.bat` ou `Repor Password Administrador.bat`.
-- Os `patch_*.sql` ficam mantidos para upgrades/migracoes de bases antigas.
+- Os `Migracoes\patch_*.sql` ficam mantidos para upgrades/migracoes de bases antigas.
 - Em cliente em producao, o caminho certo e `backup -> apply_lugest_migrations -> validar`, nunca `importar SQL unico por cima`.

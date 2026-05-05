@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from lugest_qt.services.main_bridge import LegacyBackend
+from impulse_mobile_api.app.services import pulse_runtime
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -86,6 +87,11 @@ def main() -> int:
         _assert(order_num, "Encomenda nao foi criada.")
         _assert(str(detail.get("tipo_encomenda", "")) == "Interna (produção)", f"Tipo da encomenda incorreto: {detail}")
         _assert(str(detail.get("of_codigo", "")).startswith("OF-"), f"OF nao gerada: {detail}")
+        order_seq = "".join(ch for ch in order_num if ch.isdigit())[-4:]
+        _assert(
+            str(detail.get("of_codigo", "") or "").endswith(f"-{order_seq}"),
+            f"OF nao segue a numeracao da encomenda: encomenda={order_num} of={detail.get('of_codigo')}",
+        )
 
         detail = backend.order_import_model(order_num, model_code, 1)
         _assert(int(detail.get("imported_pieces", 0) or 0) == 1, f"Pecas importadas inesperadas: {detail}")
@@ -129,6 +135,14 @@ def main() -> int:
         opp_scan = backend.operator_scan_code(opps[0], current_posto="Corte Laser")
         _assert(str(opp_scan.get("tipo", "")) == "OPP", f"Scan OPP invalido: {opp_scan}")
         _assert(str(opp_scan.get("operacao", "") or ""), f"Scan OPP nao escolheu operacao: {opp_scan}")
+
+        board = pulse_runtime.get_operator_board()
+        board_rows = [row for row in list(board.get("items", []) or []) if str(row.get("encomenda", "") or "") == order_num]
+        _assert(board_rows, f"Encomenda nao aparece no menu operador: {order_num}")
+        _assert(
+            all(str(row.get("of_codigo", "") or row.get("of", "") or "") == of_code for row in board_rows),
+            f"OF nao aparece corretamente no operador: {board_rows}",
+        )
 
         print(f"fabrication-order-flow-ok {order_num} {of_code} {' '.join(opps)}")
         return 0

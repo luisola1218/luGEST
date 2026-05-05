@@ -1845,14 +1845,7 @@ class QuotesBridgeMixin:
             "numero_orcamento": orc.get("numero"),
             "tipo_encomenda": "Cliente",
         }
-        enc_of = str(self.desktop_main.next_of_numero(data) or "").strip()
-        enc["of_codigo"] = enc_of
-        enc["ordem_fabrico"] = {
-            "id": enc_of,
-            "encomenda_id": str(enc.get("numero", "") or "").strip(),
-            "estado": "Preparacao",
-            "data": self.desktop_main.now_iso()[:10],
-        }
+        enc_of = str(self._order_of_code(enc, create=True) or "").strip()
         mats: dict[str, dict[str, Any]] = {}
         piece_idx = 1
         total_time = 0.0

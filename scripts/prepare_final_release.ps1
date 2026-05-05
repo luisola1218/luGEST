@@ -17,14 +17,16 @@ $desktopIcon = Join-Path $repoRoot 'app.ico'
 $desktopLogo = Join-Path $repoRoot 'logo.jpg'
 $desktopLogosDir = Join-Path $repoRoot 'Logos'
 $desktopAdminSetup = Join-Path $repoRoot 'scripts\setup_lugest_admin.ps1'
+$desktopUpdaterScript = Join-Path $repoRoot 'scripts\lugest_update.ps1'
+$desktopInstallerScript = Join-Path $repoRoot 'scripts\install_lugest_desktop.ps1'
+$desktopVersionFile = Join-Path $repoRoot 'VERSION'
 $apiSource = Join-Path $repoRoot 'impulse_mobile_api'
-$mobileSource = Join-Path $repoRoot 'impulse_mobile_app'
 $databaseSource = Join-Path $repoRoot 'mysql'
 $securityPlan = Join-Path $repoRoot 'docs\plans\SECURITY_TEST_PLAN.md'
 $installGuide = Join-Path $repoRoot 'docs\install\GUIA_INSTALACAO_OUTRO_PC.md'
 $fullInstallGuide = Join-Path $repoRoot 'docs\install\GUIA_INSTALACAO_TOTAL.md'
 $simpleGuide = Join-Path $repoRoot 'docs\install\GUIA_MUITO_SIMPLES.md'
-$billingPlan = Join-Path $repoRoot 'docs\plans\FATURACAO_PLAN.md'
+$emailUpdatesGuide = Join-Path $repoRoot 'docs\install\GUIA_EMAIL_E_ATUALIZACOES.md'
 
 function Resolve-MobileApkPath {
     $candidates = @()
@@ -54,6 +56,9 @@ function Resolve-DesktopExePath {
         'dist_multinet_release\main.exe',
         'dist_billing_release\main.exe',
         'dist\main.exe',
+        'dist\lugest_qt.exe',
+        'dist\lugest_qt\lugest_qt.exe',
+        'dist_qt_stable\lugest_qt\lugest_qt.exe',
         'dist_pack\main.exe'
     )) {
         $candidate = Join-Path $repoRoot $relativePath
@@ -99,14 +104,16 @@ foreach ($requiredPath in @(
     $desktopLogo,
     $desktopLogosDir,
     $desktopAdminSetup,
+    $desktopUpdaterScript,
+    $desktopInstallerScript,
+    $desktopVersionFile,
     $apiSource,
-    $mobileSource,
     $databaseSource,
     $securityPlan,
     $installGuide,
     $fullInstallGuide,
     $simpleGuide,
-    $billingPlan
+    $emailUpdatesGuide
 )) {
     if (-not (Test-Path $requiredPath)) {
         throw "Falta ficheiro/pasta obrigatoria para a release: $requiredPath"
@@ -124,12 +131,21 @@ if (Test-Path $releaseRoot) {
 $desktopDir = Join-Path $releaseRoot 'Desktop App'
 $apiDir = Join-Path $releaseRoot 'Mobile API'
 $mobileApkDir = Join-Path $releaseRoot 'Mobile APK'
-$mobileSrcDir = Join-Path $releaseRoot 'Mobile App Fonte'
 $dbDir = Join-Path $releaseRoot 'Base de Dados'
+$updatesDir = Join-Path $releaseRoot 'Atualizacoes'
+$docsDir = Join-Path $releaseRoot 'Documentacao'
 
-New-Item -ItemType Directory -Force -Path $desktopDir, $apiDir, $mobileApkDir, $mobileSrcDir, $dbDir | Out-Null
+New-Item -ItemType Directory -Force -Path $desktopDir, $apiDir, $mobileApkDir, $dbDir, $updatesDir, $docsDir | Out-Null
 
-Copy-Item $desktopExe $desktopDir
+$desktopExeItem = Get-Item $desktopExe
+$desktopExeName = $desktopExeItem.Name
+$desktopExeParent = $desktopExeItem.Directory.FullName
+if ($desktopExeParent -like (Join-Path $repoRoot 'dist\lugest_qt') -or $desktopExeParent -like (Join-Path $repoRoot 'dist_qt_stable\lugest_qt')) {
+    Copy-Item -Path (Join-Path $desktopExeParent '*') -Destination $desktopDir -Recurse -Force
+}
+else {
+    Copy-Item $desktopExe $desktopDir
+}
 Copy-Item $desktopEnvExample (Join-Path $desktopDir 'lugest.env.example')
 Copy-Item $desktopEnvExample (Join-Path $desktopDir 'lugest.env')
 Copy-Item $desktopServerEnvExample (Join-Path $desktopDir 'lugest.env.servidor.example')
@@ -139,6 +155,9 @@ Copy-Item $desktopQtConfig $desktopDir
 Copy-Item $desktopIcon $desktopDir
 Copy-Item $desktopLogo $desktopDir
 Copy-Item $desktopAdminSetup (Join-Path $desktopDir 'setup_lugest_admin.ps1')
+Copy-Item $desktopUpdaterScript (Join-Path $desktopDir 'Atualizar LuisGEST.ps1')
+Copy-Item $desktopInstallerScript (Join-Path $desktopDir 'Instalar LuisGEST no computador.ps1')
+Copy-Item $desktopVersionFile (Join-Path $desktopDir 'VERSION')
 Copy-Item -Recurse $desktopLogosDir $desktopDir
 
 $trialTemplate = [ordered]@{
@@ -159,6 +178,19 @@ $trialTemplate = [ordered]@{
 }
 $trialTemplate | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $desktopDir 'lugest_trial.json') -Encoding UTF8
 
+$appVersion = (Get-Content $desktopVersionFile -Raw -Encoding UTF8).Trim()
+if (-not $appVersion) {
+    $appVersion = $releaseStamp
+}
+$updateConfig = [ordered]@{
+    current_version = $appVersion
+    manifest_url = '..\Atualizacoes\latest.json'
+    channel = 'stable'
+    github_token = ''
+    auto_check = $false
+}
+$updateConfig | ConvertTo-Json -Depth 5 | Set-Content -Path (Join-Path $desktopDir 'update_config.json') -Encoding UTF8
+
 $desktopLauncher = @'
 @echo off
 cd /d %~dp0
@@ -168,9 +200,25 @@ if not exist lugest.env (
     pause
     exit /b 1
 )
-start "" "%~dp0main.exe"
+start "" "%~dp0$desktopExeName"
 '@
 Set-Content -Path (Join-Path $desktopDir 'Arrancar LuisGEST Desktop.bat') -Value $desktopLauncher -Encoding ASCII
+
+$desktopUpdateLauncher = @'
+@echo off
+cd /d %~dp0
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Atualizar LuisGEST.ps1"
+pause
+'@
+Set-Content -Path (Join-Path $desktopDir 'Atualizar LuisGEST.bat') -Value $desktopUpdateLauncher -Encoding ASCII
+
+$desktopInstallerLauncher = @'
+@echo off
+cd /d %~dp0
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Instalar LuisGEST no computador.ps1"
+pause
+'@
+Set-Content -Path (Join-Path $desktopDir 'Instalar LuisGEST no computador.bat') -Value $desktopInstallerLauncher -Encoding ASCII
 
 $desktopAdminLauncher = @'
 @echo off
@@ -216,18 +264,6 @@ if ($LASTEXITCODE -gt 7) {
 }
 Copy-Item (Join-Path $apiDir '.env.example') (Join-Path $apiDir '.env')
 
-robocopy $mobileSource $mobileSrcDir /E /XD 'build' '.dart_tool' '.idea' '.vscode' 'android\.gradle' 'android\.kotlin' /XF '.flutter-plugins-dependencies' '*.iml' 'local.properties' | Out-Null
-if ($LASTEXITCODE -gt 7) {
-    throw "Falha a copiar Mobile App Fonte (robocopy exit $LASTEXITCODE)"
-}
-foreach ($generatedDir in @(
-    (Join-Path $mobileSrcDir 'android\.gradle'),
-    (Join-Path $mobileSrcDir 'android\.kotlin')
-)) {
-    if (Test-Path $generatedDir) {
-        Remove-Item $generatedDir -Recurse -Force
-    }
-}
 if ($mobileApkSource) {
     Copy-Item $mobileApkSource (Join-Path $mobileApkDir ("LuisGEST-Impulse-release-" + $releaseStamp + ".apk"))
 }
@@ -237,9 +273,7 @@ Nao foi encontrada nenhuma APK release local para copiar.
 
 Esta entrega segue com o codigo fonte Flutter, mas a APK precisa de ser gerada quando existir Flutter SDK neste posto:
 
-    cd impulse_mobile_app
-    flutter pub get
-    flutter build apk --release
+    A APK deve ser gerada pelo programador a partir do projeto Flutter original.
 
 Opcional para deixar a APK ja apontada para um servidor especifico:
 
@@ -248,14 +282,64 @@ Opcional para deixar a APK ja apontada para um servidor especifico:
     Set-Content -Path (Join-Path $mobileApkDir 'APK-PENDENTE.txt') -Value $apkPending -Encoding UTF8
 }
 
-Copy-Item -Recurse $databaseSource $dbDir
-Get-ChildItem -Path $dbDir -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
-    ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
-Copy-Item $securityPlan (Join-Path $releaseRoot 'CHECKLIST - Seguranca e Testes.md')
-Copy-Item $fullInstallGuide (Join-Path $releaseRoot 'GUIA - INSTALACAO TOTAL PASSO A PASSO.md')
-Copy-Item $installGuide (Join-Path $releaseRoot 'GUIA - Instalacao Outro Computador.md')
-Copy-Item $simpleGuide (Join-Path $releaseRoot 'GUIA - MUITO SIMPLES.md')
-Copy-Item $billingPlan (Join-Path $releaseRoot 'PLANO - Faturacao.md')
+$mysqlClientDir = Join-Path $dbDir 'mysql'
+$mysqlMigrationsDir = Join-Path $mysqlClientDir 'Migracoes'
+New-Item -ItemType Directory -Force -Path $mysqlClientDir, $mysqlMigrationsDir | Out-Null
+foreach ($relativePath in @(
+    'README.md',
+    'lugest.sql',
+    'lugest_instalacao_unica.sql',
+    'install_lugest_mysql.py',
+    'install_lugest_mysql.ps1',
+    'instalar_lugest_mysql_admin.bat',
+    'validate_lugest_mysql.ps1',
+    'validar_lugest_mysql.bat',
+    'backup_lugest_mysql.py',
+    'backup_lugest_mysql.ps1',
+    'backup_lugest_mysql_admin.bat',
+    'restore_lugest_mysql.py',
+    'restore_lugest_mysql.ps1',
+    'restaurar_lugest_mysql_admin.bat',
+    'apply_lugest_migrations.py',
+    'apply_lugest_migrations.ps1',
+    'aplicar_migracoes_lugest_admin.bat',
+    'estado_migracoes_lugest_admin.bat',
+    'mysql_tooling.py'
+)) {
+    $source = Join-Path $databaseSource $relativePath
+    if (Test-Path $source) {
+        Copy-Item $source $mysqlClientDir -Force
+    }
+}
+Copy-Item (Join-Path $databaseSource 'lugest_instalacao_unica.sql') (Join-Path $mysqlClientDir 'IMPORTAR_NO_HEIDI.sql') -Force
+Get-ChildItem $databaseSource -Filter 'patch_*.sql' -File | ForEach-Object {
+    Copy-Item $_.FullName $mysqlMigrationsDir -Force
+}
+Copy-Item $securityPlan (Join-Path $docsDir 'CHECKLIST - Seguranca e Testes.md')
+Copy-Item $fullInstallGuide (Join-Path $docsDir 'GUIA - INSTALACAO TOTAL PASSO A PASSO.md')
+Copy-Item $installGuide (Join-Path $docsDir 'GUIA - Instalacao Outro Computador.md')
+Copy-Item $simpleGuide (Join-Path $docsDir 'GUIA - MUITO SIMPLES.md')
+Copy-Item $emailUpdatesGuide (Join-Path $docsDir 'GUIA - Email e Atualizacoes.md')
+
+$updateZipName = "LuisGEST-Desktop-$($appVersion.Replace('.', '-')).zip"
+$updateZipPath = Join-Path $updatesDir $updateZipName
+if (Test-Path $updateZipPath) {
+    Remove-Item $updateZipPath -Force
+}
+Compress-Archive -Path (Join-Path $desktopDir '*') -DestinationPath $updateZipPath -Force
+$updateHash = (Get-FileHash $updateZipPath -Algorithm SHA256).Hash
+$updateManifest = [ordered]@{
+    product = 'LuisGEST Desktop'
+    version = $appVersion
+    channel = 'stable'
+    package_url = $updateZipName
+    sha256 = $updateHash
+    created_at = $releaseDate.ToString('s')
+    notes = "Atualizacao LuisGEST $appVersion preparada em $releaseDateTxt."
+    requires_app_backup = $true
+    requires_database_backup = $true
+}
+$updateManifest | ConvertTo-Json -Depth 5 | Set-Content -Path (Join-Path $updatesDir 'latest.json') -Encoding UTF8
 
 $readme = @"
 # App LuisGEST - Revisao Final
@@ -263,28 +347,29 @@ $readme = @"
 Data de preparacao: $releaseDateTxt
 
 ## Conteudo
-- Desktop App: executavel principal main.exe, launcher Qt, lugest.env, branding, lugest_qt_config.json e lugest_trial.json placeholder.
+- Desktop App: executavel principal $desktopExeName, launcher Qt, lugest.env, branding, lugest_qt_config.json e lugest_trial.json placeholder.
+- Desktop App\Instalar LuisGEST no computador.bat: instala como software normal e cria atalhos com icon.
 - Mobile API: API FastAPI com .env placeholder e scripts de instalacao/arranque.
 - Mobile APK: APK Android release atual, quando disponivel; caso contrario segue uma nota APK-PENDENTE.txt.
-- Mobile App Fonte: codigo Flutter limpo para manutencao futura.
-- Base de Dados\mysql: dump principal lugest.sql, instalacao unica e patches auxiliares.
-- GUIA - INSTALACAO TOTAL PASSO A PASSO.md: guia principal para instalar servidor e postos do zero.
-- CHECKLIST - Seguranca e Testes.md: guia de validacao antes da entrega.
+- Base de Dados\mysql: apenas instalacao, backup/restauro, validacao e migracoes necessarias.
+- Atualizacoes: pacote ZIP desktop e latest.json com checksum SHA256 para atualizar clientes.
+- Documentacao: guias de instalacao, email, atualizacoes e checklist.
 
 ## Comecar por aqui
-1. Se nunca fizeste uma instalacao, le primeiro GUIA - INSTALACAO TOTAL PASSO A PASSO.md.
+1. Se nunca fizeste uma instalacao, le primeiro Documentacao\GUIA - INSTALACAO TOTAL PASSO A PASSO.md.
 2. No servidor, usar Desktop App\lugest.env.servidor.example como base do lugest.env.
 3. Nos postos, usar Desktop App\lugest.env.posto.example como base do lugest.env.
 
 ## Arranque desktop
-1. No servidor, usar Desktop App\lugest.env.servidor.example como base do lugest.env.
-2. Nos postos, usar Desktop App\lugest.env.posto.example como base do lugest.env.
-3. Se o ambiente for multi-posto, definir tambem LUGEST_SHARED_STORAGE_ROOT com uma pasta UNC partilhada para desenhos, PDFs e anexos.
-4. Se a base estiver sem utilizadores locais, correr Desktop App\Criar Administrador Inicial.bat.
-5. Ajustar Desktop App\lugest_branding.json, Desktop App\lugest_qt_config.json e os logos se quiser personalizacao.
-6. Se fores usar trial, editar/gerir Desktop App\lugest_trial.json apenas na maquina final, nunca copiando o trial desta maquina.
-7. Executar Desktop App\Arrancar LuisGEST Desktop.bat.
-8. O desktop arranca sempre em Qt e trabalha apenas com MySQL.
+1. Opcional: correr Desktop App\Instalar LuisGEST no computador.bat para instalar e criar atalhos.
+2. No servidor, usar Desktop App\lugest.env.servidor.example como base do lugest.env.
+3. Nos postos, usar Desktop App\lugest.env.posto.example como base do lugest.env.
+4. Se o ambiente for multi-posto, definir tambem LUGEST_SHARED_STORAGE_ROOT com uma pasta UNC partilhada para desenhos, PDFs e anexos.
+5. Se a base estiver sem utilizadores locais, correr Desktop App\Criar Administrador Inicial.bat.
+6. Ajustar Desktop App\lugest_branding.json, Desktop App\lugest_qt_config.json e os logos se quiser personalizacao.
+7. Se fores usar trial, editar/gerir Desktop App\lugest_trial.json apenas na maquina final, nunca copiando o trial desta maquina.
+8. Executar Desktop App\Arrancar LuisGEST Desktop.bat ou o atalho LuisGEST criado pelo instalador.
+9. O desktop arranca sempre em Qt e trabalha apenas com MySQL.
 
 ## Arranque API mobile
 1. Entrar em Mobile API.
@@ -295,15 +380,23 @@ Data de preparacao: $releaseDateTxt
 
 ## Mobile Android
 1. Se existir Mobile APK\LuisGEST-Impulse-release-$releaseStamp.apk, instalar essa APK.
-2. Se a pasta trouxer APK-PENDENTE.txt, gerar primeiro a APK a partir de Mobile App Fonte.
+2. Se a pasta trouxer APK-PENDENTE.txt, gerar primeiro a APK no ambiente do programador.
 3. No primeiro login indicar o IP/URL do servidor API.
 4. A app guarda o ultimo servidor e utilizador usados.
 
 ## Base de dados
-- Importar Base de Dados\mysql\lugest.sql no MySQL da empresa.
+- Para HeidiSQL, importar Base de Dados\mysql\IMPORTAR_NO_HEIDI.sql em instalacao nova.
+- Em alternativa, importar Base de Dados\mysql\lugest.sql no MySQL da empresa, ou usar o instalador PowerShell.
 - Em instalacao nova com logins temporarios e arranque rapido, podes importar Base de Dados\mysql\lugest_instalacao_unica.sql.
 - Aplicar patches adicionais da mesma pasta se o ambiente os exigir.
 - Para automatizar a instalacao inicial, usar Base de Dados\mysql\install_lugest_mysql.ps1 ou o atalho instalar_lugest_mysql_admin.bat.
+
+## Atualizacoes desktop
+1. Em cada cliente, abrir o LuisGEST como admin e ir a Extras > Atualizacoes.
+2. Apontar o Manifest para uma pasta/URL com latest.json.
+3. Para esta entrega local, o caminho predefinido ja aponta para ..\Atualizacoes\latest.json.
+4. Para publicar online, copiar Atualizacoes\latest.json e Atualizacoes\$updateZipName para GitHub privado, servidor proprio ou pasta partilhada.
+5. O atualizador valida SHA256, cria backup da pasta Desktop App e tenta criar backup MySQL com mysqldump antes de instalar.
 
 ## Notas finais
 - py main.py e main.exe abrem a desktop Qt principal.
@@ -314,7 +407,8 @@ Data de preparacao: $releaseDateTxt
 - O menu Faturacao faz seguimento de vendidos, faturas, pagamentos e comprovativos.
 - O menu Transportes faz agendamento de viagens, afeta encomendas e gera folha de rota PDF.
 - Este pacote nao leva os segredos da maquina atual: lugest.env, .env da API e o trial seguem em modo placeholder.
-- Depois de instalar, usa CHECKLIST - Seguranca e Testes.md para validar o ambiente novo.
+- Depois de instalar, usa Documentacao\CHECKLIST - Seguranca e Testes.md para validar o ambiente novo.
+- Para email e atualizacoes, usa Documentacao\GUIA - Email e Atualizacoes.md.
 "@
 Set-Content -Path (Join-Path $releaseRoot 'README - Revisao Final.md') -Value $readme -Encoding UTF8
 
