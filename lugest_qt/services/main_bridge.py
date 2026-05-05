@@ -12958,6 +12958,125 @@ class LegacyBackend(
                 y -= size + 3
         return y
 
+    def _quality_pdf_branding_assets(self) -> tuple[dict[str, Any], Path | None, list[str], str]:
+        branding = self.branding_settings()
+        palette = self._operator_label_palette()
+        logo_txt = str(branding.get("logo_path", "") or "").strip()
+        logo_path = Path(logo_txt) if logo_txt and Path(logo_txt).exists() else None
+        footer_lines = [str(line or "").strip() for line in list(branding.get("empresa_info_rodape", []) or []) if str(line or "").strip()]
+        company_name = str(dict(branding.get("guia_emitente", {}) or {}).get("nome", "") or "").strip()
+        if not company_name and footer_lines:
+            company_name = footer_lines[0]
+        if not company_name:
+            company_name = "luGEST"
+        return palette, logo_path, footer_lines[:3], company_name
+
+    def _quality_pdf_draw_page_frame(
+        self,
+        canvas_obj: Any,
+        page_w: float,
+        page_h: float,
+        *,
+        title: str,
+        subtitle: str = "",
+        printed_at: str = "",
+        page_label: str = "",
+    ) -> dict[str, Any]:
+        from reportlab.lib import colors
+        from reportlab.lib.units import mm
+
+        palette, logo_path, footer_lines, company_name = self._quality_pdf_branding_assets()
+        outer_margin = 10 * mm
+        header_h = 24 * mm
+        footer_h = 18 * mm
+        content_left = outer_margin + (8 * mm)
+        content_right = page_w - outer_margin - (8 * mm)
+        content_top = page_h - outer_margin - header_h - (6 * mm)
+        content_bottom = outer_margin + footer_h + (6 * mm)
+
+        canvas_obj.setFillColor(colors.white)
+        canvas_obj.rect(0, 0, page_w, page_h, stroke=0, fill=1)
+        canvas_obj.setFillColor(colors.white)
+        canvas_obj.setStrokeColor(palette["line_strong"])
+        canvas_obj.setLineWidth(1)
+        canvas_obj.roundRect(outer_margin, outer_margin, page_w - (outer_margin * 2), page_h - (outer_margin * 2), 10, stroke=1, fill=1)
+
+        header_y = page_h - outer_margin - header_h
+        canvas_obj.setFillColor(palette["primary"])
+        canvas_obj.roundRect(outer_margin, header_y, page_w - (outer_margin * 2), header_h, 10, stroke=0, fill=1)
+        self._draw_operator_logo_plate(
+            canvas_obj,
+            palette,
+            logo_path,
+            page_w - outer_margin - (34 * mm),
+            header_y + (4.5 * mm),
+            28 * mm,
+            12 * mm,
+            radius=5,
+            padding_x=3,
+            padding_y=2,
+            line_width=0.7,
+        )
+        self._draw_operator_logo_plate(
+            canvas_obj,
+            palette,
+            logo_path,
+            page_w - outer_margin - (20 * mm),
+            outer_margin + 3.5 * mm,
+            14 * mm,
+            8 * mm,
+            radius=3,
+            padding_x=2,
+            padding_y=1.5,
+            line_width=0.6,
+        )
+        canvas_obj.setFillColor(colors.white)
+        canvas_obj.setFont("Helvetica-Bold", 16)
+        canvas_obj.drawString(content_left, header_y + (14.5 * mm), self._operator_pdf_text(title))
+        if subtitle:
+            canvas_obj.setFont("Helvetica", 8.6)
+            canvas_obj.drawString(content_left, header_y + (7.8 * mm), self._operator_pdf_text(_pdf_clip_text(subtitle, 120 * mm, "Helvetica", 8.6)))
+
+        footer_y = outer_margin + 3.5 * mm
+        canvas_obj.setStrokeColor(palette["line"])
+        canvas_obj.setLineWidth(0.7)
+        canvas_obj.line(content_left, outer_margin + footer_h, content_right, outer_margin + footer_h)
+        canvas_obj.setFillColor(palette["muted"])
+        canvas_obj.setFont("Helvetica", 7.2)
+        footer_base = footer_y + 8.0
+        footer_texts = footer_lines or [company_name]
+        for index, line in enumerate(footer_texts[:2]):
+            canvas_obj.drawString(content_left, footer_base + (index * 8.0), self._operator_pdf_text(_pdf_clip_text(line, 110 * mm, "Helvetica", 7.2)))
+        if printed_at:
+            canvas_obj.drawRightString(content_right, footer_base + 8.0, self._operator_pdf_text(printed_at))
+        if page_label:
+            canvas_obj.drawRightString(content_right, footer_base, self._operator_pdf_text(page_label))
+
+        return {
+            "palette": palette,
+            "logo_path": logo_path,
+            "content_left": content_left,
+            "content_right": content_right,
+            "content_top": content_top,
+            "content_bottom": content_bottom,
+        }
+
+    def _quality_supplier_label_status_text(self, row: dict[str, Any], status_override: str = "") -> str:
+        override = str(status_override or "").strip()
+        if override:
+            return override
+        decision = str(row.get("decisao", "") or "").strip()
+        decision_norm = decision.casefold()
+        if "devolver" in decision_norm:
+            return "DEVOLVER AO FORNECEDOR"
+        if "aguardar" in decision_norm and "fornecedor" in decision_norm:
+            return "AGUARDAR DECISAO DO FORNECEDOR"
+        if "repor" in decision_norm or "substitu" in decision_norm:
+            return "AGUARDAR REPOSICAO DO FORNECEDOR"
+        if self._parse_float(row.get("qtd_rejeitada", 0), 0) > 0:
+            return "REJEITADO"
+        return decision.upper() or "EM ANALISE"
+
     def _quality_simple_pdf(self, target: Path, title: str, sections: list[tuple[str, list[str]]]) -> Path:
         def clean(value: Any) -> str:
             return str(value or "").replace("\r", " ").replace("\n", " ").strip()
@@ -13059,26 +13178,81 @@ class LegacyBackend(
             return path
         canvas_obj = pdf_canvas.Canvas(str(target), pagesize=A4)
         page_w, page_h = A4
-        margin = 16 * mm
-        y = page_h - margin
-        canvas_obj.setFillColor(colors.HexColor("#000040"))
-        canvas_obj.rect(0, page_h - 24 * mm, page_w, 24 * mm, stroke=0, fill=1)
-        canvas_obj.setFillColor(colors.white)
-        canvas_obj.setFont("Helvetica-Bold", 16)
-        canvas_obj.drawString(margin, page_h - 15 * mm, "Nao conformidade")
-        canvas_obj.setFont("Helvetica", 9)
-        canvas_obj.drawRightString(page_w - margin, page_h - 15 * mm, str(self.desktop_main.now_iso() or "").replace("T", " ")[:19])
-        y -= 34 * mm
+        printed_at = str(self.desktop_main.now_iso() or "").replace("T", " ")[:19]
+        page_number = 1
 
-        def field(label: str, value: Any) -> None:
+        def begin_page() -> tuple[float, float, float, float]:
+            frame = self._quality_pdf_draw_page_frame(
+                canvas_obj,
+                page_w,
+                page_h,
+                title="Nao conformidade",
+                subtitle=f"{nc_id_txt} | {str(row.get('estado', '') or '-').strip()} | {str(row.get('fornecedor_nome', '') or row.get('entidade_label', '') or '-').strip()}",
+                printed_at=printed_at,
+                page_label=f"Pagina {page_number}",
+            )
+            return (
+                float(frame["content_top"]),
+                float(frame["content_left"]),
+                float(frame["content_right"]),
+                float(frame["content_bottom"]),
+            )
+
+        y, content_left, content_right, bottom_limit = begin_page()
+        field_gap = 4.0
+
+        def next_page() -> None:
+            nonlocal page_number, y, content_left, content_right, bottom_limit
+            canvas_obj.showPage()
+            page_number += 1
+            y, content_left, content_right, bottom_limit = begin_page()
+
+        def ensure_space(required_height: float) -> None:
+            if y - required_height >= bottom_limit:
+                return
+            next_page()
+
+        def draw_field(label: str, value: Any) -> None:
             nonlocal y
+            text = str(value or "-").strip() or "-"
+            label_w = 32 * mm
+            value_w = max(60.0, content_right - content_left - label_w - (6 * mm))
+            lines = _pdf_wrap_text(text, "Helvetica", 9, value_w - 10, max_lines=None) or ["-"]
+            box_h = max(12 * mm, 8 + (len(lines) * 12))
+            ensure_space(box_h + field_gap)
             canvas_obj.setFillColor(colors.HexColor("#334155"))
             canvas_obj.setFont("Helvetica-Bold", 8)
-            canvas_obj.drawString(margin, y, label)
-            canvas_obj.setFont("Helvetica", 9)
+            canvas_obj.drawString(content_left, y - 10, self._operator_pdf_text(label))
+            canvas_obj.setFillColor(colors.white)
+            canvas_obj.setStrokeColor(colors.HexColor("#CBD5E1"))
+            canvas_obj.roundRect(content_left + label_w, y - box_h, value_w, box_h, 4, stroke=1, fill=1)
             canvas_obj.setFillColor(colors.black)
-            y = self._quality_pdf_draw_lines(canvas_obj, [str(value or "-")], margin + 34 * mm, y, page_w - margin * 2 - 34 * mm)
-            y -= 2
+            canvas_obj.setFont("Helvetica", 9)
+            line_y = y - 14
+            for line in lines:
+                canvas_obj.drawString(content_left + label_w + 6, line_y, self._operator_pdf_text(line))
+                line_y -= 12
+            y -= box_h + field_gap
+
+        def draw_section(label: str, value: Any) -> None:
+            nonlocal y
+            raw = str(value or "-").strip() or "-"
+            lines = _pdf_wrap_text(raw, "Helvetica", 9, content_right - content_left - 12, max_lines=None) or ["-"]
+            box_h = 12 + (len(lines) * 12)
+            ensure_space(box_h + 16)
+            canvas_obj.setFillColor(colors.HexColor("#0F172A"))
+            canvas_obj.setFont("Helvetica-Bold", 10.5)
+            canvas_obj.drawString(content_left, y - 6, self._operator_pdf_text(label))
+            canvas_obj.setFillColor(colors.HexColor("#F8FAFC"))
+            canvas_obj.setStrokeColor(colors.HexColor("#CBD5E1"))
+            canvas_obj.roundRect(content_left, y - box_h - 14, content_right - content_left, box_h + 6, 5, stroke=1, fill=1)
+            canvas_obj.setFillColor(colors.black)
+            canvas_obj.setFont("Helvetica", 9)
+            line_y = y - 20
+            for line in lines:
+                canvas_obj.drawString(content_left + 6, line_y, self._operator_pdf_text(line))
+                line_y -= 12
+            y -= box_h + 20
 
         for label, key in (
             ("ID", "id"),
@@ -13092,26 +13266,166 @@ class LegacyBackend(
             ("Lote", "lote_fornecedor"),
             ("NE", "ne_numero"),
             ("Guia", "guia"),
+            ("Decisao", "decisao"),
+            ("Qtd recebida", "qtd_recebida"),
+            ("Qtd aprovada", "qtd_aprovada"),
+            ("Qtd rejeitada", "qtd_rejeitada"),
+            ("Qtd pendente", "qtd_pendente"),
             ("Responsavel", "responsavel"),
             ("Prazo", "prazo"),
             ("Criada em", "created_at"),
             ("Fechada em", "closed_at"),
         ):
-            field(label, row.get(key, ""))
+            draw_field(label, row.get(key, ""))
         for label, key in (("Descricao", "descricao"), ("Causa", "causa"), ("Acao corretiva", "acao"), ("Eficacia", "eficacia")):
-            y -= 5
-            canvas_obj.setFillColor(colors.HexColor("#000040"))
-            canvas_obj.setFont("Helvetica-Bold", 10)
-            canvas_obj.drawString(margin, y, label)
-            y -= 14
-            canvas_obj.setFillColor(colors.black)
-            canvas_obj.setFont("Helvetica", 9)
-            y = self._quality_pdf_draw_lines(canvas_obj, [str(row.get(key, "") or "-")], margin, y, page_w - margin * 2)
-            if y < 35 * mm:
-                canvas_obj.showPage()
-                y = page_h - margin
+            draw_section(label, row.get(key, ""))
         canvas_obj.save()
         self._append_audit_event(self.ensure_data(), action="PDF NC gerado", entity_type="Nao conformidade", entity_id=nc_id_txt, summary=str(target))
+        self._save(force=True, audit=False)
+        return target
+
+    def quality_supplier_label_pdf(self, nc_id: str, output_path: str | Path | None = None, status_override: str = "") -> Path:
+        nc_id_txt = str(nc_id or "").strip()
+        row = next((item for item in self.quality_nc_rows("", "Todos") if str(item.get("id", "") or "").strip() == nc_id_txt), None)
+        if not row:
+            raise ValueError("Nao conformidade nao encontrada.")
+        try:
+            from reportlab.lib.pagesizes import A6, landscape
+            from reportlab.lib.units import mm
+            from reportlab.pdfgen import canvas as pdf_canvas
+        except Exception:
+            target = Path(output_path) if output_path else self._quality_pdf_path(f"etiqueta_fornecedor_{nc_id_txt}")
+            return self._quality_simple_pdf(
+                target,
+                f"Etiqueta fornecedor {nc_id_txt}",
+                [
+                    (
+                        "Resumo",
+                        [
+                            f"Estado etiqueta: {self._quality_supplier_label_status_text(row, status_override)}",
+                            f"Fornecedor: {row.get('fornecedor_nome', '') or '-'}",
+                            f"Referencia: {row.get('referencia', '') or '-'}",
+                            f"Lote: {row.get('lote_fornecedor', '') or '-'}",
+                            f"Qtd rejeitada: {row.get('qtd_rejeitada', '') or '-'}",
+                            f"Decisao: {row.get('decisao', '') or '-'}",
+                        ],
+                    )
+                ],
+            )
+
+        target = Path(output_path) if output_path else self._operator_label_tmp_path(nc_id_txt, "quality_supplier_label")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        page_w, page_h = landscape(A6)
+        canvas_obj = pdf_canvas.Canvas(str(target), pagesize=(page_w, page_h))
+        palette, logo_path, _footer_lines, _company_name = self._quality_pdf_branding_assets()
+        printed_at = str(self.desktop_main.now_iso() or "").replace("T", " ")[:19]
+        status_text = self._quality_supplier_label_status_text(row, status_override)
+        status_norm = status_text.casefold()
+        status_color = palette["warning"]
+        if "rejeitado" in status_norm or "devolver" in status_norm:
+            status_color = palette["danger"]
+        elif "repos" in status_norm or "substit" in status_norm:
+            status_color = palette["primary_dark"]
+
+        outer_x = 8
+        outer_y = 8
+        outer_w = page_w - 16
+        outer_h = page_h - 16
+        header_h = 26 * mm
+        body_x = outer_x + 10
+        body_w = outer_w - 20
+
+        canvas_obj.setFillColor(palette["surface"])
+        canvas_obj.setStrokeColor(palette["line_strong"])
+        canvas_obj.setLineWidth(1)
+        canvas_obj.roundRect(outer_x, outer_y, outer_w, outer_h, 11, stroke=1, fill=1)
+
+        canvas_obj.setFillColor(palette["primary"])
+        canvas_obj.roundRect(outer_x, outer_y + outer_h - header_h, outer_w, header_h, 11, stroke=0, fill=1)
+        self._draw_operator_logo_plate(
+            canvas_obj,
+            palette,
+            logo_path,
+            outer_x + 10,
+            outer_y + outer_h - (19 * mm),
+            28 * mm,
+            11 * mm,
+            radius=5,
+            padding_x=3,
+            padding_y=2,
+            line_width=0.7,
+        )
+        canvas_obj.setFillColor(palette["surface"])
+        canvas_obj.setFont("Helvetica-Bold", 13)
+        canvas_obj.drawString(outer_x + 44 * mm, outer_y + outer_h - (10 * mm), self._operator_pdf_text("Etiqueta fornecedor"))
+        canvas_obj.setFont("Helvetica", 7.5)
+        canvas_obj.drawString(outer_x + 44 * mm, outer_y + outer_h - (14.8 * mm), self._operator_pdf_text(f"NC {nc_id_txt}"))
+
+        chip_y = outer_y + outer_h - header_h - 16
+        canvas_obj.setFillColor(status_color)
+        canvas_obj.roundRect(body_x, chip_y, body_w, 15, 7, stroke=0, fill=1)
+        canvas_obj.setFillColor(palette["surface"])
+        status_font = _pdf_fit_font_size(status_text, "Helvetica-Bold", body_w - 14, 10.5, 7.2)
+        canvas_obj.setFont("Helvetica-Bold", status_font)
+        canvas_obj.drawCentredString(body_x + (body_w / 2.0), chip_y + 4.5, self._operator_pdf_text(_pdf_clip_text(status_text, body_w - 14, "Helvetica-Bold", status_font)))
+
+        row_y = chip_y - 20
+        small_gap = 8
+        small_w = (body_w - small_gap) / 2.0
+        info_cards = [
+            ("Fornecedor", str(row.get("fornecedor_nome", "") or row.get("entidade_label", "") or "-").strip() or "-"),
+            ("Lote", str(row.get("lote_fornecedor", "") or "-").strip() or "-"),
+            ("Referencia", str(row.get("referencia", "") or "-").strip() or "-"),
+            ("Qtd rejeitada", self._fmt(row.get("qtd_rejeitada", 0))),
+        ]
+        for index, (label, value) in enumerate(info_cards):
+            col = index % 2
+            line = index // 2
+            box_x = body_x + (col * (small_w + small_gap))
+            box_y = row_y - (line * 27)
+            canvas_obj.setFillColor(palette["primary_soft_2"])
+            canvas_obj.setStrokeColor(palette["line"])
+            canvas_obj.roundRect(box_x, box_y, small_w, 22, 7, stroke=1, fill=1)
+            canvas_obj.setFillColor(palette["muted"])
+            canvas_obj.setFont("Helvetica", 6.2)
+            canvas_obj.drawString(box_x + 7, box_y + 13, self._operator_pdf_text(label))
+            value_font = _pdf_fit_font_size(value, "Helvetica-Bold", small_w - 14, 8.5, 6.6)
+            canvas_obj.setFillColor(palette["ink"])
+            canvas_obj.setFont("Helvetica-Bold", value_font)
+            canvas_obj.drawString(box_x + 7, box_y + 4.5, self._operator_pdf_text(_pdf_clip_text(value, small_w - 14, "Helvetica-Bold", value_font)))
+
+        decision_y = row_y - 62
+        decision_text = str(row.get("decisao", "") or "-").strip() or "-"
+        canvas_obj.setFillColor(palette["surface_alt"])
+        canvas_obj.setStrokeColor(palette["line"])
+        canvas_obj.roundRect(body_x, decision_y, body_w, 24, 8, stroke=1, fill=1)
+        canvas_obj.setFillColor(palette["muted"])
+        canvas_obj.setFont("Helvetica", 6.2)
+        canvas_obj.drawString(body_x + 8, decision_y + 15, self._operator_pdf_text("Instrucao / decisao"))
+        decision_font = _pdf_fit_font_size(decision_text, "Helvetica-Bold", body_w - 16, 8.6, 6.4)
+        canvas_obj.setFillColor(palette["ink"])
+        canvas_obj.setFont("Helvetica-Bold", decision_font)
+        canvas_obj.drawString(body_x + 8, decision_y + 5.2, self._operator_pdf_text(_pdf_clip_text(decision_text, body_w - 16, "Helvetica-Bold", decision_font)))
+
+        barcode_y = outer_y + 10
+        barcode_h = max(24.0, decision_y - barcode_y - 8)
+        barcode_value = f"NC|{nc_id_txt}"
+        canvas_obj.setFillColor(palette["surface"])
+        canvas_obj.setStrokeColor(palette["line"])
+        canvas_obj.roundRect(body_x, barcode_y, body_w, barcode_h, 8, stroke=1, fill=1)
+        canvas_obj.setFillColor(palette["muted"])
+        canvas_obj.setFont("Helvetica", 5.8)
+        canvas_obj.drawString(body_x + 8, barcode_y + barcode_h - 11, self._operator_pdf_text("Codigo para rastreabilidade"))
+        self._draw_code128_fit(canvas_obj, barcode_value, body_x + 8, barcode_y + 12, body_w - 16, 18, min_bar_width=0.42, max_bar_width=0.92)
+        canvas_obj.setFillColor(palette["primary_dark"])
+        barcode_font = _pdf_fit_font_size(barcode_value, "Helvetica-Bold", body_w - 16, 7.8, 6.0)
+        canvas_obj.setFont("Helvetica-Bold", barcode_font)
+        canvas_obj.drawCentredString(body_x + (body_w / 2.0), barcode_y + 3.6, self._operator_pdf_text(_pdf_clip_text(barcode_value, body_w - 16, "Helvetica-Bold", barcode_font)))
+        canvas_obj.setFillColor(palette["muted"])
+        canvas_obj.setFont("Helvetica", 5.2)
+        canvas_obj.drawRightString(outer_x + outer_w - 8, outer_y + 4.6, self._operator_pdf_text(printed_at[:16]))
+        canvas_obj.save()
+        self._append_audit_event(self.ensure_data(), action="Etiqueta fornecedor gerada", entity_type="Nao conformidade", entity_id=nc_id_txt, summary=str(target))
         self._save(force=True, audit=False)
         return target
 

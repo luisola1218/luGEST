@@ -234,10 +234,16 @@ class QualityPage(QWidget):
         pdf_btn = QPushButton("PDF NC")
         pdf_btn.setProperty("variant", "secondary")
         pdf_btn.clicked.connect(self._pdf_selected_nc)
+        supplier_label_btn = QPushButton("Etiqueta fornecedor")
+        supplier_label_btn.setProperty("variant", "secondary")
+        supplier_label_btn.clicked.connect(self._preview_selected_supplier_label)
+        supplier_label_print_btn = QPushButton("Imprimir etiqueta")
+        supplier_label_print_btn.setProperty("variant", "secondary")
+        supplier_label_print_btn.clicked.connect(self._print_selected_supplier_label)
         remove_btn = QPushButton("Apagar")
         remove_btn.setProperty("variant", "danger")
         remove_btn.clicked.connect(self._remove_selected_nc)
-        for button in (add_btn, edit_btn, close_btn, release_btn, pdf_btn, remove_btn):
+        for button in (add_btn, edit_btn, close_btn, release_btn, pdf_btn, supplier_label_btn, supplier_label_print_btn, remove_btn):
             toolbar.addWidget(button)
         layout.addWidget(toolbar_card)
         layout.addWidget(self.nc_table, 1)
@@ -445,7 +451,22 @@ class QualityPage(QWidget):
         decision = QComboBox()
         decision.setEditable(True)
         decision.setInsertPolicy(QComboBox.NoInsert)
-        decision.addItems(["", "Libertar para stock", "Manter em inspeção", "Aceitar condicionado", "Bloquear stock", "Abrir reclamação fornecedor", "Rejeitar entrada", "Devolver ao fornecedor", "Corrigir internamente"])
+        decision.addItems(
+            [
+                "",
+                "Libertar para stock",
+                "Manter em inspecao",
+                "Segregar e aguardar decisao",
+                "Aceitar condicionado",
+                "Bloquear stock",
+                "Aguardar decisao do fornecedor",
+                "Abrir reclamacao fornecedor",
+                "Rejeitar entrada",
+                "Devolver ao fornecedor",
+                "Reposicao/substituicao do fornecedor",
+                "Corrigir internamente",
+            ]
+        )
         decision.setCurrentText(str(current.get("decisao", "") or ""))
         notes = QTextEdit()
         notes.setPlaceholderText("Observação complementar opcional")
@@ -457,13 +478,13 @@ class QualityPage(QWidget):
             if value == "APROVADO":
                 decision.setCurrentText("Libertar para stock")
             elif value == "REJEITADO":
-                decision.setCurrentText("Abrir reclamação fornecedor")
+                decision.setCurrentText("Aguardar decisao do fornecedor")
             elif value == "DEVOLVER_FORNECEDOR":
                 decision.setCurrentText("Devolver ao fornecedor")
             elif value == "EM_AVERIGUACAO":
-                decision.setCurrentText("Manter em averiguação")
+                decision.setCurrentText("Segregar e aguardar decisao")
             else:
-                decision.setCurrentText("Manter em inspeção")
+                decision.setCurrentText("Manter em inspecao")
 
         def sync_quantities_from_status() -> None:
             value = status.currentText().strip()
@@ -491,7 +512,7 @@ class QualityPage(QWidget):
                 approved_qty.setValue(0.0)
                 rejected_qty.setValue(pending_qty)
                 if force or not decision_text or "libert" in decision_text:
-                    decision.setCurrentText("Abrir reclamacao fornecedor")
+                    decision.setCurrentText("Aguardar decisao do fornecedor")
             elif value == "DEVOLVER_FORNECEDOR":
                 approved_qty.setValue(0.0)
                 rejected_qty.setValue(pending_qty)
@@ -502,7 +523,7 @@ class QualityPage(QWidget):
                     approved_qty.setValue(0.0)
                     rejected_qty.setValue(0.0)
                 if force or not decision_text or "libert" in decision_text:
-                    decision.setCurrentText("Manter em averiguacao")
+                    decision.setCurrentText("Segregar e aguardar decisao")
             else:
                 if approved_qty.value() + rejected_qty.value() > pending_qty:
                     approved_qty.setValue(0.0)
@@ -786,6 +807,36 @@ class QualityPage(QWidget):
             self.refresh()
         except Exception as exc:
             QMessageBox.critical(self, "Qualidade", str(exc))
+
+    def _selected_supplier_label_path(self) -> Any:
+        nc_id = self._selected_id(self.nc_table)
+        if not nc_id:
+            QMessageBox.warning(self, "Qualidade", "Seleciona uma nao conformidade.")
+            return None
+        return self.backend.quality_supplier_label_pdf(nc_id)
+
+    def _preview_selected_supplier_label(self) -> None:
+        try:
+            path = self._selected_supplier_label_path()
+            if path:
+                self._open_pdf_path(path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Etiqueta fornecedor", str(exc))
+
+    def _print_selected_supplier_label(self) -> None:
+        try:
+            path = self._selected_supplier_label_path()
+            if not path:
+                return
+            if os.name == "nt":
+                try:
+                    os.startfile(str(path), "print")  # type: ignore[attr-defined]
+                except Exception:
+                    os.startfile(str(path))  # type: ignore[attr-defined]
+            else:
+                self._open_pdf_path(path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Etiqueta fornecedor", str(exc))
 
     def _open_dossier_pdf(self) -> None:
         try:

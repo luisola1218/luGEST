@@ -2987,9 +2987,9 @@
     }
   },
   "update_settings": {
-    "manifest_url": "https://github.com/luisola1218/luGEST/releases/download/v2026.05.05.1/latest.json",
-    "github_token": "",
-    "auto_check": false,
+    "manifest_url": "C:\\Users\\engenharia\\Desktop\\App LuisGEST - Revisão Final\\Atualizacoes\\latest.json",
+    "github_token": "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",
+    "auto_check": true,
     "current_version": "2026.05.05.1"
   }
 }

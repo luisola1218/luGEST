@@ -711,8 +711,20 @@ class MainWindow(QMainWindow):
         supervisor_password_set = bool(options.get("operator_supervisor_password_set", False))
         dialog = QDialog(self)
         dialog.setWindowTitle("Extras Admin")
-        dialog.setMinimumSize(980, 720)
-        dialog.resize(1080, 760)
+        dialog.setWindowFlag(Qt.WindowMinimizeButtonHint, True)
+        dialog.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
+        dialog.setWindowFlag(Qt.WindowSystemMenuHint, True)
+        dialog.setSizeGripEnabled(True)
+        available = self.screen().availableGeometry() if self.screen() is not None else QRect()
+        min_w = 900
+        min_h = 640
+        target_w = 1080
+        target_h = 760
+        if not available.isNull():
+            target_w = max(min_w, min(1080, available.width() - 48))
+            target_h = max(min_h, min(760, available.height() - 48))
+        dialog.setMinimumSize(min_w, min_h)
+        dialog.resize(target_w, target_h)
         dialog.setStyleSheet(
             """
             QDialog { font-size: 12px; }
