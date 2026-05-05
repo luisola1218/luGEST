@@ -1843,6 +1843,15 @@ class QuotesBridgeMixin:
             "reservas": [],
             "montagem_itens": [],
             "numero_orcamento": orc.get("numero"),
+            "tipo_encomenda": "Cliente",
+        }
+        enc_of = str(self.desktop_main.next_of_numero(data) or "").strip()
+        enc["of_codigo"] = enc_of
+        enc["ordem_fabrico"] = {
+            "id": enc_of,
+            "encomenda_id": str(enc.get("numero", "") or "").strip(),
+            "estado": "Preparacao",
+            "data": self.desktop_main.now_iso()[:10],
         }
         mats: dict[str, dict[str, Any]] = {}
         piece_idx = 1
@@ -1948,7 +1957,10 @@ class QuotesBridgeMixin:
                 "ref_interna": ref_interna,
                 "ref_externa": str(line.get("ref_externa", "") or "").strip(),
                 "material": material,
+                "tipo_material": str(line.get("tipo_material", "") or line.get("material_family", "") or "CHAPA").strip().upper(),
+                "subtipo_material": str(line.get("material_subtype", "") or material).strip(),
                 "espessura": espessura,
+                "dimensao": str(line.get("dimensao", line.get("dimensoes", "")) or line.get("profile_size", "") or line.get("tube_section", "") or "").strip(),
                 "quantidade_pedida": qtd_line,
                 "Operacoes": ops_txt,
                 "Observacoes": str(line.get("descricao", "") or "").strip(),
@@ -1957,8 +1969,8 @@ class QuotesBridgeMixin:
                 "tempos_operacao": dict(line.get("tempos_operacao", {}) or {}),
                 "custos_operacao": dict(line.get("custos_operacao", {}) or {}),
                 "operacoes_detalhe": [dict(item or {}) for item in list(line.get("operacoes_detalhe", []) or []) if isinstance(item, dict)],
-                "of": self.desktop_main.next_of_numero(data),
-                "opp": self.desktop_main.next_opp_numero(data),
+                "of": enc_of,
+                "opp": f"OPP-{enc_of.split('-', 1)[1]}-{piece_idx:02d}" if enc_of.startswith("OF-") and "-" in enc_of else self.desktop_main.next_opp_numero(data),
                 "estado": "Preparacao",
                 "produzido_ok": 0.0,
                 "produzido_nok": 0.0,

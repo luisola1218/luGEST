@@ -1095,6 +1095,49 @@ class LegacyBackend(
     def _fmt(self, value: Any) -> str:
         return str(self.desktop_main.fmt_num(value))
 
+    def _write_basic_pdf(self, path: str | Path, lines: list[str]) -> Path:
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        safe_lines = [str(line or "") for line in list(lines or [])]
+        width = 595
+        height = 842
+        content_lines = ["BT", "/F1 11 Tf", "50 800 Td", "14 TL"]
+        first = True
+        for raw in safe_lines[:52]:
+            text = raw.encode("latin-1", errors="replace").decode("latin-1")
+            text = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+            if first:
+                content_lines.append(f"({text}) Tj")
+                first = False
+            else:
+                content_lines.append(f"T* ({text}) Tj")
+        content_lines.append("ET")
+        stream = "\n".join(content_lines).encode("latin-1", errors="replace")
+        objects = [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>".encode("ascii"),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream",
+        ]
+        out = bytearray(b"%PDF-1.4\n")
+        offsets = [0]
+        for index, obj in enumerate(objects, start=1):
+            offsets.append(len(out))
+            out.extend(f"{index} 0 obj\n".encode("ascii"))
+            out.extend(obj)
+            out.extend(b"\nendobj\n")
+        xref_offset = len(out)
+        out.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+        out.extend(b"0000000000 65535 f \n")
+        for offset in offsets[1:]:
+            out.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+        out.extend(
+            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n".encode("ascii")
+        )
+        target.write_bytes(bytes(out))
+        return target
+
     def _parse_dimension_mm(self, value: Any, default: float = 0.0) -> float:
         if isinstance(value, (int, float)):
             try:
@@ -4162,16 +4205,194 @@ class LegacyBackend(
         return "laser" in self.desktop_main.norm_text(self.desktop_main.normalize_operacao_nome(operation or ""))
 
     def planning_operation_options(self) -> list[str]:
-        values = list(getattr(self.desktop_main, "PLANEAMENTO_OPERACOES_DISPONIVEIS", []) or [])
-        values.extend(str(row.get("operation", row.get("name", "")) or "").strip() for row in list(self._workcenter_catalog(sync_legacy=False) or []))
-        if not values:
-            values = ["Corte Laser", "Quinagem", "Serralharia", "Maquinacao", "Roscagem", "Lacagem", "Montagem"]
-        ordered: list[str] = []
-        for value in values:
-            normalized = self._planning_normalize_operation(value)
-            if normalized and normalized not in ordered:
-                ordered.append(normalized)
-        return ordered
+        return [
+            str(row.get("name", "") or "").strip()
+            for row in self.operation_catalog_rows()
+            if bool(row.get("active", True)) and bool(row.get("planeavel", False))
+        ]
+
+    def _default_operation_catalog(self) -> list[dict[str, Any]]:
+        planning_defaults = [
+            "Corte Laser",
+            "Quinagem",
+            "Serralharia",
+            "Maquinacao",
+            "Roscagem",
+            "Lacagem",
+            "Montagem",
+            "Embalamento",
+            "Expedicao",
+            "Furo Manual",
+        ]
+        non_planning_defaults = [
+            "Departamento de Desenho",
+            "Departamento de Orcamentacao",
+            "Outros",
+        ]
+        names = list(dict.fromkeys(
+            list(getattr(self.desktop_main, "OFF_OPERACOES_DISPONIVEIS", []) or [])
+            + list(getattr(self.desktop_main, "PLANEAMENTO_OPERACOES_DISPONIVEIS", []) or [])
+            + planning_defaults
+            + non_planning_defaults
+        ))
+        planning_keys = {self.desktop_main.norm_text(name) for name in planning_defaults}
+        return [
+            {
+                "name": self._planning_normalize_operation(name, default=str(name).strip()) if self.desktop_main.norm_text(name) in planning_keys else str(name).strip(),
+                "active": True,
+                "planeavel": self.desktop_main.norm_text(name) in planning_keys,
+            }
+            for name in names
+            if str(name or "").strip()
+        ]
+
+    def operation_catalog_rows(self) -> list[dict[str, Any]]:
+        data = self.ensure_data()
+        raw_rows = list(data.get("operations_catalog", []) or [])
+        seed_rows = self._default_operation_catalog() if not raw_rows else []
+        seed_rows.extend(dict(row or {}) for row in raw_rows if isinstance(row, dict))
+        for row in list(self._workcenter_catalog(sync_legacy=False) or []):
+            op_name = self._planning_normalize_operation(row.get("operation", row.get("name", "")), default=str(row.get("operation", row.get("name", "")) or "").strip())
+            if op_name:
+                seed_rows.append({"name": op_name})
+        merged: dict[str, dict[str, Any]] = {}
+        for raw in seed_rows:
+            name = str(raw.get("name", raw.get("nome", "")) or "").strip()
+            if not name:
+                continue
+            normalized = self._planning_normalize_operation(name, default=name)
+            if self.desktop_main.norm_text(name).startswith("departamento") or self.desktop_main.norm_text(name) == "outros":
+                normalized = name
+            key = normalized.casefold()
+            current = merged.get(key)
+            if current is None:
+                current = {"name": normalized, "active": True, "planeavel": False}
+                merged[key] = current
+            if "active" in raw or "ativo" in raw:
+                current["active"] = bool(raw.get("active", raw.get("ativo")))
+            if "planeavel" in raw:
+                current["planeavel"] = bool(raw.get("planeavel"))
+        ordered_names = [row["name"] for row in self._default_operation_catalog()]
+        order_index = {name.casefold(): index for index, name in enumerate(ordered_names)}
+        cleaned = sorted(
+            merged.values(),
+            key=lambda row: (order_index.get(str(row.get("name", "")).casefold(), 999), str(row.get("name", "")).casefold()),
+        )
+        data["operations_catalog"] = cleaned
+        return [dict(row) for row in cleaned]
+
+    def operation_catalog_options(self, *, include_inactive: bool = False, planeavel_only: bool = False) -> list[str]:
+        rows = []
+        for row in self.operation_catalog_rows():
+            if not include_inactive and not bool(row.get("active", True)):
+                continue
+            if planeavel_only and not bool(row.get("planeavel", False)):
+                continue
+            name = str(row.get("name", "") or "").strip()
+            if name:
+                rows.append(name)
+        return rows
+
+    def _operation_usage_counts(self, operation: str, *, data: dict[str, Any] | None = None) -> dict[str, int]:
+        op_txt = self._planning_normalize_operation(operation, default=str(operation or "").strip())
+        if not op_txt:
+            return {"workcenters": 0, "quotes": 0, "orders": 0, "planning": 0, "total": 0}
+        data = data if isinstance(data, dict) else self.ensure_data()
+        op_key = self.desktop_main.norm_text(op_txt)
+
+        def op_matches(value: Any) -> bool:
+            normalized = self._planning_normalize_operation(value, default=str(value or "").strip())
+            return bool(normalized) and self.desktop_main.norm_text(normalized) == op_key
+
+        workcenters = sum(1 for row in list(data.get("workcenter_catalog", []) or []) if op_matches((row or {}).get("operation", (row or {}).get("name", ""))))
+        quotes = 0
+        for quote in list(data.get("orcamentos", []) or []):
+            for line in list((quote or {}).get("linhas", []) or []):
+                if any(op_matches(op_name) for op_name in self._planning_ops_from_ops_value((line or {}).get("operacao", ""))):
+                    quotes += 1
+                    break
+        orders = 0
+        for order in list(data.get("encomendas", []) or []):
+            order_used = False
+            for mat in list((order or {}).get("materiais", []) or []):
+                for esp in list((mat or {}).get("espessuras", []) or []):
+                    maps = [
+                        dict((esp or {}).get("tempos_operacao", {}) or {}),
+                        dict((esp or {}).get("maquinas_operacao", (esp or {}).get("recursos_operacao", {})) or {}),
+                    ]
+                    if any(op_matches(op_name) for values in maps for op_name in values.keys()):
+                        order_used = True
+                        break
+                if order_used:
+                    break
+            if order_used:
+                orders += 1
+        planning = sum(
+            1
+            for bucket_name in ("plano", "plano_hist")
+            for row in list(data.get(bucket_name, []) or [])
+            if op_matches((row or {}).get("operacao", ""))
+        )
+        total = workcenters + quotes + orders + planning
+        return {"workcenters": workcenters, "quotes": quotes, "orders": orders, "planning": planning, "total": total}
+
+    def save_operation_catalog_row(self, name: str, *, current_name: str = "", active: bool = True, planeavel: bool = False) -> dict[str, Any]:
+        data = self.ensure_data()
+        new_name = str(name or "").strip()
+        current_txt = str(current_name or "").strip()
+        if not new_name:
+            raise ValueError("Nome da operação obrigatório.")
+        rows = self.operation_catalog_rows()
+        new_key = new_name.casefold()
+        current_key = current_txt.casefold()
+        if any(str(row.get("name", "") or "").strip().casefold() == new_key and str(row.get("name", "") or "").strip().casefold() != current_key for row in rows):
+            raise ValueError("Já existe uma operação com esse nome.")
+        target = next((row for row in rows if str(row.get("name", "") or "").strip().casefold() == current_key), None) if current_txt else None
+        if target is None:
+            target = {"name": new_name}
+            rows.append(target)
+        old_name = str(target.get("name", "") or "").strip()
+        target["name"] = self._planning_normalize_operation(new_name, default=new_name)
+        if self.desktop_main.norm_text(new_name).startswith("departamento") or self.desktop_main.norm_text(new_name) == "outros":
+            target["name"] = new_name
+        target["active"] = bool(active)
+        target["planeavel"] = bool(planeavel)
+        if old_name and old_name.casefold() != str(target["name"]).casefold():
+            for wc in list(data.get("workcenter_catalog", []) or []):
+                if str((wc or {}).get("operation", "") or "").strip().casefold() == old_name.casefold():
+                    wc["operation"] = target["name"]
+            for bucket_name in ("plano", "plano_hist"):
+                for block in list(data.get(bucket_name, []) or []):
+                    if str((block or {}).get("operacao", "") or "").strip().casefold() == old_name.casefold():
+                        block["operacao"] = target["name"]
+        data["operations_catalog"] = rows
+        self.operation_catalog_rows()
+        self._workcenter_catalog()
+        self._save(force=True)
+        return next(row for row in self.operation_catalog_rows() if str(row.get("name", "") or "").strip().casefold() == str(target["name"]).casefold())
+
+    def remove_operation_catalog_row(self, name: str) -> None:
+        data = self.ensure_data()
+        target = str(name or "").strip()
+        if not target:
+            raise ValueError("Operação inválida.")
+        rows = self.operation_catalog_rows()
+        current = next((row for row in rows if str(row.get("name", "") or "").strip().casefold() == target.casefold()), None)
+        if current is None:
+            raise ValueError("Operação não encontrada.")
+        usage = self._operation_usage_counts(target, data=data)
+        if usage["total"] > 0:
+            raise ValueError(
+                "Não é possível remover esta operação porque ainda está em uso "
+                f"(postos: {usage['workcenters']}, orçamentos: {usage['quotes']}, encomendas: {usage['orders']}, planeamento: {usage['planning']})."
+            )
+        data["operations_catalog"] = [
+            row
+            for row in rows
+            if str(row.get("name", "") or "").strip().casefold() != target.casefold()
+        ]
+        self.operation_catalog_rows()
+        self._save(force=True)
 
     def _planning_normalize_operation(self, operation: Any, default: str = "Corte Laser") -> str:
         normalize_fn = getattr(self.desktop_main, "normalize_planeamento_operacao", None)
@@ -4186,13 +4407,16 @@ class LegacyBackend(
     def _planning_operation_aliases(self, operation: Any) -> set[str]:
         op_txt = self._planning_normalize_operation(operation)
         alias_map = {
-            "Corte Laser": {"Corte Laser"},
+            "Corte Laser": {"Corte Laser", "Laser"},
             "Quinagem": {"Quinagem"},
             "Serralharia": {"Serralharia", "Soldadura"},
             "Maquinacao": {"Maquinacao"},
             "Roscagem": {"Roscagem"},
             "Lacagem": {"Lacagem", "Pintura"},
             "Montagem": {"Montagem"},
+            "Embalamento": {"Embalamento"},
+            "Expedicao": {"Expedicao", "Expedição"},
+            "Furo Manual": {"Furo Manual"},
         }
         return set(alias_map.get(op_txt, {op_txt}))
 
@@ -4201,6 +4425,22 @@ class LegacyBackend(
         if callable(normalize_fn):
             return str(normalize_fn(operation or "") or "").strip()
         return str(self.desktop_main.normalize_operacao_nome(operation or "") or "").strip()
+
+    def _planning_operation_buffer_minutes(self) -> int:
+        try:
+            return max(0, int(float(self.ensure_data().get("planeamento_buffer_min", 15) or 15)))
+        except Exception:
+            return 15
+
+    def _planning_apply_operation_sequence_rules(self, operations: list[str]) -> list[str]:
+        ordered = [self._planning_normalize_operation(op, default="") for op in list(operations or []) if str(op or "").strip()]
+        ordered = [op for op in ordered if op and op in self.planning_operation_options()]
+        base = [op for op in ordered if op not in {"Embalamento", "Expedicao"}]
+        if "Embalamento" in ordered:
+            base.append("Embalamento")
+        if "Expedicao" in ordered:
+            base.append("Expedicao")
+        return list(dict.fromkeys(base))
 
     def _planning_default_posto_for_operation(self, operation: Any, numero: str = "") -> str:
         op_txt = self._planning_normalize_operation(operation)
@@ -4223,7 +4463,10 @@ class LegacyBackend(
         stored_txt = posto_txt or posto_trabalho_txt
         if stored_txt and op_txt:
             group_txt = self.workcenter_group_for_resource(stored_txt, op_txt) or self._legacy_workcenter_group_name(stored_txt)
-            if group_txt and stored_txt.lower() == group_txt.lower():
+            if group_txt and (
+                stored_txt.lower() == group_txt.lower()
+                or self.desktop_main.norm_text(stored_txt) in self._workcenter_group_aliases(group_txt)
+            ):
                 inferred = self._order_operation_resource(
                     str(raw_row.get("encomenda", "") or "").strip(),
                     str(raw_row.get("material", "") or "").strip(),
@@ -4393,12 +4636,12 @@ class LegacyBackend(
             ordered.append(op_txt)
         start_txt = self._planning_normalize_operation(start_operation, default="") if str(start_operation or "").strip() else ""
         if not start_txt:
-            return ordered
+            return self._planning_apply_operation_sequence_rules(ordered)
         if start_txt in ordered:
-            return ordered[ordered.index(start_txt) :]
+            return self._planning_apply_operation_sequence_rules(ordered[ordered.index(start_txt) :])
         if self._planning_item_has_operation(numero, material, espessura, start_txt):
-            return [start_txt, *ordered]
-        return ordered
+            return self._planning_apply_operation_sequence_rules([start_txt, *ordered])
+        return self._planning_apply_operation_sequence_rules(ordered)
 
     def _planning_slot_datetime(self, day_txt: str, start_min: int) -> datetime | None:
         try:
@@ -4749,6 +4992,9 @@ class LegacyBackend(
                         continue
                     next_op = self._planning_normalize_operation(sequence[next_index])
                     next_resource = self._order_operation_resource(numero, material, espessura, next_op)
+                    end_anchor = result.get("end_dt")
+                    if isinstance(end_anchor, datetime):
+                        end_anchor = end_anchor + timedelta(minutes=self._planning_operation_buffer_minutes())
                     next_round.append(
                         {
                             "numero": numero,
@@ -4756,7 +5002,7 @@ class LegacyBackend(
                             "espessura": espessura,
                             "sequence": sequence,
                             "index": next_index,
-                            "anchor_dt": result.get("end_dt"),
+                            "anchor_dt": end_anchor,
                             "resource": next_resource,
                             "data_entrega": str(job.get("data_entrega", "") or "").strip(),
                         }
@@ -5758,13 +6004,13 @@ class LegacyBackend(
         opp = str(piece.get("opp", "") or "").strip()
         if opp:
             return False
-        generator = getattr(self.desktop_main, "next_opp_numero", None)
-        if not callable(generator):
-            return False
-        try:
-            piece["opp"] = str(generator(self.ensure_data()) or "").strip()
-        except Exception:
-            return False
+        for enc in list(self.ensure_data().get("encomendas", []) or []):
+            if any(row is piece for row in list(self.desktop_main.encomenda_pecas(enc) or [])):
+                piece["opp"] = self._next_order_opp_codigo(enc)
+                if not str(piece.get("of", "") or "").strip():
+                    piece["of"] = self._order_of_code(enc, create=True)
+                return bool(piece.get("opp"))
+        piece["opp"] = str(self.desktop_main.next_opp_numero(self.ensure_data()) or "").strip()
         return bool(piece.get("opp"))
 
     def _operator_label_row(self, enc: dict[str, Any], piece: dict[str, Any], source_posto: str = "Geral") -> dict[str, Any]:
@@ -6648,6 +6894,8 @@ class LegacyBackend(
         if enc is None:
             raise ValueError("Encomenda n?o encontrada.")
         data = self.ensure_data()
+        if self._ensure_order_fabrication_order(enc):
+            self._save(force=True)
         cliente_codigo = str(enc.get("cliente", "") or "").strip()
         cliente_obj = {}
         find_cliente_fn = getattr(self.desktop_main, "find_cliente", None)
@@ -6668,16 +6916,34 @@ class LegacyBackend(
                     "ref_interna": str(piece.get("ref_interna", "")).strip(),
                     "ref_externa": str(piece.get("ref_externa", "")).strip(),
                     "material": str(piece.get("material", "")).strip(),
+                    "tipo_material": str(piece.get("tipo_material", "") or "CHAPA").strip(),
+                    "subtipo_material": str(piece.get("subtipo_material", "") or piece.get("material", "")).strip(),
                     "espessura": str(piece.get("espessura", "")).strip(),
+                    "dimensao": str(piece.get("dimensao", piece.get("dimensoes", "")) or "").strip(),
+                    "perfil_tipo": str(piece.get("perfil_tipo", "") or "").strip(),
+                    "perfil_tamanho": str(piece.get("perfil_tamanho", "") or "").strip(),
+                    "comprimento_mm": self._parse_float(piece.get("comprimento_mm", 0), 0),
+                    "tubo_forma": str(piece.get("tubo_forma", "") or "").strip(),
+                    "lado_a": self._parse_float(piece.get("lado_a", 0), 0),
+                    "lado_b": self._parse_float(piece.get("lado_b", 0), 0),
+                    "tubo_espessura": self._parse_float(piece.get("tubo_espessura", 0), 0),
+                    "diametro": self._parse_float(piece.get("diametro", 0), 0),
                     "estado": str(piece.get("estado", "")).strip(),
                     "qtd_plan": self._fmt(qty_plan),
                     "qtd_prod": self._fmt(qty_prod),
                     "descricao": str(piece.get("descricao", "") or piece.get("Observacoes", "") or "").strip(),
+                    "of": str(piece.get("of", "") or "").strip(),
+                    "opp": str(piece.get("opp", "") or "").strip(),
                     "operacoes": " + ".join(
                         [self.desktop_main.normalize_operacao_nome(op.get("nome", "")) for op in list(ops or []) if str(op.get("nome", "")).strip()]
                     ),
                     "desenho": bool(str(piece.get("desenho", "") or piece.get("desenho_path", "") or "").strip()),
                     "desenho_path": str(piece.get("desenho", "") or piece.get("desenho_path", "") or "").strip(),
+                    "ficheiros": [
+                        str(item or "").strip()
+                        for item in list(piece.get("ficheiros", []) or [])
+                        if str(item or "").strip()
+                    ],
                 }
             )
         materials = []
@@ -6760,6 +7026,9 @@ class LegacyBackend(
         montagem_resumo = str(self.desktop_main.encomenda_montagem_resumo(enc) or "").strip()
         return {
             "numero": str(enc.get("numero", "")).strip(),
+            "tipo_encomenda": str(enc.get("tipo_encomenda", "") or "Cliente").strip(),
+            "of_codigo": str(enc.get("of_codigo", "") or "").strip(),
+            "ordem_fabrico": dict(enc.get("ordem_fabrico", {}) or {}),
             "cliente": cliente_codigo,
             "cliente_nome": str(cliente_obj.get("nome", "") or "").strip(),
             "posto_trabalho": self._order_workcenter(enc),
@@ -8640,10 +8909,10 @@ class LegacyBackend(
         for enc in list(data.get("encomendas", []) or []):
             for piece in self.desktop_main.encomenda_pecas(enc):
                 if not str(piece.get("opp", "") or "").strip():
-                    piece["opp"] = self.desktop_main.next_opp_numero(data)
+                    piece["opp"] = self._next_order_opp_codigo(enc)
                     changed = True
                 if not str(piece.get("of", "") or "").strip():
-                    piece["of"] = self.desktop_main.next_of_numero(data)
+                    piece["of"] = self._order_of_code(enc, create=True)
                     changed = True
                 if str(piece.get("opp", "") or "").strip() == target:
                     if changed:
@@ -9829,6 +10098,71 @@ class LegacyBackend(
         )
         return rows
 
+    def _order_of_code(self, enc: dict[str, Any], *, create: bool = True) -> str:
+        code = str(enc.get("of_codigo", "") or "").strip()
+        if not code:
+            ordem = enc.get("ordem_fabrico", {})
+            if isinstance(ordem, dict):
+                code = str(ordem.get("id", "") or ordem.get("codigo", "") or "").strip()
+        if not code:
+            for piece in list(self.desktop_main.encomenda_pecas(enc) or []):
+                code = str(piece.get("of", "") or "").strip()
+                if code:
+                    break
+        if not code and create:
+            code = str(self.desktop_main.next_of_numero(self.ensure_data()) or "").strip()
+        if code:
+            enc["of_codigo"] = code
+            enc["ordem_fabrico"] = {
+                "id": code,
+                "encomenda_id": str(enc.get("numero", "") or "").strip(),
+                "estado": str(enc.get("estado", "") or "Preparacao").strip() or "Preparacao",
+                "data": str(enc.get("data_criacao", "") or self.desktop_main.now_iso()).strip()[:10],
+            }
+        return code
+
+    def _next_order_opp_codigo(self, enc: dict[str, Any]) -> str:
+        of_code = self._order_of_code(enc, create=True)
+        prefix = ""
+        parts = of_code.split("-")
+        if len(parts) >= 3 and parts[0].upper() == "OF":
+            prefix = f"OPP-{parts[1]}-{parts[2]}"
+        max_seq = 0
+        for piece in list(self.desktop_main.encomenda_pecas(enc) or []):
+            opp = str(piece.get("opp", "") or "").strip()
+            if prefix and opp.startswith(prefix + "-"):
+                suffix = opp.rsplit("-", 1)[-1]
+                if suffix.isdigit():
+                    max_seq = max(max_seq, int(suffix))
+        if prefix:
+            return f"{prefix}-{max_seq + 1:02d}"
+        return str(self.desktop_main.next_opp_numero(self.ensure_data()) or "").strip()
+
+    def _ensure_order_fabrication_order(self, enc: dict[str, Any], *, sync_existing: bool = False) -> bool:
+        changed = False
+        of_code = self._order_of_code(enc, create=True)
+        if of_code and enc.get("of_codigo") != of_code:
+            enc["of_codigo"] = of_code
+            changed = True
+        if of_code:
+            ordem = {
+                "id": of_code,
+                "encomenda_id": str(enc.get("numero", "") or "").strip(),
+                "estado": str(enc.get("estado", "") or "Preparacao").strip() or "Preparacao",
+                "data": str(enc.get("data_criacao", "") or self.desktop_main.now_iso()).strip()[:10],
+            }
+            if dict(enc.get("ordem_fabrico", {}) or {}) != ordem:
+                enc["ordem_fabrico"] = ordem
+                changed = True
+        for piece in list(self.desktop_main.encomenda_pecas(enc) or []):
+            if of_code and (sync_existing or not str(piece.get("of", "") or "").strip()) and str(piece.get("of", "") or "").strip() != of_code:
+                piece["of"] = of_code
+                changed = True
+            if not str(piece.get("opp", "") or "").strip():
+                piece["opp"] = self._next_order_opp_codigo(enc)
+                changed = True
+        return changed
+
     def order_suggest_ref_interna(
         self,
         numero: str = "",
@@ -9866,6 +10200,7 @@ class LegacyBackend(
             raise ValueError("Tempo estimado inv?lido.") from exc
         if enc is None:
             numero = self.desktop_main.next_encomenda_numero(data)
+            of_code = str(self.desktop_main.next_of_numero(data) or "").strip()
             enc = {
                 "id": f"ENC{len(list(data.get('encomendas', []) or [])) + 1:05d}",
                 "numero": numero,
@@ -9898,10 +10233,20 @@ class LegacyBackend(
                 "montagem_itens": [],
                 "espessuras": [],
                 "numero_orcamento": "",
+                "tipo_encomenda": "Cliente",
+                "of_codigo": of_code,
+                "ordem_fabrico": {
+                    "id": of_code,
+                    "encomenda_id": numero,
+                    "estado": "Preparacao",
+                    "data": self.desktop_main.now_iso()[:10],
+                },
             }
             data.setdefault("encomendas", []).append(enc)
 
         enc["cliente"] = cliente
+        tipo_txt = str(payload.get("tipo_encomenda", enc.get("tipo_encomenda", "Cliente")) or "Cliente").strip()
+        enc["tipo_encomenda"] = "Interna (produção)" if "intern" in self.desktop_main.norm_text(tipo_txt) else "Cliente"
         enc["posto_trabalho"] = self._normalize_workcenter_value(payload.get("posto_trabalho", "") or enc.get("posto_trabalho", ""))
         enc["nota_cliente"] = str(payload.get("nota_cliente", "") or "").strip()
         enc["nota_transporte"] = str(payload.get("nota_transporte", "") or enc.get("nota_transporte", "") or "").strip()
@@ -9931,6 +10276,7 @@ class LegacyBackend(
             enc["reservas"] = []
         enc.setdefault("montagem_itens", [])
         enc["cativar"] = requested_cativar and bool(enc.get("reservas"))
+        self._ensure_order_fabrication_order(enc)
         self.desktop_main.update_estado_encomenda_por_espessuras(enc)
         self._save(force=True)
         return self.order_detail(numero)
@@ -10123,10 +10469,28 @@ class LegacyBackend(
         current_ref = str(current_ref_interna or "").strip()
         ref_int = str(payload.get("ref_interna", "") or "").strip()
         ref_ext = str(payload.get("ref_externa", "") or "").strip()
+        tipo_material = str(payload.get("tipo_material", "") or "").strip().upper()
+        if tipo_material not in {"CHAPA", "PERFIL", "TUBO", "OUTROS"}:
+            tipo_material = "CHAPA"
         material = str(payload.get("material", "") or "").strip()
+        subtipo_material = str(payload.get("subtipo_material", "") or material).strip()
         espessura = str(payload.get("espessura", "") or "").strip()
+        dimensao = str(payload.get("dimensao", payload.get("dimensoes", "")) or "").strip()
+        perfil_tipo = str(payload.get("perfil_tipo", "") or "").strip()
+        perfil_tamanho = str(payload.get("perfil_tamanho", "") or "").strip()
+        comprimento_mm = self._parse_float(payload.get("comprimento_mm", 0), 0)
+        tubo_forma = str(payload.get("tubo_forma", "") or "").strip()
+        lado_a = self._parse_float(payload.get("lado_a", 0), 0)
+        lado_b = self._parse_float(payload.get("lado_b", 0), 0)
+        tubo_espessura = self._parse_float(payload.get("tubo_espessura", 0), 0)
+        diametro = self._parse_float(payload.get("diametro", 0), 0)
         descricao = str(payload.get("descricao", "") or "").strip()
         desenho = str(payload.get("desenho", "") or "").strip()
+        ficheiros = [
+            str(item or "").strip()
+            for item in list(payload.get("ficheiros", []) or [])
+            if str(item or "").strip()
+        ]
         operacoes = " + ".join(self.desktop_main.parse_operacoes_lista(payload.get("operacoes", "")))
         if not operacoes:
             operacoes = str(self.desktop_main.OFF_OPERACAO_OBRIGATORIA)
@@ -10137,8 +10501,16 @@ class LegacyBackend(
         operacoes_detalhe = [dict(item or {}) for item in list(payload.get("operacoes_detalhe", []) or []) if isinstance(item, dict)]
         guardar_ref = bool(payload.get("guardar_ref", True))
 
-        if not material or not espessura:
-            raise ValueError("Material e espessura sao obrigatorios.")
+        if not material:
+            raise ValueError("Material obrigatorio.")
+        if tipo_material == "CHAPA" and not espessura:
+            raise ValueError("Espessura obrigatoria para chapa.")
+        if tipo_material == "TUBO" and (not dimensao or not espessura):
+            raise ValueError("Dimensao e espessura obrigatorias para tubo.")
+        if tipo_material == "PERFIL" and not dimensao:
+            raise ValueError("Dimensao obrigatoria para perfil.")
+        if not espessura and tipo_material in {"PERFIL", "OUTROS"}:
+            espessura = "-"
         if quantidade <= 0:
             raise ValueError("Quantidade invalida.")
 
@@ -10166,10 +10538,11 @@ class LegacyBackend(
 
         _, old_esp, piece = self._order_find_piece(enc, current_ref, "")
         if piece is None:
+            of_code = self._order_of_code(enc, create=True)
             piece = {
                 "id": self._next_order_piece_id(enc),
-                "of": self.desktop_main.next_of_numero(self.ensure_data()),
-                "opp": self.desktop_main.next_opp_numero(self.ensure_data()),
+                "of": of_code,
+                "opp": self._next_order_opp_codigo(enc),
                 "estado": "Preparacao",
                 "produzido_ok": 0.0,
                 "produzido_nok": 0.0,
@@ -10188,20 +10561,33 @@ class LegacyBackend(
         piece["ref_interna"] = ref_int
         piece["ref_externa"] = ref_ext
         piece["material"] = material
+        piece["tipo_material"] = tipo_material
+        piece["subtipo_material"] = subtipo_material
         piece["espessura"] = espessura
+        piece["dimensao"] = dimensao
+        piece["dimensoes"] = dimensao
+        piece["perfil_tipo"] = perfil_tipo
+        piece["perfil_tamanho"] = perfil_tamanho
+        piece["comprimento_mm"] = comprimento_mm
+        piece["tubo_forma"] = tubo_forma
+        piece["lado_a"] = lado_a
+        piece["lado_b"] = lado_b
+        piece["tubo_espessura"] = tubo_espessura
+        piece["diametro"] = diametro
         piece["descricao"] = descricao
         piece["quantidade_pedida"] = quantidade
         piece["Operacoes"] = operacoes
         piece["Observacoes"] = descricao
         piece["desenho"] = desenho
         piece["desenho_path"] = desenho
+        piece["ficheiros"] = ficheiros
         piece["tempos_operacao"] = dict(tempos_operacao)
         piece["custos_operacao"] = dict(custos_operacao)
         piece["operacoes_detalhe"] = list(operacoes_detalhe)
         if "of" not in piece or not str(piece.get("of", "")).strip():
-            piece["of"] = self.desktop_main.next_of_numero(self.ensure_data())
+            piece["of"] = self._order_of_code(enc, create=True)
         if "opp" not in piece or not str(piece.get("opp", "")).strip():
-            piece["opp"] = self.desktop_main.next_opp_numero(self.ensure_data())
+            piece["opp"] = self._next_order_opp_codigo(enc)
         piece["operacoes_fluxo"] = self.desktop_main.build_operacoes_fluxo(operacoes, piece.get("operacoes_fluxo"))
         self.desktop_main.ensure_peca_operacoes(piece)
         self.desktop_main.atualizar_estado_peca(piece)
@@ -10215,9 +10601,13 @@ class LegacyBackend(
                 "descricao": descricao,
                 "material": material,
                 "espessura": espessura,
+                "tipo_material": tipo_material,
+                "subtipo_material": subtipo_material,
+                "dimensao": dimensao,
                 "Operacoes": operacoes,
                 "Observacoes": descricao,
                 "desenho": desenho,
+                "ficheiros": list(ficheiros),
             }
             if guardar_ref:
                 self.ensure_data().setdefault("orc_refs", {})[ref_ext] = {
@@ -10254,9 +10644,349 @@ class LegacyBackend(
                     pass
 
         self.desktop_main.update_refs(self.ensure_data(), ref_int, ref_ext)
+        self._ensure_order_fabrication_order(enc)
         self.desktop_main.update_estado_encomenda_por_espessuras(enc)
         self._save(force=True)
         return self.order_detail(numero)
+
+    def order_model_options(self, filter_text: str = "") -> list[dict[str, Any]]:
+        query = str(filter_text or "").strip().lower()
+        rows: list[dict[str, Any]] = []
+        for source, getter in (("modelo", getattr(self, "assembly_model_rows", None)), ("conjunto", getattr(self, "conjunto_rows", None))):
+            if not callable(getter):
+                continue
+            for row in list(getter(filter_text) or []):
+                if not bool(row.get("ativo", True)):
+                    continue
+                item = dict(row)
+                item["origem_tipo"] = source
+                item["label"] = f"{item.get('codigo', '')} | {item.get('descricao', '')}".strip(" |")
+                if query and not any(query in str(value).lower() for value in item.values()):
+                    continue
+                rows.append(item)
+        rows.sort(key=lambda row: (str(row.get("origem_tipo", "")), str(row.get("codigo", ""))))
+        return rows
+
+    def order_import_model(self, numero: str, codigo: str, quantity: Any = 1, source: str = "modelo") -> dict[str, Any]:
+        enc = self.get_encomenda_by_numero(numero)
+        if enc is None:
+            raise ValueError("Encomenda não encontrada.")
+        if self._order_is_orc_based(enc):
+            raise ValueError("Encomenda originada de orçamento: estrutura bloqueada.")
+        code = str(codigo or "").strip()
+        if not code:
+            raise ValueError("Seleciona um modelo/conjunto.")
+        source_norm = str(source or "").strip().lower()
+        expand_fn = self.conjunto_expand if source_norm == "conjunto" else self.assembly_model_expand
+        rows = list(expand_fn(code, quantity) or [])
+        if not rows:
+            raise ValueError("O modelo não tem linhas para importar.")
+        imported_pieces = 0
+        imported_items = 0
+        for line in rows:
+            line_type = self.desktop_main.normalize_orc_line_type(line.get("tipo_item"))
+            if self.desktop_main.orc_line_is_piece(line):
+                self.order_piece_create_or_update(
+                    numero,
+                    {
+                        "ref_interna": "",
+                        "ref_externa": str(line.get("ref_externa", "") or "").strip(),
+                        "descricao": str(line.get("descricao", "") or "").strip(),
+                        "tipo_material": str(line.get("tipo_material", "") or line.get("material_family", "") or "CHAPA").strip().upper(),
+                        "material": str(line.get("material", "") or line.get("material_subtype", "") or "").strip(),
+                        "subtipo_material": str(line.get("material_subtype", "") or line.get("material", "") or "").strip(),
+                        "espessura": str(line.get("espessura", "") or "").strip(),
+                        "dimensao": str(line.get("dimensao", line.get("dimensoes", "")) or line.get("profile_size", "") or line.get("tube_section", "") or "").strip(),
+                        "operacoes": str(line.get("operacao", "") or "Embalamento").strip(),
+                        "quantidade_pedida": self._parse_float(line.get("qtd", 0), 0),
+                        "preco_unit": self._parse_float(line.get("preco_unit", 0), 0),
+                        "tempo_peca_min": self._parse_float(line.get("tempo_peca_min", 0), 0),
+                        "desenho": str(line.get("desenho", "") or "").strip(),
+                        "guardar_ref": True,
+                    },
+                )
+                imported_pieces += 1
+                continue
+            enc.setdefault("montagem_itens", []).append(
+                {
+                    "linha_ordem": len(list(enc.get("montagem_itens", []) or [])) + 1,
+                    "tipo_item": line_type,
+                    "stock_item_kind": str(line.get("stock_item_kind", "") or "").strip(),
+                    "descricao": str(line.get("descricao", "") or "").strip(),
+                    "dimensao": str(line.get("dimensao", line.get("dimensoes", "")) or "").strip(),
+                    "material": str(line.get("material", "") or "").strip(),
+                    "espessura": str(line.get("espessura", "") or "").strip(),
+                    "stock_material_id": str(line.get("stock_material_id", "") or "").strip(),
+                    "produto_codigo": str(line.get("produto_codigo", "") or "").strip(),
+                    "produto_unid": str(line.get("produto_unid", "") or "").strip() or ("SV" if self.desktop_main.orc_line_is_service(line) else "UN"),
+                    "qtd_planeada": round(self._parse_float(line.get("qtd", 0), 0), 2),
+                    "qtd_consumida": 0.0,
+                    "preco_unit": round(self._parse_float(line.get("preco_unit", 0), 0), 4),
+                    "conjunto_codigo": str(line.get("conjunto_codigo", code) or "").strip(),
+                    "conjunto_nome": str(line.get("conjunto_nome", "") or "").strip(),
+                    "grupo_uuid": str(line.get("grupo_uuid", "") or "").strip(),
+                    "estado": "Pendente",
+                    "obs": str(line.get("operacao", "") or "").strip(),
+                    "created_at": self.desktop_main.now_iso(),
+                    "consumed_at": "",
+                    "consumed_by": "",
+                }
+            )
+            imported_items += 1
+        self._ensure_order_fabrication_order(enc)
+        self.desktop_main.update_estado_encomenda_por_espessuras(enc)
+        self._save(force=True)
+        detail = self.order_detail(numero)
+        detail["imported_pieces"] = imported_pieces
+        detail["imported_items"] = imported_items
+        return detail
+
+    def order_fabrication_pdf(self, numero: str, output_path: str | Path | None = None) -> Path:
+        enc = self.get_encomenda_by_numero(numero)
+        if enc is None:
+            raise ValueError("Encomenda não encontrada.")
+        if self._ensure_order_fabrication_order(enc):
+            self._save(force=True)
+        detail = self.order_detail(numero)
+        pieces = list(detail.get("pieces", []) or [])
+        if not pieces:
+            raise ValueError("A ordem de fabrico não tem peças.")
+        of_code = str(detail.get("of_codigo", "") or self._order_of_code(enc)).strip()
+        target = Path(output_path) if output_path else Path(tempfile.gettempdir()) / f"lugest_ordem_fabrico_{of_code}.pdf"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            from reportlab.lib import colors
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib.units import mm
+            from reportlab.pdfgen import canvas as pdf_canvas
+        except ModuleNotFoundError:
+            lines = [
+                "Ordem de Fabrico",
+                f"OF: {of_code}",
+                f"Encomenda: {detail.get('numero', '-')}",
+                f"Cliente: {detail.get('cliente', '-') or '-'} - {detail.get('cliente_nome', '') or ''}".strip(" -"),
+                f"Data: {str((detail.get('ordem_fabrico') or {}).get('data', '') or '')[:10]}",
+                "",
+            ]
+            fallback_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+            for piece in pieces:
+                key = (str(piece.get("material", "") or "-").strip() or "-", str(piece.get("espessura", "") or "-").strip() or "-")
+                fallback_groups.setdefault(key, []).append(piece)
+            for (material_txt, esp_txt), group_rows in sorted(fallback_groups.items(), key=lambda item: (item[0][0].lower(), item[0][1].lower())):
+                lines.append(f"Espessura: {material_txt} | {esp_txt} mm | {len(group_rows)} peca(s)")
+                lines.append(f"Codigo grupo: GRP|{of_code}|{material_txt}|{esp_txt}")
+                for piece in group_rows:
+                    lines.append(
+                        f"- {piece.get('ref_interna', '-') or '-'} | {piece.get('ref_externa', '-') or '-'} | "
+                        f"Qtd {piece.get('qtd_plan', '0')} | Ops: {piece.get('operacoes', '-') or '-'}"
+                    )
+                lines.append("")
+            self._write_basic_pdf(target, lines)
+            return target
+        page_w, page_h = A4
+        canvas_obj = pdf_canvas.Canvas(str(target), pagesize=A4)
+        palette = self._operator_label_palette()
+        branding = self.branding_settings()
+        logo_txt = str(branding.get("logo_path", "") or "").strip()
+        logo_path = Path(logo_txt) if logo_txt and Path(logo_txt).exists() else None
+        printed_at = str(self.desktop_main.now_iso() or "").replace("T", " ")[:19]
+        margin = 12 * mm
+        inner_w = page_w - (margin * 2)
+        header_h = 38 * mm
+        table_header_h = 8 * mm
+        row_h = 7.4 * mm
+        group_h = 10.5 * mm
+        footer_h = 9 * mm
+        columns = [
+            ("Ref.", 27 * mm),
+            ("Ref. externa", 72 * mm),
+            ("Material", 30 * mm),
+            ("Esp.", 7 * mm),
+            ("Qtd", 11 * mm),
+            ("Operacoes", inner_w - (27 + 72 + 30 + 7 + 11) * mm),
+        ]
+        rows_per_page = max(1, int((page_h - (margin * 2) - header_h - table_header_h - footer_h) // row_h))
+        grouped_pieces: list[tuple[str, str, list[dict[str, Any]]]] = []
+        groups_map: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for piece in pieces:
+            key = (str(piece.get("material", "") or "-").strip() or "-", str(piece.get("espessura", "") or "-").strip() or "-")
+            groups_map.setdefault(key, []).append(piece)
+        for key, rows in sorted(groups_map.items(), key=lambda item: (item[0][0].lower(), item[0][1].lower())):
+            grouped_pieces.append((key[0], key[1], rows))
+        visual_units = len(pieces) + (len(grouped_pieces) * max(1, math.ceil(group_h / row_h)))
+        total_pages = max(1, math.ceil(max(1, visual_units) / rows_per_page))
+
+        def draw_header(page_number: int) -> float:
+            top_y = page_h - margin
+            canvas_obj.setFillColor(colors.HexColor("#FFFFFF"))
+            canvas_obj.setStrokeColor(colors.HexColor("#CBD5E1"))
+            canvas_obj.roundRect(margin, top_y - header_h, inner_w, header_h, 5, stroke=1, fill=1)
+            self._draw_operator_logo_plate(canvas_obj, palette, logo_path, margin + 8, top_y - 23 * mm, 34 * mm, 15 * mm, radius=4, padding_x=3, padding_y=2)
+            canvas_obj.setFillColor(colors.HexColor("#020617"))
+            canvas_obj.setFont("Helvetica-Bold", 16)
+            canvas_obj.drawString(margin + 48 * mm, top_y - 10 * mm, self._operator_pdf_text("Ordem de Fabrico"))
+            canvas_obj.setFont("Helvetica", 7.5)
+            client_line = f"{detail.get('cliente', '-') or '-'} - {detail.get('cliente_nome', '') or ''}".strip(" -")
+            header_meta = [
+                f"Encomenda: {detail.get('numero', '-')}",
+                f"Cliente: {client_line or '-'}",
+                f"Data OF: {str((detail.get('ordem_fabrico') or {}).get('data', '') or '')[:10]}",
+                f"Pecas: {len(pieces)}",
+            ]
+            meta_y = top_y - 16 * mm
+            for line in header_meta:
+                canvas_obj.drawString(margin + 48 * mm, meta_y, self._operator_pdf_text(_pdf_clip_text(line, 80 * mm, "Helvetica", 7.5)))
+                meta_y -= 4 * mm
+            barcode_x = page_w - margin - 66 * mm
+            canvas_obj.setFont("Helvetica-Bold", 9)
+            canvas_obj.drawCentredString(barcode_x + 33 * mm, top_y - 8 * mm, self._operator_pdf_text(of_code))
+            self._draw_code128_fit(canvas_obj, of_code, barcode_x, top_y - 23 * mm, 66 * mm, 13 * mm, min_bar_width=0.36, max_bar_width=0.82)
+            canvas_obj.setFont("Helvetica", 7)
+            canvas_obj.setFillColor(colors.HexColor("#64748B"))
+            canvas_obj.drawRightString(page_w - margin - 8, top_y - 30 * mm, self._operator_pdf_text(f"Pagina {page_number}/{total_pages}"))
+            return top_y - header_h - 4 * mm
+
+        def draw_table_header(y_pos: float) -> float:
+            canvas_obj.setFillColor(colors.HexColor("#05004D"))
+            canvas_obj.roundRect(margin, y_pos - table_header_h, inner_w, table_header_h, 3, stroke=0, fill=1)
+            canvas_obj.setFillColor(colors.white)
+            canvas_obj.setFont("Helvetica-Bold", 6.8)
+            x = margin
+            for label, width in columns:
+                canvas_obj.drawString(x + 2.2, y_pos - 5.2 * mm, self._operator_pdf_text(label))
+                x += width
+            return y_pos - table_header_h
+
+        def draw_footer(page_number: int) -> None:
+            canvas_obj.setFillColor(colors.HexColor("#64748B"))
+            canvas_obj.setFont("Helvetica", 6.8)
+            canvas_obj.drawString(margin, margin - 2, self._operator_pdf_text(f"Impresso em {printed_at}"))
+            canvas_obj.drawRightString(page_w - margin, margin - 2, self._operator_pdf_text(f"LUGEST | OF {of_code} | {page_number}/{total_pages}"))
+
+        page_number = 1
+        y = draw_table_header(draw_header(page_number))
+        row_counter = 0
+
+        def ensure_space(height: float) -> None:
+            nonlocal page_number, y, row_counter
+            if y - height >= margin + footer_h:
+                return
+            draw_footer(page_number)
+            canvas_obj.showPage()
+            page_number += 1
+            y = draw_table_header(draw_header(page_number))
+            row_counter = 0
+
+        for material_group, esp_group, group_rows in grouped_pieces:
+            ensure_space(group_h + row_h)
+            group_code = f"GRP|{of_code}|{material_group}|{esp_group}"
+            group_y = y - group_h
+            canvas_obj.setFillColor(colors.HexColor("#EEF6FF"))
+            canvas_obj.setStrokeColor(colors.HexColor("#B9D7F2"))
+            canvas_obj.roundRect(margin, group_y, inner_w, group_h - 1, 3, stroke=1, fill=1)
+            canvas_obj.setFillColor(colors.HexColor("#0F172A"))
+            canvas_obj.setFont("Helvetica-Bold", 8.2)
+            canvas_obj.drawString(margin + 3, group_y + 6.2 * mm, self._operator_pdf_text(f"{material_group} | {esp_group} mm"))
+            canvas_obj.setFont("Helvetica", 6.4)
+            canvas_obj.drawString(margin + 3, group_y + 2.4 * mm, self._operator_pdf_text(f"{len(group_rows)} peça(s) nesta espessura"))
+            self._draw_code128_fit(canvas_obj, group_code, page_w - margin - 86 * mm, group_y + 3.0 * mm, 82 * mm, 5.2 * mm, min_bar_width=0.26, max_bar_width=0.58)
+            canvas_obj.setFont("Helvetica-Bold", 5.2)
+            canvas_obj.drawCentredString(page_w - margin - 45 * mm, group_y + 1.1 * mm, self._operator_pdf_text(_pdf_clip_text(group_code, 82 * mm, "Helvetica-Bold", 5.2)))
+            y = group_y
+            row_counter += 1
+            for piece in group_rows:
+                ensure_space(row_h)
+                row_y = y - row_h
+                canvas_obj.setFillColor(colors.HexColor("#FFFFFF") if row_counter % 2 == 0 else colors.HexColor("#F8FAFC"))
+                canvas_obj.setStrokeColor(colors.HexColor("#E2E8F0"))
+                canvas_obj.rect(margin, row_y, inner_w, row_h, stroke=1, fill=1)
+                values = [
+                    str(piece.get("ref_interna", "-") or "-"),
+                    str(piece.get("ref_externa", "-") or "-"),
+                    str(piece.get("material", "-") or "-"),
+                    str(piece.get("espessura", "-") or "-"),
+                    str(piece.get("qtd_plan", "0") or "0"),
+                    str(piece.get("operacoes", "-") or "-"),
+                ]
+                x = margin
+                canvas_obj.setFillColor(colors.HexColor("#0F172A"))
+                for col_index, value in enumerate(values):
+                    width = columns[col_index][1]
+                    font_name = "Helvetica-Bold" if col_index == 0 else "Helvetica"
+                    font_size = 6.1 if col_index in {1, 5} else 6.5
+                    canvas_obj.setFont(font_name, font_size)
+                    clipped = _pdf_clip_text(value, width - 3.5, font_name, font_size)
+                    if col_index in {3, 4}:
+                        canvas_obj.drawRightString(x + width - 2.2, row_y + 2.3 * mm, self._operator_pdf_text(clipped))
+                    else:
+                        canvas_obj.drawString(x + 2.2, row_y + 2.3 * mm, self._operator_pdf_text(clipped))
+                    x += width
+                y = row_y
+                row_counter += 1
+        draw_footer(page_number)
+        canvas_obj.save()
+        return target
+
+    def order_open_fabrication_pdf(self, numero: str) -> Path:
+        path = self.order_fabrication_pdf(numero)
+        try:
+            os.startfile(str(path))
+        except Exception:
+            pass
+        return path
+
+    def operator_scan_code(self, code: str, current_posto: str = "Geral") -> dict[str, Any]:
+        code_txt = str(code or "").strip()
+        if not code_txt:
+            raise ValueError("Código vazio.")
+        posto_txt = str(current_posto or "").strip() or "Geral"
+        if code_txt.upper().startswith("GRP|"):
+            parts = code_txt.split("|")
+            if len(parts) >= 4:
+                of_code = parts[1].strip()
+                material = parts[2].strip()
+                espessura = parts[3].strip()
+                enc = next((row for row in list(self.ensure_data().get("encomendas", []) or []) if self._order_of_code(row, create=False) == of_code), None)
+                if enc is None:
+                    raise ValueError("Grupo/espessura não encontrado.")
+                return {
+                    "tipo": "GRP",
+                    "encomenda_numero": str(enc.get("numero", "") or "").strip(),
+                    "of": of_code,
+                    "material": material,
+                    "espessura": espessura,
+                }
+        if code_txt.upper().startswith("OF-"):
+            enc = next((row for row in list(self.ensure_data().get("encomendas", []) or []) if self._order_of_code(row, create=False) == code_txt), None)
+            if enc is None:
+                raise ValueError("OF não encontrada.")
+            detail = self.order_detail(str(enc.get("numero", "") or ""))
+            return {"tipo": "OF", "encomenda": detail, "pieces": list(detail.get("pieces", []) or [])}
+        enc, piece = self._find_piece_by_opp(code_txt)
+        ctx = self.operator_piece_context(str(enc.get("numero", "") or ""), str(piece.get("id", "") or ""))
+        pending_ops = list(ctx.get("pending_ops", []) or [])
+        selected_op = ""
+        posto_norm = self.desktop_main.norm_text(posto_txt)
+        group_for_resource = self.workcenter_group_for_resource(posto_txt)
+        for op_name in pending_ops:
+            op_posto = self._operator_posto_for_operation(op_name)
+            candidates = {self.desktop_main.norm_text(op_posto), self.desktop_main.norm_text(self.workcenter_group_for_resource(posto_txt, op_name)), self.desktop_main.norm_text(group_for_resource)}
+            if posto_norm in candidates or any(token and token in self.desktop_main.norm_text(op_name) for token in posto_norm.split()):
+                selected_op = op_name
+                break
+        if not selected_op and pending_ops:
+            selected_op = pending_ops[0]
+        return {
+            "tipo": "OPP",
+            "encomenda_numero": str(enc.get("numero", "") or "").strip(),
+            "piece_id": str(piece.get("id", "") or "").strip(),
+            "opp": str(piece.get("opp", "") or "").strip(),
+            "of": str(piece.get("of", "") or "").strip(),
+            "posto": posto_txt,
+            "operacao": selected_op,
+            "pending_ops": pending_ops,
+            "context": ctx,
+        }
 
     def order_piece_remove(self, numero: str, ref_interna: str) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(numero)
@@ -12381,7 +13111,7 @@ class LegacyBackend(
 
     def _default_workcenter_catalog(self) -> list[dict[str, Any]]:
         raw_groups = [
-            ("Laser", ["Maquina 3030", "Maquina 5030", "Maquina 5040"]),
+            ("Corte Laser", ["Maquina 3030", "Maquina 5030", "Maquina 5040"]),
             ("Quinagem", []),
             ("Serralharia", []),
             ("Maquinacao", []),
@@ -12397,7 +13127,8 @@ class LegacyBackend(
             {
                 "name": str(name),
                 "operation": self._planning_normalize_operation(name, default=str(name)),
-                "machines": [str(machine) for machine in list(machines or []) if str(machine).strip()],
+                "active": True,
+                "machines": [{"name": str(machine), "active": True} for machine in list(machines or []) if str(machine).strip()],
             }
             for name, machines in raw_groups
         ]
@@ -12525,6 +13256,7 @@ class LegacyBackend(
                 row = {
                     "name": group_name,
                     "operation": str(operation or "").strip() or self._planning_normalize_operation(group_name, default=group_name),
+                    "active": True,
                     "machines": [],
                 }
                 groups_by_name[key] = row
@@ -12532,20 +13264,40 @@ class LegacyBackend(
                 row["operation"] = str(operation).strip()
             return row
 
-        def add_machine(group_name: str, machine_name: str) -> None:
+        def machine_name_from(raw_machine: Any) -> str:
+            if isinstance(raw_machine, dict):
+                return str(raw_machine.get("name", raw_machine.get("nome", "")) or "").strip()
+            return str(raw_machine or "").strip()
+
+        def machine_active_from(raw_machine: Any) -> bool:
+            if isinstance(raw_machine, dict):
+                return bool(raw_machine.get("active", raw_machine.get("ativo", True)))
+            return True
+
+        def add_machine(group_name: str, machine_name: Any, active: bool = True) -> None:
             machine_txt = str(machine_name or "").strip()
             if not machine_txt:
                 return
             group_row = ensure_group(group_name)
-            existing = {str(value or "").strip().lower() for value in list(group_row.get("machines", []) or []) if str(value or "").strip()}
+            for owner in groups_by_name.values():
+                if owner is group_row:
+                    continue
+                if any(machine_name_from(value).lower() == machine_txt.lower() for value in list(owner.get("machines", []) or [])):
+                    return
+            existing = {
+                machine_name_from(value).lower()
+                for value in list(group_row.get("machines", []) or [])
+                if machine_name_from(value)
+            }
             if machine_txt.lower() not in existing and machine_txt.lower() != str(group_row.get("name", "") or "").strip().lower():
-                group_row.setdefault("machines", []).append(machine_txt)
+                group_row.setdefault("machines", []).append({"name": machine_txt, "active": bool(active)})
 
-        seed_catalog = default_catalog if not raw_catalog else []
+        seed_catalog = default_catalog
         for default_row in seed_catalog:
             group_row = ensure_group(str(default_row.get("name", "") or "").strip(), str(default_row.get("operation", "") or "").strip())
+            group_row["active"] = bool(default_row.get("active", True))
             for machine in list(default_row.get("machines", []) or []):
-                add_machine(str(group_row.get("name", "") or "").strip(), str(machine or "").strip())
+                add_machine(str(group_row.get("name", "") or "").strip(), machine_name_from(machine), machine_active_from(machine))
 
         for raw_row in raw_catalog:
             if not isinstance(raw_row, dict):
@@ -12554,8 +13306,9 @@ class LegacyBackend(
             if not group_name:
                 continue
             group_row = ensure_group(group_name, str(raw_row.get("operation", "") or "").strip())
+            group_row["active"] = bool(raw_row.get("active", raw_row.get("ativo", True)))
             for machine in list(raw_row.get("machines", []) or []):
-                add_machine(str(group_row.get("name", "") or "").strip(), str(machine or "").strip())
+                add_machine(str(group_row.get("name", "") or "").strip(), machine_name_from(machine), machine_active_from(machine))
 
         if sync_legacy and not raw_catalog:
             legacy_postos = [str(value or "").strip() for value in list(data.get("postos_trabalho", []) or []) if str(value or "").strip()]
@@ -12572,19 +13325,18 @@ class LegacyBackend(
 
         cleaned: list[dict[str, Any]] = []
         for row in sorted(groups_by_name.values(), key=lambda item: str(item.get("name", "") or "").lower()):
-            machines = sorted(
-                {
-                    str(machine or "").strip()
-                    for machine in list(row.get("machines", []) or [])
-                    if str(machine or "").strip()
-                },
-                key=lambda value: value.lower(),
-            )
+            machines_by_key: dict[str, dict[str, Any]] = {}
+            for machine in list(row.get("machines", []) or []):
+                machine_txt = machine_name_from(machine)
+                if machine_txt:
+                    machines_by_key[machine_txt.lower()] = {"name": machine_txt, "active": machine_active_from(machine)}
+            machines = sorted(machines_by_key.values(), key=lambda value: str(value.get("name", "")).lower())
             cleaned.append(
                 {
                     "name": str(row.get("name", "") or "").strip(),
                     "operation": str(row.get("operation", "") or "").strip()
                     or self._planning_normalize_operation(row.get("name", ""), default=str(row.get("name", "") or "").strip()),
+                    "active": bool(row.get("active", True)),
                     "machines": machines,
                 }
             )
@@ -12592,7 +13344,7 @@ class LegacyBackend(
         flattened: list[str] = []
         seen_flat: set[str] = set()
         for row in cleaned:
-            for value in [str(row.get("name", "") or "").strip(), *[str(machine or "").strip() for machine in list(row.get("machines", []) or [])]]:
+            for value in [str(row.get("name", "") or "").strip(), *[machine_name_from(machine) for machine in list(row.get("machines", []) or [])]]:
                 key = str(value or "").strip().lower()
                 if not key or key == "geral" or key in seen_flat:
                     continue
@@ -12606,6 +13358,8 @@ class LegacyBackend(
         target_operation = self._planning_normalize_operation(operation, default="") if str(operation or "").strip() else ""
         rows = []
         for row in list(self._workcenter_catalog() or []):
+            if not bool(row.get("active", True)):
+                continue
             group_name = str(row.get("name", "") or "").strip()
             if not group_name:
                 continue
@@ -12623,6 +13377,8 @@ class LegacyBackend(
         target_operation = self._planning_normalize_operation(operation, default="") if str(operation or "").strip() else ""
         rows: list[str] = []
         for row in list(self._workcenter_catalog() or []):
+            if not bool(row.get("active", True)):
+                continue
             group_name = str(row.get("name", "") or "").strip()
             if not group_name:
                 continue
@@ -12631,20 +13387,31 @@ class LegacyBackend(
                 continue
             if target_operation and row_operation != target_operation:
                 continue
-            rows.extend(str(machine or "").strip() for machine in list(row.get("machines", []) or []) if str(machine or "").strip())
+            for machine in list(row.get("machines", []) or []):
+                machine_name = str((machine or {}).get("name", "") or "").strip() if isinstance(machine, dict) else str(machine or "").strip()
+                machine_active = bool((machine or {}).get("active", True)) if isinstance(machine, dict) else True
+                if machine_name and machine_active:
+                    rows.append(machine_name)
         return sorted(dict.fromkeys(rows), key=lambda value: value.lower())
 
     def workcenter_resource_options(self, operation: Any = "", include_all: bool = False) -> list[str]:
         target_operation = self._planning_normalize_operation(operation, default="") if str(operation or "").strip() else ""
         resources: list[str] = []
         for row in list(self._workcenter_catalog() or []):
+            if not bool(row.get("active", True)):
+                continue
             group_name = str(row.get("name", "") or "").strip()
             if not group_name:
                 continue
             row_operation = self._planning_normalize_operation(row.get("operation", group_name), default=group_name)
             if target_operation and row_operation != target_operation:
                 continue
-            machines = [str(machine or "").strip() for machine in list(row.get("machines", []) or []) if str(machine or "").strip()]
+            machines = [
+                str((machine or {}).get("name", "") or "").strip() if isinstance(machine, dict) else str(machine or "").strip()
+                for machine in list(row.get("machines", []) or [])
+                if (bool((machine or {}).get("active", True)) if isinstance(machine, dict) else True)
+                and (str((machine or {}).get("name", "") or "").strip() if isinstance(machine, dict) else str(machine or "").strip())
+            ]
             if machines:
                 resources.extend(machines)
             else:
@@ -12668,7 +13435,7 @@ class LegacyBackend(
             if resource_txt.lower() == group_name.lower():
                 return group_name
             for machine in list(row.get("machines", []) or []):
-                machine_txt = str(machine or "").strip()
+                machine_txt = str((machine or {}).get("name", "") or "").strip() if isinstance(machine, dict) else str(machine or "").strip()
                 if machine_txt and resource_txt.lower() == machine_txt.lower():
                     return group_name
         return self._legacy_workcenter_group_name(resource_txt)
@@ -12690,12 +13457,25 @@ class LegacyBackend(
             if group_name and raw.lower() == group_name.lower():
                 return group_name
             for machine in list(row.get("machines", []) or []):
-                machine_txt = str(machine or "").strip()
+                machine_txt = str((machine or {}).get("name", "") or "").strip() if isinstance(machine, dict) else str(machine or "").strip()
                 if machine_txt and raw.lower() == machine_txt.lower():
                     return machine_txt
             if group_name and self.desktop_main.norm_text(raw) in self._workcenter_group_aliases(group_name):
                 return group_name
         return raw
+
+    def _workcenter_machine_name(self, machine: Any) -> str:
+        if isinstance(machine, dict):
+            return str(machine.get("name", machine.get("nome", "")) or "").strip()
+        return str(machine or "").strip()
+
+    def _workcenter_machine_active(self, machine: Any) -> bool:
+        if isinstance(machine, dict):
+            return bool(machine.get("active", machine.get("ativo", True)))
+        return True
+
+    def _workcenter_machine_entry(self, name: Any, active: bool = True) -> dict[str, Any]:
+        return {"name": str(name or "").strip(), "active": bool(active)}
 
     def available_postos(self) -> list[str]:
         postos = ["Geral"] + self.quote_workcenter_options()
@@ -12794,6 +13574,7 @@ class LegacyBackend(
                     "operation": self._planning_normalize_operation(row.get("operation", group_name), default=group_name),
                     "kind": "Posto",
                     "protected": group_name == "Geral",
+                    "active": bool(row.get("active", True)),
                     "machine_count": len(list(row.get("machines", []) or [])),
                     "users": usage["users"],
                     "quotes": usage["quotes"],
@@ -12804,7 +13585,8 @@ class LegacyBackend(
                 }
             )
             for machine_name in list(row.get("machines", []) or []):
-                machine_txt = str(machine_name or "").strip()
+                machine_txt = str((machine_name or {}).get("name", "") or "").strip() if isinstance(machine_name, dict) else str(machine_name or "").strip()
+                machine_active = bool((machine_name or {}).get("active", True)) if isinstance(machine_name, dict) else True
                 if not machine_txt:
                     continue
                 machine_usage = self._workcenter_usage_counts(machine_txt, data=data)
@@ -12816,6 +13598,7 @@ class LegacyBackend(
                         "operation": self._planning_normalize_operation(row.get("operation", group_name), default=group_name),
                         "kind": "Maquina",
                         "protected": False,
+                        "active": machine_active,
                         "machine_count": 0,
                         "users": machine_usage["users"],
                         "quotes": machine_usage["quotes"],
@@ -12916,7 +13699,7 @@ class LegacyBackend(
         self._save_user_profiles(profiles)
         return stats
 
-    def save_workcenter_group(self, name: str, operation: Any = "", current_name: str = "") -> dict[str, Any]:
+    def save_workcenter_group(self, name: str, operation: Any = "", current_name: str = "", active: bool = True) -> dict[str, Any]:
         data = self.ensure_data()
         profiles = self._user_profiles()
         new_name = str(name or "").strip()
@@ -12929,16 +13712,16 @@ class LegacyBackend(
         catalog = list(self._workcenter_catalog() or [])
         group_names = {str(row.get("name", "") or "").strip().lower() for row in catalog if str(row.get("name", "") or "").strip()}
         machine_names = {
-            str(machine or "").strip().lower()
+            self._workcenter_machine_name(machine).lower()
             for row in catalog
             for machine in list(row.get("machines", []) or [])
-            if str(machine or "").strip()
+            if self._workcenter_machine_name(machine)
         }
         current_key = current_txt.lower()
         if not current_txt:
             if new_name.lower() in group_names or new_name.lower() in machine_names:
                 raise ValueError("Já existe um posto de trabalho com esse nome.")
-            catalog.append({"name": new_name, "operation": new_operation, "machines": []})
+            catalog.append({"name": new_name, "operation": new_operation, "active": bool(active), "machines": []})
             data["workcenter_catalog"] = catalog
             self._workcenter_catalog()
             self._save(force=True)
@@ -12958,6 +13741,7 @@ class LegacyBackend(
             raise ValueError("Já existe um posto de trabalho com esse nome.")
         current_group["name"] = new_name
         current_group["operation"] = new_operation
+        current_group["active"] = bool(active)
         for username, profile in list(profiles.items()):
             if self._normalize_workcenter_value(str(profile.get("posto", "") or "")).lower() == current_key:
                 profile["posto"] = new_name
@@ -13028,7 +13812,7 @@ class LegacyBackend(
         self._workcenter_catalog()
         self._save(force=True)
 
-    def save_workcenter_machine(self, group_name: str, machine_name: str, current_name: str = "") -> dict[str, Any]:
+    def save_workcenter_machine(self, group_name: str, machine_name: str, current_name: str = "", active: bool = True) -> dict[str, Any]:
         data = self.ensure_data()
         profiles = self._user_profiles()
         parent_group = str(group_name or "").strip()
@@ -13044,17 +13828,20 @@ class LegacyBackend(
             raise ValueError("Posto de trabalho não encontrado.")
         all_group_names = {str(row.get("name", "") or "").strip().lower() for row in catalog if str(row.get("name", "") or "").strip()}
         all_machine_names = {
-            str(machine or "").strip().lower()
+            self._workcenter_machine_name(machine).lower()
             for row in catalog
             for machine in list(row.get("machines", []) or [])
-            if str(machine or "").strip()
+            if self._workcenter_machine_name(machine)
         }
         current_key = current_txt.lower()
         if not current_txt:
             if new_name.lower() in all_group_names or new_name.lower() in all_machine_names:
                 raise ValueError("Já existe um posto ou máquina com esse nome.")
-            group_row.setdefault("machines", []).append(new_name)
-            group_row["machines"] = sorted(dict.fromkeys(str(value).strip() for value in list(group_row.get("machines", []) or []) if str(value).strip()), key=lambda value: value.lower())
+            group_row.setdefault("machines", []).append(self._workcenter_machine_entry(new_name, active))
+            group_row["machines"] = sorted(
+                {self._workcenter_machine_name(value).lower(): self._workcenter_machine_entry(self._workcenter_machine_name(value), self._workcenter_machine_active(value)) for value in list(group_row.get("machines", []) or []) if self._workcenter_machine_name(value)}.values(),
+                key=lambda value: str(value.get("name", "")).lower(),
+            )
             data["workcenter_catalog"] = catalog
             self._workcenter_catalog()
             self._save(force=True)
@@ -13071,7 +13858,7 @@ class LegacyBackend(
             (
                 row
                 for row in catalog
-                if any(str(machine or "").strip().lower() == current_key for machine in list(row.get("machines", []) or []))
+                if any(self._workcenter_machine_name(machine).lower() == current_key for machine in list(row.get("machines", []) or []))
             ),
             None,
         )
@@ -13080,15 +13867,23 @@ class LegacyBackend(
         if new_name.lower() != current_key and (new_name.lower() in all_group_names or new_name.lower() in all_machine_names):
             raise ValueError("Já existe um posto ou máquina com esse nome.")
         machine_owner["machines"] = [
-            new_name if str(machine or "").strip().lower() == current_key else str(machine or "").strip()
+            self._workcenter_machine_entry(new_name, active)
+            if self._workcenter_machine_name(machine).lower() == current_key
+            else self._workcenter_machine_entry(self._workcenter_machine_name(machine), self._workcenter_machine_active(machine))
             for machine in list(machine_owner.get("machines", []) or [])
-            if str(machine or "").strip()
+            if self._workcenter_machine_name(machine)
         ]
-        machine_owner["machines"] = sorted(dict.fromkeys(machine_owner["machines"]), key=lambda value: value.lower())
+        machine_owner["machines"] = sorted(
+            {self._workcenter_machine_name(value).lower(): value for value in machine_owner["machines"]}.values(),
+            key=lambda value: str(value.get("name", "")).lower(),
+        )
         if machine_owner is not group_row:
-            machine_owner["machines"] = [value for value in list(machine_owner.get("machines", []) or []) if str(value or "").strip().lower() != new_name.lower()]
-            group_row.setdefault("machines", []).append(new_name)
-            group_row["machines"] = sorted(dict.fromkeys(str(value).strip() for value in list(group_row.get("machines", []) or []) if str(value).strip()), key=lambda value: value.lower())
+            machine_owner["machines"] = [value for value in list(machine_owner.get("machines", []) or []) if self._workcenter_machine_name(value).lower() != new_name.lower()]
+            group_row.setdefault("machines", []).append(self._workcenter_machine_entry(new_name, True))
+            group_row["machines"] = sorted(
+                {self._workcenter_machine_name(value).lower(): self._workcenter_machine_entry(self._workcenter_machine_name(value), self._workcenter_machine_active(value)) for value in list(group_row.get("machines", []) or []) if self._workcenter_machine_name(value)}.values(),
+                key=lambda value: str(value.get("name", "")).lower(),
+            )
         for username, profile in list(profiles.items()):
             if self._normalize_workcenter_value(str(profile.get("posto", "") or "")).lower() == current_key:
                 profile["posto"] = new_name
@@ -13148,22 +13943,19 @@ class LegacyBackend(
             (
                 row
                 for row in catalog
-                if any(str(machine or "").strip().lower() == target.lower() for machine in list(row.get("machines", []) or []))
+                if any(self._workcenter_machine_name(machine).lower() == target.lower() for machine in list(row.get("machines", []) or []))
             ),
             None,
         )
         if owner_row is None:
             raise ValueError("Máquina não encontrada.")
-        owner_row["machines"] = [value for value in list(owner_row.get("machines", []) or []) if str(value or "").strip().lower() != target.lower()]
-        replacement = self.workcenter_default_resource(owner_row.get("operation", owner_row.get("name", "")), preferred=owner_row.get("name", ""))
-        if str(replacement or "").strip().lower() == target.lower():
-            replacement = str(owner_row.get("name", "") or "").strip()
-        self._replace_removed_resource_references(
-            target,
-            fallback_resource=replacement,
-            operation=owner_row.get("operation", owner_row.get("name", "")),
-            remove_active_planning=True,
-        )
+        usage = self._workcenter_usage_counts(target, data=data)
+        if usage["total"] > 0:
+            raise ValueError(
+                "Não é possível remover esta máquina porque ainda está em uso "
+                f"(utilizadores: {usage['users']}, orçamentos: {usage['quotes']}, encomendas: {usage['orders']}, planeamento: {usage['planning']})."
+            )
+        owner_row["machines"] = [value for value in list(owner_row.get("machines", []) or []) if self._workcenter_machine_name(value).lower() != target.lower()]
         data["workcenter_catalog"] = catalog
         self._workcenter_catalog()
         self._save(force=True)

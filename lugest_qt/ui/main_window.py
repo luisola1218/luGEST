@@ -604,6 +604,9 @@ class MainWindow(QMainWindow):
         workcenters_btn = QPushButton("Postos Trabalho")
         workcenters_btn.setProperty("variant", "secondary")
         tools_row.addWidget(workcenters_btn)
+        operations_btn = QPushButton("Operacoes")
+        operations_btn.setProperty("variant", "secondary")
+        tools_row.addWidget(operations_btn)
         trial_manage_allowed = bool(getattr(self.backend, "is_owner_session", lambda: False)())
         trial_btn = None
         if trial_manage_allowed:
@@ -1127,10 +1130,145 @@ class MainWindow(QMainWindow):
             refresh_trial_status(sync_inputs=True)
             trial_dialog.exec()
 
+        def open_operations_dialog() -> None:
+            rows_getter = getattr(self.backend, "operation_catalog_rows", None)
+            saver = getattr(self.backend, "save_operation_catalog_row", None)
+            remover = getattr(self.backend, "remove_operation_catalog_row", None)
+            if not callable(rows_getter) or not callable(saver) or not callable(remover):
+                QMessageBox.warning(dialog, "Operacoes", "Gestao de operacoes indisponivel.")
+                return
+            op_dialog = QDialog(dialog)
+            op_dialog.setWindowTitle("Operacoes")
+            op_dialog.setMinimumSize(760, 520)
+            op_layout = QHBoxLayout(op_dialog)
+            op_layout.setContentsMargins(14, 14, 14, 14)
+            op_layout.setSpacing(12)
+            table = QTableWidget(0, 3)
+            table.setHorizontalHeaderLabels(["Nome", "Ativa", "Planeavel"])
+            table.verticalHeader().setVisible(False)
+            table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+            table.setSelectionBehavior(QAbstractItemView.SelectRows)
+            table.setSelectionMode(QAbstractItemView.SingleSelection)
+            table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+            table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+            table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+            op_layout.addWidget(table, 3)
+
+            side = QWidget()
+            side_layout = QVBoxLayout(side)
+            side_layout.setContentsMargins(0, 0, 0, 0)
+            form = QFormLayout()
+            name_edit = QLineEdit()
+            name_edit.setPlaceholderText("Ex.: Laser, Quinagem, Desenho")
+            active_box = QCheckBox("Ativa")
+            active_box.setChecked(True)
+            planeavel_box = QCheckBox("Entra no planeamento")
+            form.addRow("Nome", name_edit)
+            form.addRow("", active_box)
+            form.addRow("", planeavel_box)
+            side_layout.addLayout(form)
+            new_btn = QPushButton("Nova")
+            save_btn = QPushButton("Guardar")
+            remove_btn = QPushButton("Remover")
+            remove_btn.setProperty("variant", "danger")
+            side_layout.addWidget(new_btn)
+            side_layout.addWidget(save_btn)
+            side_layout.addWidget(remove_btn)
+            side_layout.addStretch(1)
+            close_buttons = QDialogButtonBox(QDialogButtonBox.Close)
+            close_buttons.button(QDialogButtonBox.Close).setText("Fechar")
+            close_buttons.rejected.connect(op_dialog.reject)
+            side_layout.addWidget(close_buttons)
+            op_layout.addWidget(side, 2)
+            current_name = {"value": ""}
+
+            def refresh_operations(select_name: str = "") -> None:
+                rows = list(rows_getter() or [])
+                table.setRowCount(len(rows))
+                target = -1
+                for row_index, row in enumerate(rows):
+                    values = [
+                        str(row.get("name", "") or ""),
+                        "Sim" if bool(row.get("active", True)) else "Nao",
+                        "Sim" if bool(row.get("planeavel", False)) else "Nao",
+                    ]
+                    for col_index, value in enumerate(values):
+                        item = QTableWidgetItem(value)
+                        if col_index == 0:
+                            item.setData(Qt.UserRole, dict(row))
+                        table.setItem(row_index, col_index, item)
+                    if select_name and values[0].casefold() == select_name.casefold():
+                        target = row_index
+                if target >= 0:
+                    table.selectRow(target)
+                elif rows:
+                    table.selectRow(0)
+
+            def load_selected_operation() -> None:
+                item = table.currentItem()
+                if item is None:
+                    return
+                row = dict(table.item(item.row(), 0).data(Qt.UserRole) or {})
+                current_name["value"] = str(row.get("name", "") or "").strip()
+                name_edit.setText(current_name["value"])
+                active_box.setChecked(bool(row.get("active", True)))
+                planeavel_box.setChecked(bool(row.get("planeavel", False)))
+
+            def clear_operation_form() -> None:
+                current_name["value"] = ""
+                name_edit.setText("")
+                active_box.setChecked(True)
+                planeavel_box.setChecked(False)
+                name_edit.setFocus()
+
+            def save_operation() -> None:
+                try:
+                    row = saver(
+                        name_edit.text().strip(),
+                        current_name=current_name["value"],
+                        active=active_box.isChecked(),
+                        planeavel=planeavel_box.isChecked(),
+                    )
+                except Exception as exc:
+                    QMessageBox.critical(op_dialog, "Operacoes", str(exc))
+                    return
+                saved_name = str(row.get("name", "") or name_edit.text()).strip()
+                refresh_operations(saved_name)
+                QMessageBox.information(op_dialog, "Operacoes", "Operacao guardada com sucesso.")
+
+            def remove_operation() -> None:
+                item = table.currentItem()
+                if item is None:
+                    QMessageBox.warning(op_dialog, "Operacoes", "Seleciona a operação que pretendes remover.")
+                    return
+                row = dict(table.item(item.row(), 0).data(Qt.UserRole) or {})
+                target_name = str(row.get("name", "") or "").strip()
+                if not target_name:
+                    QMessageBox.warning(op_dialog, "Operacoes", "Operação inválida.")
+                    return
+                if QMessageBox.question(op_dialog, "Remover operação", f"Remover a operação '{target_name}'?") != QMessageBox.Yes:
+                    return
+                try:
+                    remover(target_name)
+                except Exception as exc:
+                    QMessageBox.critical(op_dialog, "Operacoes", str(exc))
+                    return
+                refresh_operations("")
+                clear_operation_form()
+                QMessageBox.information(op_dialog, "Operacoes", "Operação removida com sucesso.")
+
+            table.itemSelectionChanged.connect(load_selected_operation)
+            new_btn.clicked.connect(clear_operation_form)
+            save_btn.clicked.connect(save_operation)
+            remove_btn.clicked.connect(remove_operation)
+            refresh_operations("")
+            op_dialog.exec()
+
         def open_workcenters_dialog() -> None:
             getter_rows = getattr(self.backend, "workcenter_rows", None)
             group_options_getter = getattr(self.backend, "workcenter_group_options", None)
-            operation_options_getter = getattr(self.backend, "planning_operation_options", None)
+            operation_options_getter = getattr(self.backend, "operation_catalog_options", None)
+            operation_rows_getter = getattr(self.backend, "operation_catalog_rows", None)
             save_group = getattr(self.backend, "save_workcenter_group", None)
             remove_group = getattr(self.backend, "remove_workcenter_group", None)
             save_machine = getattr(self.backend, "save_workcenter_machine", None)
@@ -1139,6 +1277,7 @@ class MainWindow(QMainWindow):
                 not callable(getter_rows)
                 or not callable(group_options_getter)
                 or not callable(operation_options_getter)
+                or not callable(operation_rows_getter)
                 or not callable(save_group)
                 or not callable(remove_group)
                 or not callable(save_machine)
@@ -1166,6 +1305,30 @@ class MainWindow(QMainWindow):
             host_layout.setContentsMargins(0, 0, 0, 0)
             host_layout.setSpacing(12)
 
+            operation_panel = QWidget()
+            operation_panel_layout = QVBoxLayout(operation_panel)
+            operation_panel_layout.setContentsMargins(0, 0, 0, 0)
+            operation_panel_layout.setSpacing(8)
+            operation_title = QLabel("Operacoes")
+            operation_title.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
+            operation_panel_layout.addWidget(operation_title)
+            operation_hint = QLabel("Seleciona uma operacao para ver apenas os postos e maquinas associados.")
+            operation_hint.setProperty("role", "muted")
+            operation_hint.setWordWrap(True)
+            operation_panel_layout.addWidget(operation_hint)
+            operations_filter_table = QTableWidget(0, 3)
+            operations_filter_table.setHorizontalHeaderLabels(["Operacao", "Ativa", "Plan."])
+            operations_filter_table.verticalHeader().setVisible(False)
+            operations_filter_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+            operations_filter_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+            operations_filter_table.setSelectionMode(QAbstractItemView.SingleSelection)
+            operations_filter_table.setAlternatingRowColors(True)
+            operations_filter_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+            operations_filter_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+            operations_filter_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+            operation_panel_layout.addWidget(operations_filter_table, 1)
+            host_layout.addWidget(operation_panel, 2)
+
             table_panel = QWidget()
             table_panel_layout = QVBoxLayout(table_panel)
             table_panel_layout.setContentsMargins(0, 0, 0, 0)
@@ -1185,8 +1348,8 @@ class MainWindow(QMainWindow):
             table_tools.addWidget(remove_selected_btn, 0)
             table_panel_layout.addLayout(table_tools)
 
-            workcenters_table = QTableWidget(0, 8)
-            workcenters_table.setHorizontalHeaderLabels(["Tipo", "Nome", "Grupo", "Operacao", "Utiliz.", "Orc.", "Enc.", "Plan."])
+            workcenters_table = QTableWidget(0, 9)
+            workcenters_table.setHorizontalHeaderLabels(["Tipo", "Nome", "Grupo", "Operacao", "Ativo", "Utiliz.", "Orc.", "Enc.", "Plan."])
             workcenters_table.verticalHeader().setVisible(False)
             workcenters_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
             workcenters_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -1198,10 +1361,10 @@ class MainWindow(QMainWindow):
             workcenters_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
             workcenters_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
             workcenters_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-            for column in range(4, 8):
+            for column in range(4, 9):
                 workcenters_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeToContents)
             table_panel_layout.addWidget(workcenters_table, 1)
-            host_layout.addWidget(table_panel, 6)
+            host_layout.addWidget(table_panel, 5)
 
             side = QWidget()
             side_layout = QVBoxLayout(side)
@@ -1231,8 +1394,11 @@ class MainWindow(QMainWindow):
             group_operation_combo = QComboBox()
             for op_name in list(operation_options_getter() or []):
                 group_operation_combo.addItem(str(op_name))
+            group_active_box = QCheckBox("Posto ativo")
+            group_active_box.setChecked(True)
             group_form.addRow("Nome do posto", group_name_edit)
             group_form.addRow("Operacao base", group_operation_combo)
+            group_form.addRow("", group_active_box)
             side_layout.addLayout(group_form)
 
             group_usage_label = QLabel("Novo posto sem utilizacao.")
@@ -1280,8 +1446,11 @@ class MainWindow(QMainWindow):
             machine_group_combo = QComboBox()
             machine_name_edit = QLineEdit()
             machine_name_edit.setPlaceholderText("Ex.: Maquina 3030, Bancada 1, Serra 2")
+            machine_active_box = QCheckBox("Recurso ativo")
+            machine_active_box.setChecked(True)
             machine_form.addRow("Posto pai", machine_group_combo)
             machine_form.addRow("Nome da maquina", machine_name_edit)
+            machine_form.addRow("", machine_active_box)
             side_layout.addLayout(machine_form)
 
             machine_usage_label = QLabel("Nova maquina sem utilizacao.")
@@ -1330,6 +1499,7 @@ class MainWindow(QMainWindow):
 
             current_group = {"value": ""}
             current_machine = {"value": ""}
+            current_operation_filter = {"value": ""}
 
             def describe_usage(row: dict | None = None, empty_text: str = "Sem utilizacao.") -> str:
                 if not isinstance(row, dict) or not str(row.get("name", "") or "").strip():
@@ -1354,16 +1524,52 @@ class MainWindow(QMainWindow):
                     machine_group_combo.setCurrentIndex(0)
                 machine_group_combo.blockSignals(False)
 
+            def selected_operation_name() -> str:
+                item = operations_filter_table.currentItem()
+                if item is None:
+                    return ""
+                return str(operations_filter_table.item(item.row(), 0).data(Qt.UserRole) or "").strip()
+
+            def refresh_operation_filter(select_name: str = "") -> None:
+                rows = [{"name": "", "active": True, "planeavel": False}]
+                rows.extend(list(operation_rows_getter() or []))
+                target = str(select_name or current_operation_filter["value"] or "").strip()
+                operations_filter_table.blockSignals(True)
+                operations_filter_table.setRowCount(len(rows))
+                target_row = 0
+                for row_index, row in enumerate(rows):
+                    name = str(row.get("name", "") or "").strip()
+                    values = [
+                        name or "Todas",
+                        "Sim" if bool(row.get("active", True)) else "Nao",
+                        "Sim" if bool(row.get("planeavel", False)) else "Nao",
+                    ]
+                    for col_index, value in enumerate(values):
+                        item = QTableWidgetItem(value)
+                        if col_index == 0:
+                            item.setData(Qt.UserRole, name)
+                        operations_filter_table.setItem(row_index, col_index, item)
+                    if target and name.casefold() == target.casefold():
+                        target_row = row_index
+                operations_filter_table.selectRow(target_row)
+                current_operation_filter["value"] = selected_operation_name()
+                operations_filter_table.blockSignals(False)
+
             def clear_group_form() -> None:
                 current_group["value"] = ""
                 group_name_edit.setText("")
-                if group_operation_combo.count() > 0:
+                selected_op = str(current_operation_filter["value"] or "").strip()
+                if selected_op and group_operation_combo.findText(selected_op) >= 0:
+                    group_operation_combo.setCurrentText(selected_op)
+                elif group_operation_combo.count() > 0:
                     group_operation_combo.setCurrentIndex(0)
+                group_active_box.setChecked(True)
                 group_usage_label.setText(describe_usage(None, "Novo posto sem utilizacao."))
 
             def clear_machine_form() -> None:
                 current_machine["value"] = ""
                 machine_name_edit.setText("")
+                machine_active_box.setChecked(True)
                 machine_usage_label.setText(describe_usage(None, "Nova maquina sem utilizacao."))
 
             def clear_workcenter_form() -> None:
@@ -1405,12 +1611,14 @@ class MainWindow(QMainWindow):
                     current_group["value"] = str(row.get("name", "") or "").strip()
                     group_name_edit.setText(current_group["value"])
                     group_operation_combo.setCurrentText(str(row.get("operation", "") or "").strip())
+                    group_active_box.setChecked(bool(row.get("active", True)))
                     group_usage_label.setText(describe_usage(row, "Novo posto sem utilizacao."))
                     machine_group_combo.setCurrentText(current_group["value"])
                     clear_machine_form()
                     return
                 current_machine["value"] = str(row.get("name", "") or "").strip()
                 machine_name_edit.setText(current_machine["value"])
+                machine_active_box.setChecked(bool(row.get("active", True)))
                 machine_group_combo.setCurrentText(str(row.get("group", "") or "").strip())
                 machine_usage_label.setText(describe_usage(row, "Nova maquina sem utilizacao."))
                 parent_group = str(row.get("group", "") or "").strip()
@@ -1426,10 +1634,18 @@ class MainWindow(QMainWindow):
                     ),
                     {},
                 )
+                group_active_box.setChecked(bool(parent_row.get("active", True)))
                 group_usage_label.setText(describe_usage(parent_row, "Novo posto sem utilizacao."))
 
             def refresh_workcenters(select_name: str = "", select_type: str = "") -> None:
                 rows = list(getter_rows() or [])
+                selected_op = str(current_operation_filter["value"] or "").strip()
+                if selected_op:
+                    rows = [
+                        row
+                        for row in rows
+                        if str(row.get("operation", "") or "").strip().casefold() == selected_op.casefold()
+                    ]
                 refresh_group_options(machine_group_combo.currentText().strip())
                 workcenters_table.setRowCount(len(rows))
                 edit_selected_btn.setEnabled(bool(rows))
@@ -1441,6 +1657,7 @@ class MainWindow(QMainWindow):
                         str(row.get("name", "") or "").strip(),
                         str(row.get("group", "") or "").strip() or "-",
                         str(row.get("operation", "") or "").strip() or "-",
+                        "Sim" if bool(row.get("active", True)) else "Nao",
                         str(int(row.get("users", 0) or 0)),
                         str(int(row.get("quotes", 0) or 0)),
                         str(int(row.get("orders", 0) or 0)),
@@ -1477,6 +1694,12 @@ class MainWindow(QMainWindow):
                 else:
                     edit_selected_btn.setEnabled(False)
                     remove_selected_btn.setEnabled(False)
+
+            def on_operation_filter_selected() -> None:
+                current_operation_filter["value"] = selected_operation_name()
+                if current_operation_filter["value"]:
+                    group_operation_combo.setCurrentText(current_operation_filter["value"])
+                refresh_workcenters("")
 
             def edit_selected_workcenter_row() -> None:
                 row = selected_workcenter_row()
@@ -1534,6 +1757,7 @@ class MainWindow(QMainWindow):
                         name=group_name,
                         operation=group_operation_combo.currentText().strip(),
                         current_name=current_group["value"],
+                        active=group_active_box.isChecked(),
                     )
                 except Exception as exc:
                     QMessageBox.critical(wc_dialog, "Postos de Trabalho", str(exc))
@@ -1584,6 +1808,7 @@ class MainWindow(QMainWindow):
                         group_name=parent_group,
                         machine_name=machine_name,
                         current_name=current_machine["value"],
+                        active=machine_active_box.isChecked(),
                     )
                 except Exception as exc:
                     QMessageBox.critical(wc_dialog, "Postos de Trabalho", str(exc))
@@ -1622,6 +1847,7 @@ class MainWindow(QMainWindow):
 
             workcenters_table.itemSelectionChanged.connect(on_workcenter_selected)
             workcenters_table.itemDoubleClicked.connect(lambda *_: edit_selected_workcenter_row())
+            operations_filter_table.itemSelectionChanged.connect(on_operation_filter_selected)
             new_group_btn.clicked.connect(clear_group_form)
             new_machine_btn.clicked.connect(clear_machine_form)
             save_group_btn.clicked.connect(on_save_group)
@@ -1630,6 +1856,7 @@ class MainWindow(QMainWindow):
             remove_machine_btn.clicked.connect(on_remove_machine)
             edit_selected_btn.clicked.connect(edit_selected_workcenter_row)
             remove_selected_btn.clicked.connect(remove_selected_workcenter_row)
+            refresh_operation_filter("")
             refresh_workcenters("")
             wc_dialog.exec()
 
@@ -1754,6 +1981,7 @@ class MainWindow(QMainWindow):
 
         users_table.itemSelectionChanged.connect(on_user_selected)
         company_btn.clicked.connect(open_company_dialog)
+        operations_btn.clicked.connect(open_operations_dialog)
         workcenters_btn.clicked.connect(open_workcenters_dialog)
         if trial_btn is not None:
             trial_btn.clicked.connect(open_trial_dialog)

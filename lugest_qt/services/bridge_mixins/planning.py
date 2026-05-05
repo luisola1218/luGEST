@@ -10,6 +10,17 @@ from typing import Any
 from lugest_infra.pdf.text import clip_text as _pdf_clip_text
 
 
+class _ValueHolder:
+    def __init__(self, value: Any = "") -> None:
+        self._value = value
+
+    def get(self) -> Any:
+        return self._value
+
+    def set(self, value: Any) -> None:
+        self._value = value
+
+
 class PlanningBridgeMixin:
     """Planning board, scheduling, and planning PDF operations for the Qt bridge."""
 
@@ -953,6 +964,8 @@ class PlanningBridgeMixin:
                 break
 
             chain_anchor = current_result.get("end_dt")
+            if isinstance(chain_anchor, datetime):
+                chain_anchor = chain_anchor + timedelta(minutes=self._planning_operation_buffer_minutes())
             sequence = self._planning_item_operation_sequence(numero, material, espessura, start_operation=op_txt)
             if op_txt in sequence:
                 next_ops = sequence[sequence.index(op_txt) + 1 :]

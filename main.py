@@ -2573,6 +2573,21 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "encomendas", "local_descarga", "VARCHAR(255) NULL")
         _mysql_ensure_column(cur, "encomendas", "transporte_numero", "VARCHAR(30) NULL")
         _mysql_ensure_column(cur, "encomendas", "estado_transporte", "VARCHAR(50) NULL")
+        _mysql_ensure_column(cur, "encomendas", "tipo_encomenda", "VARCHAR(30) NULL")
+        _mysql_ensure_column(cur, "encomendas", "of_codigo", "VARCHAR(30) NULL")
+    if "pecas" in tables:
+        _mysql_ensure_column(cur, "pecas", "tipo_material", "VARCHAR(30) NULL")
+        _mysql_ensure_column(cur, "pecas", "subtipo_material", "VARCHAR(100) NULL")
+        _mysql_ensure_column(cur, "pecas", "dimensao", "VARCHAR(120) NULL")
+        _mysql_ensure_column(cur, "pecas", "ficheiros_json", "LONGTEXT NULL")
+        _mysql_ensure_column(cur, "pecas", "perfil_tipo", "VARCHAR(40) NULL")
+        _mysql_ensure_column(cur, "pecas", "perfil_tamanho", "VARCHAR(80) NULL")
+        _mysql_ensure_column(cur, "pecas", "comprimento_mm", "DECIMAL(10,2) NULL")
+        _mysql_ensure_column(cur, "pecas", "tubo_forma", "VARCHAR(40) NULL")
+        _mysql_ensure_column(cur, "pecas", "lado_a", "DECIMAL(10,2) NULL")
+        _mysql_ensure_column(cur, "pecas", "lado_b", "DECIMAL(10,2) NULL")
+        _mysql_ensure_column(cur, "pecas", "tubo_espessura", "DECIMAL(10,2) NULL")
+        _mysql_ensure_column(cur, "pecas", "diametro", "DECIMAL(10,2) NULL")
     if "transportes" in tables:
         _mysql_ensure_column(cur, "transportes", "transportadora_id", "VARCHAR(30) NULL")
         _mysql_ensure_column(cur, "transportes", "transportadora_nome", "VARCHAR(150) NULL")
@@ -3535,8 +3550,8 @@ def _mysql_sync_relational_schema(cur, data):
                     cativar, observacoes, estado, numero_orcamento, posto_trabalho,
                     nota_transporte, preco_transporte, custo_transporte, paletes, peso_bruto_kg, volume_m3,
                     transportadora_id, transportadora_nome, referencia_transporte,
-                    zona_transporte, local_descarga, transporte_numero, estado_transporte
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    zona_transporte, local_descarga, transporte_numero, estado_transporte, tipo_encomenda, of_codigo
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     enc_num,
@@ -3564,6 +3579,8 @@ def _mysql_sync_relational_schema(cur, data):
                     _clip(e.get("local_descarga"), 255),
                     _clip(e.get("transporte_numero"), 30),
                     _clip(e.get("estado_transporte"), 50),
+                    _clip(e.get("tipo_encomenda"), 30),
+                    _clip(e.get("of_codigo") or (e.get("ordem_fabrico", {}) or {}).get("id"), 30),
                 ),
             )
             if "encomenda_espessuras" in tables:
@@ -3752,8 +3769,10 @@ def _mysql_sync_relational_schema(cur, data):
                     INSERT INTO pecas (
                         id, encomenda_numero, ref_interna, ref_externa, material, espessura, quantidade_pedida, operacoes,
                         of_codigo, opp_codigo, estado, produzido_ok, produzido_nok, inicio_producao, fim_producao,
-                        tempo_producao_min, lote_baixa, observacoes, desenho_path, operacoes_fluxo_json, hist_json, qtd_expedida
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        tempo_producao_min, lote_baixa, observacoes, desenho_path, operacoes_fluxo_json, hist_json, qtd_expedida,
+                        tipo_material, subtipo_material, dimensao, ficheiros_json,
+                        perfil_tipo, perfil_tamanho, comprimento_mm, tubo_forma, lado_a, lado_b, tubo_espessura, diametro
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         pid,
@@ -3778,6 +3797,18 @@ def _mysql_sync_relational_schema(cur, data):
                         json.dumps(ensure_peca_operacoes(p), ensure_ascii=False),
                         json.dumps(p.get("hist", []), ensure_ascii=False),
                         _to_num(p.get("qtd_expedida")),
+                        _clip(p.get("tipo_material"), 30),
+                        _clip(p.get("subtipo_material"), 100),
+                        _clip(p.get("dimensao", p.get("dimensoes")), 120),
+                        json.dumps(list(p.get("ficheiros", []) or []), ensure_ascii=False),
+                        _clip(p.get("perfil_tipo"), 40),
+                        _clip(p.get("perfil_tamanho"), 80),
+                        _to_num(p.get("comprimento_mm")),
+                        _clip(p.get("tubo_forma"), 40),
+                        _to_num(p.get("lado_a")),
+                        _to_num(p.get("lado_b")),
+                        _to_num(p.get("tubo_espessura")),
+                        _to_num(p.get("diametro")),
                     ),
                 )
 
@@ -5084,12 +5115,33 @@ def _mysql_load_relational_data():
                             hist_rows = parsed_h
                 except Exception:
                     hist_rows = []
+                ficheiros_rows = []
+                try:
+                    raw_files = p.get("ficheiros_json")
+                    if raw_files:
+                        parsed_files = json.loads(raw_files)
+                        if isinstance(parsed_files, list):
+                            ficheiros_rows = [str(item or "") for item in parsed_files if str(item or "")]
+                except Exception:
+                    ficheiros_rows = []
                 peca = {
                     "id": str(p.get("id", "") or ""),
                     "ref_interna": str(p.get("ref_interna", "") or ""),
                     "ref_externa": str(p.get("ref_externa", "") or ""),
                     "material": str(p.get("material", "") or ""),
+                    "tipo_material": str(p.get("tipo_material", "") or "CHAPA"),
+                    "subtipo_material": str(p.get("subtipo_material", "") or p.get("material", "") or ""),
                     "espessura": str(p.get("espessura", "") or ""),
+                    "dimensao": str(p.get("dimensao", "") or ""),
+                    "dimensoes": str(p.get("dimensao", "") or ""),
+                    "perfil_tipo": str(p.get("perfil_tipo", "") or ""),
+                    "perfil_tamanho": str(p.get("perfil_tamanho", "") or ""),
+                    "comprimento_mm": _to_num(p.get("comprimento_mm")) or 0.0,
+                    "tubo_forma": str(p.get("tubo_forma", "") or ""),
+                    "lado_a": _to_num(p.get("lado_a")) or 0.0,
+                    "lado_b": _to_num(p.get("lado_b")) or 0.0,
+                    "tubo_espessura": _to_num(p.get("tubo_espessura")) or 0.0,
+                    "diametro": _to_num(p.get("diametro")) or 0.0,
                     "quantidade_pedida": _to_num(p.get("quantidade_pedida")) or 0.0,
                     "Operacoes": str(p.get("operacoes", "") or ""),
                     "Observacoes": str(p.get("observacoes", "") or ""),
@@ -5105,6 +5157,7 @@ def _mysql_load_relational_data():
                     "hist": hist_rows,
                     "lote_baixa": str(p.get("lote_baixa", "") or ""),
                     "desenho": str(p.get("desenho_path", "") or ""),
+                    "ficheiros": ficheiros_rows,
                     "operacoes_fluxo": fluxo,
                     "qtd_expedida": _to_num(p.get("qtd_expedida")) or 0.0,
                     "expedicoes": [],
@@ -5334,6 +5387,14 @@ def _mysql_load_relational_data():
                         "local_descarga": str(e.get("local_descarga", "") or ""),
                         "transporte_numero": str(e.get("transporte_numero", "") or ""),
                         "estado_transporte": str(e.get("estado_transporte", "") or ""),
+                        "tipo_encomenda": str(e.get("tipo_encomenda", "") or "Cliente"),
+                        "of_codigo": str(e.get("of_codigo", "") or ""),
+                        "ordem_fabrico": {
+                            "id": str(e.get("of_codigo", "") or ""),
+                            "encomenda_id": num,
+                            "estado": str(e.get("estado", "") or "Preparacao"),
+                            "data": _db_to_iso(e.get("data_criacao"))[:10],
+                        },
                         "materiais": materiais,
                         "reservas": reservas_map.get(num, []),
                         "montagem_itens": montagem_map.get(num, []),

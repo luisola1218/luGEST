@@ -1244,12 +1244,17 @@ class OperatorPage(QWidget):
         self.posto_combo.currentTextChanged.connect(self._update_piece_context)
         self.operation_combo = QComboBox()
         self.operation_combo.setEditable(False)
+        self.scan_edit = QLineEdit()
+        self.scan_edit.setPlaceholderText("Picar OF/OPP")
+        self.scan_edit.returnPressed.connect(self._handle_scan_code)
         selectors_row.addWidget(QLabel("Operador"))
         selectors_row.addWidget(self.operator_combo, 1)
         selectors_row.addWidget(QLabel("Posto"))
         selectors_row.addWidget(self.posto_combo)
         selectors_row.addWidget(QLabel("Operacao"))
         selectors_row.addWidget(self.operation_combo, 1)
+        selectors_row.addWidget(QLabel("Scanner"))
+        selectors_row.addWidget(self.scan_edit, 1)
         control_layout.addLayout(selectors_row)
         self.options_btn = QPushButton("Opcoes")
         self.options_btn.setProperty("variant", "secondary")
@@ -1624,6 +1629,108 @@ class OperatorPage(QWidget):
         if row_index >= len(self.current_pieces):
             return {}
         return self.current_pieces[row_index]
+
+    def _select_operator_target(self, enc_num: str, piece_id: str = "") -> bool:
+        enc_txt = str(enc_num or "").strip()
+        piece_txt = str(piece_id or "").strip()
+        if not enc_txt:
+            return False
+        if hasattr(self, "_apply_order_filter") and callable(getattr(self, "_apply_order_filter")):
+            target_group = None
+            if piece_txt:
+                for item in list(getattr(self, "all_items", []) or []):
+                    if str(item.get("encomenda", "") or "").strip() != enc_txt:
+                        continue
+                    if any(str(piece.get("id", "") or "").strip() == piece_txt for piece in list(item.get("pieces", []) or [])):
+                        target_group = self._group_key(item)
+                        break
+            self._apply_order_filter(enc_txt, previous_group=target_group, previous_piece=piece_txt)
+            self._show_order_detail()
+            if target_group:
+                self._show_group_detail()
+            return bool(getattr(self, "items", []))
+        target_group_index = -1
+        for index, item in enumerate(self.items):
+            if str(item.get("encomenda", "") or "").strip() != enc_txt:
+                continue
+            if piece_txt and not any(str(piece.get("id", "") or "").strip() == piece_txt for piece in list(item.get("pieces", []) or [])):
+                continue
+            target_group_index = index
+            break
+        if target_group_index < 0:
+            for index, item in enumerate(self.items):
+                if str(item.get("encomenda", "") or "").strip() == enc_txt:
+                    target_group_index = index
+                    break
+        if target_group_index < 0 or target_group_index >= self.groups_table.rowCount():
+            return False
+        self.groups_table.selectRow(target_group_index)
+        self.selected_piece_id = piece_txt
+        self._handle_group_selection()
+        if piece_txt:
+            for row_index, piece in enumerate(self.current_pieces):
+                if str(piece.get("id", "") or "").strip() == piece_txt:
+                    self.pieces_table.selectRow(row_index)
+                    self._update_piece_context()
+                    break
+        return True
+
+    def _handle_scan_code(self) -> None:
+        code = self.scan_edit.text().strip()
+        if not code:
+            return
+        self.scan_edit.clear()
+        scanner = getattr(self.backend, "operator_scan_code", None)
+        if not callable(scanner):
+            self._set_feedback("Leitura por scanner indisponivel.", error=True)
+            return
+        try:
+            result = dict(scanner(code, current_posto=self._current_posto()) or {})
+        except Exception as exc:
+            self._set_feedback(str(exc), error=True)
+            return
+        if str(result.get("tipo", "") or "").upper() == "OF":
+            enc = dict(result.get("encomenda", {}) or {})
+            enc_num = str(enc.get("numero", "") or "").strip()
+            if self._select_operator_target(enc_num):
+                self._set_feedback(f"OF {code} carregada.")
+            else:
+                self.refresh()
+                if self._select_operator_target(enc_num):
+                    self._set_feedback(f"OF {code} carregada.")
+                else:
+                    self._set_feedback(f"OF {code} encontrada, mas nao esta visivel neste posto/filtro.", error=True)
+            return
+        if str(result.get("tipo", "") or "").upper() == "GRP":
+            enc_num = str(result.get("encomenda_numero", "") or "").strip()
+            material = str(result.get("material", "") or "").strip()
+            espessura = str(result.get("espessura", "") or "").strip()
+            target_group = None
+            for item in list(getattr(self, "all_items", []) or []):
+                if str(item.get("encomenda", "") or "").strip() != enc_num:
+                    continue
+                if str(item.get("material", "") or "").strip() == material and str(item.get("espessura", "") or "").strip() == espessura:
+                    target_group = self._group_key(item)
+                    break
+            if target_group and hasattr(self, "_apply_order_filter"):
+                self._apply_order_filter(enc_num, previous_group=target_group)
+                self._show_order_detail()
+                self._show_group_detail()
+                self._set_feedback(f"Espessura {material} {espessura} aberta.")
+            else:
+                self._set_feedback(f"Espessura {material} {espessura} nao esta visivel neste posto/filtro.", error=True)
+            return
+        enc_num = str(result.get("encomenda_numero", "") or "").strip()
+        piece_id = str(result.get("piece_id", "") or "").strip()
+        operation = str(result.get("operacao", "") or "").strip()
+        if not self._select_operator_target(enc_num, piece_id):
+            self.refresh()
+            if not self._select_operator_target(enc_num, piece_id):
+                self._set_feedback(f"OPP {code} encontrada, mas nao esta visivel neste posto/filtro.", error=True)
+                return
+        if operation:
+            self.operation_combo.setCurrentText(operation)
+        self._set_feedback(f"OPP {code} aberta" + (f" | {operation}" if operation else ""))
 
     def _show_client_name(self) -> bool:
         return bool(self.ui_options.get("operator_show_client_name", True))
@@ -8037,6 +8144,7 @@ class OrdersPage(QWidget):
         info_layout.setHorizontalSpacing(12)
         info_layout.setVerticalSpacing(5)
         self.info_numero = QLabel("-")
+        self.info_of = QLabel("-")
         self.info_cliente = QLabel("-")
         self.info_entrega = QLabel("-")
         self.info_estado = QLabel("-")
@@ -8052,6 +8160,7 @@ class OrdersPage(QWidget):
         self.info_cativar = QLabel("-")
         self.info_chapa = QLabel("-")
         self.info_numero.setProperty("role", "field_value_strong")
+        self.info_of.setProperty("role", "field_value_strong")
         self.info_cliente.setProperty("role", "field_value")
         self.info_entrega.setProperty("role", "field_value")
         self.info_nota.setProperty("role", "field_value")
@@ -8077,12 +8186,12 @@ class OrdersPage(QWidget):
             ("Numero", self.info_numero, 0, 0),
             ("Cliente", self.info_cliente, 0, 2),
             ("Estado", self.info_estado, 0, 4),
-            ("Entrega", self.info_entrega, 1, 0),
+            ("OF", self.info_of, 1, 0),
             ("Nota cliente", self.info_nota, 1, 2),
             ("Cativar MP", self.info_cativar, 1, 4),
-            ("Transporte", self.info_transporte, 2, 0),
-            ("Descarga", self.info_descarga, 2, 2),
-            ("Viagem", self.info_viagem, 2, 4),
+            ("Entrega", self.info_entrega, 2, 0),
+            ("Transporte", self.info_transporte, 2, 2),
+            ("Descarga", self.info_descarga, 2, 4),
             ("Transportadora", self.info_transportadora, 3, 0),
             ("Carga", self.info_carga, 3, 2),
             ("Custos", self.info_custos, 3, 4),
@@ -8114,12 +8223,16 @@ class OrdersPage(QWidget):
         list_title = QLabel("Encomendas")
         list_title.setStyleSheet("font-size: 18px; font-weight: 800; color: #0f172a;")
         self.table = QTableWidget(0, 8)
-        self.table.setHorizontalHeaderLabels(["Numero", "Nota Cliente", "Cliente", "Data Entrega", "Tempo", "Estado", "Cativar", "Progresso"])
+        self.table.setHorizontalHeaderLabels(["Numero", "Nota cliente", "Cliente", "Entrega", "Tempo", "Estado", "MP", "Progresso"])
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        self.table.setWordWrap(False)
+        self.table.setShowGrid(False)
         self.table.setStyleSheet(
-            f"QTableWidget {{ font-size: {LIST_TABLE_FONT_PX}px; }}"
+            f"QTableWidget {{ font-size: {LIST_TABLE_FONT_PX}px; alternate-background-color: #f8fafc; gridline-color: #d8e2ef; }}"
+            f" QTableWidget::item {{ padding: 5px 8px; }}"
             f" QHeaderView::section {{ font-size: {LIST_TABLE_FONT_PX}px; padding: 8px 10px; font-weight: 800; }}"
         )
         self.table.verticalHeader().setDefaultSectionSize(38)
@@ -8127,14 +8240,14 @@ class OrdersPage(QWidget):
         _set_table_columns(
             self.table,
             [
-                (0, "fixed", 245),
-                (1, "fixed", 280),
+                (0, "fixed", 210),
+                (1, "fixed", 230),
                 (2, "stretch", 0),
-                (3, "fixed", 148),
-                (4, "fixed", 92),
-                (5, "fixed", 142),
-                (6, "fixed", 112),
-                (7, "fixed", 116),
+                (3, "fixed", 118),
+                (4, "fixed", 86),
+                (5, "fixed", 130),
+                (6, "fixed", 72),
+                (7, "fixed", 104),
             ],
         )
         self.table.itemSelectionChanged.connect(self._on_order_selected)
@@ -8255,33 +8368,44 @@ class OrdersPage(QWidget):
         pieces_header = QHBoxLayout()
         pieces_title = QLabel("Pecas")
         pieces_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
-        self.add_piece_btn = QPushButton("Adicionar peca")
+        self.add_piece_btn = QPushButton("Adicionar")
         self.add_piece_btn.clicked.connect(self._add_piece)
-        self.edit_piece_btn = QPushButton("Editar peca")
+        self.import_model_btn = QPushButton("Modelo")
+        self.import_model_btn.setProperty("variant", "secondary")
+        self.import_model_btn.clicked.connect(self._import_model)
+        self.print_of_btn = QPushButton("Imprimir OF")
+        self.print_of_btn.setProperty("variant", "secondary")
+        self.print_of_btn.clicked.connect(self._print_fabrication_order)
+        self.edit_piece_btn = QPushButton("Editar")
         self.edit_piece_btn.setProperty("variant", "secondary")
         self.edit_piece_btn.clicked.connect(self._edit_piece)
-        self.remove_piece_btn = QPushButton("Remover peca")
+        self.remove_piece_btn = QPushButton("Remover")
         self.remove_piece_btn.setProperty("variant", "secondary")
         self.remove_piece_btn.clicked.connect(self._remove_piece)
-        self.consume_montagem_btn = QPushButton("Consumir montagem")
+        self.consume_montagem_btn = QPushButton("Consumir")
         self.consume_montagem_btn.setProperty("variant", "success")
         self.consume_montagem_btn.clicked.connect(self._consume_montagem)
-        self.open_piece_btn = QPushButton("Ver desenho")
+        self.open_piece_btn = QPushButton("Desenho")
         self.open_piece_btn.setProperty("variant", "secondary")
         self.open_piece_btn.clicked.connect(self._open_selected_piece_drawing)
         for button, width in (
-            (self.add_piece_btn, 138),
-            (self.edit_piece_btn, 128),
-            (self.remove_piece_btn, 136),
-            (self.consume_montagem_btn, 162),
-            (self.open_piece_btn, 124),
+            (self.add_piece_btn, 86),
+            (self.import_model_btn, 88),
+            (self.print_of_btn, 104),
+            (self.edit_piece_btn, 78),
+            (self.remove_piece_btn, 88),
+            (self.consume_montagem_btn, 96),
+            (self.open_piece_btn, 88),
         ):
             button.setMinimumWidth(width)
+            button.setMaximumWidth(width + 18)
+            button.setMinimumHeight(30)
         pieces_header.addWidget(pieces_title, 1)
-        for button in (self.add_piece_btn, self.edit_piece_btn, self.remove_piece_btn, self.consume_montagem_btn, self.open_piece_btn):
+        pieces_header.setSpacing(6)
+        for button in (self.add_piece_btn, self.import_model_btn, self.print_of_btn, self.edit_piece_btn, self.remove_piece_btn, self.consume_montagem_btn, self.open_piece_btn):
             pieces_header.addWidget(button)
-        self.pieces_table = QTableWidget(0, 7)
-        self.pieces_table.setHorizontalHeaderLabels(["Ref. Interna", "Ref. Externa", "Material", "Esp.", "Operacoes", "Qtd", "Estado"])
+        self.pieces_table = QTableWidget(0, 8)
+        self.pieces_table.setHorizontalHeaderLabels(["Ref. Interna", "Ref. Externa", "OPP", "Material", "Esp.", "Operacoes", "Qtd", "Estado"])
         self.pieces_table.verticalHeader().setVisible(False)
         self.pieces_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.pieces_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -8458,6 +8582,7 @@ class OrdersPage(QWidget):
         self.detail_pieces = []
         self.detail_montagem = []
         self.info_numero.setText("-")
+        self.info_of.setText("-")
         self.info_cliente.setText("-")
         self.info_entrega.setText("-")
         _apply_state_chip(self.info_estado, "-")
@@ -8497,6 +8622,8 @@ class OrdersPage(QWidget):
         self.remove_esp_btn.setEnabled(can_edit and has_esp)
         self.edit_time_btn.setEnabled(has_esp)
         self.add_piece_btn.setEnabled(can_edit and has_order)
+        self.import_model_btn.setEnabled(can_edit and has_order)
+        self.print_of_btn.setEnabled(has_order)
         self.edit_piece_btn.setEnabled(can_edit and has_piece)
         self.remove_piece_btn.setEnabled(can_edit and has_piece)
         self.open_piece_btn.setEnabled(has_piece)
@@ -8517,6 +8644,7 @@ class OrdersPage(QWidget):
             return
         self.current_detail = detail
         self.info_numero.setText(str(detail.get("numero", "-")))
+        self.info_of.setText(str(detail.get("of_codigo", "-") or "-"))
         self.info_cliente.setText(
             _format_client_label(
                 f"{detail.get('cliente', '')} - {detail.get('cliente_nome', '')}".strip(" -"),
@@ -8642,6 +8770,7 @@ class OrdersPage(QWidget):
                 [
                     row.get("ref_interna", "-"),
                     row.get("ref_externa", "-"),
+                    row.get("opp", "-"),
                     row.get("material", "-"),
                     row.get("espessura", "-"),
                     row.get("operacoes", "-"),
@@ -8806,7 +8935,15 @@ class OrdersPage(QWidget):
         dialog.setWindowTitle("Cabecalho da encomenda")
         dialog.setMinimumWidth(640)
         layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 16, 16, 14)
+        layout.setSpacing(12)
         form = QFormLayout()
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(8)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        type_combo = QComboBox()
+        type_combo.addItems(["Cliente", "Interna (produção)"])
+        type_combo.setCurrentText(str(initial.get("tipo_encomenda", "") or "Cliente"))
         client_combo = QComboBox()
         client_combo.setEditable(True)
         for row in self.client_rows:
@@ -8821,19 +8958,36 @@ class OrdersPage(QWidget):
                 client_combo.setCurrentText(current_client)
         delivery_edit = QDateEdit()
         delivery_edit.setCalendarPopup(True)
-        delivery_edit.setDisplayFormat("yyyy-MM-dd")
+        delivery_edit.setDisplayFormat("dd/MM/yyyy")
+        delivery_edit.setMinimumHeight(34)
+        delivery_edit.setToolTip("Data de entrega da encomenda.")
         delivery_raw = str(initial.get("data_entrega", "") or "").strip()
         delivery_date = QDate.fromString(delivery_raw, "yyyy-MM-dd") if delivery_raw else QDate.currentDate()
         if not delivery_date.isValid():
             delivery_date = QDate.currentDate()
         delivery_edit.setDate(delivery_date)
-        posto_combo = QComboBox()
-        posto_combo.setEditable(False)
-        for posto in list(self.backend.quote_workcenter_options() or []):
-            posto_combo.addItem(str(posto))
-        posto_current = str(initial.get("posto_trabalho", "") or "").strip()
-        if posto_current:
-            posto_combo.setCurrentText(posto_current)
+        calendar = delivery_edit.calendarWidget()
+        if calendar is not None:
+            calendar.setGridVisible(True)
+            calendar.setFirstDayOfWeek(Qt.Monday)
+            calendar.setStyleSheet(
+                """
+                QCalendarWidget QWidget { alternate-background-color: #f8fafc; }
+                QCalendarWidget QToolButton {
+                    color: #020617;
+                    background: #eef4fb;
+                    border: 1px solid #bfcee3;
+                    border-radius: 6px;
+                    padding: 4px 8px;
+                    font-weight: 700;
+                }
+                QCalendarWidget QAbstractItemView {
+                    selection-background-color: #05004d;
+                    selection-color: white;
+                    outline: 0;
+                }
+                """
+            )
         transport_combo = QComboBox()
         transport_combo.setEditable(True)
         transport_combo.addItems(["", "Transporte a Cargo do Cliente", "Transporte a Nosso Cargo", "Subcontratado"])
@@ -8899,8 +9053,8 @@ class OrdersPage(QWidget):
         cativar_box.setChecked(bool(initial.get("cativar")))
         numero_label = QLabel(str(initial.get("numero", "(nova)") or "(nova)"))
         form.addRow("Numero", numero_label)
+        form.addRow("Tipo encomenda", type_combo)
         form.addRow("Cliente", client_combo)
-        form.addRow("Posto trabalho", posto_combo)
         form.addRow("Transporte", transport_combo)
         form.addRow("Transportadora", carrier_combo)
         form.addRow("Zona transporte", zone_combo)
@@ -8925,8 +9079,8 @@ class OrdersPage(QWidget):
             return None
         return {
             "numero": str(initial.get("numero", "") or "").strip(),
+            "tipo_encomenda": type_combo.currentText().strip(),
             "cliente": self._client_code_from_text(client_combo.currentText()),
-            "posto_trabalho": posto_combo.currentText().strip(),
             "nota_transporte": transport_combo.currentText().strip(),
             "transportadora_nome": carrier_combo.currentText().strip(),
             "zona_transporte": zone_combo.currentText().strip(),
@@ -8986,6 +9140,9 @@ class OrdersPage(QWidget):
         ref_int_edit = QLineEdit(str(initial.get("ref_interna", "") or "").strip())
         ref_ext_edit = QLineEdit(str(initial.get("ref_externa", "") or "").strip())
         desc_edit = QLineEdit(str(initial.get("descricao", "") or "").strip())
+        tipo_combo = QComboBox()
+        tipo_combo.addItems(["CHAPA", "PERFIL", "TUBO", "OUTROS"])
+        tipo_combo.setCurrentText(str(initial.get("tipo_material", "") or "CHAPA").strip().upper())
         material_combo = QComboBox()
         material_combo.setEditable(True)
         for value in list(self.presets.get("materiais", []) or []):
@@ -8996,6 +9153,45 @@ class OrdersPage(QWidget):
         for value in list(self.presets.get("espessuras", []) or []):
             esp_combo.addItem(str(value))
         esp_combo.setCurrentText(str(initial.get("espessura", "") or "").strip())
+        dimensao_edit = QLineEdit(str(initial.get("dimensao", initial.get("dimensoes", "")) or "").strip())
+        profile_combo = QComboBox()
+        profile_combo.addItems([
+            "IPE", "IPN", "HEA", "HEB", "HEM",
+            "UPN", "UPE", "U", "I", "C", "T", "Z", "Omega",
+            "Cantoneira L abas iguais", "Cantoneira L abas desiguais",
+            "Barra chata", "Barra quadrada", "Barra redonda", "Barra retangular", "Barra sextavada",
+        ])
+        profile_combo.setEditable(True)
+        profile_combo.setCurrentText(str(initial.get("perfil_tipo", "") or "IPE").strip())
+        profile_size_edit = QLineEdit(str(initial.get("perfil_tamanho", "") or "").strip())
+        profile_length_spin = QDoubleSpinBox()
+        profile_length_spin.setRange(0.0, 100000.0)
+        profile_length_spin.setDecimals(1)
+        profile_length_spin.setSuffix(" mm")
+        profile_length_spin.setValue(float(initial.get("comprimento_mm", 0) or 0))
+        tube_shape_combo = QComboBox()
+        tube_shape_combo.addItems(["Retangular / Quadrado", "Redondo"])
+        tube_shape_combo.setCurrentText(str(initial.get("tubo_forma", "") or "Retangular / Quadrado").strip())
+        side_a_spin = QDoubleSpinBox()
+        side_a_spin.setRange(0.0, 100000.0)
+        side_a_spin.setDecimals(1)
+        side_a_spin.setSuffix(" mm")
+        side_a_spin.setValue(float(initial.get("lado_a", 0) or 0))
+        side_b_spin = QDoubleSpinBox()
+        side_b_spin.setRange(0.0, 100000.0)
+        side_b_spin.setDecimals(1)
+        side_b_spin.setSuffix(" mm")
+        side_b_spin.setValue(float(initial.get("lado_b", 0) or 0))
+        tube_thick_spin = QDoubleSpinBox()
+        tube_thick_spin.setRange(0.0, 10000.0)
+        tube_thick_spin.setDecimals(1)
+        tube_thick_spin.setSuffix(" mm")
+        tube_thick_spin.setValue(float(initial.get("tubo_espessura", 0) or 0))
+        diameter_spin = QDoubleSpinBox()
+        diameter_spin.setRange(0.0, 100000.0)
+        diameter_spin.setDecimals(1)
+        diameter_spin.setSuffix(" mm")
+        diameter_spin.setValue(float(initial.get("diametro", 0) or 0))
         operation_selector, operacoes_edit, apply_operations = _build_operation_selector(
             list(self.presets.get("operacoes", []) or []),
             str(initial.get("operacoes", self.presets.get("operacao_default", "Embalamento")) or self.presets.get("operacao_default", "Embalamento")).strip(),
@@ -9009,6 +9205,7 @@ class OrdersPage(QWidget):
         preco_spin.setDecimals(4)
         preco_spin.setValue(float(initial.get("preco_unit", 0) or 0))
         drawing_edit = QLineEdit(str(initial.get("desenho_path", "") or "").strip())
+        files_edit = QLineEdit("; ".join(str(item or "").strip() for item in list(initial.get("ficheiros", []) or []) if str(item or "").strip()))
         keep_ref_box = QCheckBox("Guardar referencia na base")
         keep_ref_box.setChecked(bool(initial.get("guardar_ref", True)))
 
@@ -9019,7 +9216,11 @@ class OrdersPage(QWidget):
             ref_int_edit.setText(str(payload.get("ref_interna", "") or "").strip())
             desc_edit.setText(str(payload.get("descricao", "") or "").strip())
             material_combo.setCurrentText(str(payload.get("material", "") or "").strip())
+            tipo_combo.setCurrentText(str(payload.get("tipo_material", "") or payload.get("material_family", "") or "CHAPA").strip().upper())
             esp_combo.setCurrentText(str(payload.get("espessura", "") or "").strip())
+            dimensao_edit.setText(str(payload.get("dimensao", payload.get("dimensoes", "")) or "").strip())
+            profile_combo.setCurrentText(str(payload.get("perfil_tipo", "") or "IPE").strip())
+            profile_size_edit.setText(str(payload.get("perfil_tamanho", "") or "").strip())
             apply_operations(str(payload.get("operacoes", "") or self.presets.get("operacao_default", "Embalamento")).strip())
             preco_spin.setValue(float(payload.get("preco", 0) or 0))
             if not drawing_edit.text().strip():
@@ -9050,6 +9251,71 @@ class OrdersPage(QWidget):
             if path:
                 drawing_edit.setText(path)
 
+        def pick_files() -> None:
+            paths, _ = QFileDialog.getOpenFileNames(
+                self,
+                "Selecionar ficheiros associados",
+                "",
+                "Ficheiros técnicos (*.pdf *.dwg *.dxf *.step *.stp *.iges *.igs *.png *.jpg *.jpeg *.bmp);;Todos (*.*)",
+            )
+            if paths:
+                current = [part.strip() for part in files_edit.text().split(";") if part.strip()]
+                for path in paths:
+                    if path not in current:
+                        current.append(path)
+                files_edit.setText("; ".join(current))
+
+        def _spin_text(spin: QDoubleSpinBox) -> str:
+            value = float(spin.value() or 0)
+            if value <= 0:
+                return ""
+            return f"{value:g}"
+
+        def update_dimension_from_guided_fields() -> None:
+            tipo = tipo_combo.currentText().strip().upper()
+            if tipo == "PERFIL":
+                parts = [profile_combo.currentText().strip(), profile_size_edit.text().strip()]
+                generated = " ".join(part for part in parts if part)
+                if profile_length_spin.value() > 0:
+                    generated = f"{generated} L={profile_length_spin.value():g}mm".strip()
+                if generated:
+                    dimensao_edit.setText(generated)
+                return
+            if tipo == "TUBO":
+                shape = tube_shape_combo.currentText().strip().lower()
+                thick = _spin_text(tube_thick_spin)
+                if "redondo" in shape:
+                    dia = _spin_text(diameter_spin)
+                    generated = f"Ø{dia}x{thick}" if dia and thick else (f"Ø{dia}" if dia else "")
+                else:
+                    lado_a = _spin_text(side_a_spin)
+                    lado_b = _spin_text(side_b_spin) or lado_a
+                    generated = f"{lado_a}x{lado_b}x{thick}" if lado_a and lado_b and thick else ""
+                if generated:
+                    dimensao_edit.setText(generated)
+
+        def sync_material_fields() -> None:
+            tipo = tipo_combo.currentText().strip().upper()
+            is_profile = tipo == "PERFIL"
+            is_tube = tipo == "TUBO"
+            is_round_tube = is_tube and "redondo" in tube_shape_combo.currentText().strip().lower()
+            esp_combo.setEnabled(tipo in {"CHAPA", "TUBO", "OUTROS"})
+            profile_combo.setVisible(is_profile)
+            profile_size_edit.setVisible(is_profile)
+            profile_length_spin.setVisible(is_profile)
+            tube_shape_combo.setVisible(is_tube)
+            side_a_spin.setVisible(is_tube and not is_round_tube)
+            side_b_spin.setVisible(is_tube and not is_round_tube)
+            tube_thick_spin.setVisible(is_tube)
+            diameter_spin.setVisible(is_round_tube)
+            for field in (profile_combo, profile_size_edit, profile_length_spin, tube_shape_combo, side_a_spin, side_b_spin, tube_thick_spin, diameter_spin):
+                label = form.labelForField(field)
+                if label is not None:
+                    label.setVisible(field.isVisible())
+            if tipo == "PERFIL" and esp_combo.currentText().strip() == "":
+                esp_combo.setCurrentText("-")
+            update_dimension_from_guided_fields()
+
         ref_history.currentIndexChanged.connect(lambda _index: apply_reference(ref_history.currentData()))
         ref_buttons = QHBoxLayout()
         btn_generate = QPushButton("Gerar")
@@ -9069,7 +9335,11 @@ class OrdersPage(QWidget):
         btn_pick_draw = QPushButton("Selecionar desenho")
         btn_pick_draw.setProperty("variant", "secondary")
         btn_pick_draw.clicked.connect(pick_drawing)
+        btn_pick_files = QPushButton("Adicionar ficheiros")
+        btn_pick_files.setProperty("variant", "secondary")
+        btn_pick_files.clicked.connect(pick_files)
         draw_buttons.addWidget(btn_pick_draw)
+        draw_buttons.addWidget(btn_pick_files)
         draw_buttons.addStretch(1)
         defaults_btn = QPushButton("Operacao padrao")
         defaults_btn.setProperty("variant", "secondary")
@@ -9080,18 +9350,36 @@ class OrdersPage(QWidget):
         form.addRow("", ref_buttons)
         form.addRow("Ref. externa", ref_ext_edit)
         form.addRow("Descricao", desc_edit)
-        form.addRow("Material", material_combo)
+        form.addRow("Tipo material", tipo_combo)
+        form.addRow("Subtipo material", material_combo)
         form.addRow("Espessura", esp_combo)
-        form.addRow("Postos", operation_selector)
+        form.addRow("Tipo perfil", profile_combo)
+        form.addRow("Tamanho perfil", profile_size_edit)
+        form.addRow("Comprimento", profile_length_spin)
+        form.addRow("Tipo tubo", tube_shape_combo)
+        form.addRow("Lado A", side_a_spin)
+        form.addRow("Lado B", side_b_spin)
+        form.addRow("Esp. tubo", tube_thick_spin)
+        form.addRow("Diametro", diameter_spin)
+        form.addRow("Dimensao", dimensao_edit)
+        form.addRow("Operacoes", operation_selector)
         form.addRow("", defaults_btn)
         form.addRow("Quantidade", qtd_spin)
         form.addRow("Preco unit.", preco_spin)
         form.addRow("Desenho", drawing_edit)
+        form.addRow("Ficheiros associados", files_edit)
         form.addRow("", draw_buttons)
         form.addRow("", keep_ref_box)
         layout.addLayout(form)
         if not ref_int_edit.text().strip():
             generate_ref()
+        tipo_combo.currentTextChanged.connect(lambda _text: sync_material_fields())
+        tube_shape_combo.currentTextChanged.connect(lambda _text: sync_material_fields())
+        for widget in (side_a_spin, side_b_spin, tube_thick_spin, diameter_spin, profile_length_spin):
+            widget.valueChanged.connect(lambda _value: update_dimension_from_guided_fields())
+        profile_combo.currentTextChanged.connect(lambda _text: update_dimension_from_guided_fields())
+        profile_size_edit.textChanged.connect(lambda _text: update_dimension_from_guided_fields())
+        sync_material_fields()
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
@@ -9102,12 +9390,24 @@ class OrdersPage(QWidget):
             "ref_interna": ref_int_edit.text().strip(),
             "ref_externa": ref_ext_edit.text().strip(),
             "descricao": desc_edit.text().strip(),
+            "tipo_material": tipo_combo.currentText().strip(),
             "material": material_combo.currentText().strip(),
+            "subtipo_material": material_combo.currentText().strip(),
             "espessura": esp_combo.currentText().strip(),
+            "dimensao": dimensao_edit.text().strip(),
+            "perfil_tipo": profile_combo.currentText().strip(),
+            "perfil_tamanho": profile_size_edit.text().strip(),
+            "comprimento_mm": profile_length_spin.value(),
+            "tubo_forma": tube_shape_combo.currentText().strip(),
+            "lado_a": side_a_spin.value(),
+            "lado_b": side_b_spin.value(),
+            "tubo_espessura": tube_thick_spin.value(),
+            "diametro": diameter_spin.value(),
             "operacoes": operacoes_edit.text().strip(),
             "quantidade_pedida": qtd_spin.value(),
             "preco_unit": preco_spin.value(),
             "desenho": drawing_edit.text().strip(),
+            "ficheiros": [part.strip() for part in files_edit.text().split(";") if part.strip()],
             "guardar_ref": keep_ref_box.isChecked(),
         }
 
@@ -9218,6 +9518,66 @@ class OrdersPage(QWidget):
             QMessageBox.critical(self, "Encomendas", str(exc))
             return
         self.refresh()
+
+    def _import_model(self) -> None:
+        numero = str(self.current_detail.get("numero", "") or "").strip()
+        if not numero:
+            QMessageBox.warning(self, "Encomendas", "Seleciona uma encomenda.")
+            return
+        try:
+            models = list(self.backend.order_model_options() or [])
+        except Exception as exc:
+            QMessageBox.critical(self, "Carregar modelo", str(exc))
+            return
+        if not models:
+            QMessageBox.information(self, "Carregar modelo", "Nao existem modelos/conjuntos ativos.")
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Carregar modelo / conjunto")
+        dialog.setMinimumWidth(520)
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        model_combo = QComboBox()
+        for row in models:
+            model_combo.addItem(str(row.get("label", "") or row.get("codigo", "")), row)
+        qty_spin = QDoubleSpinBox()
+        qty_spin.setRange(0.01, 100000.0)
+        qty_spin.setDecimals(2)
+        qty_spin.setValue(1.0)
+        form.addRow("Modelo/conjunto", model_combo)
+        form.addRow("Quantidade", qty_spin)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        selected = dict(model_combo.currentData() or {})
+        try:
+            self.backend.order_import_model(
+                numero,
+                str(selected.get("codigo", "") or "").strip(),
+                qty_spin.value(),
+                str(selected.get("origem_tipo", "modelo") or "modelo"),
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Carregar modelo", str(exc))
+            return
+        self.refresh()
+        self._select_order(numero)
+
+    def _print_fabrication_order(self) -> None:
+        numero = str(self.current_detail.get("numero", "") or "").strip()
+        if not numero:
+            QMessageBox.warning(self, "Ordem de Fabrico", "Seleciona uma encomenda.")
+            return
+        try:
+            path = self.backend.order_open_fabrication_pdf(numero)
+        except Exception as exc:
+            QMessageBox.critical(self, "Ordem de Fabrico", str(exc))
+            return
+        QMessageBox.information(self, "Ordem de Fabrico", f"PDF criado:\n{path}")
 
     def _add_material(self) -> None:
         numero = str(self.current_detail.get("numero", "") or "").strip()
@@ -10033,17 +10393,21 @@ class LegacyOperatorPage(OperatorPage):
         selectors_grid.addWidget(self.posto_combo, 1, 1)
         selectors_grid.addWidget(oper_label, 2, 0, 1, 2)
         selectors_grid.addWidget(self.operation_combo, 3, 0, 1, 2)
+        scan_label = QLabel("Scanner")
+        scan_label.setStyleSheet("font-size: 9.4px; color: #334155;")
+        selectors_grid.addWidget(scan_label, 4, 0, 1, 2)
+        selectors_grid.addWidget(self.scan_edit, 5, 0, 1, 2)
         selectors_grid.setColumnStretch(0, 1)
         selectors_grid.setColumnStretch(1, 1)
         control_layout.addWidget(selectors_host)
         _adopt_layout_item(control_layout, feedback_item)
-        self.control_card.setMinimumHeight(166)
-        self.control_card.setMaximumHeight(166)
+        self.control_card.setMinimumHeight(190)
+        self.control_card.setMaximumHeight(190)
         self.feedback_label.setStyleSheet("font-size: 9px; color: #475467;")
         self.feedback_label.setWordWrap(True)
 
-        self.orders_table = QTableWidget(0, 8)
-        self.orders_table.setHorizontalHeaderLabels(["Encomenda", "Cliente", "Estado", "Grupos", "Pecas", "Em curso", "Avarias", "Progress"])
+        self.orders_table = QTableWidget(0, 9)
+        self.orders_table.setHorizontalHeaderLabels(["Encomenda", "OF", "Cliente", "Estado", "Grupos", "Pecas", "Em curso", "Avarias", "Progress"])
         self.orders_table.verticalHeader().setVisible(False)
         self.orders_table.verticalHeader().setDefaultSectionSize(LIST_TABLE_ROW_PX)
         self.orders_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -10054,13 +10418,13 @@ class LegacyOperatorPage(OperatorPage):
         self.orders_table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         _configure_table(self.orders_table, stretch=(1,), contents=())
         orders_header = self.orders_table.horizontalHeader()
-        for col, width in ((0, 192), (1, 430), (2, 126), (3, 66), (4, 64), (5, 82), (6, 78), (7, 84)):
+        for col, width in ((0, 174), (1, 132), (2, 300), (3, 116), (4, 66), (5, 64), (6, 82), (7, 78), (8, 84)):
             orders_header.setSectionResizeMode(col, QHeaderView.Interactive)
             orders_header.resizeSection(col, width)
-        orders_header.setSectionResizeMode(1, QHeaderView.Stretch)
+        orders_header.setSectionResizeMode(2, QHeaderView.Stretch)
         self.orders_table.setStyleSheet(
-            f"QTableWidget {{ font-size: {LIST_TABLE_FONT_PX}px; }}"
-            f" QHeaderView::section {{ font-size: {LIST_TABLE_FONT_PX}px; padding: 8px 10px; font-weight: 800; }}"
+            f"QTableWidget {{ font-size: {max(10, LIST_TABLE_FONT_PX - 1)}px; }}"
+            f" QHeaderView::section {{ font-size: {max(10, LIST_TABLE_FONT_PX - 1)}px; padding: 7px 8px; font-weight: 800; }}"
         )
         self.orders_table.itemDoubleClicked.connect(lambda item: self._open_selected_order_from_item(item))
 
@@ -10225,7 +10589,7 @@ class LegacyOperatorPage(OperatorPage):
         workspace_split.addWidget(control_host)
         workspace_split.addWidget(context_host)
         workspace_split.setSizes([580, 1530])
-        workspace_split.setMaximumHeight(234)
+        workspace_split.setMaximumHeight(258)
         detail_layout.addWidget(workspace_split)
 
         self.groups_title_label.setText("Grupos ativos")
@@ -10518,6 +10882,7 @@ class LegacyOperatorPage(OperatorPage):
                     "cliente": str(item.get("cliente_label", item.get("cliente", "")) or "-"),
                     "cliente_codigo": str(item.get("cliente_codigo", "") or "").strip(),
                     "cliente_nome": str(item.get("cliente_nome", "") or "").strip(),
+                    "of_codigo": str(item.get("of", "") or item.get("of_codigo", "") or "").strip(),
                     "grupos": 0,
                     "pecas": 0,
                     "em_curso": 0,
@@ -10527,9 +10892,15 @@ class LegacyOperatorPage(OperatorPage):
                 },
             )
             row["grupos"] += 1
+            pieces = list(item.get("pieces", []) or [])
+            if not str(row.get("of_codigo", "") or "").strip():
+                for piece in pieces:
+                    of_txt = str(piece.get("of", "") or piece.get("of_codigo", "") or "").strip()
+                    if of_txt:
+                        row["of_codigo"] = of_txt
+                        break
             row["states"].append(str(item.get("estado_espessura", item.get("estado", "")) or ""))
             row["progress_samples"].append(float(item.get("progress_pct", 0) or 0))
-            pieces = list(item.get("pieces", []) or [])
             row["pecas"] += len(pieces)
             for piece in pieces:
                 state = str(piece.get("estado", "") or "").strip()
@@ -10595,6 +10966,7 @@ class LegacyOperatorPage(OperatorPage):
         for row_index, row in enumerate(self.order_rows):
             row_values = [
                 row.get("encomenda", "-"),
+                row.get("of_codigo", "-") or "-",
                 _format_client_label(row.get("cliente", "-"), show_name=True),
                 row.get("estado", "-"),
                 row.get("grupos", 0),
@@ -10611,7 +10983,7 @@ class LegacyOperatorPage(OperatorPage):
                     font = cell.font()
                     font.setBold(True)
                     cell.setFont(font)
-                if col_index >= 3:
+                if col_index >= 4:
                     cell.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
                 self.orders_table.setItem(row_index, col_index, cell)
         self.orders_table.blockSignals(False)
@@ -10669,7 +11041,8 @@ class LegacyOperatorPage(OperatorPage):
                 _apply_state_chip(self.detail_groups_chip, "-", "0 grupos")
                 _apply_state_chip(self.detail_total_chip, "-", "Todas 0")
             return
-        full_order_title = f"{numero} | {_format_client_label(row.get('cliente', '-'), show_name=True)}"
+        of_txt = str(row.get("of_codigo", "") or "-").strip() or "-"
+        full_order_title = f"{numero} | OF {of_txt} | {_format_client_label(row.get('cliente', '-'), show_name=True)}"
         self.order_focus_label.setText(_elide_middle(full_order_title, 72))
         self.order_focus_label.setToolTip(full_order_title)
         self.order_meta_label.setText(f"{int(row.get('grupos', 0) or 0)} grupos | {int(row.get('pecas', 0) or 0)} pecas | Em curso {int(row.get('em_curso', 0) or 0)} | Avarias {int(row.get('avarias', 0) or 0)} | Progresso {float(row.get('progress_pct', 0) or 0):.1f}%")
@@ -11318,7 +11691,6 @@ class QuotesPage(QWidget):
         meta_right_form.setVerticalSpacing(4)
         meta_right_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         meta_right_form.addRow("Orcamentista", self.executed_combo)
-        meta_right_form.addRow("Posto trab.", self.workcenter_combo)
         meta_right_form.addRow("Empresa", self.client_company_edit)
         meta_right_form.addRow("Contacto", self.client_contact_edit)
         meta_right_form.addRow("Morada", self.client_address_edit)
@@ -11921,13 +12293,8 @@ class QuotesPage(QWidget):
         for value in list(self.backend.ensure_data().get("orcamentistas", []) or []):
             self.executed_combo.addItem(str(value))
         self.executed_combo.setCurrentText(current_exec)
-        current_workcenter = self.workcenter_combo.currentText().strip()
         self.workcenter_combo.blockSignals(True)
         self.workcenter_combo.clear()
-        for value in list(self.backend.quote_workcenter_options() or []):
-            self.workcenter_combo.addItem(str(value))
-        if current_workcenter:
-            self.workcenter_combo.setCurrentText(current_workcenter)
         self.workcenter_combo.blockSignals(False)
 
     def _client_lookup(self, text: str) -> dict:
@@ -12350,7 +12717,7 @@ class QuotesPage(QWidget):
         self.client_contact_edit.setText(str(client.get("contacto", "") or "").strip())
         self.client_email_edit.setText(str(client.get("email", "") or "").strip())
         self.executed_combo.setCurrentText(str(detail.get("executado_por", "") or "").strip())
-        self.workcenter_combo.setCurrentText(str(detail.get("posto_trabalho", "") or "").strip())
+        self.workcenter_combo.setCurrentText("")
         self.note_cliente_edit.setText(str(detail.get("nota_cliente", "") or "").strip())
         self.transport_combo.setCurrentText(str(detail.get("nota_transporte", "") or "").strip())
         carrier_txt = " - ".join(
@@ -15601,7 +15968,6 @@ class QuotesPage(QWidget):
                 "email": self.client_email_edit.text().strip(),
             },
             "executado_por": self.executed_combo.currentText().strip(),
-            "posto_trabalho": self.workcenter_combo.currentText().strip(),
             "nota_transporte": self.transport_combo.currentText().strip(),
             "transportadora_nome": self.transport_carrier_combo.currentText().strip(),
             "zona_transporte": self.transport_zone_combo.currentText().strip(),
