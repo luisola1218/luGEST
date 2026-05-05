@@ -184,7 +184,7 @@ if (-not $appVersion) {
 }
 $updateConfig = [ordered]@{
     current_version = $appVersion
-    manifest_url = '..\Atualizacoes\latest.json'
+    manifest_url = 'https://github.com/luisola1218/luGEST/releases/download/v2026.05.05.1/latest.json'
     channel = 'stable'
     github_token = ''
     auto_check = $false
@@ -393,9 +393,9 @@ Data de preparacao: $releaseDateTxt
 
 ## Atualizacoes desktop
 1. Em cada cliente, abrir o LuisGEST como admin e ir a Extras > Atualizacoes.
-2. Apontar o Manifest para uma pasta/URL com latest.json.
-3. Para esta entrega local, o caminho predefinido ja aponta para ..\Atualizacoes\latest.json.
-4. Para publicar online, copiar Atualizacoes\latest.json e Atualizacoes\$updateZipName para GitHub privado, servidor proprio ou pasta partilhada.
+2. O Manifest ja segue preconfigurado para a release estavel no GitHub privado.
+3. O cliente apenas precisa de colar um token valido e carregar em Verificar.
+4. Se preferires atualizacao por servidor proprio ou pasta partilhada, podes trocar manualmente o Manifest para outro latest.json.
 5. O atualizador valida SHA256, cria backup da pasta Desktop App e tenta criar backup MySQL com mysqldump antes de instalar.
 
 ## Notas finais

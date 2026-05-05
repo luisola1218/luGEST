@@ -2987,7 +2987,7 @@
     }
   },
   "update_settings": {
-    "manifest_url": "..\\Atualizacoes\\latest.json",
+    "manifest_url": "https://github.com/luisola1218/luGEST/releases/download/v2026.05.05.1/latest.json",
     "github_token": "",
     "auto_check": false,
     "current_version": "2026.05.05.1"

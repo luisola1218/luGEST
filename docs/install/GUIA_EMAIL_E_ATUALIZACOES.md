@@ -75,7 +75,8 @@ Confirmar sempre:
 1. Abrir LuisGEST como admin.
 2. Ir a `Extras`.
 3. Abrir `Atualizacoes`.
-4. Em `Manifest`, indicar o caminho/URL do `latest.json`.
+4. Em `Manifest`, o mais profissional e deixar o URL ja gravado de origem no programa.
+5. Se for preciso configurar manualmente, indicar o caminho/URL do `latest.json`.
 
 Exemplos:
 
@@ -96,15 +97,16 @@ Passo a passo simples com GitHub:
    - `latest.json`
    - `LuisGEST-Desktop-2026-05-05-1.zip`
 4. No campo `Manifest`, usar o URL do `latest.json` dessa Release.
-5. No campo `Token GitHub`, colar o token.
-6. Carregar em `Guardar`.
-7. Carregar em `Verificar`.
+5. No cliente final, esse Manifest pode ja seguir preenchido no programa.
+6. No campo `Token GitHub`, colar o token.
+7. Carregar em `Guardar`.
+8. Carregar em `Verificar`.
 8. Se aparecer nova versão, carregar em `Atualizar agora`.
 
 Exemplo:
 
 ```text
-https://github.com/EMPRESA/lugest-releases/releases/download/v2026.05.05.1/latest.json
+https://github.com/luisola1218/luGEST/releases/download/v2026.05.05.1/latest.json
 ```
 
 ## Como publicar uma nova versao
