@@ -68,15 +68,69 @@ function Resolve-RelativePathOrUrl($value, $baseDir) {
     return (Join-Path $baseDir $txt)
 }
 
+function Get-DownloadHeaders($url, $token, [switch]$BinaryAsset) {
+    $headers = @{}
+    if ($token) {
+        $headers['Authorization'] = "Bearer $token"
+    }
+    if ($BinaryAsset) {
+        $headers['Accept'] = 'application/octet-stream'
+    }
+    return $headers
+}
+
+function Resolve-GitHubReleaseAssetApiUrl($url, $token) {
+    if (-not $token) {
+        return $null
+    }
+    $txt = [string]$url
+    $match = [regex]::Match($txt, '^https://github\.com/(?<owner>[^/]+)/(?<repo>[^/]+)/releases/download/(?<tag>[^/]+)/(?<asset>[^/?#]+)$')
+    if (-not $match.Success) {
+        return $null
+    }
+    $owner = $match.Groups['owner'].Value
+    $repo = $match.Groups['repo'].Value
+    $tag = $match.Groups['tag'].Value
+    $assetName = [System.Uri]::UnescapeDataString($match.Groups['asset'].Value)
+    $headers = Get-DownloadHeaders "https://api.github.com/" $token
+    $headers['User-Agent'] = 'LuisGEST-Updater'
+    $headers['Accept'] = 'application/vnd.github+json'
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$owner/$repo/releases/tags/$tag" -Headers $headers -Method Get
+    foreach ($asset in $release.assets) {
+        if ([string]$asset.name -eq $assetName) {
+            return [string]$asset.url
+        }
+    }
+    throw "Asset GitHub nao encontrado na release ${tag}: $assetName"
+}
+
+function Download-RemoteFile($url, $targetPath, $token) {
+    $txt = [string]$url
+    $assetApiUrl = Resolve-GitHubReleaseAssetApiUrl $txt $token
+    if ($assetApiUrl) {
+        $headers = Get-DownloadHeaders $assetApiUrl $token -BinaryAsset
+        $headers['User-Agent'] = 'LuisGEST-Updater'
+        Invoke-WebRequest -Uri $assetApiUrl -OutFile $targetPath -Headers $headers -UseBasicParsing
+        return
+    }
+    if ($txt -match '^https://api\.github\.com/repos/.+/releases/assets/\d+$') {
+        $headers = Get-DownloadHeaders $txt $token -BinaryAsset
+        $headers['User-Agent'] = 'LuisGEST-Updater'
+        Invoke-WebRequest -Uri $txt -OutFile $targetPath -Headers $headers -UseBasicParsing
+        return
+    }
+    $headers = Get-DownloadHeaders $txt $token
+    if ($token) {
+        $headers['User-Agent'] = 'LuisGEST-Updater'
+    }
+    Invoke-WebRequest -Uri $txt -OutFile $targetPath -Headers $headers -UseBasicParsing
+}
+
 function Read-Manifest($manifestRef, $config, $workDir) {
     $manifestPath = Join-Path $workDir 'latest.json'
     if ($manifestRef -match '^https?://') {
-        $headers = @{}
         $token = [string](Get-JsonValue $config 'github_token' '')
-        if ($token) {
-            $headers['Authorization'] = "Bearer $token"
-        }
-        Invoke-WebRequest -Uri $manifestRef -OutFile $manifestPath -Headers $headers -UseBasicParsing
+        Download-RemoteFile $manifestRef $manifestPath $token
         return [pscustomobject]@{ Manifest = (Read-JsonFile $manifestPath); LocalPath = $manifestPath; SourceRef = $manifestRef }
     }
     $resolved = Resolve-RelativePathOrUrl $manifestRef $appDir
@@ -242,12 +296,8 @@ try {
     $packageResolved = Resolve-RelativePathOrUrl $packageRef $manifestBase
     $packagePath = Join-Path $workDir 'package.zip'
     if ($packageResolved -match '^https?://') {
-        $headers = @{}
         $token = [string](Get-JsonValue $config 'github_token' '')
-        if ($token) {
-            $headers['Authorization'] = "Bearer $token"
-        }
-        Invoke-WebRequest -Uri $packageResolved -OutFile $packagePath -Headers $headers -UseBasicParsing
+        Download-RemoteFile $packageResolved $packagePath $token
     }
     else {
         if (-not (Test-Path $packageResolved)) {
