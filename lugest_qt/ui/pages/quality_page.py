@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QSizePolicy,
 )
 
 from ..widgets import CardFrame, StatCard
@@ -77,6 +78,9 @@ class QualityPage(QWidget):
         self.tabs = QTabWidget()
         self.tabs.setObjectName("QualityTabs")
         self.tabs.setDocumentMode(True)
+        self.tabs.setUsesScrollButtons(True)
+        self.tabs.tabBar().setExpanding(False)
+        self.tabs.tabBar().setDrawBase(False)
         root.addWidget(self.tabs, 1)
 
         self.reception_rows: list[dict[str, Any]] = []
@@ -189,9 +193,13 @@ class QualityPage(QWidget):
         reject_btn = QPushButton("Rejeitar / NC")
         reject_btn.setProperty("variant", "danger")
         reject_btn.clicked.connect(lambda: self._evaluate_selected_reception(default_status="REJEITADO"))
-        toolbar.addWidget(evaluate_btn)
-        toolbar.addWidget(approve_btn)
-        toolbar.addWidget(reject_btn)
+        for button in (evaluate_btn, approve_btn, reject_btn):
+            button.setProperty("compact", "true")
+            button.setProperty("qualityAction", "true")
+            button.setProperty("toolbarAction", "true")
+            button.setMinimumWidth(104)
+            button.setMinimumHeight(36)
+            toolbar.addWidget(button)
         layout.addWidget(toolbar_card)
         note = QLabel("A receção apenas dá entrada física. Nesta lista a qualidade liberta, mantém em inspeção ou rejeita o material/produto recebido.")
         note.setProperty("role", "muted")
@@ -215,11 +223,18 @@ class QualityPage(QWidget):
         layout.addWidget(self._section_header("Nao conformidades", "Registo de desvios, reclamacoes a fornecedores, devolucoes e acoes corretivas com rastreabilidade por entidade."))
         toolbar_card = CardFrame()
         toolbar_card.setObjectName("QualityToolbar")
-        toolbar = QHBoxLayout(toolbar_card)
+        toolbar = QVBoxLayout(toolbar_card)
         toolbar.setContentsMargins(12, 10, 12, 10)
         toolbar.setSpacing(8)
-        toolbar.addWidget(self.nc_filter, 1)
-        toolbar.addWidget(self.nc_state)
+        filter_row = QHBoxLayout()
+        filter_row.setContentsMargins(0, 0, 0, 0)
+        filter_row.setSpacing(8)
+        filter_row.addWidget(self.nc_filter, 1)
+        filter_row.addWidget(self.nc_state)
+        toolbar.addLayout(filter_row)
+        actions_row = QHBoxLayout()
+        actions_row.setContentsMargins(0, 0, 0, 0)
+        actions_row.setSpacing(6)
         add_btn = QPushButton("Nova NC")
         add_btn.clicked.connect(lambda: self._edit_nc({}))
         edit_btn = QPushButton("Editar")
@@ -244,7 +259,15 @@ class QualityPage(QWidget):
         remove_btn.setProperty("variant", "danger")
         remove_btn.clicked.connect(self._remove_selected_nc)
         for button in (add_btn, edit_btn, close_btn, release_btn, pdf_btn, supplier_label_btn, supplier_label_print_btn, remove_btn):
-            toolbar.addWidget(button)
+            button.setProperty("compact", "true")
+            button.setProperty("qualityAction", "true")
+            button.setProperty("toolbarAction", "true")
+            button.setMinimumWidth(88)
+            button.setMinimumHeight(36)
+            button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+            actions_row.addWidget(button)
+        actions_row.addStretch(1)
+        toolbar.addLayout(actions_row)
         layout.addWidget(toolbar_card)
         layout.addWidget(self.nc_table, 1)
         return page
@@ -273,6 +296,11 @@ class QualityPage(QWidget):
         remove_btn.setProperty("variant", "danger")
         remove_btn.clicked.connect(self._remove_selected_document)
         for button in (add_btn, edit_btn, open_btn, remove_btn):
+            button.setProperty("compact", "true")
+            button.setProperty("qualityAction", "true")
+            button.setProperty("toolbarAction", "true")
+            button.setMinimumWidth(104)
+            button.setMinimumHeight(36)
             toolbar.addWidget(button)
         layout.addWidget(toolbar_card)
         layout.addWidget(self.doc_table, 1)
@@ -305,6 +333,11 @@ class QualityPage(QWidget):
         actions.setContentsMargins(12, 10, 12, 10)
         dossier_btn = QPushButton("Gerar dossier PDF")
         dossier_btn.clicked.connect(self._open_dossier_pdf)
+        dossier_btn.setProperty("compact", "true")
+        dossier_btn.setProperty("qualityAction", "true")
+        dossier_btn.setProperty("toolbarAction", "true")
+        dossier_btn.setMinimumWidth(128)
+        dossier_btn.setMinimumHeight(36)
         actions.addStretch(1)
         actions.addWidget(dossier_btn)
         note = QLabel("Checklist operacional para apoiar auditorias. Nao substitui a interpretacao formal da norma.")

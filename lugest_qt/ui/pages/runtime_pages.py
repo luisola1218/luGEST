@@ -1675,11 +1675,12 @@ class OperatorPage(QWidget):
                     break
         return True
 
-    def _handle_scan_code(self) -> None:
-        code = self.scan_edit.text().strip()
+    def _handle_scan_code(self, source_edit: QLineEdit | None = None) -> None:
+        active_edit = source_edit or self.scan_edit
+        code = active_edit.text().strip()
         if not code:
             return
-        self.scan_edit.clear()
+        active_edit.clear()
         scanner = getattr(self.backend, "operator_scan_code", None)
         if not callable(scanner):
             self._set_feedback("Leitura por scanner indisponivel.", error=True)
@@ -1689,9 +1690,18 @@ class OperatorPage(QWidget):
         except Exception as exc:
             self._set_feedback(str(exc), error=True)
             return
-        if str(result.get("tipo", "") or "").upper() == "OF":
+        scan_type = str(result.get("tipo", "") or "").upper()
+        detail_mode = self._is_order_detail_active()
+        current_order = str(self.selected_order_number or self._current_order_row().get("encomenda", "") or "").strip()
+        if scan_type == "OF":
             enc = dict(result.get("encomenda", {}) or {})
             enc_num = str(enc.get("numero", "") or "").strip()
+            if detail_mode:
+                if current_order and enc_num == current_order:
+                    self._set_feedback(f"OF {code} confirmada. Nesta pagina usa a etiqueta da espessura ou a OPP para continuar.")
+                else:
+                    self._set_feedback("Ja estas dentro de uma encomenda. Aqui o scanner serve para abrir espessura ou OPP.", error=True)
+                return
             if self._select_operator_target(enc_num):
                 self._set_feedback(f"OF {code} carregada.")
             else:
@@ -1701,10 +1711,16 @@ class OperatorPage(QWidget):
                 else:
                     self._set_feedback(f"OF {code} encontrada, mas nao esta visivel neste posto/filtro.", error=True)
             return
-        if str(result.get("tipo", "") or "").upper() == "GRP":
+        if scan_type == "GRP":
             enc_num = str(result.get("encomenda_numero", "") or "").strip()
             material = str(result.get("material", "") or "").strip()
             espessura = str(result.get("espessura", "") or "").strip()
+            if detail_mode and current_order and enc_num != current_order:
+                self._set_feedback(
+                    f"A espessura {material} {espessura} pertence a outra encomenda ({enc_num}). Nesta pagina trabalha-se dentro da encomenda atual.",
+                    error=True,
+                )
+                return
             target_group = None
             for item in list(getattr(self, "all_items", []) or []):
                 if str(item.get("encomenda", "") or "").strip() != enc_num:
@@ -1723,6 +1739,12 @@ class OperatorPage(QWidget):
         enc_num = str(result.get("encomenda_numero", "") or "").strip()
         piece_id = str(result.get("piece_id", "") or "").strip()
         operation = str(result.get("operacao", "") or "").strip()
+        if detail_mode and current_order and enc_num != current_order:
+            self._set_feedback(
+                f"A OPP {code} pertence a outra encomenda ({enc_num}). Nesta pagina usa a OPP da encomenda atual.",
+                error=True,
+            )
+            return
         if not self._select_operator_target(enc_num, piece_id):
             self.refresh()
             if not self._select_operator_target(enc_num, piece_id):
@@ -1731,6 +1753,17 @@ class OperatorPage(QWidget):
         if operation:
             self.operation_combo.setCurrentText(operation)
         self._set_feedback(f"OPP {code} aberta" + (f" | {operation}" if operation else ""))
+
+    def _is_order_detail_active(self) -> bool:
+        return bool(hasattr(self, "view_stack") and self.view_stack.currentWidget() is getattr(self, "detail_page", None))
+
+    def _sync_scan_placeholder(self) -> None:
+        if not hasattr(self, "scan_edit"):
+            return
+        placeholder = "Picar espessura/OPP" if self._is_order_detail_active() else "Picar OF/OPP"
+        self.scan_edit.setPlaceholderText(placeholder)
+        if hasattr(self, "list_scan_edit"):
+            self.list_scan_edit.setPlaceholderText("Picar OF")
 
     def _show_client_name(self) -> bool:
         return bool(self.ui_options.get("operator_show_client_name", True))
@@ -9420,7 +9453,11 @@ class OrdersPage(QWidget):
             QDialog { font-size: 12px; }
             QTableWidget { font-size: 12px; }
             QHeaderView::section { font-size: 12px; font-weight: 700; }
-            QDoubleSpinBox { font-size: 12px; min-height: 28px; }
+            QDoubleSpinBox {
+                font-size: 12px;
+                min-height: 32px;
+                padding: 3px 8px;
+            }
             QPushButton { min-width: 116px; min-height: 36px; font-size: 12px; }
             """
         )
@@ -9434,7 +9471,7 @@ class OrdersPage(QWidget):
         table.setSelectionBehavior(QTableWidget.SelectRows)
         table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        table.verticalHeader().setDefaultSectionSize(30)
+        table.verticalHeader().setDefaultSectionSize(38)
         header = table.horizontalHeader()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -9453,11 +9490,13 @@ class OrdersPage(QWidget):
             spin.setRange(0.0, float(row.get("disponivel", 0) or 0))
             spin.setDecimals(2)
             spin.setButtonSymbols(QDoubleSpinBox.NoButtons)
-            spin.setAlignment(Qt.AlignCenter)
+            spin.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            spin.setMinimumHeight(30)
             spin.setMinimumWidth(144)
             cell_host = QWidget()
             cell_layout = QHBoxLayout(cell_host)
             cell_layout.setContentsMargins(8, 3, 8, 3)
+            cell_layout.setAlignment(Qt.AlignCenter)
             cell_layout.addWidget(spin)
             table.setCellWidget(row_index, 4, cell_host)
             spinners.append((row, spin))
@@ -10479,6 +10518,22 @@ class LegacyOperatorPage(OperatorPage):
         list_filters_layout.addWidget(self.orders_search_edit, 1)
         _cap_width(self.orders_state_filter_combo, 152)
         list_layout.addWidget(list_filters)
+        list_scan_card = CardFrame()
+        list_scan_card.set_tone("info")
+        list_scan_layout = QHBoxLayout(list_scan_card)
+        list_scan_layout.setContentsMargins(12, 8, 12, 8)
+        list_scan_layout.setSpacing(8)
+        list_scan_title = QLabel("Scanner OF")
+        list_scan_title.setStyleSheet("font-size: 12px; font-weight: 800; color: #0f172a;")
+        list_scan_hint = QLabel("Pica a OF para abrir diretamente a encomenda certa.")
+        list_scan_hint.setProperty("role", "muted")
+        self.list_scan_edit = QLineEdit()
+        self.list_scan_edit.setPlaceholderText("Picar OF")
+        self.list_scan_edit.returnPressed.connect(lambda: self._handle_scan_code(self.list_scan_edit))
+        list_scan_layout.addWidget(list_scan_title)
+        list_scan_layout.addWidget(list_scan_hint, 1)
+        list_scan_layout.addWidget(self.list_scan_edit, 0)
+        list_layout.addWidget(list_scan_card)
         self.orders_card = CardFrame()
         self.orders_card.set_tone("info")
         orders_layout = QVBoxLayout(self.orders_card)
@@ -10834,11 +10889,13 @@ class LegacyOperatorPage(OperatorPage):
 
     def _show_order_list(self) -> None:
         self.view_stack.setCurrentWidget(self.list_page)
+        self._sync_scan_placeholder()
         self._refresh_orders_list_view()
         self._sync_order_focus()
 
     def _show_order_detail(self) -> None:
         self.view_stack.setCurrentWidget(self.detail_page)
+        self._sync_scan_placeholder()
         self._show_group_overview()
 
     def _show_group_overview(self) -> None:

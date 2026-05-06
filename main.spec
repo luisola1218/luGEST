@@ -1,5 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_submodules
 
 hiddenimports = ['main']
@@ -7,21 +9,26 @@ hiddenimports += collect_submodules('lugest_qt')
 hiddenimports += collect_submodules('impulse_mobile_api')
 hiddenimports += collect_submodules('reportlab.graphics.barcode')
 
+repo_root = Path.cwd()
+datas = [
+    ('app.ico', '.'),
+    ('lugest_branding.json', '.'),
+    ('logo.jpg', '.'),
+    ('Logos/logo.png', 'Logos'),
+    ('Logos/image (1).jpg', 'Logos'),
+    ('Logos/image.jpg', 'Logos'),
+    ('Logos/logo(1).jpg', 'Logos'),
+]
+intro_video = repo_root / 'Logos' / 'Vidoinicial.mp4'
+if intro_video.exists():
+    datas.append(('Logos/Vidoinicial.mp4', 'Logos'))
+
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[
-        ('app.ico', '.'),
-        ('lugest_branding.json', '.'),
-        ('logo.jpg', '.'),
-        ('Logos/logo.png', 'Logos'),
-        ('Logos/image (1).jpg', 'Logos'),
-        ('Logos/image.jpg', 'Logos'),
-        ('Logos/logo(1).jpg', 'Logos'),
-        ('Logos/Vidoinicial.mp4', 'Logos'),
-    ],
+    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

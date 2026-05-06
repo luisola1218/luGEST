@@ -2,7 +2,9 @@
 
 from PyInstaller.utils.hooks import collect_submodules
 
-hiddenimports = collect_submodules('impulse_mobile_api')
+hiddenimports = ['main']
+hiddenimports += collect_submodules('lugest_qt')
+hiddenimports += collect_submodules('impulse_mobile_api')
 hiddenimports += collect_submodules('reportlab.graphics.barcode')
 
 

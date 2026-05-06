@@ -1599,9 +1599,9 @@
           "rapid_speed_mm_s": 2000.0,
           "travel_acc_mm_s2": 2000.0,
           "cut_acc_mm_s2": 2000.0,
-          "mark_speed_m_min": 25.0,
-          "effective_speed_factor_pct": 90.0,
-          "lead_in_mm": 2.0,
+          "mark_speed_m_min": 26.0,
+          "effective_speed_factor_pct": 88.0,
+          "lead_in_mm": 0.5,
           "lead_out_mm": 2.0,
           "lead_move_speed_mm_s": 5.0,
           "pierce_base_ms": 350.0,
@@ -2637,23 +2637,28 @@
             },
             "S275JR": {
               "price_per_kg": 0.95,
-              "scrap_credit_per_kg": 0.9
+              "scrap_credit_per_kg": 0.9,
+              "density_kg_m3": 7850.0
             },
             "S355JR": {
               "price_per_kg": 0.95,
-              "scrap_credit_per_kg": 0.9
+              "scrap_credit_per_kg": 0.9,
+              "density_kg_m3": 7850.0
             },
             "S355J2+N": {
               "price_per_kg": 0.95,
-              "scrap_credit_per_kg": 0.9
+              "scrap_credit_per_kg": 0.9,
+              "density_kg_m3": 7850.0
             },
             "S355MC": {
               "price_per_kg": 0.95,
-              "scrap_credit_per_kg": 0.9
+              "scrap_credit_per_kg": 0.9,
+              "density_kg_m3": 7850.0
             },
             "S420MC": {
               "price_per_kg": 0.95,
-              "scrap_credit_per_kg": 0.9
+              "scrap_credit_per_kg": 0.9,
+              "density_kg_m3": 7850.0
             },
             "DX51D+Z": {
               "price_per_kg": 0.95,
@@ -2677,7 +2682,8 @@
             },
             "S355JOW": {
               "price_per_kg": 0.95,
-              "scrap_credit_per_kg": 0.9
+              "scrap_credit_per_kg": 0.9,
+              "density_kg_m3": 7850.0
             },
             "HARDOX 400": {
               "price_per_kg": 0.95,
@@ -2696,6 +2702,26 @@
             "HARDOX": {
               "price_per_kg": 0.95,
               "scrap_credit_per_kg": 0.9
+            },
+            "S235JR 2MM": {
+              "thickness_overrides": [
+                {
+                  "price_per_kg": 1.0,
+                  "scrap_credit_per_kg": 1.0,
+                  "density_kg_m3": 7850.0,
+                  "thickness_min_mm": 1.0
+                }
+              ]
+            },
+            "S235JR 3MM": {
+              "thickness_overrides": [
+                {
+                  "price_per_kg": 2.0,
+                  "scrap_credit_per_kg": 2.0,
+                  "density_kg_m3": 7850.0,
+                  "thickness_min_mm": 2.0
+                }
+              ]
             }
           },
           "Aco inox": {
@@ -2776,7 +2802,7 @@
           }
         },
         "rates": {
-          "cut_per_m_eur": 0.44999999999999996,
+          "cut_per_m_eur": 0.45,
           "defilm_per_m_eur": 0.5,
           "marking_per_m_eur": 0.61,
           "pierce_eur": 0.1,
@@ -2815,7 +2841,9 @@
         "HARDOX 400",
         "HARDOX 450",
         "DX51D",
-        "HARDOX"
+        "HARDOX",
+        "S235JR 2MM",
+        "S235JR 3MM"
       ],
       "Aco inox": [
         "INOX304 2B",
@@ -2988,7 +3016,7 @@
   },
   "update_settings": {
     "manifest_url": "C:\\Users\\engenharia\\Desktop\\App LuisGEST - Revisão Final\\Atualizacoes\\latest.json",
-    "github_token": "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",
+    "github_token": "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",
     "auto_check": true,
     "current_version": "2026.05.05.1"
   }

@@ -5,6 +5,7 @@ from typing import Any
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -120,7 +122,10 @@ def _settings_gas_names(settings: dict[str, Any], machine_name: str, material_na
     materials = dict(machine.get("materials", {}) or {})
     material = _resolve_material_mapping(materials, material_name)
     gases = dict(material.get("gases", {}) or {})
-    return list(gases.keys()) or ["Oxigenio"]
+    forced = _forced_gas_for_material(material_name)
+    if forced and forced in gases:
+        return [forced]
+    return list(gases.keys()) or [forced or "Oxigenio"]
 
 
 def _norm_material_token(value: Any) -> str:
@@ -156,6 +161,184 @@ def _display_material_family(value: Any) -> str:
     if not canonical:
         return ""
     return MATERIAL_FAMILY_LABELS.get(canonical, canonical)
+
+
+def _forced_gas_for_material(material_name: Any) -> str:
+    canonical = _canonical_material_family(material_name)
+    if canonical == "Aco inox":
+        return "Nitrogenio"
+    return ""
+
+
+def _preferred_material_gas(settings: dict[str, Any], machine_name: str, material_name: str, fallback: str = "") -> str:
+    forced = _forced_gas_for_material(material_name)
+    values = _settings_gas_names(settings, machine_name, material_name)
+    if forced and forced in values:
+        return forced
+    if fallback and fallback in values:
+        return fallback
+    machines = dict(settings.get("machine_profiles", {}) or {})
+    machine = dict(machines.get(machine_name, {}) or {})
+    materials = dict(machine.get("materials", {}) or {})
+    material = _resolve_material_mapping(materials, material_name)
+    default_gas = str(material.get("default_gas", "") or "").strip()
+    if default_gas and default_gas in values:
+        return default_gas
+    return values[0] if values else (forced or "Oxigenio")
+
+
+def _material_catalog_metrics(family_catalog: dict[str, Any]) -> tuple[int, int]:
+    subtype_count = 0
+    rule_count = 0
+    for subtype, payload in dict(family_catalog or {}).items():
+        if not str(subtype or "").strip():
+            continue
+        subtype_count += 1
+        rule_count += 1
+        for row in list(dict(payload or {}).get("thickness_overrides", []) or []):
+            if isinstance(row, dict):
+                rule_count += 1
+    return subtype_count, rule_count
+
+
+def _cut_rows_summary(rows: list[dict[str, Any]]) -> str:
+    valid = [
+        dict(row or {})
+        for row in list(rows or [])
+        if float(str((row or {}).get("thickness_mm", 0) or 0).replace(",", ".")) > 0.0
+    ]
+    if not valid:
+        return "Sem linhas de corte configuradas."
+    values = sorted(float(row.get("thickness_mm", 0) or 0) for row in valid)
+    return f"{len(valid)} linhas | espessuras {_fmt_num(values[0], 1)} a {_fmt_num(values[-1], 1)} mm"
+
+
+class CutTableDialog(QDialog):
+    def __init__(self, material_name: str, gas_name: str, rows: list[dict[str, Any]], parent=None) -> None:
+        super().__init__(parent)
+        self.material_name = str(material_name or "").strip() or "Material"
+        self.gas_name = str(gas_name or "").strip() or "Gas"
+        self.setWindowTitle(f"Tabela de corte - {self.material_name} / {self.gas_name}")
+        self.resize(1180, 620)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
+
+        header_card = CardFrame()
+        header_layout = QVBoxLayout(header_card)
+        header_layout.setContentsMargins(12, 10, 12, 10)
+        header_layout.setSpacing(6)
+        title = QLabel(f"Tabela de corte para {self.material_name} / {self.gas_name}")
+        title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        helper = QLabel(
+            "Edita aqui a tabela completa por espessura. Cada linha representa um set de parametros de corte."
+        )
+        helper.setProperty("role", "muted")
+        self.summary_label = QLabel("")
+        self.summary_label.setProperty("role", "muted")
+        header_layout.addWidget(title)
+        header_layout.addWidget(helper)
+        header_layout.addWidget(self.summary_label)
+        root.addWidget(header_card)
+
+        table_card = CardFrame()
+        table_layout = QVBoxLayout(table_card)
+        table_layout.setContentsMargins(12, 10, 12, 10)
+        table_layout.setSpacing(8)
+        self.table = QTableWidget(0, 11)
+        self.table.setHorizontalHeaderLabels(["Esp.", "Vel min", "Vel max", "Bico dist.", "Gas min", "Gas max", "Foco", "Bico", "Duty %", "Freq Hz", "Potencia"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table_layout.addWidget(self.table, 1)
+        actions = QHBoxLayout()
+        self.add_btn = QPushButton("Adicionar linha")
+        self.remove_btn = QPushButton("Remover linha")
+        self.remove_btn.setProperty("variant", "danger")
+        actions.addWidget(self.add_btn)
+        actions.addWidget(self.remove_btn)
+        actions.addStretch(1)
+        table_layout.addLayout(actions)
+        root.addWidget(table_card, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+        self.add_btn.clicked.connect(self._add_row)
+        self.remove_btn.clicked.connect(self._remove_row)
+        self.table.itemChanged.connect(lambda *_args: self._update_summary())
+        self._load_rows(rows)
+
+    def _load_rows(self, rows: list[dict[str, Any]]) -> None:
+        self.table.blockSignals(True)
+        self.table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            self.table.setItem(row_index, 0, _table_number_item(row.get("thickness_mm", 0), 1))
+            self.table.setItem(row_index, 1, _table_number_item(row.get("speed_min_m_min", 0), 2))
+            self.table.setItem(row_index, 2, _table_number_item(row.get("speed_max_m_min", 0), 2))
+            self.table.setItem(row_index, 3, _table_number_item(row.get("nozzle_distance_mm", 0), 2))
+            self.table.setItem(row_index, 4, _table_number_item(row.get("gas_pressure_bar_min", 0), 2))
+            self.table.setItem(row_index, 5, _table_number_item(row.get("gas_pressure_bar_max", 0), 2))
+            self.table.setItem(row_index, 6, _table_number_item(row.get("focus_mm", 0), 2))
+            self.table.setItem(row_index, 7, _table_text_item(row.get("nozzle", "")))
+            self.table.setItem(row_index, 8, _table_number_item(row.get("duty_pct", 0), 1))
+            self.table.setItem(row_index, 9, _table_number_item(row.get("frequency_hz", 0), 0))
+            self.table.setItem(row_index, 10, _table_number_item(row.get("power_w", row.get("power_pct", 0)), 0))
+        self.table.blockSignals(False)
+        self._update_summary()
+
+    def _update_summary(self) -> None:
+        self.summary_label.setText(_cut_rows_summary(self.rows_payload()))
+
+    def _add_row(self) -> None:
+        row_index = self.table.rowCount()
+        self.table.insertRow(row_index)
+        for col_index in range(self.table.columnCount()):
+            if col_index == 7:
+                self.table.setItem(row_index, col_index, _table_text_item(""))
+            else:
+                self.table.setItem(row_index, col_index, _table_number_item(0, 2 if col_index else 1))
+        self._update_summary()
+
+    def _remove_row(self) -> None:
+        row = self.table.currentRow()
+        if row < 0:
+            row = self.table.rowCount() - 1
+        if row >= 0:
+            self.table.removeRow(row)
+        self._update_summary()
+
+    def rows_payload(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for row_index in range(self.table.rowCount()):
+            numeric_values: list[float] = []
+            for col_index in (0, 1, 2, 3, 4, 5, 6, 8, 9, 10):
+                item = self.table.item(row_index, col_index)
+                text = str(item.text() if item is not None else "").strip().replace(",", ".")
+                numeric_values.append(float(text or 0.0))
+            if numeric_values[0] <= 0.0:
+                continue
+            nozzle_item = self.table.item(row_index, 7)
+            rows.append(
+                {
+                    "thickness_mm": numeric_values[0],
+                    "speed_min_m_min": numeric_values[1],
+                    "speed_max_m_min": numeric_values[2],
+                    "nozzle_distance_mm": numeric_values[3],
+                    "gas_pressure_bar_min": numeric_values[4],
+                    "gas_pressure_bar_max": numeric_values[5],
+                    "focus_mm": numeric_values[6],
+                    "nozzle": str(nozzle_item.text() if nozzle_item is not None else "").strip(),
+                    "duty_pct": numeric_values[7],
+                    "frequency_hz": numeric_values[8],
+                    "power_w": numeric_values[9],
+                }
+            )
+        rows.sort(key=lambda row: float(row.get("thickness_mm", 0) or 0))
+        return rows
 
 
 def _resolve_material_mapping(materials: dict[str, Any], material_name: str) -> dict[str, Any]:
@@ -201,7 +384,7 @@ class MaterialSubtypeCatalogDialog(QDialog):
         self.fallback_price_per_kg = float(fallback_price_per_kg or 0.0)
         self.fallback_scrap_credit_per_kg = float(fallback_scrap_credit_per_kg or 0.0)
         self.setWindowTitle(f"Tabela de subtipos - {self.material_name}")
-        self.resize(820, 520)
+        self.resize(980, 620)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -225,23 +408,35 @@ class MaterialSubtypeCatalogDialog(QDialog):
         header_layout.addWidget(helper)
         root.addWidget(header_card)
 
+        filter_card = CardFrame()
+        filter_layout = QHBoxLayout(filter_card)
+        filter_layout.setContentsMargins(12, 8, 12, 8)
+        filter_layout.setSpacing(8)
+        filter_layout.addWidget(QLabel("Procurar"))
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Filtrar por subtipo ou espessura")
+        self.count_label = QLabel("")
+        self.count_label.setProperty("role", "muted")
+        filter_layout.addWidget(self.search_edit, 1)
+        filter_layout.addWidget(self.count_label)
+        root.addWidget(filter_card)
+
         table_card = CardFrame()
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(12, 10, 12, 10)
         table_layout.setSpacing(8)
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Subtipo", "Preco material (EUR/kg)", "Densidade (kg/m3)", "Valor sucata (EUR/kg)"])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["Subtipo", "Esp. min (mm)", "Esp. max (mm)", "Preco material (EUR/kg)", "Densidade (kg/m3)", "Valor sucata (EUR/kg)"])
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        for section in (1, 2, 3, 4, 5):
+            header.setSectionResizeMode(section, QHeaderView.ResizeToContents)
         table_layout.addWidget(self.table, 1)
         table_actions = QHBoxLayout()
-        self.add_btn = QPushButton("Adicionar subtipo")
-        self.remove_btn = QPushButton("Remover subtipo")
+        self.add_btn = QPushButton("Adicionar regra")
+        self.remove_btn = QPushButton("Remover regra")
         self.remove_btn.setProperty("variant", "secondary")
         table_actions.addWidget(self.add_btn)
         table_actions.addWidget(self.remove_btn)
@@ -256,35 +451,47 @@ class MaterialSubtypeCatalogDialog(QDialog):
 
         self.add_btn.clicked.connect(self._add_row)
         self.remove_btn.clicked.connect(self._remove_row)
+        self.search_edit.textChanged.connect(self._apply_filter)
         self._load_rows(family_catalog)
 
     def _load_rows(self, family_catalog: dict[str, Any]) -> None:
-        rows = sorted(
+        rows: list[tuple[str, dict[str, Any], bool]] = []
+        for subtype, payload in sorted(
             [
                 (str(subtype or "").strip(), dict(payload or {}))
                 for subtype, payload in dict(family_catalog or {}).items()
                 if str(subtype or "").strip()
             ],
             key=lambda item: item[0].upper(),
-        )
+        ):
+            rows.append((subtype, payload, True))
+            for override in list(payload.get("thickness_overrides", []) or []):
+                if isinstance(override, dict):
+                    rows.append((subtype, dict(override), False))
         self.table.setRowCount(len(rows))
-        for row_index, (subtype, payload) in enumerate(rows):
+        for row_index, (subtype, payload, is_base) in enumerate(rows):
             self.table.setItem(row_index, 0, _table_text_item(subtype))
-            self.table.setItem(row_index, 1, _table_number_item(payload.get("price_per_kg", self.fallback_price_per_kg), 3))
-            self.table.setItem(row_index, 2, _table_number_item(payload.get("density_kg_m3", 0.0), 1))
-            self.table.setItem(row_index, 3, _table_number_item(payload.get("scrap_credit_per_kg", self.fallback_scrap_credit_per_kg), 3))
+            self.table.setItem(row_index, 1, _table_text_item("" if is_base else _fmt_num(payload.get("thickness_min_mm", 0.0), 1)))
+            self.table.setItem(row_index, 2, _table_text_item("" if is_base else _fmt_num(payload.get("thickness_max_mm", 0.0), 1)))
+            self.table.setItem(row_index, 3, _table_number_item(payload.get("price_per_kg", self.fallback_price_per_kg), 3))
+            self.table.setItem(row_index, 4, _table_number_item(payload.get("density_kg_m3", 0.0), 1))
+            self.table.setItem(row_index, 5, _table_number_item(payload.get("scrap_credit_per_kg", self.fallback_scrap_credit_per_kg), 3))
+        self._apply_filter()
 
     def _add_row(self) -> None:
         row_index = self.table.rowCount()
         self.table.insertRow(row_index)
         self.table.setItem(row_index, 0, _table_text_item(""))
-        self.table.setItem(row_index, 1, _table_number_item(self.fallback_price_per_kg, 3))
-        self.table.setItem(row_index, 2, _table_number_item(0.0, 1))
-        self.table.setItem(row_index, 3, _table_number_item(self.fallback_scrap_credit_per_kg, 3))
+        self.table.setItem(row_index, 1, _table_text_item(""))
+        self.table.setItem(row_index, 2, _table_text_item(""))
+        self.table.setItem(row_index, 3, _table_number_item(self.fallback_price_per_kg, 3))
+        self.table.setItem(row_index, 4, _table_number_item(0.0, 1))
+        self.table.setItem(row_index, 5, _table_number_item(self.fallback_scrap_credit_per_kg, 3))
         self.table.setCurrentCell(row_index, 0)
         item = self.table.item(row_index, 0)
         if item is not None:
             self.table.editItem(item)
+        self._apply_filter()
 
     def _remove_row(self) -> None:
         row = self.table.currentRow()
@@ -292,6 +499,21 @@ class MaterialSubtypeCatalogDialog(QDialog):
             row = self.table.rowCount() - 1
         if row >= 0:
             self.table.removeRow(row)
+        self._apply_filter()
+
+    def _apply_filter(self) -> None:
+        token = str(self.search_edit.text() or "").strip().lower()
+        visible = 0
+        for row_index in range(self.table.rowCount()):
+            texts = []
+            for col_index in range(self.table.columnCount()):
+                item = self.table.item(row_index, col_index)
+                texts.append(str(item.text() if item is not None else "").strip().lower())
+            matches = not token or any(token in text for text in texts if text)
+            self.table.setRowHidden(row_index, not matches)
+            if matches:
+                visible += 1
+        self.count_label.setText(f"{visible} regras visiveis")
 
     def catalog_payload(self) -> dict[str, Any]:
         catalog: dict[str, Any] = {}
@@ -300,9 +522,13 @@ class MaterialSubtypeCatalogDialog(QDialog):
             subtype = str(subtype_item.text() if subtype_item is not None else "").strip()
             if not subtype:
                 continue
-            price_item = self.table.item(row_index, 1)
-            density_item = self.table.item(row_index, 2)
-            scrap_item = self.table.item(row_index, 3)
+            min_item = self.table.item(row_index, 1)
+            max_item = self.table.item(row_index, 2)
+            price_item = self.table.item(row_index, 3)
+            density_item = self.table.item(row_index, 4)
+            scrap_item = self.table.item(row_index, 5)
+            min_txt = str(min_item.text() if min_item is not None else "").strip().replace(",", ".")
+            max_txt = str(max_item.text() if max_item is not None else "").strip().replace(",", ".")
             try:
                 price_per_kg = float(str(price_item.text() if price_item is not None else "0").strip().replace(",", ".") or 0.0)
             except Exception:
@@ -321,7 +547,32 @@ class MaterialSubtypeCatalogDialog(QDialog):
             }
             if density_kg_m3 > 0.0:
                 payload["density_kg_m3"] = density_kg_m3
-            catalog[subtype] = payload
+            if min_txt or max_txt:
+                try:
+                    thickness_min_mm = max(0.0, float(min_txt or 0.0))
+                except Exception:
+                    thickness_min_mm = 0.0
+                try:
+                    thickness_max_mm = max(0.0, float(max_txt or 0.0))
+                except Exception:
+                    thickness_max_mm = 0.0
+                override = dict(payload)
+                if thickness_min_mm > 0.0:
+                    override["thickness_min_mm"] = thickness_min_mm
+                if thickness_max_mm > 0.0:
+                    override["thickness_max_mm"] = thickness_max_mm
+                base = dict(catalog.get(subtype, {}) or {})
+                overrides = [dict(item or {}) for item in list(base.get("thickness_overrides", []) or [])]
+                overrides.append(override)
+                base["thickness_overrides"] = overrides
+                catalog[subtype] = base
+            else:
+                base = dict(catalog.get(subtype, {}) or {})
+                overrides = [dict(item or {}) for item in list(base.get("thickness_overrides", []) or [])]
+                base.update(payload)
+                if overrides:
+                    base["thickness_overrides"] = overrides
+                catalog[subtype] = base
         return catalog
 
 
@@ -467,10 +718,27 @@ class LaserSettingsDialog(QDialog):
         self.settings = dict(self.backend.laser_quote_settings() or {})
         self._material_catalog_cache: dict[str, Any] = {}
         self._series_tiers_cache: list[dict[str, Any]] = []
+        self.setWindowFlag(Qt.WindowMinimizeButtonHint, True)
+        self.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
         self.setWindowTitle("Configuracao de Orcamento Laser")
-        self.resize(1100, 760)
+        self.resize(1120, 760)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        root = QVBoxLayout(self)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        outer.addWidget(scroll, 1)
+
+        content = QWidget()
+        scroll.setWidget(content)
+        self._content_widget = content
+        self._scroll_area = scroll
+        self._apply_screen_bounds()
+
+        root = QVBoxLayout(content)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
@@ -515,33 +783,40 @@ class LaserSettingsDialog(QDialog):
         top_layout.addWidget(self.ignore_patterns_edit, 3, 2, 1, 2)
         root.addWidget(top_card)
 
+        manage_card = CardFrame()
+        manage_layout = QGridLayout(manage_card)
+        manage_layout.setContentsMargins(12, 10, 12, 10)
+        manage_layout.setHorizontalSpacing(10)
+        manage_layout.setVerticalSpacing(6)
+        manage_title = QLabel("Tabelas e regras")
+        manage_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        manage_layout.addWidget(manage_title, 0, 0, 1, 3)
+        self.manage_cut_table_btn = QPushButton("Tabela de corte")
+        self.manage_cut_table_btn.setProperty("variant", "secondary")
+        self.manage_material_catalog_btn = QPushButton("Tabela subtipos")
+        self.manage_material_catalog_btn.setProperty("variant", "secondary")
+        self.manage_series_btn = QPushButton("Series")
+        self.manage_series_btn.setProperty("variant", "secondary")
+        for button in (self.manage_cut_table_btn, self.manage_material_catalog_btn, self.manage_series_btn):
+            button.setMinimumHeight(32)
+            button.setCursor(Qt.PointingHandCursor)
+        self.cut_table_summary_label = QLabel("")
+        self.material_catalog_summary_label = QLabel("")
+        self.series_summary_label = QLabel("")
+        for label in (self.cut_table_summary_label, self.material_catalog_summary_label, self.series_summary_label):
+            label.setProperty("role", "muted")
+            label.setWordWrap(True)
+        manage_layout.addWidget(self.manage_cut_table_btn, 1, 0)
+        manage_layout.addWidget(self.manage_material_catalog_btn, 1, 1)
+        manage_layout.addWidget(self.manage_series_btn, 1, 2)
+        manage_layout.addWidget(self.cut_table_summary_label, 2, 0)
+        manage_layout.addWidget(self.material_catalog_summary_label, 2, 1)
+        manage_layout.addWidget(self.series_summary_label, 2, 2)
+        root.addWidget(manage_card)
+
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
         root.addWidget(self.tabs, 1)
-        tab_actions_widget = QWidget()
-        tab_actions_layout = QHBoxLayout(tab_actions_widget)
-        tab_actions_layout.setContentsMargins(8, 2, 0, 0)
-        tab_actions_layout.setSpacing(6)
-        self.manage_material_catalog_btn = QPushButton("Tabela subtipos")
-        self.manage_material_catalog_btn.setProperty("variant", "secondary")
-        self.manage_material_catalog_btn.setMinimumHeight(30)
-        self.manage_material_catalog_btn.setMinimumWidth(144)
-        self.manage_material_catalog_btn.setCursor(Qt.PointingHandCursor)
-        self.manage_material_catalog_btn.setStyleSheet(
-            "padding: 4px 12px; font-weight: 700; border-radius: 9px;"
-        )
-        self.manage_series_btn = QPushButton("Series")
-        self.manage_series_btn.setProperty("variant", "secondary")
-        self.manage_series_btn.setMinimumHeight(30)
-        self.manage_series_btn.setMinimumWidth(118)
-        self.manage_series_btn.setCursor(Qt.PointingHandCursor)
-        self.manage_series_btn.setStyleSheet(
-            "padding: 4px 12px; font-weight: 700; border-radius: 9px;"
-        )
-        tab_actions_layout.addWidget(self.manage_material_catalog_btn)
-        tab_actions_layout.addWidget(self.manage_series_btn)
-        tab_actions_layout.addStretch(1)
-        self.tabs.setCornerWidget(tab_actions_widget, Qt.TopRightCorner)
 
         self.machine_tab = QWidget()
         self.machine_tab_layout = QVBoxLayout(self.machine_tab)
@@ -577,28 +852,21 @@ class LaserSettingsDialog(QDialog):
         motion_layout.addRow("Overhead movimento %", self.overhead_spin)
         self.machine_tab_layout.addWidget(motion_card)
 
-        table_card = CardFrame()
-        table_layout = QVBoxLayout(table_card)
-        table_layout.setContentsMargins(12, 10, 12, 10)
-        table_layout.setSpacing(8)
-        title = QLabel("Tabela de corte")
-        title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
-        table_layout.addWidget(title)
-        self.cut_table = QTableWidget(0, 11)
-        self.cut_table.setHorizontalHeaderLabels(["Esp.", "Vel min", "Vel max", "Bico dist.", "Gas min", "Gas max", "Foco", "Bico", "Duty %", "Freq Hz", "Potencia"])
-        self.cut_table.verticalHeader().setVisible(False)
-        self.cut_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.cut_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        table_layout.addWidget(self.cut_table, 1)
-        table_actions = QHBoxLayout()
-        self.add_cut_row_btn = QPushButton("Adicionar linha")
-        self.remove_cut_row_btn = QPushButton("Remover linha")
-        self.remove_cut_row_btn.setProperty("variant", "danger")
-        table_actions.addWidget(self.add_cut_row_btn)
-        table_actions.addWidget(self.remove_cut_row_btn)
-        table_actions.addStretch(1)
-        table_layout.addLayout(table_actions)
-        self.machine_tab_layout.addWidget(table_card, 1)
+        machine_note_card = CardFrame()
+        machine_note_layout = QVBoxLayout(machine_note_card)
+        machine_note_layout.setContentsMargins(12, 10, 12, 10)
+        machine_note_layout.setSpacing(6)
+        machine_note_title = QLabel("Tabela de corte separada")
+        machine_note_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        machine_note_text = QLabel(
+            "Os parametros por espessura ficam numa janela propria para poderes trabalhar com mais detalhe "
+            "sem apertar esta configuracao principal."
+        )
+        machine_note_text.setWordWrap(True)
+        machine_note_text.setProperty("role", "muted")
+        machine_note_layout.addWidget(machine_note_title)
+        machine_note_layout.addWidget(machine_note_text)
+        self.machine_tab_layout.addWidget(machine_note_card, 1)
         self.tabs.addTab(self.machine_tab, "Maquina")
 
         self.cost_tab = QWidget()
@@ -622,13 +890,32 @@ class LaserSettingsDialog(QDialog):
         self._build_cost_tab()
         self.gas_combo.currentTextChanged.connect(self._load_current_values)
         self.commercial_combo.currentTextChanged.connect(self._on_commercial_changed)
-        self.add_cut_row_btn.clicked.connect(self._add_cut_row)
-        self.remove_cut_row_btn.clicked.connect(self._remove_cut_row)
+        self.manage_cut_table_btn.clicked.connect(self._open_cut_table_dialog)
         self.manage_material_catalog_btn.clicked.connect(self._open_material_catalog_dialog)
         self.manage_series_btn.clicked.connect(self._open_series_dialog)
         self._reload_material_catalog_cache_from_current_profile()
         self._reload_series_cache_from_current_profile()
         self._refresh_materials()
+
+    def _apply_screen_bounds(self) -> None:
+        screen = self.screen()
+        if screen is None:
+            screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        max_width = max(760, available.width() - 24)
+        max_height = max(560, available.height() - 24)
+        self.setMaximumSize(max_width, max_height)
+        self.resize(min(1120, max_width), min(760, max_height))
+        current = self.frameGeometry()
+        x = max(available.left(), min(current.x(), available.right() - current.width() + 1))
+        y = max(available.top(), min(current.y(), available.bottom() - current.height() + 1))
+        self.move(x, y)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._apply_screen_bounds()
 
     def _build_cost_tab(self) -> None:
         cost_card = CardFrame()
@@ -735,7 +1022,8 @@ class LaserSettingsDialog(QDialog):
     def _refresh_gases(self) -> None:
         current_gas = self.gas_combo.currentText().strip()
         values = _settings_gas_names(self.settings, self.machine_combo.currentText().strip(), self.material_combo.currentText().strip())
-        _set_combo_values(self.gas_combo, values, current_gas if current_gas else values[0])
+        preferred = _preferred_material_gas(self.settings, self.machine_combo.currentText().strip(), self.material_combo.currentText().strip(), current_gas)
+        _set_combo_values(self.gas_combo, values, preferred)
         self._load_current_values()
 
     def _load_current_values(self) -> None:
@@ -760,19 +1048,9 @@ class LaserSettingsDialog(QDialog):
         gases = dict(material.get("gases", {}) or {})
         gas = dict(gases.get(self.gas_combo.currentText().strip(), {}) or {})
         rows = list(gas.get("rows", []) or [])
-        self.cut_table.setRowCount(len(rows))
-        for row_index, row in enumerate(rows):
-            self.cut_table.setItem(row_index, 0, _table_number_item(row.get("thickness_mm", 0), 1))
-            self.cut_table.setItem(row_index, 1, _table_number_item(row.get("speed_min_m_min", 0), 2))
-            self.cut_table.setItem(row_index, 2, _table_number_item(row.get("speed_max_m_min", 0), 2))
-            self.cut_table.setItem(row_index, 3, _table_number_item(row.get("nozzle_distance_mm", 0), 2))
-            self.cut_table.setItem(row_index, 4, _table_number_item(row.get("gas_pressure_bar_min", 0), 2))
-            self.cut_table.setItem(row_index, 5, _table_number_item(row.get("gas_pressure_bar_max", 0), 2))
-            self.cut_table.setItem(row_index, 6, _table_number_item(row.get("focus_mm", 0), 2))
-            self.cut_table.setItem(row_index, 7, _table_text_item(row.get("nozzle", "")))
-            self.cut_table.setItem(row_index, 8, _table_number_item(row.get("duty_pct", 0), 1))
-            self.cut_table.setItem(row_index, 9, _table_number_item(row.get("frequency_hz", 0), 0))
-            self.cut_table.setItem(row_index, 10, _table_number_item(row.get("power_w", 0), 0))
+        self.cut_table_summary_label.setText(
+            f"{self.material_combo.currentText().strip() or 'Material'} / {self.gas_combo.currentText().strip() or 'Gas'}: {_cut_rows_summary(rows)}"
+        )
 
         commercial = self._commercial_profile()
         commercial_materials = dict(commercial.get("materials", {}) or {})
@@ -809,13 +1087,16 @@ class LaserSettingsDialog(QDialog):
                 f"{len(rows)} subtipos configurados para {current_family}: {sample}. "
                 "Abre a janela para editar os precos por categoria."
             )
-            self.manage_material_catalog_btn.setText(f"Tabela subtipos ({len(rows)})")
+            subtype_count, rule_count = _material_catalog_metrics(catalog)
+            self.manage_material_catalog_btn.setText(f"Tabela subtipos ({subtype_count})")
+            self.material_catalog_summary_label.setText(f"{rule_count} regras comerciais configuradas.")
         else:
             summary = (
                 f"Sem subtipos configurados para {current_family}. "
                 "Abre a janela para criar categorias com preco proprio."
             )
             self.manage_material_catalog_btn.setText("Tabela subtipos")
+            self.material_catalog_summary_label.setText("Sem regras comerciais para este material.")
         self.manage_material_catalog_btn.setToolTip(summary)
         self.manage_material_catalog_btn.setStatusTip(summary)
 
@@ -826,6 +1107,7 @@ class LaserSettingsDialog(QDialog):
             self.manage_series_btn.setText("Series")
             self.manage_series_btn.setToolTip(summary)
             self.manage_series_btn.setStatusTip(summary)
+            self.series_summary_label.setText(summary)
             return
         parts: list[str] = []
         for tier in tiers[:4]:
@@ -841,6 +1123,33 @@ class LaserSettingsDialog(QDialog):
         self.manage_series_btn.setText(f"Series ({len(tiers)})")
         self.manage_series_btn.setToolTip(summary)
         self.manage_series_btn.setStatusTip(summary)
+        self.series_summary_label.setText(summary)
+
+    def _open_cut_table_dialog(self) -> None:
+        machine_name = self.machine_combo.currentText().strip()
+        material_name = _canonical_material_family(self.material_combo.currentText().strip()) or "Aco carbono"
+        gas_name = _preferred_material_gas(self.settings, machine_name, material_name, self.gas_combo.currentText().strip())
+        machine_profiles = dict(self.settings.get("machine_profiles", {}) or {})
+        machine = dict(machine_profiles.get(machine_name, {}) or {})
+        materials = dict(machine.get("materials", {}) or {})
+        material = dict(materials.get(material_name, {}) or {})
+        gases = dict(material.get("gases", {}) or {})
+        rows = list(dict(gases.get(gas_name, {}) or {}).get("rows", []) or [])
+        dialog = CutTableDialog(_display_material_family(material_name), gas_name, rows, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        gases[gas_name] = {"rows": dialog.rows_payload()}
+        material["gases"] = gases
+        if _forced_gas_for_material(material_name):
+            material["default_gas"] = _forced_gas_for_material(material_name)
+        else:
+            material["default_gas"] = gas_name
+        materials[material_name] = material
+        machine["materials"] = materials
+        machine_profiles[machine_name] = machine
+        self.settings["machine_profiles"] = machine_profiles
+        self.gas_combo.setCurrentText(material.get("default_gas", gas_name))
+        self._load_current_values()
 
     def _open_material_catalog_dialog(self) -> None:
         current_family = _canonical_material_family(self.material_combo.currentText().strip()) or "Aco carbono"
@@ -863,52 +1172,6 @@ class LaserSettingsDialog(QDialog):
             return
         self._series_tiers_cache = dialog.tiers_payload()
         self._update_series_summary()
-
-    def _read_cut_rows(self) -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
-        for row_index in range(self.cut_table.rowCount()):
-            numeric_values: list[float] = []
-            for col_index in (0, 1, 2, 3, 4, 5, 6, 8, 9, 10):
-                item = self.cut_table.item(row_index, col_index)
-                text = str(item.text() if item is not None else "").strip().replace(",", ".")
-                numeric_values.append(float(text or 0.0))
-            if numeric_values[0] <= 0.0:
-                continue
-            nozzle_item = self.cut_table.item(row_index, 7)
-            nozzle_txt = str(nozzle_item.text() if nozzle_item is not None else "").strip()
-            rows.append(
-                {
-                    "thickness_mm": numeric_values[0],
-                    "speed_min_m_min": numeric_values[1],
-                    "speed_max_m_min": numeric_values[2],
-                    "nozzle_distance_mm": numeric_values[3],
-                    "gas_pressure_bar_min": numeric_values[4],
-                    "gas_pressure_bar_max": numeric_values[5],
-                    "focus_mm": numeric_values[6],
-                    "nozzle": nozzle_txt,
-                    "duty_pct": numeric_values[7],
-                    "frequency_hz": numeric_values[8],
-                    "power_w": numeric_values[9],
-                }
-            )
-        rows.sort(key=lambda row: float(row.get("thickness_mm", 0) or 0))
-        return rows
-
-    def _add_cut_row(self) -> None:
-        row_index = self.cut_table.rowCount()
-        self.cut_table.insertRow(row_index)
-        for col_index in range(self.cut_table.columnCount()):
-            if col_index == 7:
-                self.cut_table.setItem(row_index, col_index, _table_text_item(""))
-            else:
-                self.cut_table.setItem(row_index, col_index, _table_number_item(0, 2 if col_index else 1))
-
-    def _remove_cut_row(self) -> None:
-        row = self.cut_table.currentRow()
-        if row < 0:
-            row = self.cut_table.rowCount() - 1
-        if row >= 0:
-            self.cut_table.removeRow(row)
 
     def _save(self) -> None:
         settings = dict(self.settings or {})
@@ -942,10 +1205,8 @@ class LaserSettingsDialog(QDialog):
         material_name = _canonical_material_family(self.material_combo.currentText().strip()) or "Aco carbono"
         material = dict(materials.get(material_name, {}) or {})
         material["density_kg_m3"] = self.density_spin.value()
-        material["default_gas"] = self.gas_combo.currentText().strip() or "Oxigenio"
-        gases = dict(material.get("gases", {}) or {})
-        gases[self.gas_combo.currentText().strip() or "Oxigenio"] = {"rows": self._read_cut_rows()}
-        material["gases"] = gases
+        forced_gas = _forced_gas_for_material(material_name)
+        material["default_gas"] = forced_gas or self.gas_combo.currentText().strip() or "Oxigenio"
         materials[material_name] = material
         machine["materials"] = materials
         machine_profiles[settings["active_machine"]] = machine

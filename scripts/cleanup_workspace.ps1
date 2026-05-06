@@ -30,9 +30,12 @@ function Remove-PathSafe {
 }
 
 $pathsToRemove = @(
+    'backups',
     'build',
     'build_qt_stable',
+    'dist',
     'dist_qt_stable',
+    'generated',
     'dist\lugest_trial.json',
     '.cad312',
     '.pytest_cache',

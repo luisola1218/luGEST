@@ -369,6 +369,13 @@ def _canonical_gas_name(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _forced_gas_for_material(material_name: Any) -> str:
+    family = _canonical_material_family(material_name)
+    if family == "Aco inox":
+        return "Nitrogenio"
+    return ""
+
+
 def _profile_section_perimeter_mm(section: Any, family: Any = "") -> float:
     text = str(section or "").upper().replace(",", ".")
     values = [float(match) for match in re.findall(r"\d+(?:\.\d+)?", text)]
@@ -1791,20 +1798,58 @@ def _commercial_material(profile: dict[str, Any], material_name: str, material_s
     return _resolve_material_profile(materials, material_name, material_subtype)[1]
 
 
-def _commercial_material_subtype_override(profile: dict[str, Any], material_name: str, material_subtype: str = "") -> dict[str, Any]:
+def _commercial_material_subtype_override(
+    profile: dict[str, Any],
+    material_name: str,
+    material_subtype: str = "",
+    thickness_mm: float = 0.0,
+) -> dict[str, Any]:
     subtype = str(material_subtype or "").strip()
     if not subtype:
         return {}
     catalog = dict(profile.get("material_catalog", {}) or {})
     family = _canonical_material_family(material_name) or str(material_name or "").strip()
     family_catalog = dict(catalog.get(family, {}) or {})
+    payload = {}
     if subtype in family_catalog:
-        return dict(family_catalog.get(subtype, {}) or {})
-    subtype_token = _norm_material_token(subtype)
-    for key, value in family_catalog.items():
-        if _norm_material_token(key) == subtype_token:
-            return dict(value or {})
-    return {}
+        payload = dict(family_catalog.get(subtype, {}) or {})
+    else:
+        subtype_token = _norm_material_token(subtype)
+        for key, value in family_catalog.items():
+            if _norm_material_token(key) == subtype_token:
+                payload = dict(value or {})
+                break
+    if not payload:
+        return {}
+    result = {
+        key: value
+        for key, value in payload.items()
+        if key != "thickness_overrides"
+    }
+    target_thickness = max(0.0, _as_float(thickness_mm, 0.0))
+    matched_override: dict[str, Any] = {}
+    best_score = -1.0
+    for row in list(payload.get("thickness_overrides", []) or []):
+        if not isinstance(row, dict):
+            continue
+        min_mm = max(0.0, _as_float(row.get("thickness_min_mm", 0.0), 0.0))
+        max_mm = max(0.0, _as_float(row.get("thickness_max_mm", 0.0), 0.0))
+        if max_mm > 0.0 and min_mm > max_mm:
+            min_mm, max_mm = max_mm, min_mm
+        if target_thickness > 0.0:
+            if min_mm > 0.0 and target_thickness < min_mm:
+                continue
+            if max_mm > 0.0 and target_thickness > max_mm:
+                continue
+        width = max_mm - min_mm if max_mm > 0.0 else 999999.0
+        score = (1000000.0 - width) + (10.0 if min_mm > 0.0 else 0.0) + (10.0 if max_mm > 0.0 else 0.0)
+        if score > best_score:
+            best_score = score
+            matched_override = dict(row)
+    for key, value in matched_override.items():
+        if key not in {"thickness_min_mm", "thickness_max_mm"} and value is not None:
+            result[key] = value
+    return result
 
 
 def _series_pricing_tiers(profile: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1850,7 +1895,8 @@ def _pick_series_tier(profile: dict[str, Any], quantity: int) -> dict[str, Any]:
 def _gas_rows(machine_profile: dict[str, Any], material_name: str, gas_name: str, material_subtype: str = "") -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     material_profile = _machine_material(machine_profile, material_name, material_subtype)
     gases = dict((material_profile.get("gases") or {}))
-    selected_gas = _canonical_gas_name(gas_name or material_profile.get("default_gas", "") or "")
+    forced_gas = _forced_gas_for_material(material_name)
+    selected_gas = _canonical_gas_name(forced_gas or gas_name or material_profile.get("default_gas", "") or "")
     if selected_gas and selected_gas in gases:
         return selected_gas, list(dict(gases.get(selected_gas, {}) or {}).get("rows", []) or []), material_profile
     selected_token = _norm_material_token(selected_gas)
@@ -2072,7 +2118,12 @@ def estimate_laser_quote(payload: dict[str, Any], settings: dict[str, Any] | Non
         raise ValueError("Nao foi possivel encontrar parametros de corte para esta espessura.")
     motion_cfg = dict(machine_profile.get("motion", {}) or {})
     commercial_material = _commercial_material(commercial_profile, material_family, material_subtype)
-    commercial_subtype_override = _commercial_material_subtype_override(commercial_profile, material_family, material_subtype)
+    commercial_subtype_override = _commercial_material_subtype_override(
+        commercial_profile,
+        material_family,
+        material_subtype,
+        thickness_mm,
+    )
     pricing_material = dict(commercial_material or {})
     pricing_material.update({key: value for key, value in dict(commercial_subtype_override or {}).items() if value is not None})
     metrics = dict(geometry.get("metrics", {}) or {})
@@ -2420,7 +2471,12 @@ def estimate_profile_laser_quote(payload: dict[str, Any], settings: dict[str, An
 
     motion_cfg = dict(machine_profile.get("motion", {}) or {})
     commercial_material = _commercial_material(commercial_profile, material_family, material_subtype)
-    commercial_subtype_override = _commercial_material_subtype_override(commercial_profile, material_family, material_subtype)
+    commercial_subtype_override = _commercial_material_subtype_override(
+        commercial_profile,
+        material_family,
+        material_subtype,
+        thickness_mm,
+    )
     pricing_material = dict(commercial_material or {})
     pricing_material.update({key: value for key, value in dict(commercial_subtype_override or {}).items() if value is not None})
     profile_operations = dict(commercial_profile.get("profile_operations", {}) or {})

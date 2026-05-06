@@ -138,6 +138,8 @@ class StockDashboardPage(QWidget):
             self.create_note_btn,
             self.export_btn,
         ):
+            widget.setProperty("toolbarAction", "true")
+            widget.setMinimumHeight(36)
             top_row.addWidget(widget)
         toolbar_layout.addLayout(top_row)
 
@@ -228,6 +230,9 @@ class StockDashboardPage(QWidget):
         for key, label in (("radar", "Radar"), ("actions", "Acoes"), ("logistics", "Logistica")):
             btn = QPushButton(label)
             btn.setCheckable(True)
+            btn.setProperty("dashboardSegment", "true")
+            btn.setMinimumHeight(38)
+            btn.setMinimumWidth(104)
             btn.clicked.connect(lambda checked=False, view_key=key: self._set_operational_view(view_key))
             self.op_buttons[key] = btn
             op_menu_layout.addWidget(btn)
@@ -363,6 +368,9 @@ class StockDashboardPage(QWidget):
         for key, label in (("overview", "Visao geral"), ("purchases", "Compras"), ("montagem", "Montagem")):
             btn = QPushButton(label)
             btn.setCheckable(True)
+            btn.setProperty("dashboardSegment", "true")
+            btn.setMinimumHeight(38)
+            btn.setMinimumWidth(118)
             btn.clicked.connect(lambda checked=False, view_key=key: self._set_stock_view(view_key))
             self.stock_buttons[key] = btn
             stock_menu_layout.addWidget(btn)
@@ -557,9 +565,7 @@ class StockDashboardPage(QWidget):
         mapping = {"radar": 0, "actions": 1, "logistics": 2}
         self.operational_stack.setCurrentIndex(mapping.get(key, 0))
         for button_key, button in self.op_buttons.items():
-            active = button_key == key
-            button.setChecked(active)
-            button.setStyleSheet(self._segment_style(active))
+            button.setChecked(button_key == key)
         self._sync_actions()
 
     def _set_stock_view(self, key: str) -> None:
@@ -567,21 +573,8 @@ class StockDashboardPage(QWidget):
         mapping = {"overview": 0, "purchases": 1, "montagem": 2}
         self.stock_stack.setCurrentIndex(mapping.get(key, 0))
         for button_key, button in self.stock_buttons.items():
-            active = button_key == key
-            button.setChecked(active)
-            button.setStyleSheet(self._segment_style(active))
+            button.setChecked(button_key == key)
         self._sync_actions()
-
-    def _segment_style(self, active: bool) -> str:
-        if active:
-            return (
-                "QPushButton { background: #0f3c88; color: white; font-weight: 800; "
-                "border: 1px solid #0f3c88; border-radius: 10px; padding: 8px 14px; }"
-            )
-        return (
-            "QPushButton { background: #f8fafc; color: #0f172a; font-weight: 700; "
-            "border: 1px solid #cbd5e1; border-radius: 10px; padding: 8px 14px; }"
-        )
 
     def refresh(self) -> None:
         year = str(self.year_combo.currentText() or "Todos").strip() or "Todos"
@@ -589,10 +582,12 @@ class StockDashboardPage(QWidget):
         years = ["Todos"]
         years.extend([str(value) for value in list(finance_preview.get("years", []) or []) if str(value).strip()])
         self._sync_year_combo(years, finance_preview.get("selected_year", year))
-        year = str(self.year_combo.currentText() or finance_preview.get("selected_year", year) or "Todos").strip() or "Todos"
-
-        self.finance_payload = dict(self.backend.finance_dashboard(year) or {})
-        self.operational_payload = dict(self.backend.operational_dashboard(year) or {})
+        selected_year = str(self.year_combo.currentText() or finance_preview.get("selected_year", year) or "Todos").strip() or "Todos"
+        if selected_year == year:
+            self.finance_payload = finance_preview
+        else:
+            self.finance_payload = dict(self.backend.finance_dashboard(selected_year) or {})
+        self.operational_payload = dict(self.backend.operational_dashboard(selected_year) or {})
         self._fill_operational()
         self._fill_finance()
         updated_txt = _text(self.operational_payload.get("updated_at", ""), "")

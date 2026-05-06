@@ -355,12 +355,19 @@ try {
         status = 'installed'
     }
     Write-Info "Atualizacao concluida."
-    $exe = Join-Path $appDir 'lugest_qt.exe'
+    $exe = Join-Path $appDir 'main.exe'
     if (-not (Test-Path $exe)) {
-        $exe = Join-Path $appDir 'main.exe'
+        $exe = Join-Path $appDir 'lugest_qt.exe'
     }
     if ((-not $NoRestart) -and (Test-Path $exe)) {
-        Start-Process -FilePath $exe -WorkingDirectory $appDir
+        $restartParams = @{
+            FilePath = $exe
+            WorkingDirectory = $appDir
+        }
+        if ([System.IO.Path]::GetFileName($exe).ToLowerInvariant() -eq 'main.exe') {
+            $restartParams['WindowStyle'] = 'Hidden'
+        }
+        Start-Process @restartParams
     }
 }
 finally {

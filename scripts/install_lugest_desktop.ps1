@@ -1,6 +1,7 @@
 param(
     [string]$InstallDir = "",
-    [switch]$Force
+    [switch]$Force,
+    [switch]$ReplaceEnv
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,6 +24,19 @@ function New-Shortcut($shortcutPath, $targetPath, $workingDirectory, $iconPath) 
     $shortcut.Save()
 }
 
+function New-ShortcutWithArgs($shortcutPath, $targetPath, $arguments, $workingDirectory, $iconPath) {
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $targetPath
+    $shortcut.Arguments = $arguments
+    $shortcut.WorkingDirectory = $workingDirectory
+    if (Test-Path $iconPath) {
+        $shortcut.IconLocation = $iconPath
+    }
+    $shortcut.Description = 'LuisGEST ERP industrial'
+    $shortcut.Save()
+}
+
 $sourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $InstallDir) {
     if (Test-IsAdmin) {
@@ -33,10 +47,10 @@ if (-not $InstallDir) {
     }
 }
 
-$exeName = 'lugest_qt.exe'
+$exeName = 'main.exe'
 $sourceExe = Join-Path $sourceDir $exeName
 if (-not (Test-Path $sourceExe)) {
-    $exeName = 'main.exe'
+    $exeName = 'lugest_qt.exe'
     $sourceExe = Join-Path $sourceDir $exeName
 }
 if (-not (Test-Path $sourceExe)) {
@@ -64,7 +78,28 @@ if ($LASTEXITCODE -gt 7) {
     throw "Falha ao copiar ficheiros (robocopy exit $LASTEXITCODE)."
 }
 
-foreach ($fileName in @('lugest.env', 'lugest_trial.json', 'update_config.json')) {
+$sourceEnv = Join-Path $sourceDir 'lugest.env'
+$targetEnv = Join-Path $InstallDir 'lugest.env'
+$shouldReplaceEnv = $false
+if ((Test-Path $sourceEnv) -and (Test-Path $targetEnv)) {
+    if ($ReplaceEnv) {
+        $shouldReplaceEnv = $true
+    }
+    elseif (-not $Force) {
+        $answerEnv = Read-Host "Substituir o lugest.env ja instalado pelo lugest.env desta pasta? (S/N)"
+        $shouldReplaceEnv = $answerEnv.Trim().ToUpperInvariant() -eq 'S'
+    }
+}
+elseif ((Test-Path $sourceEnv) -and -not (Test-Path $targetEnv)) {
+    $shouldReplaceEnv = $true
+}
+
+if ($shouldReplaceEnv -and (Test-Path $sourceEnv)) {
+    Copy-Item $sourceEnv $targetEnv -Force
+    Write-Host "lugest.env atualizado: $targetEnv"
+}
+
+foreach ($fileName in @('lugest_trial.json', 'update_config.json')) {
     $sourceFile = Join-Path $sourceDir $fileName
     $targetFile = Join-Path $InstallDir $fileName
     if ((Test-Path $sourceFile) -and -not (Test-Path $targetFile)) {
@@ -73,14 +108,34 @@ foreach ($fileName in @('lugest.env', 'lugest_trial.json', 'update_config.json')
 }
 
 $targetExe = Join-Path $InstallDir $exeName
+$targetLauncherBat = Join-Path $InstallDir 'Arrancar LuisGEST Desktop.bat'
+$targetLauncherPs1 = Join-Path $InstallDir 'Arrancar LuisGEST Desktop.ps1'
+$targetLauncherVbs = Join-Path $InstallDir 'Arrancar LuisGEST Desktop.vbs'
 $iconPath = Join-Path $InstallDir 'app.ico'
 $desktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) 'LuisGEST.lnk'
 $startMenuDir = Join-Path ([Environment]::GetFolderPath('Programs')) 'LuisGEST'
 New-Item -ItemType Directory -Path $startMenuDir -Force | Out-Null
 $startMenuShortcut = Join-Path $startMenuDir 'LuisGEST.lnk'
-
-New-Shortcut $desktopShortcut $targetExe $InstallDir $iconPath
-New-Shortcut $startMenuShortcut $targetExe $InstallDir $iconPath
+$powershellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$wscriptExe = Join-Path $env:SystemRoot 'System32\wscript.exe'
+if (Test-Path $targetLauncherBat) {
+    New-Shortcut $desktopShortcut $targetLauncherBat $InstallDir $iconPath
+    New-Shortcut $startMenuShortcut $targetLauncherBat $InstallDir $iconPath
+}
+elseif ((Test-Path $targetLauncherVbs) -and (Test-Path $wscriptExe)) {
+    $launcherArgs = "`"$targetLauncherVbs`" `"$InstallDir`""
+    New-ShortcutWithArgs $desktopShortcut $wscriptExe $launcherArgs $InstallDir $iconPath
+    New-ShortcutWithArgs $startMenuShortcut $wscriptExe $launcherArgs $InstallDir $iconPath
+}
+elseif ((Test-Path $targetLauncherPs1) -and (Test-Path $powershellExe)) {
+    $launcherArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$targetLauncherPs1`" -InstallDir `"$InstallDir`""
+    New-ShortcutWithArgs $desktopShortcut $powershellExe $launcherArgs $InstallDir $iconPath
+    New-ShortcutWithArgs $startMenuShortcut $powershellExe $launcherArgs $InstallDir $iconPath
+}
+else {
+    New-Shortcut $desktopShortcut $targetExe $InstallDir $iconPath
+    New-Shortcut $startMenuShortcut $targetExe $InstallDir $iconPath
+}
 
 Write-Host ''
 Write-Host 'LuisGEST instalado com sucesso.'

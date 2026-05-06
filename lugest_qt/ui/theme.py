@@ -123,6 +123,28 @@ def apply_theme(app: QApplication, branding: dict) -> None:
         QPushButton[variant="secondary"]:hover {{
             background: #dde8f4;
         }}
+        QPushButton[variant="logout"] {{
+            color: #ffffff;
+            border: 1px solid #8f1d14;
+            border-bottom: 2px solid #6f140f;
+            padding: 9px 15px 8px 15px;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #ef5d55,
+                stop:0.55 #d92d20,
+                stop:1 #b42318);
+        }}
+        QPushButton[variant="logout"]:hover {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #f26d65,
+                stop:0.55 #e13b2f,
+                stop:1 #be2518);
+        }}
+        QPushButton[variant="logout"]:pressed {{
+            padding-top: 10px;
+            padding-bottom: 7px;
+            border-bottom-width: 1px;
+            background: #a61b13;
+        }}
         QPushButton[variant="danger"] {{
             background: #b42318;
         }}
@@ -150,6 +172,84 @@ def apply_theme(app: QApplication, branding: dict) -> None:
         QPushButton[compact="true"] {{
             padding: 5px 8px;
             font-size: 11px;
+        }}
+        QPushButton[qualityAction="true"] {{
+            padding: 8px 14px 7px 14px;
+            font-size: 11px;
+            font-weight: 800;
+            border-radius: 10px;
+            border-width: 1px;
+            border-style: solid;
+        }}
+        QPushButton[toolbarAction="true"] {{
+            padding: 9px 16px 8px 16px;
+            font-size: 12px;
+            font-weight: 800;
+            border-radius: 10px;
+            border: 1px solid #153979;
+            border-bottom: 2px solid #0b234f;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #214ca0,
+                stop:0.55 #173e87,
+                stop:1 #0f2f70);
+        }}
+        QPushButton[toolbarAction="true"]:hover {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #2c58ad,
+                stop:0.55 #1b4692,
+                stop:1 #123578);
+        }}
+        QPushButton[toolbarAction="true"][variant="secondary"] {{
+            color: #16304e;
+            border: 1px solid #aebfd2;
+            border-bottom: 2px solid #8fa3ba;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #ffffff,
+                stop:1 #e7eef7);
+        }}
+        QPushButton[toolbarAction="true"][variant="secondary"]:hover {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #ffffff,
+                stop:1 #dbe6f2);
+        }}
+        QPushButton[toolbarAction="true"][variant="success"] {{
+            border: 1px solid #0e6b54;
+            border-bottom: 2px solid #0a4c3d;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #19a17e,
+                stop:0.55 #0f8a6a,
+                stop:1 #0b6f56);
+        }}
+        QPushButton[toolbarAction="true"][variant="danger"] {{
+            border: 1px solid #8f1d14;
+            border-bottom: 2px solid #6f140f;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #e8564d,
+                stop:0.55 #d92d20,
+                stop:1 #b42318);
+        }}
+        QPushButton[dashboardSegment="true"] {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #ffffff,
+                stop:1 #eef4fb);
+            color: #17314f;
+            font-weight: 700;
+            border: 1px solid #bfd0e2;
+            border-bottom: 2px solid #9cb3c9;
+            border-radius: 11px;
+            padding: 8px 16px 7px 16px;
+        }}
+        QPushButton[dashboardSegment="true"]:hover {{
+            background: #ffffff;
+        }}
+        QPushButton[dashboardSegment="true"]:checked {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #204a9b,
+                stop:1 #0f2f70);
+            color: #ffffff;
+            font-weight: 800;
+            border: 1px solid #153979;
+            border-bottom: 2px solid #0b234f;
         }}
         QToolButton[nav="true"] {{
             background: transparent;
@@ -273,25 +373,65 @@ def apply_theme(app: QApplication, branding: dict) -> None:
         }}
         QTabWidget#QualityTabs::pane {{
             background: #f8fbff;
-            border: 1px solid #b8c8da;
+            border: 1px solid #b7c7d9;
+            border-radius: 10px;
+            top: -1px;
+        }}
+        QTabWidget#QualityTabs QTabBar::tab {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #ffffff,
+                stop:1 #eaf1fa);
+            color: #10253d;
+            border: 1px solid #bcc9d8;
+            border-bottom: 2px solid #9bb2ca;
+            padding: 11px 18px 10px 18px;
+            min-height: 26px;
+            min-width: 112px;
+            margin-right: 3px;
+            margin-top: 4px;
+            border-top-left-radius: 9px;
+            border-top-right-radius: 9px;
+            font-size: 12px;
+            font-weight: 800;
+        }}
+        QTabWidget#QualityTabs QTabBar::tab:selected {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #ffffff,
+                stop:1 #f4f8fd);
+            color: {primary_dark};
+            border-color: #91a8c1;
+            border-bottom: 1px solid #ffffff;
+            margin-top: 0px;
+            padding-top: 13px;
+        }}
+        QTabWidget#QualityTabs QTabBar::tab:hover {{
+            background: #ffffff;
+            border-color: #aebfd2;
         }}
         QTabBar::tab {{
-            background: #edf2f8;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #ffffff,
+                stop:1 #e8eff8);
             color: #24384e;
-            border: 1px solid #c7d2df;
-            border-bottom: 0;
-            padding: 8px 14px;
+            border: 1px solid #bcc9d8;
+            border-bottom: 2px solid #9eb3c8;
+            padding: 9px 16px 8px 16px;
             margin-right: 4px;
-            border-top-left-radius: 6px;
-            border-top-right-radius: 6px;
-            font-weight: 700;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+            font-weight: 800;
         }}
         QTabBar::tab:selected {{
-            background: #ffffff;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #244e9d,
+                stop:1 #133671);
             color: {primary_dark};
+            border-color: #163979;
+            border-bottom: 2px solid #0c234c;
+            color: #ffffff;
         }}
         QTabBar::tab:hover {{
-            background: #f4f7fb;
+            background: #ffffff;
         }}
         QScrollBar:vertical, QScrollBar:horizontal {{
             background: #edf2f8;

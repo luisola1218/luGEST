@@ -1680,7 +1680,7 @@ class PlanningBridgeMixin:
             None,
         )
         if target is None:
-            raise ValueError("Bloco de planeamento n?o encontrado.")
+            return
         numero = str(target.get("encomenda", "") or "").strip()
         material = str(target.get("material", "") or "").strip()
         espessura = str(target.get("espessura", "") or "").strip()

@@ -1,5 +1,3 @@
-$ErrorActionPreference = 'Stop'
-
 param(
     [string]$ExecutablePath = '',
     [string]$Username = '',
@@ -7,6 +5,8 @@ param(
     [string]$Role = 'Admin',
     [switch]$Reset
 )
+
+$ErrorActionPreference = 'Stop'
 
 function Read-RequiredText {
     param(
@@ -51,14 +51,17 @@ function Read-RequiredPassword {
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $ExecutablePath) {
-    $candidate = Join-Path $scriptDir 'main.exe'
-    if (Test-Path $candidate) {
-        $ExecutablePath = $candidate
+    foreach ($candidateName in @('lugest_qt.exe', 'main.exe')) {
+        $candidate = Join-Path $scriptDir $candidateName
+        if (Test-Path $candidate) {
+            $ExecutablePath = $candidate
+            break
+        }
     }
 }
 
 if (-not $ExecutablePath) {
-    throw 'Nao foi encontrado o main.exe. Indica -ExecutablePath explicitamente.'
+    throw 'Nao foi encontrado lugest_qt.exe nem main.exe. Indica -ExecutablePath explicitamente.'
 }
 
 if (-not (Test-Path $ExecutablePath)) {

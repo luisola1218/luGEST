@@ -17,6 +17,9 @@ $desktopIcon = Join-Path $repoRoot 'app.ico'
 $desktopLogo = Join-Path $repoRoot 'logo.jpg'
 $desktopLogosDir = Join-Path $repoRoot 'Logos'
 $desktopAdminSetup = Join-Path $repoRoot 'scripts\setup_lugest_admin.ps1'
+$desktopEnvDiagnose = Join-Path $repoRoot 'scripts\diagnose_lugest_env.ps1'
+$desktopStartLauncher = Join-Path $repoRoot 'scripts\start_lugest_desktop.ps1'
+$desktopStartLauncherHidden = Join-Path $repoRoot 'scripts\start_lugest_desktop_hidden.vbs'
 $desktopUpdaterScript = Join-Path $repoRoot 'scripts\lugest_update.ps1'
 $desktopInstallerScript = Join-Path $repoRoot 'scripts\install_lugest_desktop.ps1'
 $desktopVersionFile = Join-Path $repoRoot 'VERSION'
@@ -104,6 +107,9 @@ foreach ($requiredPath in @(
     $desktopLogo,
     $desktopLogosDir,
     $desktopAdminSetup,
+    $desktopEnvDiagnose,
+    $desktopStartLauncher,
+    $desktopStartLauncherHidden,
     $desktopUpdaterScript,
     $desktopInstallerScript,
     $desktopVersionFile,
@@ -140,11 +146,15 @@ New-Item -ItemType Directory -Force -Path $desktopDir, $apiDir, $mobileApkDir, $
 $desktopExeItem = Get-Item $desktopExe
 $desktopExeName = $desktopExeItem.Name
 $desktopExeParent = $desktopExeItem.Directory.FullName
+$desktopConsoleExe = Join-Path $repoRoot 'dist\main.exe'
 if ($desktopExeParent -like (Join-Path $repoRoot 'dist\lugest_qt') -or $desktopExeParent -like (Join-Path $repoRoot 'dist_qt_stable\lugest_qt')) {
     Copy-Item -Path (Join-Path $desktopExeParent '*') -Destination $desktopDir -Recurse -Force
 }
 else {
     Copy-Item $desktopExe $desktopDir
+}
+if (Test-Path $desktopConsoleExe) {
+    Copy-Item $desktopConsoleExe (Join-Path $desktopDir 'main.exe') -Force
 }
 Copy-Item $desktopEnvExample (Join-Path $desktopDir 'lugest.env.example')
 Copy-Item $desktopEnvExample (Join-Path $desktopDir 'lugest.env')
@@ -155,6 +165,9 @@ Copy-Item $desktopQtConfig $desktopDir
 Copy-Item $desktopIcon $desktopDir
 Copy-Item $desktopLogo $desktopDir
 Copy-Item $desktopAdminSetup (Join-Path $desktopDir 'setup_lugest_admin.ps1')
+Copy-Item $desktopEnvDiagnose (Join-Path $desktopDir 'Diagnosticar Ligacao LuisGEST.ps1')
+Copy-Item $desktopStartLauncher (Join-Path $desktopDir 'Arrancar LuisGEST Desktop.ps1')
+Copy-Item $desktopStartLauncherHidden (Join-Path $desktopDir 'Arrancar LuisGEST Desktop.vbs')
 Copy-Item $desktopUpdaterScript (Join-Path $desktopDir 'Atualizar LuisGEST.ps1')
 Copy-Item $desktopInstallerScript (Join-Path $desktopDir 'Instalar LuisGEST no computador.ps1')
 Copy-Item $desktopVersionFile (Join-Path $desktopDir 'VERSION')
@@ -191,7 +204,7 @@ $updateConfig = [ordered]@{
 }
 $updateConfig | ConvertTo-Json -Depth 5 | Set-Content -Path (Join-Path $desktopDir 'update_config.json') -Encoding UTF8
 
-$desktopLauncher = @'
+$desktopLauncher = @"
 @echo off
 cd /d %~dp0
 if not exist lugest.env (
@@ -200,8 +213,12 @@ if not exist lugest.env (
     pause
     exit /b 1
 )
-start "" "%~dp0$desktopExeName"
-'@
+if exist "%~dp0Arrancar LuisGEST Desktop.vbs" (
+    wscript.exe "%~dp0Arrancar LuisGEST Desktop.vbs" "%~dp0"
+    exit /b 0
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Arrancar LuisGEST Desktop.ps1"
+"@
 Set-Content -Path (Join-Path $desktopDir 'Arrancar LuisGEST Desktop.bat') -Value $desktopLauncher -Encoding ASCII
 
 $desktopUpdateLauncher = @'
@@ -235,6 +252,14 @@ powershell -ExecutionPolicy Bypass -File "%~dp0setup_lugest_admin.ps1" -Reset
 pause
 '@
 Set-Content -Path (Join-Path $desktopDir 'Repor Password Administrador.bat') -Value $desktopAdminResetLauncher -Encoding ASCII
+
+$desktopDiagnoseLauncher = @'
+@echo off
+cd /d %~dp0
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Diagnosticar Ligacao LuisGEST.ps1"
+pause
+'@
+Set-Content -Path (Join-Path $desktopDir 'Diagnosticar Ligacao LuisGEST.bat') -Value $desktopDiagnoseLauncher -Encoding ASCII
 
 $desktopAdminReadme = @"
 ADMIN LOCAL DO LUGEST

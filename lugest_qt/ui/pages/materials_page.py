@@ -8,6 +8,7 @@ import re
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -533,35 +534,119 @@ class _WeightCalculatorDialog(QDialog):
 
 
 class _HistoryDialog(QDialog):
-    def __init__(self, title: str, rows: list[dict[str, str]], parent=None) -> None:
+    def __init__(self, title: str, rows: list[dict[str, str]], backend, parent=None) -> None:
         super().__init__(parent)
+        self.backend = backend
+        self.dialog_title = title
+        self.all_rows = list(rows or [])
+        self.filtered_rows = list(self.all_rows)
         self.setWindowTitle(title)
-        self.resize(980, 560)
+        self.resize(1380, 720)
         layout = QVBoxLayout(self)
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Data", "Operador", "Acao", "Detalhes"])
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
+
+        intro = CardFrame()
+        intro.set_tone("info")
+        intro_layout = QVBoxLayout(intro)
+        intro_layout.setContentsMargins(14, 12, 14, 12)
+        intro_layout.setSpacing(4)
+        title_label = QLabel(title)
+        title_label.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
+        subtitle = QLabel("Consulta detalhada dos movimentos do stock com leitura limpa, filtro rápido e saída para impressão.")
+        subtitle.setProperty("role", "muted")
+        subtitle.setWordWrap(True)
+        intro_layout.addWidget(title_label)
+        intro_layout.addWidget(subtitle)
+        layout.addWidget(intro)
+
+        toolbar_card = CardFrame()
+        toolbar_card.set_tone("default")
+        toolbar = QHBoxLayout(toolbar_card)
+        toolbar.setContentsMargins(12, 10, 12, 10)
+        toolbar.setSpacing(8)
+        self.filter_edit = QLineEdit()
+        self.filter_edit.setPlaceholderText("Filtrar por ação, operador, matéria-prima, espessura, lote ou detalhe...")
+        self.filter_edit.textChanged.connect(self._apply_filter)
+        self.count_label = QLabel("0 registos")
+        self.count_label.setProperty("role", "muted")
+        self.pdf_btn = QPushButton("Abrir PDF")
+        self.pdf_btn.setProperty("variant", "secondary")
+        self.pdf_btn.clicked.connect(self._open_pdf)
+        self.print_btn = QPushButton("Imprimir")
+        self.print_btn.setProperty("variant", "secondary")
+        self.print_btn.clicked.connect(self._print_pdf)
+        toolbar.addWidget(self.filter_edit, 1)
+        toolbar.addWidget(self.count_label)
+        toolbar.addWidget(self.pdf_btn)
+        toolbar.addWidget(self.print_btn)
+        layout.addWidget(toolbar_card)
+
+        self.table = QTableWidget(0, 10)
+        self.table.setHorizontalHeaderLabels(["Data", "Ação", "Operador", "Matéria-prima", "Esp.", "Dim.", "Lote", "Qtd", "Reserv.", "Detalhes"])
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setDefaultSectionSize(28)
+        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        header = self.table.horizontalHeader()
+        for col, width in ((0, 138), (1, 92), (2, 102), (3, 220), (4, 60), (5, 96), (6, 150), (7, 64), (8, 72), (9, 440)):
+            header.setSectionResizeMode(col, QHeaderView.Interactive)
+            header.resizeSection(col, width)
+        header.setSectionResizeMode(9, QHeaderView.Stretch)
         layout.addWidget(self.table)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         buttons.rejected.connect(self.reject)
         buttons.accepted.connect(self.accept)
         layout.addWidget(buttons)
-        self.set_rows(rows)
+        self._apply_filter()
 
-    def set_rows(self, rows: list[dict[str, str]]) -> None:
+    def _apply_filter(self) -> None:
+        query = self.filter_edit.text().strip().lower()
+        if query:
+            self.filtered_rows = [
+                row for row in self.all_rows if query in " ".join(str(value or "") for value in row.values()).lower()
+            ]
+        else:
+            self.filtered_rows = list(self.all_rows)
+        self._set_rows(self.filtered_rows)
+
+    def _set_rows(self, rows: list[dict[str, str]]) -> None:
+        self.count_label.setText(f"{len(rows)} registos")
         self.table.setRowCount(len(rows))
+        keys = ("data", "acao", "operador", "material", "espessura", "dimensao", "lote", "qtd", "reservado", "detalhes")
         for row_index, row in enumerate(rows):
-            for col_index, key in enumerate(("data", "operador", "acao", "detalhes")):
+            for col_index, key in enumerate(keys):
                 item = QTableWidgetItem(str(row.get(key, "") or ""))
-                if col_index < 3:
+                if col_index in (0, 1, 2, 4, 7, 8):
                     item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
+                item.setToolTip(item.text())
                 self.table.setItem(row_index, col_index, item)
+
+    def _render_pdf(self) -> Path:
+        target = Path(os.path.join(Path.home(), "AppData", "Local", "Temp", "lugest_material_history_dialog.pdf"))
+        self.backend.material_render_history_pdf(self.filtered_rows, self.dialog_title, target)
+        return target
+
+    def _open_pdf(self) -> None:
+        try:
+            path = self._render_pdf()
+            os.startfile(str(path))
+        except Exception as exc:
+            QMessageBox.critical(self, "Histórico", str(exc))
+
+    def _print_pdf(self) -> None:
+        try:
+            path = self._render_pdf()
+            try:
+                os.startfile(str(path), "print")
+            except Exception:
+                os.startfile(str(path))
+        except Exception as exc:
+            QMessageBox.critical(self, "Histórico", str(exc))
 
 
 class _MaterialEditorDialog(QDialog):
@@ -2068,6 +2153,6 @@ class MaterialsPage(QWidget):
         if material_id:
             title = f"Histórico de stock | {material_id}"
         rows = self.backend.material_history_rows(material_id, limit=320)
-        dlg = _HistoryDialog(title, rows, self)
+        dlg = _HistoryDialog(title, rows, self.backend, self)
         dlg.exec()
 
