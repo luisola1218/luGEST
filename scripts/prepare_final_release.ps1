@@ -47,9 +47,10 @@ function Resolve-MobileApkPath {
 }
 
 function Resolve-DesktopExePath {
-    $candidates = @()
-
     foreach ($relativePath in @(
+        'dist_qt_stable\lugest_qt\lugest_qt.exe',
+        'dist\lugest_qt\lugest_qt.exe',
+        'dist\lugest_qt.exe',
         'dist_dashboard_release\main.exe',
         'dist_transportes_tarifario_release\main.exe',
         'dist_transportes_pro_release\main.exe',
@@ -59,27 +60,19 @@ function Resolve-DesktopExePath {
         'dist_multinet_release\main.exe',
         'dist_billing_release\main.exe',
         'dist\main.exe',
-        'dist\lugest_qt.exe',
-        'dist\lugest_qt\lugest_qt.exe',
-        'dist_qt_stable\lugest_qt\lugest_qt.exe',
         'dist_pack\main.exe'
     )) {
         $candidate = Join-Path $repoRoot $relativePath
         if (Test-Path $candidate) {
-            $candidates += Get-Item $candidate
+            return (Get-Item $candidate).FullName
         }
-    }
-
-    $candidates = $candidates | Sort-Object LastWriteTime -Descending
-    if ($candidates) {
-        return $candidates[0].FullName
     }
     return $null
 }
 
 $desktopExe = Resolve-DesktopExePath
 if (-not $desktopExe) {
-    throw "Nao foi encontrado nenhum main.exe valido para a release."
+    throw "Nao foi encontrado nenhum executavel desktop valido para a release."
 }
 
 $mobileApk = Resolve-MobileApkPath
@@ -153,7 +146,7 @@ if ($desktopExeParent -like (Join-Path $repoRoot 'dist\lugest_qt') -or $desktopE
 else {
     Copy-Item $desktopExe $desktopDir
 }
-if (Test-Path $desktopConsoleExe) {
+if ((Test-Path $desktopConsoleExe) -and -not (Test-Path (Join-Path $desktopDir 'main.exe'))) {
     Copy-Item $desktopConsoleExe (Join-Path $desktopDir 'main.exe') -Force
 }
 Copy-Item $desktopEnvExample (Join-Path $desktopDir 'lugest.env.example')
@@ -424,7 +417,7 @@ Data de preparacao: $releaseDateTxt
 5. O atualizador valida SHA256, cria backup da pasta Desktop App e tenta criar backup MySQL com mysqldump antes de instalar.
 
 ## Notas finais
-- py main.py e main.exe abrem a desktop Qt principal.
+- A release desktop deve arrancar preferencialmente por lugest_qt.exe; main.exe fica apenas como fallback tecnico quando existir.
 - O desktop suporta um ficheiro externo lugest.env, por isso nao e preciso alterar codigo para mudar empresa/servidor.
 - Em multi-posto, usa LUGEST_SHARED_STORAGE_ROOT com um caminho UNC comum a todos os postos.
 - O login OWNER no lugest.env serve para trial/licenciamento; o admin normal da app cria-se ou repoe-se pelos scripts da pasta Desktop App.

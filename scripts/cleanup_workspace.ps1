@@ -37,6 +37,10 @@ $pathsToRemove = @(
     'dist_qt_stable',
     'generated',
     'dist\lugest_trial.json',
+    'lugest_runtime_state.json',
+    'lugest_supplier_seq.json',
+    'lugest_transport_seq.json',
+    'lugest_trial.json',
     '.cad312',
     '.pytest_cache',
     '.mypy_cache',
@@ -51,6 +55,9 @@ $pathsToRemove = @(
     'impulse_mobile_api\api_stdout.log',
     'impulse_mobile_api\api_stderr.log',
     'impulse_mobile_api\.server.pid',
+    'lugest_web_readonly\local-server.err.log',
+    'lugest_web_readonly\local-server.out.log',
+    'lugest_web_readonly\local-server.pid',
     'previews'
 )
 

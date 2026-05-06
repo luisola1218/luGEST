@@ -42,7 +42,8 @@ try {
     if (-not (Test-Path $exePath)) {
         throw "Nao foi encontrado lugest_qt.exe nem main.exe em: $InstallDir"
     }
-    if (-not (Test-Path $internalDir)) {
+    $exeName = [System.IO.Path]::GetFileName($exePath).ToLowerInvariant()
+    if ($exeName -eq 'lugest_qt.exe' -and -not (Test-Path $internalDir)) {
         throw "Falta a pasta _internal em: $InstallDir`nA instalacao ficou incompleta."
     }
     if (-not (Test-Path $envPath)) {
@@ -56,7 +57,7 @@ try {
         WorkingDirectory = $InstallDir
         PassThru = $true
     }
-    if ([System.IO.Path]::GetFileName($exePath).ToLowerInvariant() -eq 'main.exe') {
+    if ($exeName -eq 'main.exe') {
         $startParams['WindowStyle'] = 'Hidden'
     }
     $process = Start-Process @startParams

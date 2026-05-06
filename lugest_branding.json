@@ -1,5 +1,6 @@
 {
   "logo_candidates": [
+    "C:/Users/engenharia/VSCodeProjects/teste/Logos/image (1).jpg",
     "C:/Users/engenharia/VSCodeProjects/teste/dist/Logos/image.jpg",
     "C:/Users/engenharia/VSCodeProjects/teste/Logos/logo(1).jpg",
     "C:\\Users\\engenharia\\VSCodeProjects\\teste\\Logos/image (1).jpg",
@@ -27,5 +28,6 @@
     "local_carga": "Rua dos Canteiros, nº 53 - Adaufe"
   },
   "guia_info_extra": [],
-  "primary_color": "#000040"
+  "primary_color": "#000040",
+  "logo": "C:/Users/engenharia/VSCodeProjects/teste/Logos/image (1).jpg"
 }
