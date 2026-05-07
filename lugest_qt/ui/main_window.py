@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import partial
+import os
 import sys
 import time
 
@@ -584,9 +585,24 @@ class MainWindow(QMainWindow):
                 stopper(timeout_sec=1.0)
             self.backend.user = {}
             if getattr(sys, "frozen", False):
-                started = QProcess.startDetached(sys.executable, sys.argv[1:])
+                app_dir = os.path.dirname(os.path.abspath(sys.executable))
+                launcher_vbs = os.path.join(app_dir, "Arrancar LuisGEST Desktop.vbs")
+                launcher_bat = os.path.join(app_dir, "Arrancar LuisGEST Desktop.bat")
+                launcher_ps1 = os.path.join(app_dir, "Arrancar LuisGEST Desktop.ps1")
+                if os.path.exists(launcher_vbs):
+                    started = QProcess.startDetached("wscript.exe", [launcher_vbs, app_dir], app_dir)
+                elif os.path.exists(launcher_bat):
+                    started = QProcess.startDetached(launcher_bat, [], app_dir)
+                elif os.path.exists(launcher_ps1):
+                    started = QProcess.startDetached(
+                        "powershell.exe",
+                        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", launcher_ps1, "-InstallDir", app_dir],
+                        app_dir,
+                    )
+                else:
+                    started = QProcess.startDetached(sys.executable, sys.argv[1:], app_dir)
             else:
-                started = QProcess.startDetached(sys.executable, list(sys.argv))
+                started = QProcess.startDetached(sys.executable, list(sys.argv), os.getcwd())
             if not started:
                 raise RuntimeError("Não foi possível reabrir o ecrã de login.")
             self.close()
