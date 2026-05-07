@@ -11775,6 +11775,38 @@ class QuotesPage(QWidget):
 
         self.quote_notes_card = CardFrame()
         self.quote_notes_card.set_tone("warning")
+        self.quote_notes_card.setStyleSheet(
+            """
+            QFrame#Card {
+                background: #fffaf0;
+                border: 1.5px solid #e4bc6a;
+                border-radius: 16px;
+            }
+            QLabel {
+                color: #6f4a12;
+            }
+            QFrame#Card QLineEdit,
+            QFrame#Card QComboBox,
+            QFrame#Card QSpinBox,
+            QFrame#Card QDoubleSpinBox {
+                background: #ffffff;
+                border: 1px solid #d4b170;
+                border-radius: 8px;
+                padding: 5px 8px;
+            }
+            QFrame#Card QComboBox::drop-down,
+            QFrame#Card QSpinBox::down-button,
+            QFrame#Card QDoubleSpinBox::down-button,
+            QFrame#Card QSpinBox::up-button,
+            QFrame#Card QDoubleSpinBox::up-button {
+                width: 22px;
+                border-left: 1px solid #e2c690;
+                background: #fff6e4;
+                border-top-right-radius: 8px;
+                border-bottom-right-radius: 8px;
+            }
+            """
+        )
         notes_layout = QVBoxLayout(self.quote_notes_card)
         notes_layout.setContentsMargins(12, 10, 12, 10)
         notes_layout.setSpacing(6)
@@ -11793,22 +11825,33 @@ class QuotesPage(QWidget):
         self.notes_tabs.setDocumentMode(True)
         self.notes_tabs.setStyleSheet(
             """
+            QTabWidget::pane {
+                border: 1px solid #e5c88c;
+                border-radius: 12px;
+                top: -1px;
+                background: rgba(255, 255, 255, 0.92);
+            }
             QTabBar::tab {
                 font-size: 10px;
-                min-height: 30px;
-                min-width: 98px;
-                padding: 5px 12px;
-                margin-right: 4px;
-                border: 1px solid #c8d4e2;
-                border-top-left-radius: 10px;
-                border-top-right-radius: 10px;
-                background: #eef4fb;
+                min-height: 32px;
+                min-width: 112px;
+                padding: 6px 14px;
+                margin-right: 6px;
+                border: 1px solid #dec084;
+                border-top-left-radius: 11px;
+                border-top-right-radius: 11px;
+                background: #fff1d4;
+                color: #7a4d10;
+                font-weight: 700;
             }
             QTabBar::tab:selected {
                 background: #ffffff;
-                border-color: #9fb8d2;
+                border-color: #d3ab58;
                 color: #0f172a;
                 font-weight: 800;
+            }
+            QTabBar::tab:hover:!selected {
+                background: #fff7e6;
             }
             """
         )
@@ -11830,10 +11873,13 @@ class QuotesPage(QWidget):
 
         transport_form_card = CardFrame()
         transport_form_card.set_tone("default")
+        transport_form_card.setStyleSheet("QFrame#Card { background: #fffdf8; border: 1px solid #e4c37f; border-radius: 12px; }")
         transport_form_layout = QGridLayout(transport_form_card)
         transport_form_layout.setContentsMargins(12, 10, 12, 10)
         transport_form_layout.setHorizontalSpacing(10)
         transport_form_layout.setVerticalSpacing(4)
+        transport_form_layout.setColumnMinimumWidth(0, 270)
+        transport_form_layout.setColumnMinimumWidth(1, 270)
 
         left_transport_form = QFormLayout()
         left_transport_form.setContentsMargins(0, 0, 0, 0)
@@ -11866,6 +11912,7 @@ class QuotesPage(QWidget):
 
         transport_actions_card = CardFrame()
         transport_actions_card.set_tone("default")
+        transport_actions_card.setStyleSheet("QFrame#Card { background: #fffdf8; border: 1px solid #e4c37f; border-radius: 12px; }")
         transport_actions_layout = QGridLayout(transport_actions_card)
         transport_actions_layout.setContentsMargins(12, 10, 12, 10)
         transport_actions_layout.setHorizontalSpacing(12)
@@ -11884,18 +11931,24 @@ class QuotesPage(QWidget):
         fill_notes_btn = QPushButton("Preencher notas PDF")
         fill_notes_btn.setProperty("variant", "secondary")
         fill_notes_btn.setProperty("compact", "true")
+        fill_notes_btn.setProperty("quoteTransportAction", "true")
         fill_notes_btn.setToolTip("Preenche automaticamente as notas PDF com base no contexto do orçamento.")
         fill_notes_btn.clicked.connect(self._fill_pdf_notes_from_context)
         apply_transport_btn = QPushButton("Aplicar ao orçamento")
         apply_transport_btn.setProperty("variant", "secondary")
         apply_transport_btn.setProperty("compact", "true")
+        apply_transport_btn.setProperty("quoteTransportAction", "true")
         apply_transport_btn.setToolTip("Aplica o cálculo do transporte ao orçamento atual.")
         apply_transport_btn.clicked.connect(self._apply_transport_calc)
         for button in (fill_notes_btn, apply_transport_btn):
-            button.setMinimumHeight(34)
-            button.setMinimumWidth(180)
-            button.setMaximumWidth(180)
+            button.setMinimumHeight(36)
+            button.setMinimumWidth(188)
+            button.setMaximumWidth(196)
             button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            button.setStyleSheet(
+                "QPushButton { border: 1px solid #d0b06c; border-bottom: 2px solid #b99343; border-radius: 9px; }"
+                " QPushButton:hover { border-color: #c08b30; }"
+            )
         self.transport_suggest_label.setStyleSheet("font-size: 14px; font-weight: 900; color: #0f172a;")
         self.transport_suggest_label.setAlignment(Qt.AlignCenter)
         transport_action_buttons = QHBoxLayout()
@@ -11990,8 +12043,8 @@ class QuotesPage(QWidget):
             widget.setProperty("compact", "true")
             widget.setMaximumWidth(16777215)
             widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            widget.setMinimumWidth(0)
-            widget.setMinimumHeight(24)
+            widget.setMinimumWidth(146)
+            widget.setMinimumHeight(28)
             _repolish(widget)
         self.notes_tabs.setMinimumHeight(318)
         self.quote_summary_card = CardFrame()
@@ -12001,12 +12054,12 @@ class QuotesPage(QWidget):
         self.quote_summary_card.setStyleSheet(
             """
             QFrame#Card {
-                background: #fff4ee;
-                border: 1px solid #f1c2ad;
+                background: #fffdf8;
+                border: 1.5px solid #e89b2f;
                 border-radius: 16px;
             }
             QLabel {
-                color: #7c2d12;
+                color: #8a4b08;
             }
             """
         )
@@ -12037,6 +12090,7 @@ class QuotesPage(QWidget):
         ):
             widget.setProperty("role", "field_value")
         self.total_label.setProperty("role", "field_value_strong")
+        self.total_label.setStyleSheet("font-size: 15px; font-weight: 900; color: #8a3f00;")
         for row_index, (label_text, widget) in enumerate(
             (
                 ("Linhas", self.lines_subtotal_label),
@@ -12253,6 +12307,7 @@ class QuotesPage(QWidget):
         left_stack_layout = QVBoxLayout(left_stack)
         left_stack_layout.setContentsMargins(0, 0, 0, 0)
         left_stack_layout.setSpacing(8)
+        left_stack.setMinimumWidth(590)
         left_stack_layout.addWidget(self.quote_client_card)
         left_stack_layout.addWidget(self.quote_exec_card)
         left_stack_layout.addWidget(self.quote_notes_card, 1)
@@ -12265,7 +12320,7 @@ class QuotesPage(QWidget):
         detail_content_split.setChildrenCollapsible(False)
         detail_content_split.addWidget(left_stack)
         detail_content_split.addWidget(lines_card)
-        detail_content_split.setSizes([520, 1280])
+        detail_content_split.setSizes([590, 1210])
         detail_layout.addWidget(detail_content_split, 1)
 
         self.view_stack.addWidget(self.list_page)
