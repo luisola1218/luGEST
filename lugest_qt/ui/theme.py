@@ -186,31 +186,31 @@ def apply_theme(app: QApplication, branding: dict) -> None:
             font-size: 12px;
             font-weight: 800;
             border-radius: 10px;
-            border: 1px solid #153979;
-            border-bottom: 2px solid #0b234f;
+            border: 1px solid #b75a12;
+            border-bottom: 2px solid #94450d;
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #214ca0,
-                stop:0.55 #173e87,
-                stop:1 #0f2f70);
+                stop:0 #ffb45a,
+                stop:0.55 #f68b1f,
+                stop:1 #d46a07);
         }}
         QPushButton[toolbarAction="true"]:hover {{
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #2c58ad,
-                stop:0.55 #1b4692,
-                stop:1 #123578);
+                stop:0 #ffc06f,
+                stop:0.55 #fb982f,
+                stop:1 #de730c);
         }}
         QPushButton[toolbarAction="true"][variant="secondary"] {{
-            color: #16304e;
-            border: 1px solid #aebfd2;
-            border-bottom: 2px solid #8fa3ba;
+            color: #7a3d08;
+            border: 1px solid #e3b06e;
+            border-bottom: 2px solid #c98b42;
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                 stop:0 #ffffff,
-                stop:1 #e7eef7);
+                stop:1 #fff0dc);
         }}
         QPushButton[toolbarAction="true"][variant="secondary"]:hover {{
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                 stop:0 #ffffff,
-                stop:1 #dbe6f2);
+                stop:1 #ffe6c3);
         }}
         QPushButton[toolbarAction="true"][variant="success"] {{
             border: 1px solid #0e6b54;
