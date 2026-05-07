@@ -21,6 +21,7 @@ $desktopEnvDiagnose = Join-Path $repoRoot 'scripts\diagnose_lugest_env.ps1'
 $desktopStartLauncher = Join-Path $repoRoot 'scripts\start_lugest_desktop.ps1'
 $desktopStartLauncherHidden = Join-Path $repoRoot 'scripts\start_lugest_desktop_hidden.vbs'
 $desktopUpdaterScript = Join-Path $repoRoot 'scripts\lugest_update.ps1'
+$desktopRepairUpdaterScript = Join-Path $repoRoot 'scripts\repair_installed_updater.ps1'
 $desktopInstallerScript = Join-Path $repoRoot 'scripts\install_lugest_desktop.ps1'
 $desktopVersionFile = Join-Path $repoRoot 'VERSION'
 $apiSource = Join-Path $repoRoot 'impulse_mobile_api'
@@ -171,6 +172,7 @@ Copy-Item $desktopEnvDiagnose (Join-Path $desktopDir 'Diagnosticar Ligacao LuisG
 Copy-Item $desktopStartLauncher (Join-Path $desktopDir 'Arrancar LuisGEST Desktop.ps1')
 Copy-Item $desktopStartLauncherHidden (Join-Path $desktopDir 'Arrancar LuisGEST Desktop.vbs')
 Copy-Item $desktopUpdaterScript (Join-Path $desktopDir 'Atualizar LuisGEST.ps1')
+Copy-Item $desktopRepairUpdaterScript (Join-Path $desktopDir 'Reparar Atualizador Instalado.ps1')
 Copy-Item $desktopInstallerScript (Join-Path $desktopDir 'Instalar LuisGEST no computador.ps1')
 Copy-Item $desktopVersionFile (Join-Path $desktopDir 'VERSION')
 Copy-Item -Recurse $desktopLogosDir $desktopDir
@@ -230,6 +232,14 @@ cd /d %~dp0
 pause
 '@
 Set-Content -Path (Join-Path $desktopDir 'Atualizar LuisGEST.bat') -Value $desktopUpdateLauncher -Encoding ASCII
+
+$desktopRepairUpdaterLauncher = @'
+@echo off
+cd /d %~dp0
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0Reparar Atualizador Instalado.ps1"
+pause
+'@
+Set-Content -Path (Join-Path $desktopDir 'Reparar Atualizador Instalado.bat') -Value $desktopRepairUpdaterLauncher -Encoding ASCII
 
 $desktopInstallerLauncher = @'
 @echo off
