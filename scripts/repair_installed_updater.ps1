@@ -40,6 +40,25 @@ function Save-JsonFile {
     $Payload | ConvertTo-Json -Depth 8 | Set-Content -Path $Path -Encoding UTF8
 }
 
+function Copy-ItemIfDifferent {
+    param(
+        [string]$Source,
+        [string]$Destination
+    )
+    $sourceResolved = ""
+    $destinationResolved = ""
+    if (Test-Path $Source) {
+        $sourceResolved = (Resolve-Path $Source).Path
+    }
+    if (Test-Path $Destination) {
+        $destinationResolved = (Resolve-Path $Destination).Path
+    }
+    if ($sourceResolved -and $destinationResolved -and ($sourceResolved -ieq $destinationResolved)) {
+        return
+    }
+    Copy-Item $Source $Destination -Force
+}
+
 function Resolve-InstallDir {
     param([string]$Preferred)
     $candidates = @()
@@ -236,10 +255,10 @@ try {
         throw "Nao foi encontrado 'Reparar Atualizador Instalado.bat' na release."
     }
 
-    Copy-Item $releaseUpdatePs1 $updatePs1Target -Force
-    Copy-Item $releaseUpdateBat $updateBatTarget -Force
-    Copy-Item $releaseRepairPs1 $repairPs1Target -Force
-    Copy-Item $releaseRepairBat $repairBatTarget -Force
+    Copy-ItemIfDifferent $releaseUpdatePs1 $updatePs1Target
+    Copy-ItemIfDifferent $releaseUpdateBat $updateBatTarget
+    Copy-ItemIfDifferent $releaseRepairPs1 $repairPs1Target
+    Copy-ItemIfDifferent $releaseRepairBat $repairBatTarget
 
     $payload = @{
         current_version = $CurrentVersion
