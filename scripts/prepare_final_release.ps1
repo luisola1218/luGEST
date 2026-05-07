@@ -22,6 +22,7 @@ $desktopStartLauncher = Join-Path $repoRoot 'scripts\start_lugest_desktop.ps1'
 $desktopStartLauncherHidden = Join-Path $repoRoot 'scripts\start_lugest_desktop_hidden.vbs'
 $desktopUpdaterScript = Join-Path $repoRoot 'scripts\lugest_update.ps1'
 $desktopRepairUpdaterScript = Join-Path $repoRoot 'scripts\repair_installed_updater.ps1'
+$desktopRemoteBootstrapScript = Join-Path $repoRoot 'scripts\lugest_update_bootstrap.ps1'
 $desktopInstallerScript = Join-Path $repoRoot 'scripts\install_lugest_desktop.ps1'
 $desktopVersionFile = Join-Path $repoRoot 'VERSION'
 $apiSource = Join-Path $repoRoot 'impulse_mobile_api'
@@ -114,6 +115,7 @@ foreach ($requiredPath in @(
     $desktopStartLauncher,
     $desktopStartLauncherHidden,
     $desktopUpdaterScript,
+    $desktopRemoteBootstrapScript,
     $desktopInstallerScript,
     $desktopVersionFile,
     $apiSource,
@@ -173,6 +175,7 @@ Copy-Item $desktopStartLauncher (Join-Path $desktopDir 'Arrancar LuisGEST Deskto
 Copy-Item $desktopStartLauncherHidden (Join-Path $desktopDir 'Arrancar LuisGEST Desktop.vbs')
 Copy-Item $desktopUpdaterScript (Join-Path $desktopDir 'Atualizar LuisGEST.ps1')
 Copy-Item $desktopRepairUpdaterScript (Join-Path $desktopDir 'Reparar Atualizador Instalado.ps1')
+Copy-Item $desktopRemoteBootstrapScript (Join-Path $desktopDir 'LuisGEST-UpdateBootstrap.ps1')
 Copy-Item $desktopInstallerScript (Join-Path $desktopDir 'Instalar LuisGEST no computador.ps1')
 Copy-Item $desktopVersionFile (Join-Path $desktopDir 'VERSION')
 Copy-Item -Recurse $desktopLogosDir $desktopDir
@@ -201,7 +204,7 @@ if (-not $appVersion) {
 }
 $updateConfig = [ordered]@{
     current_version = $appVersion
-    manifest_url = 'https://github.com/luisola1218/luGEST/releases/download/v2026.05.05.1/latest.json'
+    manifest_url = 'https://github.com/luisola1218/luGEST/releases/latest/download/latest.json'
     channel = 'stable'
     github_token = ''
     auto_check = $false
@@ -360,16 +363,23 @@ Copy-Item $emailUpdatesGuide (Join-Path $docsDir 'GUIA - Email e Atualizacoes.md
 
 $updateZipName = "LuisGEST-Desktop-$($appVersion.Replace('.', '-')).zip"
 $updateZipPath = Join-Path $updatesDir $updateZipName
+$bootstrapAssetName = "LuisGEST-UpdateBootstrap.ps1"
+$bootstrapAssetPath = Join-Path $updatesDir $bootstrapAssetName
 if (Test-Path $updateZipPath) {
     Remove-Item $updateZipPath -Force
 }
+if (Test-Path $bootstrapAssetPath) {
+    Remove-Item $bootstrapAssetPath -Force
+}
 Compress-Archive -Path (Join-Path $desktopDir '*') -DestinationPath $updateZipPath -Force
+Copy-Item $desktopRemoteBootstrapScript $bootstrapAssetPath -Force
 $updateHash = (Get-FileHash $updateZipPath -Algorithm SHA256).Hash
 $updateManifest = [ordered]@{
     product = 'LuisGEST Desktop'
     version = $appVersion
     channel = 'stable'
     package_url = $updateZipName
+    bootstrap_url = $bootstrapAssetName
     sha256 = $updateHash
     created_at = $releaseDate.ToString('s')
     notes = "Atualizacao LuisGEST $appVersion preparada em $releaseDateTxt."
@@ -390,7 +400,7 @@ Data de preparacao: $releaseDateTxt
 - Mobile API: API FastAPI com .env placeholder e scripts de instalacao/arranque.
 - Mobile APK: APK Android release atual, quando disponivel; caso contrario segue uma nota APK-PENDENTE.txt.
 - Base de Dados\mysql: apenas instalacao, backup/restauro, validacao e migracoes necessarias.
-- Atualizacoes: pacote ZIP desktop e latest.json com checksum SHA256 para atualizar clientes.
+- Atualizacoes: pacote ZIP desktop, bootstrap remoto e latest.json com checksum SHA256 para atualizar clientes.
 - Documentacao: guias de instalacao, email, atualizacoes e checklist.
 
 ## Comecar por aqui

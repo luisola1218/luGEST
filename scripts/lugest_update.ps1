@@ -4,6 +4,7 @@ param(
     [string]$ManifestUrl = "",
     [string]$GitHubToken = "",
     [string]$CurrentVersion = "",
+    [string]$PackageFileOverride = "",
     [switch]$CheckOnly,
     [switch]$Force,
     [switch]$NoRestart
@@ -87,18 +88,24 @@ function Resolve-GitHubReleaseAssetApiUrl($url, $token) {
         return $null
     }
     $txt = [string]$url
-    $match = [regex]::Match($txt, '^https://github\.com/(?<owner>[^/]+)/(?<repo>[^/]+)/releases/download/(?<tag>[^/]+)/(?<asset>[^/?#]+)$')
-    if (-not $match.Success) {
+    $tagMatch = [regex]::Match($txt, '^https://github\.com/(?<owner>[^/]+)/(?<repo>[^/]+)/releases/download/(?<tag>[^/]+)/(?<asset>[^/?#]+)$')
+    $latestMatch = [regex]::Match($txt, '^https://github\.com/(?<owner>[^/]+)/(?<repo>[^/]+)/releases/latest/download/(?<asset>[^/?#]+)$')
+    $match = if ($tagMatch.Success) { $tagMatch } elseif ($latestMatch.Success) { $latestMatch } else { $null }
+    if ($null -eq $match) {
         return $null
     }
     $owner = $match.Groups['owner'].Value
     $repo = $match.Groups['repo'].Value
-    $tag = $match.Groups['tag'].Value
     $assetName = [System.Uri]::UnescapeDataString($match.Groups['asset'].Value)
     $headers = Get-DownloadHeaders "https://api.github.com/" $token
     $headers['User-Agent'] = 'LuisGEST-Updater'
     $headers['Accept'] = 'application/vnd.github+json'
-    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$owner/$repo/releases/tags/$tag" -Headers $headers -Method Get
+    $releaseApiUrl = "https://api.github.com/repos/$owner/$repo/releases/latest"
+    if ($tagMatch.Success) {
+        $tag = $tagMatch.Groups['tag'].Value
+        $releaseApiUrl = "https://api.github.com/repos/$owner/$repo/releases/tags/$tag"
+    }
+    $release = Invoke-RestMethod -Uri $releaseApiUrl -Headers $headers -Method Get
     foreach ($asset in $release.assets) {
         if ([string]$asset.name -eq $assetName) {
             return [string]$asset.url
@@ -313,28 +320,36 @@ try {
         }
     }
 
-    $manifestBase = Split-Path $manifestLocalPath -Parent
-    if ($manifestSourceRef -match '^https?://') {
-        $manifestBase = $manifestSourceRef
-    }
-    $packageRef = [string](Get-JsonValue $manifest 'package_url' '')
-    if (-not $packageRef) {
-        throw "Manifest sem package_url."
-    }
-    $packageResolved = Resolve-RelativePathOrUrl $packageRef $manifestBase
     $packagePath = Join-Path $workDir 'package.zip'
-    if ($packageResolved -match '^https?://') {
-        $token = [string]$GitHubToken
-        if (-not $token) {
-            $token = [string](Get-JsonValue $config 'github_token' '')
+    if ($PackageFileOverride) {
+        if (-not (Test-Path $PackageFileOverride)) {
+            throw "Pacote override nao encontrado: $PackageFileOverride"
         }
-        Download-RemoteFile $packageResolved $packagePath $token
+        Copy-Item $PackageFileOverride $packagePath -Force
     }
     else {
-        if (-not (Test-Path $packageResolved)) {
-            throw "Pacote nao encontrado: $packageResolved"
+        $manifestBase = Split-Path $manifestLocalPath -Parent
+        if ($manifestSourceRef -match '^https?://') {
+            $manifestBase = $manifestSourceRef
         }
-        Copy-Item $packageResolved $packagePath -Force
+        $packageRef = [string](Get-JsonValue $manifest 'package_url' '')
+        if (-not $packageRef) {
+            throw "Manifest sem package_url."
+        }
+        $packageResolved = Resolve-RelativePathOrUrl $packageRef $manifestBase
+        if ($packageResolved -match '^https?://') {
+            $token = [string]$GitHubToken
+            if (-not $token) {
+                $token = [string](Get-JsonValue $config 'github_token' '')
+            }
+            Download-RemoteFile $packageResolved $packagePath $token
+        }
+        else {
+            if (-not (Test-Path $packageResolved)) {
+                throw "Pacote nao encontrado: $packageResolved"
+            }
+            Copy-Item $packageResolved $packagePath -Force
+        }
     }
 
     $expectedHash = [string](Get-JsonValue $manifest 'sha256' '')

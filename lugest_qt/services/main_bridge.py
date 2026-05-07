@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -11570,23 +11571,31 @@ class LegacyBackend(
         if not token_txt:
             return ""
         txt = str(url or "").strip()
-        match = re.match(
+        tag_match = re.match(
             r"^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/releases/download/(?P<tag>[^/]+)/(?P<asset>[^/?#]+)$",
             txt,
             flags=re.IGNORECASE,
         )
-        if not match:
+        latest_match = re.match(
+            r"^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/releases/latest/download/(?P<asset>[^/?#]+)$",
+            txt,
+            flags=re.IGNORECASE,
+        )
+        match = tag_match or latest_match
+        if match is None:
             return ""
         owner = str(match.group("owner") or "").strip()
         repo = str(match.group("repo") or "").strip()
-        tag = str(match.group("tag") or "").strip()
         asset_name = urllib.parse.unquote(str(match.group("asset") or "").strip())
-        if not owner or not repo or not tag or not asset_name:
+        if not owner or not repo or not asset_name:
             return ""
-        request = urllib.request.Request(
-            f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}",
-            headers=self._update_github_headers(token_txt),
-        )
+        api_url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+        if tag_match is not None:
+            tag = str(tag_match.group("tag") or "").strip()
+            if not tag:
+                return ""
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}"
+        request = urllib.request.Request(api_url, headers=self._update_github_headers(token_txt))
         with urllib.request.urlopen(request, timeout=12) as response:
             payload = json.loads(response.read().decode("utf-8", errors="ignore"))
         if isinstance(payload, dict):
@@ -11622,6 +11631,49 @@ class LegacyBackend(
         payload = json.loads(path.read_text(encoding="utf-8-sig"))
         return (payload if isinstance(payload, dict) else {}, path)
 
+    def _update_resolve_relative_ref(self, ref: str, base_ref: str, manifest_path: Path | None = None) -> str:
+        ref_txt = str(ref or "").strip()
+        if not ref_txt:
+            return ""
+        if re.match(r"^https?://", ref_txt, flags=re.IGNORECASE):
+            return ref_txt
+        if ref_txt.lower().startswith("file:///"):
+            return str(Path(urllib.request.url2pathname(urllib.parse.urlparse(ref_txt).path)))
+        base_txt = str(base_ref or "").strip()
+        if base_txt and re.match(r"^https?://", base_txt, flags=re.IGNORECASE):
+            return urllib.parse.urljoin(base_txt, ref_txt)
+        if manifest_path is not None:
+            return str((manifest_path.parent / ref_txt).resolve())
+        return self._update_resolve_ref(ref_txt)
+
+    def _update_download_ref_to_temp(self, ref: str, suffix: str = ".tmp") -> Path:
+        resolved = self._update_resolve_ref(ref)
+        if not resolved:
+            raise ValueError("Referencia de atualizacao vazia.")
+        temp_path = Path(tempfile.mkdtemp(prefix="lugest_update_bootstrap_")) / f"asset{suffix}"
+        if re.match(r"^https?://", resolved, flags=re.IGNORECASE):
+            settings = self.update_settings()
+            headers = {}
+            token = str(settings.get("github_token", "") or "").strip()
+            request_url = resolved
+            if token:
+                asset_api_url = self._update_resolve_github_release_asset_api_url(resolved, token)
+                if asset_api_url:
+                    request_url = asset_api_url
+                    headers = self._update_github_headers(token, binary_asset=True)
+                else:
+                    headers["Authorization"] = f"Bearer {token}"
+                    headers["User-Agent"] = "LuisGEST-Updater"
+            request = urllib.request.Request(request_url, headers=headers)
+            with urllib.request.urlopen(request, timeout=20) as response, temp_path.open("wb") as handle:
+                shutil.copyfileobj(response, handle)
+            return temp_path
+        source = Path(resolved)
+        if not source.exists():
+            raise ValueError(f"Ficheiro de atualizacao nao encontrado: {source}")
+        shutil.copy2(source, temp_path)
+        return temp_path
+
     def update_check(self) -> dict[str, Any]:
         settings = self.update_settings()
         current_version = self.app_version()
@@ -11640,6 +11692,7 @@ class LegacyBackend(
             "manifest_url": str(settings.get("manifest_url", "") or ""),
             "manifest_path": str(manifest_path or ""),
             "package_url": package_url,
+            "bootstrap_url": str(manifest.get("bootstrap_url", "") or ""),
             "sha256": str(manifest.get("sha256", "") or ""),
             "notes": str(manifest.get("notes", "") or ""),
             "channel": str(manifest.get("channel", settings.get("channel", "stable")) or "stable"),
@@ -11648,48 +11701,26 @@ class LegacyBackend(
     def update_installer_command(self) -> list[str]:
         settings = dict(self.update_settings() or {})
         powershell_exe = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
-        repair_candidates = [
-            self.base_dir / "Reparar Atualizador Instalado.ps1",
-        ]
-        repair_script = next((path for path in repair_candidates if path.exists()), None)
-        if repair_script is not None:
-            command = [
-                str(powershell_exe),
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(repair_script),
-                "-InstallDir",
-                str(self.base_dir),
-                "-ManifestUrl",
-                str(settings.get("manifest_url", "") or ""),
-            ]
-            token = str(settings.get("github_token", "") or "").strip()
-            if token:
-                command.extend(["-GitHubToken", token])
-            return command
-        updater_candidates = [
-            self.base_dir / "Atualizar LuisGEST.ps1",
-            self.base_dir / "scripts" / "lugest_update.ps1",
-            Path.cwd() / "scripts" / "lugest_update.ps1",
-        ]
-        script = next((path for path in updater_candidates if path.exists()), None)
-        if script is None:
-            raise ValueError("Script de atualizacao nao encontrado.")
+        manifest_url = str(settings.get("manifest_url", "") or "").strip()
+        if not manifest_url:
+            raise ValueError("Configura primeiro o manifest de atualizacao.")
+        manifest, manifest_path = self._update_read_json_ref(manifest_url)
+        bootstrap_ref = str(manifest.get("bootstrap_url", "") or "").strip() or "LuisGEST-UpdateBootstrap.ps1"
+        bootstrap_resolved = self._update_resolve_relative_ref(bootstrap_ref, manifest_url, manifest_path)
+        bootstrap_script = self._update_download_ref_to_temp(bootstrap_resolved, suffix=".ps1")
         command = [
             str(powershell_exe),
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
             "-File",
-            str(script),
-            "-AppDir",
+            str(bootstrap_script),
+            "-InstallDir",
             str(self.base_dir),
+            "-ManifestUrl",
+            manifest_url,
             "-CurrentVersion",
             self.app_version(),
-            "-ManifestUrl",
-            str(settings.get("manifest_url", "") or ""),
         ]
         token = str(settings.get("github_token", "") or "").strip()
         if token:
