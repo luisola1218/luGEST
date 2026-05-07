@@ -364,9 +364,6 @@ try {
             FilePath = $exe
             WorkingDirectory = $appDir
         }
-        if ([System.IO.Path]::GetFileName($exe).ToLowerInvariant() -eq 'main.exe') {
-            $restartParams['WindowStyle'] = 'Hidden'
-        }
         Start-Process @restartParams
     }
 }

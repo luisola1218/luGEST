@@ -31,6 +31,15 @@ $fullInstallGuide = Join-Path $repoRoot 'docs\install\GUIA_INSTALACAO_TOTAL.md'
 $simpleGuide = Join-Path $repoRoot 'docs\install\GUIA_MUITO_SIMPLES.md'
 $emailUpdatesGuide = Join-Path $repoRoot 'docs\install\GUIA_EMAIL_E_ATUALIZACOES.md'
 
+function Write-Utf8NoBomFile {
+    param(
+        [string]$Path,
+        [string]$Content
+    )
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
+}
+
 function Resolve-MobileApkPath {
     $candidates = @()
 
@@ -357,7 +366,8 @@ $updateManifest = [ordered]@{
     requires_app_backup = $true
     requires_database_backup = $true
 }
-$updateManifest | ConvertTo-Json -Depth 5 | Set-Content -Path (Join-Path $updatesDir 'latest.json') -Encoding UTF8
+$updateManifestJson = $updateManifest | ConvertTo-Json -Depth 5
+Write-Utf8NoBomFile -Path (Join-Path $updatesDir 'latest.json') -Content $updateManifestJson
 
 $readme = @"
 # App LuisGEST - Revisao Final

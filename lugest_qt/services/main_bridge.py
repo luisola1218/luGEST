@@ -11556,6 +11556,45 @@ class LegacyBackend(
             return str(path)
         return str((base or self.base_dir) / path)
 
+    def _update_github_headers(self, token: str = "", *, binary_asset: bool = False) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        token_txt = str(token or "").strip()
+        if token_txt:
+            headers["Authorization"] = f"Bearer {token_txt}"
+        headers["User-Agent"] = "LuisGEST-Updater"
+        headers["Accept"] = "application/octet-stream" if binary_asset else "application/vnd.github+json"
+        return headers
+
+    def _update_resolve_github_release_asset_api_url(self, url: str, token: str = "") -> str:
+        token_txt = str(token or "").strip()
+        if not token_txt:
+            return ""
+        txt = str(url or "").strip()
+        match = re.match(
+            r"^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/releases/download/(?P<tag>[^/]+)/(?P<asset>[^/?#]+)$",
+            txt,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return ""
+        owner = str(match.group("owner") or "").strip()
+        repo = str(match.group("repo") or "").strip()
+        tag = str(match.group("tag") or "").strip()
+        asset_name = urllib.parse.unquote(str(match.group("asset") or "").strip())
+        if not owner or not repo or not tag or not asset_name:
+            return ""
+        request = urllib.request.Request(
+            f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}",
+            headers=self._update_github_headers(token_txt),
+        )
+        with urllib.request.urlopen(request, timeout=12) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="ignore"))
+        if isinstance(payload, dict):
+            for asset in list(payload.get("assets", []) or []):
+                if str(dict(asset).get("name", "") or "") == asset_name:
+                    return str(dict(asset).get("url", "") or "").strip()
+        return ""
+
     def _update_read_json_ref(self, ref: str) -> tuple[dict[str, Any], Path | None]:
         resolved = self._update_resolve_ref(ref)
         if not resolved:
@@ -11564,16 +11603,23 @@ class LegacyBackend(
             settings = self.update_settings()
             headers = {}
             token = str(settings.get("github_token", "") or "").strip()
+            request_url = resolved
             if token:
-                headers["Authorization"] = f"Bearer {token}"
-            request = urllib.request.Request(resolved, headers=headers)
+                asset_api_url = self._update_resolve_github_release_asset_api_url(resolved, token)
+                if asset_api_url:
+                    request_url = asset_api_url
+                    headers = self._update_github_headers(token, binary_asset=True)
+                else:
+                    headers["Authorization"] = f"Bearer {token}"
+                    headers["User-Agent"] = "LuisGEST-Updater"
+            request = urllib.request.Request(request_url, headers=headers)
             with urllib.request.urlopen(request, timeout=12) as response:
-                payload = json.loads(response.read().decode("utf-8", errors="ignore"))
+                payload = json.loads(response.read().decode("utf-8-sig", errors="ignore"))
             return (payload if isinstance(payload, dict) else {}, None)
         path = Path(resolved)
         if not path.exists():
             raise ValueError(f"Manifest nao encontrado: {path}")
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
         return (payload if isinstance(payload, dict) else {}, path)
 
     def update_check(self) -> dict[str, Any]:

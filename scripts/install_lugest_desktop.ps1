@@ -118,14 +118,14 @@ New-Item -ItemType Directory -Path $startMenuDir -Force | Out-Null
 $startMenuShortcut = Join-Path $startMenuDir 'LuisGEST.lnk'
 $powershellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $wscriptExe = Join-Path $env:SystemRoot 'System32\wscript.exe'
-if (Test-Path $targetLauncherBat) {
-    New-Shortcut $desktopShortcut $targetLauncherBat $InstallDir $iconPath
-    New-Shortcut $startMenuShortcut $targetLauncherBat $InstallDir $iconPath
-}
-elseif ((Test-Path $targetLauncherVbs) -and (Test-Path $wscriptExe)) {
+if ((Test-Path $targetLauncherVbs) -and (Test-Path $wscriptExe)) {
     $launcherArgs = "`"$targetLauncherVbs`" `"$InstallDir`""
     New-ShortcutWithArgs $desktopShortcut $wscriptExe $launcherArgs $InstallDir $iconPath
     New-ShortcutWithArgs $startMenuShortcut $wscriptExe $launcherArgs $InstallDir $iconPath
+}
+elseif (Test-Path $targetLauncherBat) {
+    New-Shortcut $desktopShortcut $targetLauncherBat $InstallDir $iconPath
+    New-Shortcut $startMenuShortcut $targetLauncherBat $InstallDir $iconPath
 }
 elseif ((Test-Path $targetLauncherPs1) -and (Test-Path $powershellExe)) {
     $launcherArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$targetLauncherPs1`" -InstallDir `"$InstallDir`""

@@ -57,9 +57,6 @@ try {
         WorkingDirectory = $InstallDir
         PassThru = $true
     }
-    if ($exeName -eq 'main.exe') {
-        $startParams['WindowStyle'] = 'Hidden'
-    }
     $process = Start-Process @startParams
     Start-Sleep -Seconds 5
 
