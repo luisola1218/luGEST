@@ -125,25 +125,25 @@ def apply_theme(app: QApplication, branding: dict) -> None:
         }}
         QPushButton[variant="logout"] {{
             color: #ffffff;
-            border: 1px solid #8f1d14;
-            border-bottom: 2px solid #6f140f;
+            border: 1px solid #b75a12;
+            border-bottom: 2px solid #94450d;
             padding: 9px 15px 8px 15px;
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #ef5d55,
-                stop:0.55 #d92d20,
-                stop:1 #b42318);
+                stop:0 #ffb45a,
+                stop:0.55 #f68b1f,
+                stop:1 #d46a07);
         }}
         QPushButton[variant="logout"]:hover {{
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #f26d65,
-                stop:0.55 #e13b2f,
-                stop:1 #be2518);
+                stop:0 #ffc06f,
+                stop:0.55 #fb982f,
+                stop:1 #de730c);
         }}
         QPushButton[variant="logout"]:pressed {{
             padding-top: 10px;
             padding-bottom: 7px;
             border-bottom-width: 1px;
-            background: #a61b13;
+            background: #c55f05;
         }}
         QPushButton[variant="danger"] {{
             background: #b42318;
