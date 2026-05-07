@@ -11646,6 +11646,12 @@ class LegacyBackend(
         }
 
     def update_installer_command(self) -> list[str]:
+        batch_candidates = [
+            self.base_dir / "Atualizar LuisGEST.bat",
+        ]
+        batch_path = next((path for path in batch_candidates if path.exists()), None)
+        if batch_path is not None:
+            return [str(batch_path)]
         script_candidates = [
             self.base_dir / "Atualizar LuisGEST.ps1",
             self.base_dir / "scripts" / "lugest_update.ps1",
@@ -11654,8 +11660,9 @@ class LegacyBackend(
         script = next((path for path in script_candidates if path.exists()), None)
         if script is None:
             raise ValueError("Script de atualizacao nao encontrado.")
+        powershell_exe = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
         return [
-            "powershell",
+            str(powershell_exe),
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
@@ -11667,7 +11674,11 @@ class LegacyBackend(
 
     def update_start_installer(self) -> dict[str, Any]:
         command = self.update_installer_command()
-        subprocess.Popen(command, cwd=str(self.base_dir), close_fds=True)
+        creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+        if command and str(command[0]).lower().endswith(".bat"):
+            os.startfile(command[0])
+        else:
+            subprocess.Popen(command, cwd=str(self.base_dir), close_fds=True, creationflags=creationflags)
         return {"started": True, "command": command}
 
     def verify_supervisor_password(self, password: str) -> bool:

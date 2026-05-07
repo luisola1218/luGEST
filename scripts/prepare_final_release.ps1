@@ -219,14 +219,14 @@ if exist "%~dp0Arrancar LuisGEST Desktop.vbs" (
     wscript.exe "%~dp0Arrancar LuisGEST Desktop.vbs" "%~dp0"
     exit /b 0
 )
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Arrancar LuisGEST Desktop.ps1"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0Arrancar LuisGEST Desktop.ps1"
 "@
 Set-Content -Path (Join-Path $desktopDir 'Arrancar LuisGEST Desktop.bat') -Value $desktopLauncher -Encoding ASCII
 
 $desktopUpdateLauncher = @'
 @echo off
 cd /d %~dp0
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Atualizar LuisGEST.ps1"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0Atualizar LuisGEST.ps1"
 pause
 '@
 Set-Content -Path (Join-Path $desktopDir 'Atualizar LuisGEST.bat') -Value $desktopUpdateLauncher -Encoding ASCII
@@ -234,7 +234,7 @@ Set-Content -Path (Join-Path $desktopDir 'Atualizar LuisGEST.bat') -Value $deskt
 $desktopInstallerLauncher = @'
 @echo off
 cd /d %~dp0
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Instalar LuisGEST no computador.ps1"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0Instalar LuisGEST no computador.ps1"
 pause
 '@
 Set-Content -Path (Join-Path $desktopDir 'Instalar LuisGEST no computador.bat') -Value $desktopInstallerLauncher -Encoding ASCII
@@ -242,7 +242,7 @@ Set-Content -Path (Join-Path $desktopDir 'Instalar LuisGEST no computador.bat') 
 $desktopAdminLauncher = @'
 @echo off
 cd /d %~dp0
-powershell -ExecutionPolicy Bypass -File "%~dp0setup_lugest_admin.ps1"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -File "%~dp0setup_lugest_admin.ps1"
 pause
 '@
 Set-Content -Path (Join-Path $desktopDir 'Criar Administrador Inicial.bat') -Value $desktopAdminLauncher -Encoding ASCII
@@ -250,7 +250,7 @@ Set-Content -Path (Join-Path $desktopDir 'Criar Administrador Inicial.bat') -Val
 $desktopAdminResetLauncher = @'
 @echo off
 cd /d %~dp0
-powershell -ExecutionPolicy Bypass -File "%~dp0setup_lugest_admin.ps1" -Reset
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -ExecutionPolicy Bypass -File "%~dp0setup_lugest_admin.ps1" -Reset
 pause
 '@
 Set-Content -Path (Join-Path $desktopDir 'Repor Password Administrador.bat') -Value $desktopAdminResetLauncher -Encoding ASCII
