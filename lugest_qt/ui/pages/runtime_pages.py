@@ -11620,6 +11620,17 @@ class QuotesPage(QWidget):
         self.discount_spin.setSuffix(" %")
         self.discount_spin.setToolTip("Desconto global do orçamento, aplicado antes do IVA sobre linhas + transporte.")
         self.discount_spin.valueChanged.connect(lambda _value: self._render_quote_lines())
+        self.discount_mode_combo = QComboBox()
+        self.discount_mode_combo.addItem("Total final", "total")
+        self.discount_mode_combo.addItem("Por lote / espessura", "lotes_espessura")
+        self.discount_mode_combo.setToolTip(
+            "Escolhe se o desconto se aplica a todas as linhas ou apenas aos lotes/espessuras selecionados."
+        )
+        self.discount_mode_combo.currentIndexChanged.connect(lambda _index: self._render_quote_lines())
+        self.discount_groups_btn = QPushButton("Escolher lotes")
+        self.discount_groups_btn.setProperty("compact", "true")
+        self.discount_groups_btn.setProperty("variant", "secondary")
+        self.discount_groups_btn.clicked.connect(self._pick_quote_discount_groups)
         self.iva_spin = QDoubleSpinBox()
         self.iva_spin.setRange(0.0, 100.0)
         self.iva_spin.setDecimals(2)
@@ -11673,6 +11684,7 @@ class QuotesPage(QWidget):
             self.transport_zone_combo,
             self.transport_price_spin,
             self.discount_spin,
+            self.discount_mode_combo,
             self.iva_spin,
             self.transport_km_spin,
             self.transport_rate_spin,
@@ -11764,7 +11776,7 @@ class QuotesPage(QWidget):
         self.quote_notes_card = CardFrame()
         self.quote_notes_card.set_tone("warning")
         notes_layout = QVBoxLayout(self.quote_notes_card)
-        notes_layout.setContentsMargins(10, 8, 10, 8)
+        notes_layout.setContentsMargins(12, 10, 12, 10)
         notes_layout.setSpacing(8)
         notes_header = QHBoxLayout()
         notes_title = QLabel("Notas do orcamento (PDF)")
@@ -11819,7 +11831,7 @@ class QuotesPage(QWidget):
         transport_form_card = CardFrame()
         transport_form_card.set_tone("default")
         transport_form_layout = QGridLayout(transport_form_card)
-        transport_form_layout.setContentsMargins(10, 9, 10, 9)
+        transport_form_layout.setContentsMargins(12, 10, 12, 10)
         transport_form_layout.setHorizontalSpacing(12)
         transport_form_layout.setVerticalSpacing(6)
 
@@ -11855,7 +11867,7 @@ class QuotesPage(QWidget):
         transport_actions_card = CardFrame()
         transport_actions_card.set_tone("default")
         transport_actions_layout = QGridLayout(transport_actions_card)
-        transport_actions_layout.setContentsMargins(10, 8, 10, 8)
+        transport_actions_layout.setContentsMargins(12, 10, 12, 10)
         transport_actions_layout.setHorizontalSpacing(12)
         transport_actions_layout.setVerticalSpacing(8)
         transport_actions_title = QLabel("Cálculo e aplicação")
@@ -11981,7 +11993,7 @@ class QuotesPage(QWidget):
             widget.setMinimumWidth(0)
             widget.setMinimumHeight(24)
             _repolish(widget)
-        self.notes_tabs.setMinimumHeight(358)
+        self.notes_tabs.setMinimumHeight(338)
         self.quote_summary_card = CardFrame()
         self.quote_summary_card.set_tone("info")
         self.quote_summary_card.setMaximumWidth(265)
@@ -12048,6 +12060,32 @@ class QuotesPage(QWidget):
         discount_row.addStretch(1)
         discount_row.addWidget(self.discount_spin)
         summary_layout.addLayout(discount_row)
+        discount_mode_row = QHBoxLayout()
+        discount_mode_row.setContentsMargins(0, 0, 0, 0)
+        discount_mode_caption = QLabel("Modo")
+        discount_mode_caption.setProperty("role", "field_label")
+        discount_mode_row.addWidget(discount_mode_caption)
+        discount_mode_row.addStretch(1)
+        discount_mode_row.addWidget(self.discount_mode_combo)
+        summary_layout.addLayout(discount_mode_row)
+        discount_group_row = QHBoxLayout()
+        discount_group_row.setContentsMargins(0, 0, 0, 0)
+        discount_group_caption = QLabel("Lotes")
+        discount_group_caption.setProperty("role", "field_label")
+        discount_group_row.addWidget(discount_group_caption)
+        discount_group_row.addStretch(1)
+        discount_group_row.addWidget(self.discount_groups_btn)
+        summary_layout.addLayout(discount_group_row)
+        self.discount_target_label = QLabel("Desconto aplicado a todas as linhas.")
+        self.discount_target_label.setProperty("role", "muted")
+        self.discount_target_label.setWordWrap(True)
+        self.discount_target_label.setStyleSheet("font-size: 10.5px; line-height: 1.2;")
+        summary_layout.addWidget(self.discount_target_label)
+        self.discount_breakdown_label = QLabel("Sem desconto global aplicado.")
+        self.discount_breakdown_label.setProperty("role", "muted")
+        self.discount_breakdown_label.setWordWrap(True)
+        self.discount_breakdown_label.setStyleSheet("font-size: 10.5px; line-height: 1.2;")
+        summary_layout.addWidget(self.discount_breakdown_label)
         summary_layout.addStretch(1)
         top_split = QSplitter(Qt.Horizontal)
         top_split.setChildrenCollapsible(False)
@@ -12062,8 +12100,8 @@ class QuotesPage(QWidget):
         lines_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.quote_lines_card = lines_card
         lines_layout = QVBoxLayout(lines_card)
-        lines_layout.setContentsMargins(16, 14, 16, 14)
-        lines_layout.setSpacing(10)
+        lines_layout.setContentsMargins(12, 10, 12, 10)
+        lines_layout.setSpacing(8)
         line_actions = QVBoxLayout()
         line_actions.setSpacing(6)
         line_title_row = QHBoxLayout()
@@ -12169,8 +12207,8 @@ class QuotesPage(QWidget):
             check_weight_btn,
         ):
             button.setProperty("compact", "true")
-        self.lines_table = QTableWidget(0, 12)
-        self.lines_table.setHorizontalHeaderLabels(["Tipo", "Ref./Cod.", "Ref. Ext.", "Descricao", "Material/Produto", "Esp./Unid", "Operacao", "Tempo", "Qtd", "Preco", "Total", "Conjunto"])
+        self.lines_table = QTableWidget(0, 13)
+        self.lines_table.setHorizontalHeaderLabels(["Tipo", "Ref./Cod.", "Ref. Ext.", "Descricao", "Material/Produto", "Esp./Unid", "Operacao", "Tempo", "Qtd", "Preco", "Preco c/ desc.", "Total", "Conjunto"])
         self.lines_table.verticalHeader().setVisible(False)
         self.lines_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.lines_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -12185,8 +12223,8 @@ class QuotesPage(QWidget):
             " QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
         )
         self.lines_table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter | Qt.AlignVCenter)
-        self.lines_table.verticalHeader().setDefaultSectionSize(28)
-        self.lines_table.setMinimumHeight(380)
+        self.lines_table.verticalHeader().setDefaultSectionSize(26)
+        self.lines_table.setMinimumHeight(340)
         self.lines_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         _set_table_columns(
             self.lines_table,
@@ -12200,19 +12238,20 @@ class QuotesPage(QWidget):
                 (6, "fixed", 118),
                 (7, "fixed", 76),
                 (8, "fixed", 58),
-                (9, "fixed", 84),
-                (10, "fixed", 92),
-                (11, "fixed", 96),
+                (9, "fixed", 80),
+                (10, "fixed", 96),
+                (11, "fixed", 92),
+                (12, "fixed", 92),
             ],
         )
         lines_layout.addLayout(line_actions)
         lines_layout.addWidget(self.lines_table)
-        self.quote_client_card.setMaximumHeight(212)
-        self.quote_exec_card.setMaximumHeight(212)
-        self.quote_notes_card.setMaximumWidth(660)
-        self.quote_notes_card.setMinimumWidth(560)
-        lines_card.setMinimumHeight(430)
-        lines_card.setMaximumHeight(720)
+        self.quote_client_card.setMaximumHeight(200)
+        self.quote_exec_card.setMaximumHeight(200)
+        self.quote_notes_card.setMaximumWidth(640)
+        self.quote_notes_card.setMinimumWidth(540)
+        lines_card.setMinimumHeight(380)
+        lines_card.setMaximumHeight(660)
         content_split = QSplitter(Qt.Horizontal)
         content_split.setChildrenCollapsible(False)
         content_split.addWidget(self.quote_notes_card)
@@ -12555,6 +12594,7 @@ class QuotesPage(QWidget):
 
     def _clear_quote_detail(self) -> None:
         self.line_rows = []
+        self.discount_group_keys = []
         self.nesting_bridge_data = {}
         self._set_quote_header(self.backend.orc_next_number(), "Em edicao", "")
         self.client_combo.setCurrentText("")
@@ -12569,6 +12609,8 @@ class QuotesPage(QWidget):
         self.transport_carrier_combo.setCurrentText("")
         self.transport_zone_combo.setCurrentText("")
         self.transport_price_spin.setValue(0.0)
+        self.discount_spin.setValue(0.0)
+        self.discount_mode_combo.setCurrentIndex(0)
         self.transport_km_spin.setValue(0.0)
         self.transport_rate_spin.setValue(0.65)
         self.transport_diesel_spin.setValue(1.65)
@@ -12614,6 +12656,137 @@ class QuotesPage(QWidget):
             "Usa a tabela para vender/orcamentar por referencia e o plano de chapa para validar consumo real, compra e cobertura comercial."
         )
 
+    def _quote_discount_mode(self) -> str:
+        mode = str(self.discount_mode_combo.currentData() or "").strip().lower()
+        return mode if mode in {"total", "lotes_espessura"} else "total"
+
+    def _quote_discount_groups(self) -> list[dict]:
+        groups: list[dict] = []
+        by_key: dict[str, dict] = {}
+        for row_index, row in enumerate(list(self.line_rows or [])):
+            line_total = round(float(row.get("total", 0) or (float(row.get("qtd", 0) or 0) * float(row.get("preco_unit", 0) or 0))), 2)
+            if line_total <= 0:
+                continue
+            key, label = self._quote_discount_group_label(row)
+            bucket = by_key.setdefault(key, {"key": key, "label": label, "base": 0.0, "rows": []})
+            bucket["base"] = round(float(bucket.get("base", 0) or 0) + line_total, 2)
+            bucket["rows"].append(row_index)
+        groups.extend(by_key.values())
+        return groups
+
+    def _quote_selected_discount_group_keys(self) -> set[str]:
+        groups = self._quote_discount_groups()
+        available = {str(group.get("key", "") or "").strip() for group in groups if str(group.get("key", "") or "").strip()}
+        mode = self._quote_discount_mode()
+        selected = {
+            str(key or "").strip()
+            for key in list(getattr(self, "discount_group_keys", []) or [])
+            if str(key or "").strip() in available
+        }
+        if mode == "lotes_espessura":
+            return selected
+        return available
+
+    def _sync_discount_targets_label(self) -> None:
+        mode = self._quote_discount_mode()
+        self.discount_groups_btn.setEnabled(mode == "lotes_espessura")
+        if mode != "lotes_espessura":
+            self.discount_target_label.setText("Desconto aplicado a todas as linhas do orçamento. O transporte fica fora do desconto.")
+            return
+        groups = self._quote_discount_groups()
+        selected = self._quote_selected_discount_group_keys()
+        if not groups:
+            self.discount_target_label.setText("Sem lotes elegíveis para desconto neste orçamento.")
+            return
+        if not selected:
+            self.discount_target_label.setText("Nenhum lote selecionado. Escolhe os lotes/espessuras a descontar.")
+            return
+        labels = [str(group.get("label", "") or "").strip() for group in groups if str(group.get("key", "") or "").strip() in selected]
+        preview = ", ".join(labels[:3])
+        if len(labels) > 3:
+            preview = f"{preview}, ..."
+        self.discount_target_label.setText(f"Desconto aplicado a: {preview}")
+
+    def _pick_quote_discount_groups(self) -> None:
+        groups = self._quote_discount_groups()
+        if not groups:
+            QMessageBox.information(self, "Desconto por lote", "Este orçamento ainda não tem linhas elegíveis para selecionar lotes.")
+            return
+        selected = self._quote_selected_discount_group_keys()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Selecionar lotes / espessuras para desconto")
+        dialog.resize(560, 420)
+        root = QVBoxLayout(dialog)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
+        helper = QLabel("Marca os lotes/espessuras onde queres aplicar o desconto global.")
+        helper.setWordWrap(True)
+        root.addWidget(helper)
+        list_widget = QListWidget()
+        for group in groups:
+            label = f"{group.get('label', '-')}: {_fmt_eur(float(group.get('base', 0) or 0))}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, str(group.get("key", "") or "").strip())
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if str(group.get("key", "") or "").strip() in selected else Qt.Unchecked)
+            list_widget.addItem(item)
+        root.addWidget(list_widget, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Aplicar")
+        buttons.button(QDialogButtonBox.Cancel).setText("Fechar")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        root.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        chosen: list[str] = []
+        for index in range(list_widget.count()):
+            item = list_widget.item(index)
+            if item is not None and item.checkState() == Qt.Checked:
+                key = str(item.data(Qt.UserRole) or "").strip()
+                if key:
+                    chosen.append(key)
+        self.discount_group_keys = chosen
+        self._render_quote_lines()
+
+    def _quote_discount_group_label(self, row: dict) -> tuple[str, str]:
+        if self._quote_line_is_raw_material_ui(row) or self._quote_line_type(row) == self.backend.desktop_main.ORC_LINE_TYPE_PIECE:
+            family = str(row.get("material_family", "") or row.get("material", "") or "Material").strip() or "Material"
+            subtype = str(row.get("material_subtype", "") or "").strip()
+            thickness = str(row.get("espessura", "") or "").strip()
+            label = family
+            if subtype:
+                label = f"{label} / {subtype}"
+            if thickness:
+                label = f"{label} / {thickness} mm"
+            key = f"piece|{family}|{subtype}|{thickness}"
+            return key, label
+        line_type = self._quote_line_type(row)
+        if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PRODUCT:
+            return "product", "Produtos / outros artigos"
+        return "service", "Servicos / outras operacoes"
+
+    def _quote_discount_breakdown(self, selected_keys: set[str], discount_pct: float) -> list[dict]:
+        groups: list[dict] = []
+        if discount_pct <= 0:
+            return groups
+        for group in self._quote_discount_groups():
+            key = str(group.get("key", "") or "").strip()
+            base_value = round(float(group.get("base", 0) or 0), 2)
+            if not key or base_value <= 0:
+                continue
+            discount_value = round(base_value * (discount_pct / 100.0), 2) if key in selected_keys else 0.0
+            groups.append(
+                {
+                    "key": key,
+                    "label": str(group.get("label", "") or "").strip() or "-",
+                    "base": base_value,
+                    "discount": discount_value,
+                    "subtotal_after_discount": round(max(0.0, base_value - discount_value), 2),
+                }
+            )
+        return groups
+
     def _render_quote_lines(self) -> None:
         subtotal = 0.0
         bridge = dict(getattr(self, "nesting_bridge_data", {}) or {})
@@ -12622,6 +12795,8 @@ class QuotesPage(QWidget):
             for row in list(bridge.get("part_rows", []) or [])
             if str(row.get("ref_externa", "") or "").strip()
         }
+        discount_pct = float(self.discount_spin.value() or 0)
+        selected_discount_keys = self._quote_selected_discount_group_keys()
         normalized_rows = []
         for row in self.line_rows:
             if self._quote_line_should_be_raw_material_ui(row):
@@ -12630,6 +12805,14 @@ class QuotesPage(QWidget):
             preco_unit = float(row.get("preco_unit", 0) or 0)
             total = round(qtd * preco_unit, 2)
             row["total"] = total
+            group_key, _group_label = self._quote_discount_group_label(row)
+            apply_discount = discount_pct > 0 and group_key in selected_discount_keys
+            discounted_unit = round(preco_unit * (1.0 - (discount_pct / 100.0)), 4) if apply_discount else round(preco_unit, 4)
+            discounted_total = round(qtd * discounted_unit, 2)
+            row["discount_group_key"] = group_key
+            row["preco_unit_desconto"] = discounted_unit
+            row["total_desconto"] = discounted_total
+            row["desconto_aplicado"] = round(max(0.0, total - discounted_total), 2)
             normalized_rows.append(row)
         self.line_rows = normalized_rows
         _fill_table(
@@ -12646,7 +12829,8 @@ class QuotesPage(QWidget):
                     "-" if self._quote_line_is_raw_material_ui(row) or self._quote_line_type(row) == self.backend.desktop_main.ORC_LINE_TYPE_PRODUCT else f"{float(row.get('tempo_peca_min', 0) or 0):.2f} min",
                     f"{float(row.get('qtd', 0) or 0):.2f}",
                     _fmt_eur(float(row.get("preco_unit", 0) or 0)),
-                    _fmt_eur(float(row.get("total", 0) or 0)),
+                    _fmt_eur(float(row.get("preco_unit_desconto", row.get("preco_unit", 0)) or 0)),
+                    _fmt_eur(float(row.get("total_desconto", row.get("total", 0)) or 0)),
                     row.get("conjunto_nome", "-") or "-",
                 ]
                 for row in self.line_rows
@@ -12666,7 +12850,7 @@ class QuotesPage(QWidget):
         for row_index, row in enumerate(self.line_rows):
             subtotal += float(row.get("total", 0) or 0)
             _paint_table_row(self.lines_table, row_index, "Preparacao")
-            for col_index in (9, 10):
+            for col_index in (9, 10, 11):
                 item = self.lines_table.item(row_index, col_index)
                 if item is not None:
                     item.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
@@ -12679,6 +12863,7 @@ class QuotesPage(QWidget):
                 f"Operacao: {str(row.get('operacao', '') or '-').strip() or '-'}",
                 f"Quantidade na linha: {float(row.get('qtd', 0) or 0):.2f}",
                 f"Preco unitario comercial: {_fmt_eur(float(row.get('preco_unit', 0) or 0))}",
+                f"Preco unitario com desconto: {_fmt_eur(float(row.get('preco_unit_desconto', row.get('preco_unit', 0)) or 0))}",
             ]
             if bool(row.get("material_supplied_by_client", False) or row.get("material_fornecido_cliente", False)):
                 tooltip_lines.append("Materia-prima: fornecida pelo cliente. A linha considera apenas transformacao/processo.")
@@ -12729,8 +12914,8 @@ class QuotesPage(QWidget):
                     item.setToolTip(tooltip)
             if bridge_row:
                 adjusted_total = float(bridge_row.get("adjusted_quote_total_eur", 0) or 0.0)
-                current_total = float(row.get("total", 0) or 0.0)
-                total_item = self.lines_table.item(row_index, 10)
+                current_total = float(row.get("total_desconto", row.get("total", 0)) or 0.0)
+                total_item = self.lines_table.item(row_index, 11)
                 if total_item is not None and adjusted_total > 0:
                     if current_total + 0.009 < adjusted_total:
                         total_item.setBackground(QBrush(QColor("#fee2e2")))
@@ -12741,10 +12926,10 @@ class QuotesPage(QWidget):
                     else:
                         total_item.setBackground(QBrush(QColor("#fef3c7")))
                         total_item.setForeground(QBrush(QColor("#92400e")))
-        discount_pct = float(self.discount_spin.value() or 0)
-        subtotal_bruto = subtotal + transport
-        discount_value = round(subtotal_bruto * (discount_pct / 100.0), 2)
-        subtotal_without_iva = max(0.0, subtotal_bruto - discount_value)
+        discount_mode = self._quote_discount_mode()
+        discount_value = round(sum(float(row.get("desconto_aplicado", 0) or 0) for row in self.line_rows), 2)
+        subtotal_discounted = round(sum(float(row.get("total_desconto", row.get("total", 0)) or 0) for row in self.line_rows), 2)
+        subtotal_without_iva = max(0.0, subtotal_discounted + transport)
         iva_amount = subtotal_without_iva * (float(self.iva_spin.value()) / 100.0)
         total = subtotal_without_iva + iva_amount
         self.lines_subtotal_label.setText(_fmt_eur(subtotal))
@@ -12753,12 +12938,28 @@ class QuotesPage(QWidget):
         self.subtotal_without_iva_label.setText(_fmt_eur(subtotal_without_iva))
         self.iva_total_label.setText(_fmt_eur(iva_amount))
         self.total_label.setText(_fmt_eur(total))
-        visible_rows = min(max(11, len(self.line_rows) + 2), 14)
+        self._sync_discount_targets_label()
+        discount_breakdown = self._quote_discount_breakdown(selected_discount_keys, discount_pct)
+        if discount_mode == "lotes_espessura" and discount_breakdown:
+            breakdown_lines = [
+                f"{str(group.get('label', '-') or '-').strip()}: -{_fmt_eur(float(group.get('discount', 0) or 0))}"
+                for group in discount_breakdown
+                if float(group.get("discount", 0) or 0) > 0
+            ]
+            if breakdown_lines:
+                self.discount_breakdown_label.setText("Desconto aplicado por lote:\n" + "\n".join(breakdown_lines))
+            else:
+                self.discount_breakdown_label.setText("Nenhum dos lotes selecionados tem desconto aplicado.")
+        elif discount_pct > 0:
+            self.discount_breakdown_label.setText("Desconto aplicado a todas as linhas do orçamento. O transporte mantém-se fora do desconto.")
+        else:
+            self.discount_breakdown_label.setText("Sem desconto global aplicado.")
+        visible_rows = min(max(10, len(self.line_rows) + 2), 12)
         target_height = _table_visible_height(self.lines_table, visible_rows, extra=18)
         self.lines_table.setMinimumHeight(target_height)
         self.lines_table.setMaximumHeight(target_height)
         if hasattr(self, "quote_lines_card"):
-            actions_height = 208
+            actions_height = 188
             self.quote_lines_card.setMinimumHeight(target_height + actions_height)
 
     def _load_quote(self, numero: str) -> None:
@@ -12791,6 +12992,13 @@ class QuotesPage(QWidget):
         self.transport_zone_combo.setCurrentText(str(detail.get("zona_transporte", "") or "").strip())
         self.transport_price_spin.setValue(float(detail.get("preco_transporte", 0) or 0))
         self.discount_spin.setValue(float(detail.get("desconto_perc", 0) or 0))
+        discount_mode = str(detail.get("desconto_modo", "total") or "total").strip().lower()
+        self.discount_mode_combo.setCurrentIndex(1 if discount_mode == "lotes_espessura" else 0)
+        self.discount_group_keys = [
+            str(key or "").strip()
+            for key in list(detail.get("desconto_grupos", []) or [])
+            if str(key or "").strip()
+        ]
         self.notes_edit.setPlainText(str(detail.get("notas_pdf", "") or "").strip())
         self.iva_spin.setValue(float(detail.get("iva_perc", 23) or 23))
         self.nesting_bridge_data = dict(detail.get("nesting_bridge", {}) or {})
@@ -16030,6 +16238,8 @@ class QuotesPage(QWidget):
             "zona_transporte": self.transport_zone_combo.currentText().strip(),
             "preco_transporte": self.transport_price_spin.value(),
             "desconto_perc": self.discount_spin.value(),
+            "desconto_modo": self._quote_discount_mode(),
+            "desconto_grupos": list(getattr(self, "discount_group_keys", []) or []),
             "notas_pdf": self.notes_edit.toPlainText().strip(),
             "nota_cliente": self.note_cliente_edit.text().strip(),
             "iva_perc": self.iva_spin.value(),

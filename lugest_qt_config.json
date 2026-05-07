@@ -2704,24 +2704,14 @@
               "scrap_credit_per_kg": 0.9
             },
             "S235JR 2MM": {
-              "thickness_overrides": [
-                {
-                  "price_per_kg": 1.0,
-                  "scrap_credit_per_kg": 1.0,
-                  "density_kg_m3": 7850.0,
-                  "thickness_min_mm": 1.0
-                }
-              ]
+              "price_per_kg": 1.0,
+              "scrap_credit_per_kg": 1.0,
+              "density_kg_m3": 7850.0
             },
             "S235JR 3MM": {
-              "thickness_overrides": [
-                {
-                  "price_per_kg": 2.0,
-                  "scrap_credit_per_kg": 2.0,
-                  "density_kg_m3": 7850.0,
-                  "thickness_min_mm": 2.0
-                }
-              ]
+              "price_per_kg": 1.0,
+              "scrap_credit_per_kg": 1.0,
+              "density_kg_m3": 7850.0
             }
           },
           "Aco inox": {

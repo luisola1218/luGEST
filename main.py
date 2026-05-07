@@ -2550,6 +2550,7 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "orcamentos", "volume_m3", "DECIMAL(12,3) NULL")
         _mysql_ensure_column(cur, "orcamentos", "transportadora_id", "VARCHAR(30) NULL")
         _mysql_ensure_column(cur, "orcamentos", "transportadora_nome", "VARCHAR(150) NULL")
+        _mysql_ensure_column(cur, "orcamentos", "meta_json", "LONGTEXT NULL")
         _mysql_ensure_column(cur, "orcamentos", "referencia_transporte", "VARCHAR(80) NULL")
         _mysql_ensure_column(cur, "orcamentos", "zona_transporte", "VARCHAR(120) NULL")
         _mysql_ensure_column(cur, "orcamentos", "posto_trabalho", "VARCHAR(80) NULL")
@@ -3413,8 +3414,8 @@ def _mysql_sync_relational_schema(cur, data):
                     numero, ano, data, estado, cliente_codigo, iva_perc, subtotal, total, numero_encomenda, nota_cliente,
                     executado_por, nota_transporte, notas_pdf, desconto_perc, desconto_valor, subtotal_bruto,
                     preco_transporte, custo_transporte, paletes,
-                    peso_bruto_kg, volume_m3, transportadora_id, transportadora_nome, referencia_transporte, zona_transporte, posto_trabalho
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    peso_bruto_kg, volume_m3, transportadora_id, transportadora_nome, referencia_transporte, zona_transporte, posto_trabalho, meta_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     num,
@@ -3443,6 +3444,17 @@ def _mysql_sync_relational_schema(cur, data):
                     _clip(o.get("referencia_transporte"), 80),
                     _clip(o.get("zona_transporte"), 120),
                     _clip(o.get("posto_trabalho"), 80),
+                    json.dumps(
+                        {
+                            key: o.get(key)
+                            for key in (
+                                "desconto_modo",
+                                "desconto_grupos",
+                            )
+                            if o.get(key) not in (None, "", [], {})
+                        },
+                        ensure_ascii=False,
+                    ),
                 ),
             )
             if "orcamento_linhas" in tables:
@@ -4997,6 +5009,15 @@ def _mysql_load_relational_data():
 
             for o in fetch_all("orcamentos", "numero"):
                 num = str(o.get("numero", "") or "")
+                meta_payload = {}
+                try:
+                    raw_meta_json = o.get("meta_json")
+                    if raw_meta_json:
+                        parsed_meta = json.loads(raw_meta_json)
+                        if isinstance(parsed_meta, dict):
+                            meta_payload = parsed_meta
+                except Exception:
+                    meta_payload = {}
                 data["orcamentos"].append(
                     {
                         "numero": num,
@@ -5025,6 +5046,7 @@ def _mysql_load_relational_data():
                         "nota_transporte": str(o.get("nota_transporte", "") or ""),
                         "notas_pdf": str(o.get("notas_pdf", "") or ""),
                         "nota_cliente": str(o.get("nota_cliente", "") or ""),
+                        **dict(meta_payload or {}),
                     }
                 )
 
@@ -6771,7 +6793,8 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
                         transportadora_nome VARCHAR(150) NULL,
                         referencia_transporte VARCHAR(80) NULL,
                         zona_transporte VARCHAR(120) NULL,
-                        posto_trabalho VARCHAR(80) NULL
+                        posto_trabalho VARCHAR(80) NULL,
+                        meta_json LONGTEXT NULL
                     )
                     """
                 )
@@ -6788,6 +6811,7 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
                 _mysql_ensure_column(cur, "orcamentos", "referencia_transporte", "VARCHAR(80) NULL")
                 _mysql_ensure_column(cur, "orcamentos", "zona_transporte", "VARCHAR(120) NULL")
                 _mysql_ensure_column(cur, "orcamentos", "posto_trabalho", "VARCHAR(80) NULL")
+                _mysql_ensure_column(cur, "orcamentos", "meta_json", "LONGTEXT NULL")
                 _mysql_ensure_index(cur, "orcamentos", "idx_orcamentos_ano", "ano")
                 cur.execute(
                     """
@@ -6845,8 +6869,8 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
                     numero, ano, data, estado, cliente_codigo, iva_perc, subtotal, total, numero_encomenda, nota_cliente,
                     executado_por, nota_transporte, notas_pdf, desconto_perc, desconto_valor, subtotal_bruto,
                     preco_transporte, transportadora_id, transportadora_nome,
-                    referencia_transporte, zona_transporte, posto_trabalho
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    referencia_transporte, zona_transporte, posto_trabalho, meta_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     ano=VALUES(ano),
                     data=VALUES(data),
@@ -6868,7 +6892,8 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
                     transportadora_nome=VALUES(transportadora_nome),
                     referencia_transporte=VALUES(referencia_transporte),
                     zona_transporte=VALUES(zona_transporte),
-                    posto_trabalho=VALUES(posto_trabalho)
+                    posto_trabalho=VALUES(posto_trabalho),
+                    meta_json=VALUES(meta_json)
                 """,
                 (
                     num,
@@ -6893,6 +6918,17 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
                     _clip(orc.get("referencia_transporte"), 80),
                     _clip(orc.get("zona_transporte"), 120),
                     _clip(orc.get("posto_trabalho"), 80),
+                    json.dumps(
+                        {
+                            key: orc.get(key)
+                            for key in (
+                                "desconto_modo",
+                                "desconto_grupos",
+                            )
+                            if orc.get(key) not in (None, "", [], {})
+                        },
+                        ensure_ascii=False,
+                    ),
                 ),
             )
 

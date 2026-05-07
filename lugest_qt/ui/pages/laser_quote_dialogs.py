@@ -104,6 +104,19 @@ def _spin(decimals: int, min_value: float, max_value: float, value: float, step:
     return widget
 
 
+def _densify_editor(widget: QWidget, *, height: int = 28) -> QWidget:
+    try:
+        widget.setProperty("compact", "true")
+    except Exception:
+        pass
+    try:
+        widget.setMinimumHeight(height)
+        widget.setMaximumHeight(max(height, widget.maximumHeight()))
+    except Exception:
+        pass
+    return widget
+
+
 def _settings_material_names(settings: dict[str, Any], machine_name: str) -> list[str]:
     machines = dict(settings.get("machine_profiles", {}) or {})
     machine = dict(machines.get(machine_name, {}) or {})
@@ -498,7 +511,22 @@ class MaterialSubtypeCatalogDialog(QDialog):
         if row < 0:
             row = self.table.rowCount() - 1
         if row >= 0:
-            self.table.removeRow(row)
+            subtype_item = self.table.item(row, 0)
+            subtype = str(subtype_item.text() if subtype_item is not None else "").strip()
+            min_item = self.table.item(row, 1)
+            max_item = self.table.item(row, 2)
+            is_base_row = not str(min_item.text() if min_item is not None else "").strip() and not str(max_item.text() if max_item is not None else "").strip()
+            if subtype and is_base_row:
+                rows_to_remove = []
+                for row_index in range(self.table.rowCount()):
+                    other_item = self.table.item(row_index, 0)
+                    other_subtype = str(other_item.text() if other_item is not None else "").strip()
+                    if other_subtype == subtype:
+                        rows_to_remove.append(row_index)
+                for row_index in reversed(rows_to_remove):
+                    self.table.removeRow(row_index)
+            else:
+                self.table.removeRow(row)
         self._apply_filter()
 
     def _apply_filter(self) -> None:
@@ -556,6 +584,8 @@ class MaterialSubtypeCatalogDialog(QDialog):
                     thickness_max_mm = max(0.0, float(max_txt or 0.0))
                 except Exception:
                     thickness_max_mm = 0.0
+                if thickness_min_mm > 0.0 and thickness_max_mm > 0.0 and thickness_max_mm < thickness_min_mm:
+                    thickness_min_mm, thickness_max_mm = thickness_max_mm, thickness_min_mm
                 override = dict(payload)
                 if thickness_min_mm > 0.0:
                     override["thickness_min_mm"] = thickness_min_mm
@@ -573,6 +603,16 @@ class MaterialSubtypeCatalogDialog(QDialog):
                 if overrides:
                     base["thickness_overrides"] = overrides
                 catalog[subtype] = base
+        for subtype, payload in list(catalog.items()):
+            overrides = [dict(item or {}) for item in list(payload.get("thickness_overrides", []) or []) if isinstance(item, dict)]
+            if overrides:
+                overrides.sort(
+                    key=lambda item: (
+                        float(item.get("thickness_min_mm", 0) or 0),
+                        float(item.get("thickness_max_mm", 0) or 0),
+                    )
+                )
+                payload["thickness_overrides"] = overrides
         return catalog
 
 
@@ -721,7 +761,25 @@ class LaserSettingsDialog(QDialog):
         self.setWindowFlag(Qt.WindowMinimizeButtonHint, True)
         self.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
         self.setWindowTitle("Configuracao de Orcamento Laser")
-        self.resize(1120, 760)
+        self.setMinimumSize(920, 620)
+        self.resize(1040, 690)
+        self.setStyleSheet(
+            """
+            QLabel {
+                font-size: 11px;
+            }
+            QLineEdit,
+            QComboBox,
+            QDoubleSpinBox,
+            QPushButton {
+                font-size: 11px;
+            }
+            QTabBar::tab {
+                min-height: 28px;
+                padding: 6px 14px;
+            }
+            """
+        )
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -739,14 +797,14 @@ class LaserSettingsDialog(QDialog):
         self._apply_screen_bounds()
 
         root = QVBoxLayout(content)
-        root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(10)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
 
         top_card = CardFrame()
         top_layout = QGridLayout(top_card)
-        top_layout.setContentsMargins(12, 10, 12, 10)
+        top_layout.setContentsMargins(10, 8, 10, 8)
         top_layout.setHorizontalSpacing(8)
-        top_layout.setVerticalSpacing(6)
+        top_layout.setVerticalSpacing(4)
 
         self.machine_combo = QComboBox()
         self.machine_combo.setEditable(False)
@@ -766,6 +824,16 @@ class LaserSettingsDialog(QDialog):
         self.gas_combo.setEditable(True)
         self.mark_patterns_edit = QLineEdit()
         self.ignore_patterns_edit = QLineEdit()
+        for widget in (
+            self.machine_combo,
+            self.commercial_combo,
+            self.material_combo,
+            self.subtype_combo,
+            self.gas_combo,
+            self.mark_patterns_edit,
+            self.ignore_patterns_edit,
+        ):
+            _densify_editor(widget)
 
         top_layout.addWidget(QLabel("Maquina"), 0, 0)
         top_layout.addWidget(QLabel("Perfil comercial"), 0, 1)
@@ -785,11 +853,11 @@ class LaserSettingsDialog(QDialog):
 
         manage_card = CardFrame()
         manage_layout = QGridLayout(manage_card)
-        manage_layout.setContentsMargins(12, 10, 12, 10)
-        manage_layout.setHorizontalSpacing(10)
-        manage_layout.setVerticalSpacing(6)
+        manage_layout.setContentsMargins(10, 8, 10, 8)
+        manage_layout.setHorizontalSpacing(8)
+        manage_layout.setVerticalSpacing(4)
         manage_title = QLabel("Tabelas e regras")
-        manage_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        manage_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
         manage_layout.addWidget(manage_title, 0, 0, 1, 3)
         self.manage_cut_table_btn = QPushButton("Tabela de corte")
         self.manage_cut_table_btn.setProperty("variant", "secondary")
@@ -798,7 +866,7 @@ class LaserSettingsDialog(QDialog):
         self.manage_series_btn = QPushButton("Series")
         self.manage_series_btn.setProperty("variant", "secondary")
         for button in (self.manage_cut_table_btn, self.manage_material_catalog_btn, self.manage_series_btn):
-            button.setMinimumHeight(32)
+            button.setMinimumHeight(30)
             button.setCursor(Qt.PointingHandCursor)
         self.cut_table_summary_label = QLabel("")
         self.material_catalog_summary_label = QLabel("")
@@ -820,14 +888,22 @@ class LaserSettingsDialog(QDialog):
 
         self.machine_tab = QWidget()
         self.machine_tab_layout = QVBoxLayout(self.machine_tab)
-        self.machine_tab_layout.setContentsMargins(6, 6, 6, 6)
-        self.machine_tab_layout.setSpacing(10)
+        self.machine_tab_layout.setContentsMargins(4, 4, 4, 4)
+        self.machine_tab_layout.setSpacing(8)
 
         motion_card = CardFrame()
-        motion_layout = QFormLayout(motion_card)
-        motion_layout.setContentsMargins(12, 10, 12, 10)
-        motion_layout.setHorizontalSpacing(10)
-        motion_layout.setVerticalSpacing(8)
+        motion_shell = QVBoxLayout(motion_card)
+        motion_shell.setContentsMargins(10, 8, 10, 8)
+        motion_shell.setSpacing(6)
+        motion_grid = QGridLayout()
+        motion_grid.setHorizontalSpacing(12)
+        motion_grid.setVerticalSpacing(0)
+        motion_left = QFormLayout()
+        motion_left.setHorizontalSpacing(10)
+        motion_left.setVerticalSpacing(6)
+        motion_right = QFormLayout()
+        motion_right.setHorizontalSpacing(10)
+        motion_right.setVerticalSpacing(6)
         self.rapid_speed_spin = _spin(1, 1.0, 2000.0, 200.0, 10.0)
         self.mark_speed_spin = _spin(2, 0.1, 200.0, 18.0, 0.5)
         self.speed_factor_spin = _spin(1, 1.0, 200.0, 92.0, 1.0)
@@ -839,17 +915,36 @@ class LaserSettingsDialog(QDialog):
         self.first_gas_delay_spin = _spin(0, 0.0, 10000.0, 200.0, 50.0)
         self.gas_delay_spin = _spin(0, 0.0, 10000.0, 0.0, 50.0)
         self.overhead_spin = _spin(1, 0.0, 200.0, 4.0, 0.5)
-        motion_layout.addRow("Rapidos (mm/s)", self.rapid_speed_spin)
-        motion_layout.addRow("Marcacao (m/min)", self.mark_speed_spin)
-        motion_layout.addRow("Fator velocidade %", self.speed_factor_spin)
-        motion_layout.addRow("Lead-in (mm)", self.lead_in_spin)
-        motion_layout.addRow("Lead-out (mm)", self.lead_out_spin)
-        motion_layout.addRow("Velocidade lead (mm/s)", self.lead_speed_spin)
-        motion_layout.addRow("Pierce base (ms)", self.pierce_base_spin)
-        motion_layout.addRow("Pierce por mm (ms)", self.pierce_per_mm_spin)
-        motion_layout.addRow("1o atraso gas (ms)", self.first_gas_delay_spin)
-        motion_layout.addRow("Atraso gas (ms)", self.gas_delay_spin)
-        motion_layout.addRow("Overhead movimento %", self.overhead_spin)
+        for widget in (
+            self.rapid_speed_spin,
+            self.mark_speed_spin,
+            self.speed_factor_spin,
+            self.lead_in_spin,
+            self.lead_out_spin,
+            self.lead_speed_spin,
+            self.pierce_base_spin,
+            self.pierce_per_mm_spin,
+            self.first_gas_delay_spin,
+            self.gas_delay_spin,
+            self.overhead_spin,
+        ):
+            _densify_editor(widget)
+        motion_left.addRow("Rapidos (mm/s)", self.rapid_speed_spin)
+        motion_left.addRow("Marcacao (m/min)", self.mark_speed_spin)
+        motion_left.addRow("Fator velocidade %", self.speed_factor_spin)
+        motion_left.addRow("Lead-in (mm)", self.lead_in_spin)
+        motion_left.addRow("Lead-out (mm)", self.lead_out_spin)
+        motion_left.addRow("Velocidade lead (mm/s)", self.lead_speed_spin)
+        motion_right.addRow("Pierce base (ms)", self.pierce_base_spin)
+        motion_right.addRow("Pierce por mm (ms)", self.pierce_per_mm_spin)
+        motion_right.addRow("1o atraso gas (ms)", self.first_gas_delay_spin)
+        motion_right.addRow("Atraso gas (ms)", self.gas_delay_spin)
+        motion_right.addRow("Overhead movimento %", self.overhead_spin)
+        motion_grid.addLayout(motion_left, 0, 0)
+        motion_grid.addLayout(motion_right, 0, 1)
+        motion_grid.setColumnStretch(0, 1)
+        motion_grid.setColumnStretch(1, 1)
+        motion_shell.addLayout(motion_grid)
         self.machine_tab_layout.addWidget(motion_card)
 
         machine_note_card = CardFrame()
@@ -857,7 +952,7 @@ class LaserSettingsDialog(QDialog):
         machine_note_layout.setContentsMargins(12, 10, 12, 10)
         machine_note_layout.setSpacing(6)
         machine_note_title = QLabel("Tabela de corte separada")
-        machine_note_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        machine_note_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
         machine_note_text = QLabel(
             "Os parametros por espessura ficam numa janela propria para poderes trabalhar com mais detalhe "
             "sem apertar esta configuracao principal."
@@ -871,8 +966,8 @@ class LaserSettingsDialog(QDialog):
 
         self.cost_tab = QWidget()
         self.cost_tab_layout = QVBoxLayout(self.cost_tab)
-        self.cost_tab_layout.setContentsMargins(6, 6, 6, 6)
-        self.cost_tab_layout.setSpacing(10)
+        self.cost_tab_layout.setContentsMargins(4, 4, 4, 4)
+        self.cost_tab_layout.setSpacing(8)
 
         self.tabs.addTab(self.cost_tab, "Custos")
 
@@ -905,9 +1000,9 @@ class LaserSettingsDialog(QDialog):
             return
         available = screen.availableGeometry()
         max_width = max(760, available.width() - 24)
-        max_height = max(560, available.height() - 24)
+        max_height = max(560, available.height() - 40)
         self.setMaximumSize(max_width, max_height)
-        self.resize(min(1120, max_width), min(760, max_height))
+        self.resize(min(1040, max_width), min(690, max_height))
         current = self.frameGeometry()
         x = max(available.left(), min(current.x(), available.right() - current.width() + 1))
         y = max(available.top(), min(current.y(), available.bottom() - current.height() + 1))
@@ -919,10 +1014,18 @@ class LaserSettingsDialog(QDialog):
 
     def _build_cost_tab(self) -> None:
         cost_card = CardFrame()
-        cost_layout = QFormLayout(cost_card)
-        cost_layout.setContentsMargins(12, 10, 12, 10)
-        cost_layout.setHorizontalSpacing(10)
-        cost_layout.setVerticalSpacing(8)
+        cost_shell = QVBoxLayout(cost_card)
+        cost_shell.setContentsMargins(10, 8, 10, 8)
+        cost_shell.setSpacing(6)
+        cost_grid = QGridLayout()
+        cost_grid.setHorizontalSpacing(12)
+        cost_grid.setVerticalSpacing(0)
+        cost_left = QFormLayout()
+        cost_left.setHorizontalSpacing(10)
+        cost_left.setVerticalSpacing(6)
+        cost_right = QFormLayout()
+        cost_right.setHorizontalSpacing(10)
+        cost_right.setVerticalSpacing(6)
         self.density_spin = _spin(1, 1.0, 50000.0, 7800.0, 50.0)
         self.material_price_spin = _spin(3, 0.0, 1000.0, 1.30, 0.05)
         self.scrap_credit_spin = _spin(3, 0.0, 1000.0, 1.20, 0.05)
@@ -941,21 +1044,43 @@ class LaserSettingsDialog(QDialog):
         self.cost_mode_combo.addItems(["hybrid_max", "per_meter", "machine_time"])
         self.scrap_credit_check = QCheckBox("Subtrair valor da sucata")
         self.scrap_credit_check.setChecked(True)
-        cost_layout.addRow("Densidade (kg/m3)", self.density_spin)
-        cost_layout.addRow("Preco material (EUR/kg)", self.material_price_spin)
-        cost_layout.addRow("Valor sucata (EUR/kg)", self.scrap_credit_spin)
-        cost_layout.addRow("Corte (EUR/m)", self.cut_rate_spin)
-        cost_layout.addRow("Marcacao (EUR/m)", self.mark_rate_spin)
-        cost_layout.addRow("Defilm (EUR/m)", self.defilm_rate_spin)
-        cost_layout.addRow("Pierce (EUR/pc)", self.pierce_rate_spin)
-        cost_layout.addRow("Hora maquina (EUR/h)", self.machine_hour_spin)
-        cost_layout.addRow("Setup (min)", self.setup_time_spin)
-        cost_layout.addRow("Aproveitamento %", self.utilization_spin)
-        cost_layout.addRow("Fallback area %", self.fill_factor_spin)
-        cost_layout.addRow("Margem %", self.margin_spin)
-        cost_layout.addRow("Manuseamento (EUR)", self.handling_spin)
-        cost_layout.addRow("Modo custo", self.cost_mode_combo)
-        cost_layout.addRow("", self.scrap_credit_check)
+        for widget in (
+            self.density_spin,
+            self.material_price_spin,
+            self.scrap_credit_spin,
+            self.cut_rate_spin,
+            self.mark_rate_spin,
+            self.defilm_rate_spin,
+            self.pierce_rate_spin,
+            self.machine_hour_spin,
+            self.setup_time_spin,
+            self.utilization_spin,
+            self.fill_factor_spin,
+            self.margin_spin,
+            self.handling_spin,
+            self.cost_mode_combo,
+        ):
+            _densify_editor(widget)
+        cost_left.addRow("Densidade (kg/m3)", self.density_spin)
+        cost_left.addRow("Preco material (EUR/kg)", self.material_price_spin)
+        cost_left.addRow("Valor sucata (EUR/kg)", self.scrap_credit_spin)
+        cost_left.addRow("Corte (EUR/m)", self.cut_rate_spin)
+        cost_left.addRow("Marcacao (EUR/m)", self.mark_rate_spin)
+        cost_left.addRow("Defilm (EUR/m)", self.defilm_rate_spin)
+        cost_right.addRow("Pierce (EUR/pc)", self.pierce_rate_spin)
+        cost_right.addRow("Hora maquina (EUR/h)", self.machine_hour_spin)
+        cost_right.addRow("Setup (min)", self.setup_time_spin)
+        cost_right.addRow("Aproveitamento %", self.utilization_spin)
+        cost_right.addRow("Fallback area %", self.fill_factor_spin)
+        cost_right.addRow("Margem %", self.margin_spin)
+        cost_right.addRow("Manuseamento (EUR)", self.handling_spin)
+        cost_right.addRow("Modo custo", self.cost_mode_combo)
+        cost_right.addRow("", self.scrap_credit_check)
+        cost_grid.addLayout(cost_left, 0, 0)
+        cost_grid.addLayout(cost_right, 0, 1)
+        cost_grid.setColumnStretch(0, 1)
+        cost_grid.setColumnStretch(1, 1)
+        cost_shell.addLayout(cost_grid)
         self.cost_tab_layout.addWidget(cost_card)
 
     def _machine_profile(self) -> dict[str, Any]:
@@ -1015,8 +1140,8 @@ class LaserSettingsDialog(QDialog):
         current_subtype = self.subtype_combo.currentText().strip()
         values = self._material_subtype_candidates(self.material_combo.currentText().strip())
         _set_combo_values(self.subtype_combo, values, current_subtype)
-        if current_subtype and current_subtype not in _combo_items(self.subtype_combo):
-            self.subtype_combo.setCurrentText(current_subtype)
+        if self.subtype_combo.count() and not self.subtype_combo.currentText().strip():
+            self.subtype_combo.setCurrentIndex(0)
         self._refresh_gases()
 
     def _refresh_gases(self) -> None:
@@ -1150,6 +1275,7 @@ class LaserSettingsDialog(QDialog):
         self.settings["machine_profiles"] = machine_profiles
         self.gas_combo.setCurrentText(material.get("default_gas", gas_name))
         self._load_current_values()
+        self._persist_settings(close_dialog=False)
 
     def _open_material_catalog_dialog(self) -> None:
         current_family = _canonical_material_family(self.material_combo.currentText().strip()) or "Aco carbono"
@@ -1165,6 +1291,7 @@ class LaserSettingsDialog(QDialog):
         self._material_catalog_cache[current_family] = dialog.catalog_payload()
         self._update_material_catalog_summary()
         self._refresh_subtypes()
+        self._persist_settings(close_dialog=False)
 
     def _open_series_dialog(self) -> None:
         dialog = SeriesPricingDialog(self._series_tiers_cache, self)
@@ -1172,8 +1299,9 @@ class LaserSettingsDialog(QDialog):
             return
         self._series_tiers_cache = dialog.tiers_payload()
         self._update_series_summary()
+        self._persist_settings(close_dialog=False)
 
-    def _save(self) -> None:
+    def _persist_settings(self, *, close_dialog: bool) -> bool:
         settings = dict(self.settings or {})
         defaults = default_laser_quote_settings()
         settings["active_machine"] = self.machine_combo.currentText().strip()
@@ -1279,7 +1407,6 @@ class LaserSettingsDialog(QDialog):
                     families.append(clean)
         if material_name and material_name not in families:
             families.append(material_name)
-        current_subtype = self.subtype_combo.currentText().strip()
         for family in families:
             values: list[str] = []
             for profile in dict(commercial_profiles or {}).values():
@@ -1289,8 +1416,6 @@ class LaserSettingsDialog(QDialog):
                     clean = str(subtype or "").strip()
                     if clean and clean not in values:
                         values.append(clean)
-            if family == material_name and current_subtype and current_subtype not in values:
-                values.append(current_subtype)
             material_subtypes[family] = values
         default_subtypes = dict(defaults.get("material_subtypes", {}) or {})
         material_subtypes_hidden: dict[str, list[str]] = {}
@@ -1315,8 +1440,17 @@ class LaserSettingsDialog(QDialog):
             self.backend.laser_quote_save_settings(settings)
         except Exception as exc:
             QMessageBox.critical(self, "Configuracao Laser", str(exc))
-            return
-        self.accept()
+            return False
+        self.settings = dict(self.backend.laser_quote_settings() or {})
+        self._reload_material_catalog_cache_from_current_profile()
+        self._reload_series_cache_from_current_profile()
+        self._load_current_values()
+        if close_dialog:
+            self.accept()
+        return True
+
+    def _save(self) -> None:
+        self._persist_settings(close_dialog=True)
 
 
 class LaserQuoteDialog(QDialog):
@@ -1533,8 +1667,8 @@ class LaserQuoteDialog(QDialog):
         current_subtype = self.subtype_combo.currentText().strip()
         values = self._material_subtype_candidates(self.material_combo.currentText().strip())
         _set_combo_values(self.subtype_combo, values, current_subtype)
-        if current_subtype and current_subtype not in _combo_items(self.subtype_combo):
-            self.subtype_combo.setCurrentText(current_subtype)
+        if self.subtype_combo.count() and not self.subtype_combo.currentText().strip():
+            self.subtype_combo.setCurrentIndex(0)
         self._refresh_gases()
 
     def _refresh_gases(self) -> None:

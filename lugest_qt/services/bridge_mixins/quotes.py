@@ -15,6 +15,18 @@ from lugest_infra.pdf.text import wrap_text as _pdf_wrap_text
 class QuotesBridgeMixin:
     """Quote, assembly model, and quote-to-order operations for the Qt bridge."""
 
+    def _normalize_quote_discount_mode(self, value: Any) -> str:
+        mode = str(value or "").strip().lower()
+        return mode if mode in {"total", "lotes_espessura"} else "total"
+
+    def _normalize_quote_discount_groups(self, value: Any) -> list[str]:
+        groups: list[str] = []
+        for item in list(value or []):
+            clean = str(item or "").strip()
+            if clean and clean not in groups:
+                groups.append(clean)
+        return groups
+
     def _peek_next_orc_number(self) -> str:
         data = self.ensure_data()
         try:
@@ -431,6 +443,7 @@ class QuotesBridgeMixin:
                     "tube_section": str(row.get("tube_section", "") or "").strip(),
                     "quality": str(row.get("quality", "") or "").strip(),
                     "calc_mode": str(row.get("calc_mode", "") or "").strip(),
+                    "discount_group_key": str(row.get("discount_group_key", "") or "").strip(),
                 }
             )
         return {
@@ -441,6 +454,8 @@ class QuotesBridgeMixin:
             "posto_trabalho": self._normalize_workcenter_value(orc.get("posto_trabalho", "")),
             "iva_perc": round(self._parse_float(orc.get("iva_perc", 23), 23), 2),
             "desconto_perc": round(self._parse_float(orc.get("desconto_perc", 0), 0), 2),
+            "desconto_modo": self._normalize_quote_discount_mode(orc.get("desconto_modo", "total")),
+            "desconto_grupos": self._normalize_quote_discount_groups(orc.get("desconto_grupos", [])),
             "desconto_valor": round(self._parse_float(orc.get("desconto_valor", 0), 0), 2),
             "subtotal_bruto": round(self._parse_float(orc.get("subtotal_bruto", 0), 0), 2),
             "preco_transporte": round(self._parse_float(orc.get("preco_transporte", 0), 0), 2),
@@ -962,6 +977,7 @@ class QuotesBridgeMixin:
             "laser_base_active": bool(payload.get("laser_base_active", False)),
             "laser_base_tempo_unit": round(self._parse_float(payload.get("laser_base_tempo_unit", payload.get("tempo_peca_min", payload.get("tempo_pecas_min", 0))), 0), 4),
             "laser_base_preco_unit": round(self._parse_float(payload.get("laser_base_preco_unit", payload.get("preco_unit", 0)), 0), 4),
+            "discount_group_key": str(payload.get("discount_group_key", "") or "").strip(),
         }
         if stock_item_kind == "raw_material" and not line["stock_material_id"] and self._quote_line_looks_stock_material_ref(line["ref_externa"]):
             line["stock_material_id"] = line["ref_externa"]
@@ -1157,6 +1173,8 @@ class QuotesBridgeMixin:
                 seen_pairs.add((ref_externa, ref_interna))
         iva_perc = round(self._parse_float(payload.get("iva_perc", 23), 23), 2)
         desconto_perc = round(max(0.0, min(100.0, self._parse_float(payload.get("desconto_perc", (existing or {}).get("desconto_perc", 0)), 0))), 2)
+        desconto_modo = self._normalize_quote_discount_mode(payload.get("desconto_modo", (existing or {}).get("desconto_modo", "total")))
+        desconto_grupos = self._normalize_quote_discount_groups(payload.get("desconto_grupos", (existing or {}).get("desconto_grupos", [])))
         preco_transporte = round(self._parse_float(payload.get("preco_transporte", 0), 0), 2)
         custo_transporte = round(self._parse_float(payload.get("custo_transporte", (existing or {}).get("custo_transporte", 0)), 0), 2)
         paletes = round(self._parse_float(payload.get("paletes", (existing or {}).get("paletes", 0)), 0), 2)
@@ -1168,10 +1186,33 @@ class QuotesBridgeMixin:
         )
         referencia_transporte = str(payload.get("referencia_transporte", (existing or {}).get("referencia_transporte", "")) or "").strip()
         zona_transporte = str(payload.get("zona_transporte", (existing or {}).get("zona_transporte", "")) or "").strip()
-        subtotal_linhas = round(sum(self._parse_float(row.get("total", 0), 0) for row in lines), 2)
+        subtotal_linhas = 0.0
+        subtotal_com_desconto = 0.0
+        desconto_valor = 0.0
+        normalized_discount_groups = {item for item in desconto_grupos if item}
+        for line in lines:
+            line_total = round(self._parse_float(line.get("total", 0), 0), 2)
+            qtd = round(self._parse_float(line.get("qtd", 0), 0), 2)
+            preco_unit = round(self._parse_float(line.get("preco_unit", 0), 0), 4)
+            if line_total <= 0 and qtd > 0 and preco_unit > 0:
+                line_total = round(qtd * preco_unit, 2)
+                line["total"] = line_total
+            subtotal_linhas = round(subtotal_linhas + line_total, 2)
+            discount_key = str(line.get("discount_group_key", "") or "").strip()
+            apply_discount = desconto_perc > 0 and (desconto_modo == "total" or discount_key in normalized_discount_groups)
+            if apply_discount:
+                discounted_unit = round(preco_unit * (1.0 - (desconto_perc / 100.0)), 4)
+            else:
+                discounted_unit = preco_unit
+            discounted_total = round(qtd * discounted_unit, 2)
+            line_discount = round(max(0.0, line_total - discounted_total), 2)
+            line["preco_unit_desconto"] = discounted_unit
+            line["total_desconto"] = discounted_total
+            line["desconto_aplicado"] = line_discount
+            subtotal_com_desconto = round(subtotal_com_desconto + discounted_total, 2)
+            desconto_valor = round(desconto_valor + line_discount, 2)
         subtotal_bruto = round(subtotal_linhas + preco_transporte, 2)
-        desconto_valor = round(subtotal_bruto * (desconto_perc / 100.0), 2)
-        subtotal = round(max(0.0, subtotal_bruto - desconto_valor), 2)
+        subtotal = round(max(0.0, subtotal_com_desconto + preco_transporte), 2)
         total = round(subtotal * (1.0 + (iva_perc / 100.0)), 2)
         note = {
             "numero": numero,
@@ -1182,6 +1223,8 @@ class QuotesBridgeMixin:
             "linhas": lines,
             "iva_perc": iva_perc,
             "desconto_perc": desconto_perc,
+            "desconto_modo": desconto_modo,
+            "desconto_grupos": desconto_grupos,
             "desconto_valor": desconto_valor,
             "preco_transporte": preco_transporte,
             "custo_transporte": custo_transporte,
