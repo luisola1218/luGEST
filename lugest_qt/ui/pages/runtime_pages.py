@@ -11729,25 +11729,25 @@ class QuotesPage(QWidget):
         self.quote_client_card.set_tone("default")
         client_layout = QVBoxLayout(self.quote_client_card)
         client_layout.setContentsMargins(12, 10, 12, 10)
-        client_layout.setSpacing(6)
+        client_layout.setSpacing(5)
         client_title = QLabel("Dados do Cliente")
-        client_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        client_title.setStyleSheet("font-size: 12px; font-weight: 800; color: #0f172a;")
         client_layout.addWidget(client_title)
 
         self.quote_exec_card = CardFrame()
         self.quote_exec_card.set_tone("default")
         exec_layout = QVBoxLayout(self.quote_exec_card)
         exec_layout.setContentsMargins(12, 10, 12, 10)
-        exec_layout.setSpacing(6)
+        exec_layout.setSpacing(5)
         exec_title = QLabel("Dados do Orcamentista")
-        exec_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        exec_title.setStyleSheet("font-size: 12px; font-weight: 800; color: #0f172a;")
         exec_layout.addWidget(exec_title)
 
         meta_left_host = QWidget()
         meta_left_form = QFormLayout(meta_left_host)
         meta_left_form.setContentsMargins(0, 0, 0, 0)
-        meta_left_form.setHorizontalSpacing(10)
-        meta_left_form.setVerticalSpacing(4)
+        meta_left_form.setHorizontalSpacing(8)
+        meta_left_form.setVerticalSpacing(3)
         meta_left_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         meta_left_form.addRow("Cliente", self.client_combo)
         meta_left_form.addRow("Nome", self.client_name_edit)
@@ -11756,8 +11756,8 @@ class QuotesPage(QWidget):
         meta_right_host = QWidget()
         meta_right_form = QFormLayout(meta_right_host)
         meta_right_form.setContentsMargins(0, 0, 0, 0)
-        meta_right_form.setHorizontalSpacing(10)
-        meta_right_form.setVerticalSpacing(4)
+        meta_right_form.setHorizontalSpacing(8)
+        meta_right_form.setVerticalSpacing(3)
         meta_right_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         meta_right_form.addRow("Orcamentista", self.executed_combo)
         meta_right_form.addRow("Empresa", self.client_company_edit)
@@ -11767,8 +11767,8 @@ class QuotesPage(QWidget):
         exec_layout.addWidget(meta_right_host, 1)
         meta_note_form = QFormLayout()
         meta_note_form.setContentsMargins(0, 0, 0, 0)
-        meta_note_form.setHorizontalSpacing(10)
-        meta_note_form.setVerticalSpacing(4)
+        meta_note_form.setHorizontalSpacing(8)
+        meta_note_form.setVerticalSpacing(3)
         meta_note_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         meta_note_form.addRow("Nota cliente", self.note_cliente_edit)
         client_layout.addLayout(meta_note_form)
@@ -11777,10 +11777,10 @@ class QuotesPage(QWidget):
         self.quote_notes_card.set_tone("warning")
         notes_layout = QVBoxLayout(self.quote_notes_card)
         notes_layout.setContentsMargins(12, 10, 12, 10)
-        notes_layout.setSpacing(8)
+        notes_layout.setSpacing(6)
         notes_header = QHBoxLayout()
         notes_title = QLabel("Notas do orcamento (PDF)")
-        notes_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
+        notes_title.setStyleSheet("font-size: 12px; font-weight: 800; color: #0f172a;")
         notes_hint = QLabel("PDF / transporte")
         notes_hint.setProperty("role", "muted")
         notes_hint.setStyleSheet("font-size: 10px;")
@@ -11794,10 +11794,10 @@ class QuotesPage(QWidget):
         self.notes_tabs.setStyleSheet(
             """
             QTabBar::tab {
-                font-size: 11px;
-                min-height: 34px;
-                min-width: 116px;
-                padding: 6px 16px;
+                font-size: 10px;
+                min-height: 30px;
+                min-width: 98px;
+                padding: 5px 12px;
                 margin-right: 4px;
                 border: 1px solid #c8d4e2;
                 border-top-left-radius: 10px;
@@ -11820,7 +11820,7 @@ class QuotesPage(QWidget):
         transport_intro = QLabel("Define o transporte do orçamento, calcula a sugestão e aplica diretamente ao PDF e ao total final.")
         transport_intro.setProperty("role", "muted")
         transport_intro.setWordWrap(True)
-        transport_intro.setStyleSheet("font-size: 10.5px;")
+        transport_intro.setStyleSheet("font-size: 9.5px;")
         transport_page_layout.addWidget(transport_intro)
 
         transport_grid = QGridLayout()
@@ -11832,13 +11832,13 @@ class QuotesPage(QWidget):
         transport_form_card.set_tone("default")
         transport_form_layout = QGridLayout(transport_form_card)
         transport_form_layout.setContentsMargins(12, 10, 12, 10)
-        transport_form_layout.setHorizontalSpacing(12)
-        transport_form_layout.setVerticalSpacing(6)
+        transport_form_layout.setHorizontalSpacing(10)
+        transport_form_layout.setVerticalSpacing(4)
 
         left_transport_form = QFormLayout()
         left_transport_form.setContentsMargins(0, 0, 0, 0)
         left_transport_form.setHorizontalSpacing(8)
-        left_transport_form.setVerticalSpacing(6)
+        left_transport_form.setVerticalSpacing(4)
         left_transport_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         left_transport_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         left_transport_form.addRow("Modo", self.transport_combo)
@@ -11850,7 +11850,7 @@ class QuotesPage(QWidget):
         right_transport_form = QFormLayout()
         right_transport_form.setContentsMargins(0, 0, 0, 0)
         right_transport_form.setHorizontalSpacing(8)
-        right_transport_form.setVerticalSpacing(6)
+        right_transport_form.setVerticalSpacing(4)
         right_transport_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         right_transport_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         right_transport_form.addRow("Distância", self.transport_km_spin)
@@ -11869,13 +11869,13 @@ class QuotesPage(QWidget):
         transport_actions_layout = QGridLayout(transport_actions_card)
         transport_actions_layout.setContentsMargins(12, 10, 12, 10)
         transport_actions_layout.setHorizontalSpacing(12)
-        transport_actions_layout.setVerticalSpacing(8)
+        transport_actions_layout.setVerticalSpacing(6)
         transport_actions_title = QLabel("Cálculo e aplicação")
-        transport_actions_title.setStyleSheet("font-size: 11px; font-weight: 800; color: #0f172a;")
+        transport_actions_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #0f172a;")
         transport_actions_hint = QLabel("Usa os parâmetros do transporte para sugerir um valor coerente com a orçamentação.")
         transport_actions_hint.setProperty("role", "muted")
         transport_actions_hint.setWordWrap(True)
-        transport_actions_hint.setStyleSheet("font-size: 10.5px;")
+        transport_actions_hint.setStyleSheet("font-size: 9.5px;")
         transport_actions_text = QVBoxLayout()
         transport_actions_text.setContentsMargins(0, 0, 0, 0)
         transport_actions_text.setSpacing(4)
@@ -11892,11 +11892,11 @@ class QuotesPage(QWidget):
         apply_transport_btn.setToolTip("Aplica o cálculo do transporte ao orçamento atual.")
         apply_transport_btn.clicked.connect(self._apply_transport_calc)
         for button in (fill_notes_btn, apply_transport_btn):
-            button.setMinimumHeight(38)
-            button.setMinimumWidth(196)
-            button.setMaximumWidth(196)
+            button.setMinimumHeight(34)
+            button.setMinimumWidth(180)
+            button.setMaximumWidth(180)
             button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.transport_suggest_label.setStyleSheet("font-size: 16px; font-weight: 900; color: #0f172a;")
+        self.transport_suggest_label.setStyleSheet("font-size: 14px; font-weight: 900; color: #0f172a;")
         self.transport_suggest_label.setAlignment(Qt.AlignCenter)
         transport_action_buttons = QHBoxLayout()
         transport_action_buttons.setContentsMargins(0, 0, 0, 0)
@@ -11925,15 +11925,15 @@ class QuotesPage(QWidget):
         operations_intro = QLabel("Insere rapidamente notas técnicas e comerciais no PDF conforme o processo considerado.")
         operations_intro.setProperty("role", "muted")
         operations_intro.setWordWrap(True)
-        operations_intro.setStyleSheet("font-size: 10.5px;")
+        operations_intro.setStyleSheet("font-size: 9.5px;")
         operations_layout.addWidget(operations_intro)
         op_card = CardFrame()
         op_card.set_tone("default")
         op_card_layout = QVBoxLayout(op_card)
         op_card_layout.setContentsMargins(12, 10, 12, 10)
-        op_card_layout.setSpacing(8)
+        op_card_layout.setSpacing(6)
         op_title = QLabel("Inserções rápidas por operação")
-        op_title.setStyleSheet("font-size: 11px; font-weight: 800; color: #0f172a;")
+        op_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #0f172a;")
         op_card_layout.addWidget(op_title)
         op_buttons = QGridLayout()
         op_buttons.setHorizontalSpacing(8)
@@ -11942,7 +11942,7 @@ class QuotesPage(QWidget):
             op_btn = QPushButton(op_text)
             op_btn.setProperty("variant", "secondary")
             op_btn.clicked.connect(lambda _checked=False, text=op_text: self._append_pdf_note(f"- Foi considerado: {text}."))
-            op_btn.setMinimumHeight(34)
+            op_btn.setMinimumHeight(30)
             op_buttons.addWidget(op_btn, index // 3, index % 3)
         op_card_layout.addLayout(op_buttons)
         operations_layout.addWidget(op_card, 1)
@@ -11954,19 +11954,19 @@ class QuotesPage(QWidget):
         notes_text_intro = QLabel("Texto livre que segue diretamente para o PDF do orçamento.")
         notes_text_intro.setProperty("role", "muted")
         notes_text_intro.setWordWrap(True)
-        notes_text_intro.setStyleSheet("font-size: 10.5px;")
+        notes_text_intro.setStyleSheet("font-size: 9.5px;")
         notes_text_page_layout.addWidget(notes_text_intro)
         notes_text_card = CardFrame()
         notes_text_card.set_tone("default")
         notes_text_layout = QVBoxLayout(notes_text_card)
         notes_text_layout.setContentsMargins(12, 10, 12, 10)
-        notes_text_layout.setSpacing(8)
+        notes_text_layout.setSpacing(6)
         notes_text_title = QLabel("Texto técnico e comercial")
-        notes_text_title.setStyleSheet("font-size: 11px; font-weight: 800; color: #0f172a;")
+        notes_text_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #0f172a;")
         notes_text_layout.addWidget(notes_text_title)
         self.notes_edit.setProperty("compact", "false")
-        self.notes_edit.setMinimumHeight(180)
-        self.notes_edit.setMaximumHeight(260)
+        self.notes_edit.setMinimumHeight(160)
+        self.notes_edit.setMaximumHeight(220)
         notes_text_layout.addWidget(self.notes_edit, 1)
         notes_text_page_layout.addWidget(notes_text_card, 1)
 
@@ -11993,11 +11993,11 @@ class QuotesPage(QWidget):
             widget.setMinimumWidth(0)
             widget.setMinimumHeight(24)
             _repolish(widget)
-        self.notes_tabs.setMinimumHeight(338)
+        self.notes_tabs.setMinimumHeight(318)
         self.quote_summary_card = CardFrame()
         self.quote_summary_card.set_tone("info")
-        self.quote_summary_card.setMaximumWidth(265)
-        self.quote_summary_card.setMinimumWidth(236)
+        self.quote_summary_card.setMaximumWidth(16777215)
+        self.quote_summary_card.setMinimumWidth(0)
         self.quote_summary_card.setStyleSheet(
             """
             QFrame#Card {
@@ -12012,9 +12012,9 @@ class QuotesPage(QWidget):
         )
         summary_layout = QVBoxLayout(self.quote_summary_card)
         summary_layout.setContentsMargins(12, 10, 12, 10)
-        summary_layout.setSpacing(8)
+        summary_layout.setSpacing(6)
         summary_title = QLabel("Resumo financeiro")
-        summary_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        summary_title.setStyleSheet("font-size: 12px; font-weight: 800; color: #0f172a;")
         summary_hint = QLabel("Preco final do orcamento com transporte e IVA.")
         summary_hint.setProperty("role", "muted")
         summary_layout.addWidget(summary_title)
@@ -12087,27 +12087,19 @@ class QuotesPage(QWidget):
         self.discount_breakdown_label.setStyleSheet("font-size: 10.5px; line-height: 1.2;")
         summary_layout.addWidget(self.discount_breakdown_label)
         summary_layout.addStretch(1)
-        top_split = QSplitter(Qt.Horizontal)
-        top_split.setChildrenCollapsible(False)
-        top_split.addWidget(self.quote_client_card)
-        top_split.addWidget(self.quote_exec_card)
-        top_split.addWidget(self.quote_summary_card)
-        top_split.setSizes([500, 500, 250])
-        detail_layout.addWidget(top_split)
-
         lines_card = CardFrame()
         lines_card.set_tone("default")
         lines_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.quote_lines_card = lines_card
         lines_layout = QVBoxLayout(lines_card)
         lines_layout.setContentsMargins(12, 10, 12, 10)
-        lines_layout.setSpacing(8)
+        lines_layout.setSpacing(4)
         line_actions = QVBoxLayout()
-        line_actions.setSpacing(6)
+        line_actions.setSpacing(4)
         line_title_row = QHBoxLayout()
         line_title_row.setSpacing(8)
         lines_title = QLabel("Referencias do orcamento")
-        lines_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
+        lines_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
         add_line_btn = QPushButton("Adicionar linha")
         add_line_btn.clicked.connect(self._add_line)
         laser_batch_btn = QPushButton("Lote DXF/DWG")
@@ -12165,11 +12157,12 @@ class QuotesPage(QWidget):
         )
         self.nesting_bridge_label.setProperty("role", "muted")
         self.nesting_bridge_label.setWordWrap(True)
-        self.nesting_bridge_label.setStyleSheet("font-size: 10.5px; line-height: 1.15;")
+        self.nesting_bridge_label.setStyleSheet("font-size: 9.5px; line-height: 1.15;")
+        self.nesting_bridge_label.setMaximumHeight(26)
         line_actions.addWidget(self.nesting_bridge_label)
         line_buttons = QGridLayout()
-        line_buttons.setHorizontalSpacing(8)
-        line_buttons.setVerticalSpacing(6)
+        line_buttons.setHorizontalSpacing(6)
+        line_buttons.setVerticalSpacing(4)
         action_rows = (
             (add_line_btn, laser_batch_btn, laser_nesting_btn, profile_step_btn),
             (add_model_btn, conjunto_builder_btn, save_selected_group_btn, structure_builder_btn),
@@ -12182,7 +12175,7 @@ class QuotesPage(QWidget):
                     continue
                 button.setProperty("compact", "true")
                 button.setMinimumWidth(0)
-                button.setMinimumHeight(28)
+                button.setMinimumHeight(24)
                 button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 line_buttons.addWidget(button, row_index, col_index)
         for col_index in range(4):
@@ -12215,49 +12208,65 @@ class QuotesPage(QWidget):
         self.lines_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.lines_table.setAlternatingRowColors(True)
         self.lines_table.setStyleSheet(
-            "QTableWidget { font-size: 11px; }"
-            " QHeaderView::section { font-size: 11px; padding: 5px 6px; font-weight: 700; }"
+            "QTableWidget { font-size: 9px; }"
+            " QHeaderView::section { font-size: 9px; padding: 4px 5px; font-weight: 700; }"
             " QScrollBar:vertical { background: #e2e8f0; width: 14px; margin: 0; border-left: 1px solid #cbd5e1; }"
             " QScrollBar::handle:vertical { background: #1e3a8a; min-height: 28px; border-radius: 6px; margin: 2px; }"
             " QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
             " QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
         )
         self.lines_table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter | Qt.AlignVCenter)
-        self.lines_table.verticalHeader().setDefaultSectionSize(26)
-        self.lines_table.setMinimumHeight(340)
+        self.lines_table.verticalHeader().setDefaultSectionSize(24)
+        self.lines_table.setMinimumHeight(380)
+        self.lines_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.lines_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         _set_table_columns(
             self.lines_table,
             [
-                (0, "fixed", 108),
-                (1, "fixed", 118),
-                (2, "fixed", 148),
+                (0, "fixed", 92),
+                (1, "fixed", 104),
+                (2, "fixed", 132),
                 (3, "stretch", 0),
                 (4, "stretch", 0),
-                (5, "fixed", 82),
-                (6, "fixed", 118),
-                (7, "fixed", 76),
-                (8, "fixed", 58),
-                (9, "fixed", 80),
-                (10, "fixed", 96),
-                (11, "fixed", 92),
-                (12, "fixed", 92),
+                (5, "fixed", 72),
+                (6, "fixed", 104),
+                (7, "fixed", 68),
+                (8, "fixed", 50),
+                (9, "fixed", 76),
+                (10, "fixed", 88),
+                (11, "fixed", 84),
+                (12, "fixed", 84),
             ],
         )
-        lines_layout.addLayout(line_actions)
-        lines_layout.addWidget(self.lines_table)
-        self.quote_client_card.setMaximumHeight(200)
+        line_actions_host = QWidget()
+        line_actions_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        line_actions_host_layout = QVBoxLayout(line_actions_host)
+        line_actions_host_layout.setContentsMargins(0, 0, 0, 0)
+        line_actions_host_layout.setSpacing(4)
+        line_actions_host_layout.addLayout(line_actions)
+        lines_layout.addWidget(line_actions_host, 0, Qt.AlignTop)
+        lines_layout.addWidget(self.lines_table, 0, Qt.AlignTop)
+        lines_layout.addStretch(1)
+        self.quote_client_card.setMaximumHeight(220)
         self.quote_exec_card.setMaximumHeight(200)
-        self.quote_notes_card.setMaximumWidth(640)
-        self.quote_notes_card.setMinimumWidth(540)
-        lines_card.setMinimumHeight(380)
-        lines_card.setMaximumHeight(660)
-        content_split = QSplitter(Qt.Horizontal)
-        content_split.setChildrenCollapsible(False)
-        content_split.addWidget(self.quote_notes_card)
-        content_split.addWidget(lines_card)
-        content_split.setSizes([620, 1270])
-        detail_layout.addWidget(content_split, 1)
+        left_stack = QWidget()
+        left_stack_layout = QVBoxLayout(left_stack)
+        left_stack_layout.setContentsMargins(0, 0, 0, 0)
+        left_stack_layout.setSpacing(8)
+        left_stack_layout.addWidget(self.quote_client_card)
+        left_stack_layout.addWidget(self.quote_exec_card)
+        left_stack_layout.addWidget(self.quote_notes_card, 1)
+        left_stack_layout.addWidget(self.quote_summary_card)
+        left_stack_layout.addStretch(0)
+        self.quote_notes_card.setMaximumWidth(16777215)
+        self.quote_notes_card.setMinimumWidth(0)
+        lines_card.setMinimumHeight(420)
+        detail_content_split = QSplitter(Qt.Horizontal)
+        detail_content_split.setChildrenCollapsible(False)
+        detail_content_split.addWidget(left_stack)
+        detail_content_split.addWidget(lines_card)
+        detail_content_split.setSizes([520, 1280])
+        detail_layout.addWidget(detail_content_split, 1)
 
         self.view_stack.addWidget(self.list_page)
         self.view_stack.addWidget(self.detail_page)
@@ -12954,12 +12963,12 @@ class QuotesPage(QWidget):
             self.discount_breakdown_label.setText("Desconto aplicado a todas as linhas do orçamento. O transporte mantém-se fora do desconto.")
         else:
             self.discount_breakdown_label.setText("Sem desconto global aplicado.")
-        visible_rows = min(max(10, len(self.line_rows) + 2), 12)
+        visible_rows = min(max(16, len(self.line_rows) + 3), 20)
         target_height = _table_visible_height(self.lines_table, visible_rows, extra=18)
         self.lines_table.setMinimumHeight(target_height)
         self.lines_table.setMaximumHeight(target_height)
         if hasattr(self, "quote_lines_card"):
-            actions_height = 188
+            actions_height = 148
             self.quote_lines_card.setMinimumHeight(target_height + actions_height)
 
     def _load_quote(self, numero: str) -> None:
