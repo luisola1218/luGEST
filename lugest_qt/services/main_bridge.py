@@ -11714,21 +11714,19 @@ class LegacyBackend(
 
     def update_installer_command(self) -> list[str]:
         settings = dict(self.update_settings() or {})
-        powershell_exe = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
         manifest_url = str(settings.get("manifest_url", "") or "").strip()
         if not manifest_url:
             raise ValueError("Configura primeiro o manifest de atualizacao.")
         release_dir, _package_zip = self._update_prepare_release_bundle(manifest_url)
-        repair_script = release_dir / "Reparar Atualizador Instalado.ps1"
-        if not repair_script.exists():
-            raise ValueError("A release nao inclui 'Reparar Atualizador Instalado.ps1'.")
+        repair_launcher = release_dir / "Reparar Atualizador Instalado.bat"
+        if not repair_launcher.exists():
+            raise ValueError("A release nao inclui 'Reparar Atualizador Instalado.bat'.")
+        cmd_exe = Path(os.environ.get("ComSpec", r"C:\Windows\System32\cmd.exe"))
         command = [
-            str(powershell_exe),
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(repair_script),
+            str(cmd_exe),
+            "/c",
+            "call",
+            str(repair_launcher),
             "-InstallDir",
             str(self.base_dir),
             "-ManifestUrl",

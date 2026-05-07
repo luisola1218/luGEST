@@ -228,7 +228,7 @@ Set-Content -Path (Join-Path $desktopDir 'Arrancar LuisGEST Desktop.bat') -Value
 $desktopUpdateLauncher = @'
 @echo off
 cd /d %~dp0
-"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0Atualizar LuisGEST.ps1"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0Atualizar LuisGEST.ps1" %*
 pause
 '@
 Set-Content -Path (Join-Path $desktopDir 'Atualizar LuisGEST.bat') -Value $desktopUpdateLauncher -Encoding ASCII
@@ -236,7 +236,7 @@ Set-Content -Path (Join-Path $desktopDir 'Atualizar LuisGEST.bat') -Value $deskt
 $desktopRepairUpdaterLauncher = @'
 @echo off
 cd /d %~dp0
-"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0Reparar Atualizador Instalado.ps1"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0Reparar Atualizador Instalado.ps1" %*
 pause
 '@
 Set-Content -Path (Join-Path $desktopDir 'Reparar Atualizador Instalado.bat') -Value $desktopRepairUpdaterLauncher -Encoding ASCII
