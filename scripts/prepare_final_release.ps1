@@ -156,8 +156,10 @@ if ($desktopExeParent -like (Join-Path $repoRoot 'dist\lugest_qt') -or $desktopE
 else {
     Copy-Item $desktopExe $desktopDir
 }
-if ((Test-Path $desktopConsoleExe) -and -not (Test-Path (Join-Path $desktopDir 'main.exe'))) {
+if (Test-Path $desktopConsoleExe) {
     Copy-Item $desktopConsoleExe (Join-Path $desktopDir 'main.exe') -Force
+    $consoleExeItem = Get-Item $desktopConsoleExe
+    Write-Host ("[Release] main.exe incluído a partir de dist\\main.exe ({0}, {1:N0} bytes)" -f $consoleExeItem.LastWriteTime.ToString('dd/MM/yyyy HH:mm:ss'), $consoleExeItem.Length)
 }
 Copy-Item $desktopEnvExample (Join-Path $desktopDir 'lugest.env.example')
 Copy-Item $desktopEnvExample (Join-Path $desktopDir 'lugest.env')
