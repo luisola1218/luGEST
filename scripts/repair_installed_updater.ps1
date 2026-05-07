@@ -7,6 +7,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Fluxo validado em cliente:
+# 1. a app renova primeiro este reparador dentro da pasta instalada
+# 2. depois executa este reparador local
+# 3. este reparador renova os restantes scripts e arranca a atualizacao real
+# Nao simplificar este fluxo sem revalidar em cliente.
+
 function Write-Info($message) {
     Write-Host "[LuisGEST Repair] $message"
 }
@@ -54,6 +60,8 @@ function Copy-ItemIfDifferent {
         $destinationResolved = (Resolve-Path $Destination).Path
     }
     if ($sourceResolved -and $destinationResolved -and ($sourceResolved -ieq $destinationResolved)) {
+        # Evita o erro "Cannot overwrite ... with itself" quando o reparador
+        # ja esta a correr a partir da propria pasta instalada.
         return
     }
     Copy-Item $Source $Destination -Force

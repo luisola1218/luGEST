@@ -11715,6 +11715,9 @@ class LegacyBackend(
         bootstrap_ref = str(manifest.get("bootstrap_url", "") or "").strip() or "Reparar Atualizador Instalado.ps1"
         bootstrap_resolved = self._update_resolve_relative_ref(bootstrap_ref, manifest_url, manifest_path)
         local_repair_script = self.base_dir / "Reparar Atualizador Instalado.ps1"
+        # Fluxo validado em cliente: renovar primeiro o reparador local e so depois
+        # executa-lo. Foi este comportamento que substituiu com sucesso a copia manual
+        # via TeamViewer que o utilizador fazia quando o update automatico falhava.
         self._update_download_ref_to_path(bootstrap_resolved, local_repair_script)
         command = [
             str(powershell_exe),
