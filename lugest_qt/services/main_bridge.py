@@ -11641,7 +11641,8 @@ class LegacyBackend(
             return str(Path(urllib.request.url2pathname(urllib.parse.urlparse(ref_txt).path)))
         base_txt = str(base_ref or "").strip()
         if base_txt and re.match(r"^https?://", base_txt, flags=re.IGNORECASE):
-            return urllib.parse.urljoin(base_txt, ref_txt)
+            encoded_ref = urllib.parse.quote(ref_txt, safe="/:@?&=%#+,;~-._")
+            return urllib.parse.urljoin(base_txt, encoded_ref)
         if manifest_path is not None:
             return str((manifest_path.parent / ref_txt).resolve())
         return self._update_resolve_ref(ref_txt)

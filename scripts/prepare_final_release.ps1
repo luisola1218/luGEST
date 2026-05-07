@@ -360,7 +360,7 @@ Copy-Item $emailUpdatesGuide (Join-Path $docsDir 'GUIA - Email e Atualizacoes.md
 
 $updateZipName = "LuisGEST-Desktop-$($appVersion.Replace('.', '-')).zip"
 $updateZipPath = Join-Path $updatesDir $updateZipName
-$bootstrapAssetName = "Reparar Atualizador Instalado.ps1"
+$bootstrapAssetName = "Reparar_Atualizador_Instalado.ps1"
 $bootstrapAssetPath = Join-Path $updatesDir $bootstrapAssetName
 if (Test-Path $updateZipPath) {
     Remove-Item $updateZipPath -Force
