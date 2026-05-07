@@ -11647,16 +11647,37 @@ class LegacyBackend(
 
     def update_installer_command(self) -> list[str]:
         settings = dict(self.update_settings() or {})
-        script_candidates = [
+        powershell_exe = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        repair_candidates = [
+            self.base_dir / "Reparar Atualizador Instalado.ps1",
+        ]
+        repair_script = next((path for path in repair_candidates if path.exists()), None)
+        if repair_script is not None:
+            command = [
+                str(powershell_exe),
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(repair_script),
+                "-InstallDir",
+                str(self.base_dir),
+                "-ManifestUrl",
+                str(settings.get("manifest_url", "") or ""),
+            ]
+            token = str(settings.get("github_token", "") or "").strip()
+            if token:
+                command.extend(["-GitHubToken", token])
+            return command
+        updater_candidates = [
             self.base_dir / "Atualizar LuisGEST.ps1",
             self.base_dir / "scripts" / "lugest_update.ps1",
             Path.cwd() / "scripts" / "lugest_update.ps1",
         ]
-        script = next((path for path in script_candidates if path.exists()), None)
+        script = next((path for path in updater_candidates if path.exists()), None)
         if script is None:
             raise ValueError("Script de atualizacao nao encontrado.")
-        powershell_exe = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
-        return [
+        command = [
             str(powershell_exe),
             "-NoProfile",
             "-ExecutionPolicy",

@@ -60,6 +60,8 @@ $qtConfigPath = Join-Path $installRoot "lugest_qt_config.json"
 $updateConfigPath = Join-Path $installRoot "update_config.json"
 $updatePs1Target = Join-Path $installRoot "Atualizar LuisGEST.ps1"
 $updateBatTarget = Join-Path $installRoot "Atualizar LuisGEST.bat"
+$repairPs1Target = Join-Path $installRoot "Reparar Atualizador Instalado.ps1"
+$repairBatTarget = Join-Path $installRoot "Reparar Atualizador Instalado.bat"
 
 $qtConfig = Read-JsonFile $qtConfigPath
 $qtUpdate = Get-JsonValue $qtConfig "update_settings" @{}
@@ -83,15 +85,25 @@ if (Test-Path $versionPath) {
 
 $releaseUpdatePs1 = Join-Path $sourceRoot "Atualizar LuisGEST.ps1"
 $releaseUpdateBat = Join-Path $sourceRoot "Atualizar LuisGEST.bat"
+$releaseRepairPs1 = Join-Path $sourceRoot "Reparar Atualizador Instalado.ps1"
+$releaseRepairBat = Join-Path $sourceRoot "Reparar Atualizador Instalado.bat"
 if (-not (Test-Path $releaseUpdatePs1)) {
     throw "Nao foi encontrado 'Atualizar LuisGEST.ps1' nesta pasta. Executa este reparador a partir da Desktop App da release."
 }
 if (-not (Test-Path $releaseUpdateBat)) {
     throw "Nao foi encontrado 'Atualizar LuisGEST.bat' nesta pasta. Executa este reparador a partir da Desktop App da release."
 }
+if (-not (Test-Path $releaseRepairPs1)) {
+    throw "Nao foi encontrado 'Reparar Atualizador Instalado.ps1' nesta pasta. Executa este reparador a partir da Desktop App da release."
+}
+if (-not (Test-Path $releaseRepairBat)) {
+    throw "Nao foi encontrado 'Reparar Atualizador Instalado.bat' nesta pasta. Executa este reparador a partir da Desktop App da release."
+}
 
 Copy-Item $releaseUpdatePs1 $updatePs1Target -Force
 Copy-Item $releaseUpdateBat $updateBatTarget -Force
+Copy-Item $releaseRepairPs1 $repairPs1Target -Force
+Copy-Item $releaseRepairBat $repairBatTarget -Force
 
 $payload = @{
     current_version = $version
