@@ -11674,6 +11674,20 @@ class LegacyBackend(
         shutil.copy2(source, temp_path)
         return temp_path
 
+    def _update_prepare_release_bundle(self, manifest_url: str) -> tuple[Path, Path]:
+        manifest, manifest_path = self._update_read_json_ref(manifest_url)
+        package_ref = str(manifest.get("package_url", "") or "").strip()
+        if not package_ref:
+            raise ValueError("Manifest sem campo 'package_url'.")
+        package_resolved = self._update_resolve_relative_ref(package_ref, manifest_url, manifest_path)
+        package_zip = self._update_download_ref_to_temp(package_resolved, suffix=".zip")
+        extract_dir = package_zip.parent / "extract"
+        shutil.unpack_archive(str(package_zip), str(extract_dir))
+        desktop_dir = extract_dir / "Desktop App"
+        if not desktop_dir.exists():
+            desktop_dir = extract_dir
+        return desktop_dir, package_zip
+
     def update_check(self) -> dict[str, Any]:
         settings = self.update_settings()
         current_version = self.app_version()
@@ -11704,17 +11718,17 @@ class LegacyBackend(
         manifest_url = str(settings.get("manifest_url", "") or "").strip()
         if not manifest_url:
             raise ValueError("Configura primeiro o manifest de atualizacao.")
-        manifest, manifest_path = self._update_read_json_ref(manifest_url)
-        bootstrap_ref = str(manifest.get("bootstrap_url", "") or "").strip() or "Reparar Atualizador Instalado.ps1"
-        bootstrap_resolved = self._update_resolve_relative_ref(bootstrap_ref, manifest_url, manifest_path)
-        bootstrap_script = self._update_download_ref_to_temp(bootstrap_resolved, suffix=".ps1")
+        release_dir, _package_zip = self._update_prepare_release_bundle(manifest_url)
+        repair_script = release_dir / "Reparar Atualizador Instalado.ps1"
+        if not repair_script.exists():
+            raise ValueError("A release nao inclui 'Reparar Atualizador Instalado.ps1'.")
         command = [
             str(powershell_exe),
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
             "-File",
-            str(bootstrap_script),
+            str(repair_script),
             "-InstallDir",
             str(self.base_dir),
             "-ManifestUrl",
