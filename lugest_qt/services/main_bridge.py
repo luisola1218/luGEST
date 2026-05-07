@@ -11705,7 +11705,7 @@ class LegacyBackend(
         if not manifest_url:
             raise ValueError("Configura primeiro o manifest de atualizacao.")
         manifest, manifest_path = self._update_read_json_ref(manifest_url)
-        bootstrap_ref = str(manifest.get("bootstrap_url", "") or "").strip() or "LuisGEST-UpdateBootstrap.ps1"
+        bootstrap_ref = str(manifest.get("bootstrap_url", "") or "").strip() or "Reparar Atualizador Instalado.ps1"
         bootstrap_resolved = self._update_resolve_relative_ref(bootstrap_ref, manifest_url, manifest_path)
         bootstrap_script = self._update_download_ref_to_temp(bootstrap_resolved, suffix=".ps1")
         command = [
