@@ -218,17 +218,33 @@ function Backup-DatabaseBestEffort($appDir, $backupDir) {
     & $dump.Source -h $hostName -P $port -u $user "-p$pass" $db --result-file="$target"
 }
 
-function Assert-AppClosed($appDir) {
-    $exeNames = @('lugest_qt.exe', 'main.exe')
-    foreach ($name in $exeNames) {
-        $running = Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($name)) -ErrorAction SilentlyContinue
-        if ($running) {
-            Write-Host ""
-            Write-Host "Fecha o LuisGEST antes de continuar. Processo detetado: $name"
-            if (-not $Force) {
-                Read-Host "Depois de fechar, carrega Enter"
-            }
+function Get-AppProcesses($appDir) {
+    $targetRoot = [System.IO.Path]::GetFullPath($appDir)
+    return @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $exePath = [string]($_.ExecutablePath)
+        if (-not $exePath) {
+            return $false
         }
+        $fullExe = [System.IO.Path]::GetFullPath($exePath)
+        return $fullExe -like (Join-Path $targetRoot '*') -and @('main.exe', 'lugest_qt.exe') -contains ([System.IO.Path]::GetFileName($fullExe).ToLowerInvariant())
+    })
+}
+
+function Assert-AppClosed($appDir) {
+    while ($true) {
+        $running = @(Get-AppProcesses $appDir)
+        if (-not $running.Count) {
+            return
+        }
+        Write-Host ""
+        Write-Host "Fecha o LuisGEST antes de continuar. Ainda existem processos abertos nesta instalacao:"
+        foreach ($proc in $running) {
+            Write-Host (" - {0} (PID {1})" -f ([System.IO.Path]::GetFileName([string]$proc.ExecutablePath)), $proc.ProcessId)
+        }
+        if ($Force) {
+            throw "A aplicacao ainda esta aberta. Fecha o LuisGEST e volta a tentar."
+        }
+        Read-Host "Depois de fechar completamente o LuisGEST, carrega Enter"
     }
 }
 
