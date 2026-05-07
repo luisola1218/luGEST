@@ -11672,14 +11672,28 @@ class LegacyBackend(
             str(self.base_dir),
         ]
 
+    def _update_sync_installer_config(self) -> Path:
+        target = self.base_dir / "update_config.json"
+        settings = dict(self.update_settings() or {})
+        payload = {
+            "current_version": self.app_version(),
+            "manifest_url": str(settings.get("manifest_url", "") or "").strip(),
+            "channel": str(settings.get("channel", "stable") or "stable").strip() or "stable",
+            "github_token": str(settings.get("github_token", "") or "").strip(),
+            "auto_check": bool(settings.get("auto_check", False)),
+        }
+        target.write_text(json.dumps(payload, indent=4, ensure_ascii=False) + "\n", encoding="utf-8")
+        return target
+
     def update_start_installer(self) -> dict[str, Any]:
+        config_path = self._update_sync_installer_config()
         command = self.update_installer_command()
         creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
         if command and str(command[0]).lower().endswith(".bat"):
             os.startfile(command[0])
         else:
             subprocess.Popen(command, cwd=str(self.base_dir), close_fds=True, creationflags=creationflags)
-        return {"started": True, "command": command}
+        return {"started": True, "command": command, "config_path": str(config_path)}
 
     def verify_supervisor_password(self, password: str) -> bool:
         stored = str(dict(self._load_qt_config().get("ui_options", {}) or {}).get("operator_supervisor_password", "") or "").strip()
