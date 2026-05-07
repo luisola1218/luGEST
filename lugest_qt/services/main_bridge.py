@@ -11674,19 +11674,11 @@ class LegacyBackend(
         shutil.copy2(source, temp_path)
         return temp_path
 
-    def _update_prepare_release_bundle(self, manifest_url: str) -> tuple[Path, Path]:
-        manifest, manifest_path = self._update_read_json_ref(manifest_url)
-        package_ref = str(manifest.get("package_url", "") or "").strip()
-        if not package_ref:
-            raise ValueError("Manifest sem campo 'package_url'.")
-        package_resolved = self._update_resolve_relative_ref(package_ref, manifest_url, manifest_path)
-        package_zip = self._update_download_ref_to_temp(package_resolved, suffix=".zip")
-        extract_dir = package_zip.parent / "extract"
-        shutil.unpack_archive(str(package_zip), str(extract_dir))
-        desktop_dir = extract_dir / "Desktop App"
-        if not desktop_dir.exists():
-            desktop_dir = extract_dir
-        return desktop_dir, package_zip
+    def _update_download_ref_to_path(self, ref: str, target: Path) -> Path:
+        downloaded = self._update_download_ref_to_temp(ref, suffix=target.suffix or ".tmp")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(downloaded, target)
+        return target
 
     def update_check(self) -> dict[str, Any]:
         settings = self.update_settings()
@@ -11714,19 +11706,22 @@ class LegacyBackend(
 
     def update_installer_command(self) -> list[str]:
         settings = dict(self.update_settings() or {})
+        powershell_exe = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
         manifest_url = str(settings.get("manifest_url", "") or "").strip()
         if not manifest_url:
             raise ValueError("Configura primeiro o manifest de atualizacao.")
-        release_dir, _package_zip = self._update_prepare_release_bundle(manifest_url)
-        repair_launcher = release_dir / "Reparar Atualizador Instalado.bat"
-        if not repair_launcher.exists():
-            raise ValueError("A release nao inclui 'Reparar Atualizador Instalado.bat'.")
-        cmd_exe = Path(os.environ.get("ComSpec", r"C:\Windows\System32\cmd.exe"))
+        manifest, manifest_path = self._update_read_json_ref(manifest_url)
+        bootstrap_ref = str(manifest.get("bootstrap_url", "") or "").strip() or "Reparar Atualizador Instalado.ps1"
+        bootstrap_resolved = self._update_resolve_relative_ref(bootstrap_ref, manifest_url, manifest_path)
+        local_repair_script = self.base_dir / "Reparar Atualizador Instalado.ps1"
+        self._update_download_ref_to_path(bootstrap_resolved, local_repair_script)
         command = [
-            str(cmd_exe),
-            "/c",
-            "call",
-            str(repair_launcher),
+            str(powershell_exe),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(local_repair_script),
             "-InstallDir",
             str(self.base_dir),
             "-ManifestUrl",
