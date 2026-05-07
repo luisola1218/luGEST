@@ -11646,12 +11646,7 @@ class LegacyBackend(
         }
 
     def update_installer_command(self) -> list[str]:
-        batch_candidates = [
-            self.base_dir / "Atualizar LuisGEST.bat",
-        ]
-        batch_path = next((path for path in batch_candidates if path.exists()), None)
-        if batch_path is not None:
-            return [str(batch_path)]
+        settings = dict(self.update_settings() or {})
         script_candidates = [
             self.base_dir / "Atualizar LuisGEST.ps1",
             self.base_dir / "scripts" / "lugest_update.ps1",
@@ -11670,7 +11665,15 @@ class LegacyBackend(
             str(script),
             "-AppDir",
             str(self.base_dir),
+            "-CurrentVersion",
+            self.app_version(),
+            "-ManifestUrl",
+            str(settings.get("manifest_url", "") or ""),
         ]
+        token = str(settings.get("github_token", "") or "").strip()
+        if token:
+            command.extend(["-GitHubToken", token])
+        return command
 
     def _update_sync_installer_config(self) -> Path:
         target = self.base_dir / "update_config.json"
@@ -11689,10 +11692,7 @@ class LegacyBackend(
         config_path = self._update_sync_installer_config()
         command = self.update_installer_command()
         creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
-        if command and str(command[0]).lower().endswith(".bat"):
-            os.startfile(command[0])
-        else:
-            subprocess.Popen(command, cwd=str(self.base_dir), close_fds=True, creationflags=creationflags)
+        subprocess.Popen(command, cwd=str(self.base_dir), close_fds=True, creationflags=creationflags)
         return {"started": True, "command": command, "config_path": str(config_path)}
 
     def verify_supervisor_password(self, password: str) -> bool:

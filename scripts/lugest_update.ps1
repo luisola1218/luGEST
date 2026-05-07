@@ -1,6 +1,9 @@
 param(
     [string]$AppDir = "",
     [string]$ConfigPath = "",
+    [string]$ManifestUrl = "",
+    [string]$GitHubToken = "",
+    [string]$CurrentVersion = "",
     [switch]$CheckOnly,
     [switch]$Force,
     [switch]$NoRestart
@@ -129,7 +132,10 @@ function Download-RemoteFile($url, $targetPath, $token) {
 function Read-Manifest($manifestRef, $config, $workDir) {
     $manifestPath = Join-Path $workDir 'latest.json'
     if ($manifestRef -match '^https?://') {
-        $token = [string](Get-JsonValue $config 'github_token' '')
+        $token = [string]$GitHubToken
+        if (-not $token) {
+            $token = [string](Get-JsonValue $config 'github_token' '')
+        }
         Download-RemoteFile $manifestRef $manifestPath $token
         return [pscustomobject]@{ Manifest = (Read-JsonFile $manifestPath); LocalPath = $manifestPath; SourceRef = $manifestRef }
     }
@@ -232,14 +238,20 @@ if (-not $ConfigPath) {
 }
 $config = Read-JsonFile $ConfigPath
 $versionPath = Join-Path $appDir 'VERSION'
-$currentVersion = [string](Get-JsonValue $config 'current_version' '')
-if ((Test-Path $versionPath) -and -not $currentVersion) {
+$currentVersion = [string]$CurrentVersion
+if (-not $currentVersion) {
+    $currentVersion = [string](Get-JsonValue $config 'current_version' '')
+}
+if ((Test-Path $versionPath) -and -not $CurrentVersion -and -not $currentVersion) {
     $currentVersion = (Get-Content $versionPath -Raw -Encoding UTF8).Trim()
 }
 if (-not $currentVersion) {
     $currentVersion = "0.0.0"
 }
-$manifestRef = [string](Get-JsonValue $config 'manifest_url' '')
+$manifestRef = [string]$ManifestUrl
+if (-not $manifestRef) {
+    $manifestRef = [string](Get-JsonValue $config 'manifest_url' '')
+}
 if (-not $manifestRef) {
     throw "Configura manifest_url em update_config.json."
 }
@@ -296,7 +308,10 @@ try {
     $packageResolved = Resolve-RelativePathOrUrl $packageRef $manifestBase
     $packagePath = Join-Path $workDir 'package.zip'
     if ($packageResolved -match '^https?://') {
-        $token = [string](Get-JsonValue $config 'github_token' '')
+        $token = [string]$GitHubToken
+        if (-not $token) {
+            $token = [string](Get-JsonValue $config 'github_token' '')
+        }
         Download-RemoteFile $packageResolved $packagePath $token
     }
     else {
