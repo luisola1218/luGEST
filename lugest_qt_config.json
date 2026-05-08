@@ -98,11 +98,11 @@
       ]
     },
     "nesting": {
-      "default_part_spacing_mm": 7.0,
-      "default_edge_margin_mm": 7.0,
+      "default_part_spacing_mm": 8.0,
+      "default_edge_margin_mm": 8.0,
       "allow_rotate": true,
       "auto_select_sheet": false,
-      "use_stock_first": true,
+      "use_stock_first": false,
       "allow_purchase_fallback": false,
       "shape_aware": true,
       "shape_grid_mm": 100.0,

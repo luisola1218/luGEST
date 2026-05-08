@@ -255,6 +255,34 @@ function Assert-AppClosed($appDir) {
     }
 }
 
+function Restart-LuisGEST($appDir) {
+    $launcherVbs = Join-Path $appDir 'Arrancar LuisGEST Desktop.vbs'
+    $launcherBat = Join-Path $appDir 'Arrancar LuisGEST Desktop.bat'
+    $launcherPs1 = Join-Path $appDir 'Arrancar LuisGEST Desktop.ps1'
+    $mainExe = Join-Path $appDir 'main.exe'
+    $qtExe = Join-Path $appDir 'lugest_qt.exe'
+
+    if (Test-Path $launcherVbs) {
+        Start-Process -FilePath 'wscript.exe' -ArgumentList @($launcherVbs, $appDir) -WorkingDirectory $appDir
+        return
+    }
+    if (Test-Path $launcherBat) {
+        Start-Process -FilePath $launcherBat -WorkingDirectory $appDir
+        return
+    }
+    if (Test-Path $launcherPs1) {
+        Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $launcherPs1, '-InstallDir', $appDir) -WorkingDirectory $appDir
+        return
+    }
+    if (Test-Path $mainExe) {
+        Start-Process -FilePath $mainExe -WorkingDirectory $appDir
+        return
+    }
+    if (Test-Path $qtExe) {
+        Start-Process -FilePath $qtExe -WorkingDirectory $appDir
+    }
+}
+
 $appDir = Resolve-AppDir
 if (-not $ConfigPath) {
     $ConfigPath = Join-Path $appDir 'update_config.json'
@@ -401,16 +429,8 @@ try {
         status = 'installed'
     }
     Write-Info "Atualizacao concluida."
-    $exe = Join-Path $appDir 'main.exe'
-    if (-not (Test-Path $exe)) {
-        $exe = Join-Path $appDir 'lugest_qt.exe'
-    }
-    if ((-not $NoRestart) -and (Test-Path $exe)) {
-        $restartParams = @{
-            FilePath = $exe
-            WorkingDirectory = $appDir
-        }
-        Start-Process @restartParams
+    if (-not $NoRestart) {
+        Restart-LuisGEST $appDir
     }
 }
 finally {

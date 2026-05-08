@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
-from PySide6.QtCore import Qt, QDate, QMimeData, QTime, QTimer
+from PySide6.QtCore import Qt, QDate, QEvent, QMimeData, QTime, QTimer
 from PySide6.QtGui import QColor, QBrush, QDrag, QPixmap
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -11413,6 +11413,7 @@ class QuotesPage(QWidget):
     def __init__(self, backend, parent=None) -> None:
         super().__init__(parent)
         self.backend = backend
+        self._combo_click_targets: dict[QWidget, QComboBox] = {}
         self.rows: list[dict] = []
         self.client_rows: list[dict] = []
         self.line_rows: list[dict] = []
@@ -11695,6 +11696,26 @@ class QuotesPage(QWidget):
             widget.setProperty("compact", "true")
             widget.setMaximumWidth(16777215)
         for widget in (
+            self.transport_combo,
+            self.transport_carrier_combo,
+            self.transport_zone_combo,
+        ):
+            widget.setMinimumWidth(150)
+            widget.setMaximumWidth(164)
+            widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        for widget in (
+            self.transport_price_spin,
+            self.iva_spin,
+            self.transport_km_spin,
+            self.transport_rate_spin,
+            self.transport_diesel_spin,
+            self.transport_consumption_spin,
+            self.transport_trip_factor_spin,
+        ):
+            widget.setMinimumWidth(116)
+            widget.setMaximumWidth(136)
+            widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        for widget in (
             self.transport_km_spin,
             self.transport_rate_spin,
             self.transport_diesel_spin,
@@ -11834,9 +11855,9 @@ class QuotesPage(QWidget):
             QTabBar::tab {
                 font-size: 10px;
                 min-height: 32px;
-                min-width: 112px;
-                padding: 6px 14px;
-                margin-right: 6px;
+                min-width: 118px;
+                padding: 7px 16px;
+                margin-right: 8px;
                 border: 1px solid #dec084;
                 border-top-left-radius: 11px;
                 border-top-right-radius: 11px;
@@ -11873,50 +11894,93 @@ class QuotesPage(QWidget):
 
         transport_form_card = CardFrame()
         transport_form_card.set_tone("default")
-        transport_form_card.setStyleSheet("QFrame#Card { background: #fffdf8; border: 1px solid #e4c37f; border-radius: 12px; }")
+        transport_form_card.setStyleSheet(
+            """
+            QFrame#Card {
+                background: #fffdf8;
+                border: 1px solid #e4c37f;
+                border-radius: 12px;
+            }
+            QFrame#Card QLabel {
+                font-size: 9px;
+                color: #7a4d10;
+            }
+            QFrame#Card QLineEdit,
+            QFrame#Card QComboBox,
+            QFrame#Card QAbstractSpinBox {
+                font-size: 9px;
+                min-height: 26px;
+                padding: 2px 6px;
+            }
+            """
+        )
         transport_form_layout = QGridLayout(transport_form_card)
-        transport_form_layout.setContentsMargins(12, 10, 12, 10)
-        transport_form_layout.setHorizontalSpacing(10)
-        transport_form_layout.setVerticalSpacing(4)
-        transport_form_layout.setColumnMinimumWidth(0, 270)
-        transport_form_layout.setColumnMinimumWidth(1, 270)
+        transport_form_layout.setContentsMargins(14, 12, 14, 12)
+        transport_form_layout.setHorizontalSpacing(12)
+        transport_form_layout.setVerticalSpacing(8)
+        transport_form_layout.setColumnMinimumWidth(0, 222)
+        transport_form_layout.setColumnMinimumWidth(1, 222)
+        transport_form_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+
+        def _transport_form_label(text: str) -> QLabel:
+            label = QLabel(text)
+            label.setMinimumWidth(94)
+            label.setMaximumWidth(94)
+            label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            return label
 
         left_transport_form = QFormLayout()
         left_transport_form.setContentsMargins(0, 0, 0, 0)
         left_transport_form.setHorizontalSpacing(8)
-        left_transport_form.setVerticalSpacing(4)
-        left_transport_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        left_transport_form.setVerticalSpacing(6)
+        left_transport_form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
         left_transport_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        left_transport_form.addRow("Modo", self.transport_combo)
-        left_transport_form.addRow("Transportadora", self.transport_carrier_combo)
-        left_transport_form.addRow("Zona", self.transport_zone_combo)
-        left_transport_form.addRow("Preço manual", self.transport_price_spin)
-        left_transport_form.addRow("IVA %", self.iva_spin)
+        left_transport_form.setFormAlignment(Qt.AlignTop)
+        left_transport_form.setRowWrapPolicy(QFormLayout.DontWrapRows)
+        left_transport_form.addRow(_transport_form_label("Modo"), self.transport_combo)
+        left_transport_form.addRow(_transport_form_label("Transport."), self.transport_carrier_combo)
+        left_transport_form.addRow(_transport_form_label("Zona"), self.transport_zone_combo)
+        left_transport_form.addRow(_transport_form_label("Preço manual"), self.transport_price_spin)
+        left_transport_form.addRow(_transport_form_label("IVA %"), self.iva_spin)
 
         right_transport_form = QFormLayout()
         right_transport_form.setContentsMargins(0, 0, 0, 0)
         right_transport_form.setHorizontalSpacing(8)
-        right_transport_form.setVerticalSpacing(4)
-        right_transport_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        right_transport_form.setVerticalSpacing(6)
+        right_transport_form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
         right_transport_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        right_transport_form.addRow("Distância", self.transport_km_spin)
-        right_transport_form.addRow("Preço / km", self.transport_rate_spin)
-        right_transport_form.addRow("Gasóleo", self.transport_diesel_spin)
-        right_transport_form.addRow("Consumo", self.transport_consumption_spin)
-        right_transport_form.addRow("Fator de viagem", self.transport_trip_factor_spin)
+        right_transport_form.setFormAlignment(Qt.AlignTop)
+        right_transport_form.setRowWrapPolicy(QFormLayout.DontWrapRows)
+        right_transport_form.addRow(_transport_form_label("Distância"), self.transport_km_spin)
+        right_transport_form.addRow(_transport_form_label("Preço / km"), self.transport_rate_spin)
+        right_transport_form.addRow(_transport_form_label("Gasóleo"), self.transport_diesel_spin)
+        right_transport_form.addRow(_transport_form_label("Consumo"), self.transport_consumption_spin)
+        right_transport_form.addRow(_transport_form_label("Fator viagem"), self.transport_trip_factor_spin)
 
         transport_form_layout.addLayout(left_transport_form, 0, 0)
         transport_form_layout.addLayout(right_transport_form, 0, 1)
-        transport_form_layout.setColumnStretch(0, 1)
-        transport_form_layout.setColumnStretch(1, 1)
+        transport_form_layout.setColumnStretch(0, 0)
+        transport_form_layout.setColumnStretch(1, 0)
 
         transport_actions_card = CardFrame()
         transport_actions_card.set_tone("default")
-        transport_actions_card.setStyleSheet("QFrame#Card { background: #fffdf8; border: 1px solid #e4c37f; border-radius: 12px; }")
+        transport_actions_card.setStyleSheet(
+            """
+            QFrame#Card {
+                background: #fffdf8;
+                border: 1px solid #e4c37f;
+                border-radius: 12px;
+            }
+            QFrame#Card QLabel {
+                font-size: 9px;
+                color: #7a4d10;
+            }
+            """
+        )
         transport_actions_layout = QGridLayout(transport_actions_card)
-        transport_actions_layout.setContentsMargins(12, 10, 12, 10)
-        transport_actions_layout.setHorizontalSpacing(12)
-        transport_actions_layout.setVerticalSpacing(6)
+        transport_actions_layout.setContentsMargins(14, 12, 14, 12)
+        transport_actions_layout.setHorizontalSpacing(14)
+        transport_actions_layout.setVerticalSpacing(8)
         transport_actions_title = QLabel("Cálculo e aplicação")
         transport_actions_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #0f172a;")
         transport_actions_hint = QLabel("Usa os parâmetros do transporte para sugerir um valor coerente com a orçamentação.")
@@ -11942,18 +12006,18 @@ class QuotesPage(QWidget):
         apply_transport_btn.clicked.connect(self._apply_transport_calc)
         for button in (fill_notes_btn, apply_transport_btn):
             button.setMinimumHeight(36)
-            button.setMinimumWidth(188)
-            button.setMaximumWidth(196)
+            button.setMinimumWidth(196)
+            button.setMaximumWidth(206)
             button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             button.setStyleSheet(
-                "QPushButton { border: 1px solid #d0b06c; border-bottom: 2px solid #b99343; border-radius: 9px; }"
+                "QPushButton { border: 1px solid #d0b06c; border-bottom: 2px solid #b99343; border-radius: 10px; padding: 0 12px; }"
                 " QPushButton:hover { border-color: #c08b30; }"
             )
         self.transport_suggest_label.setStyleSheet("font-size: 14px; font-weight: 900; color: #0f172a;")
         self.transport_suggest_label.setAlignment(Qt.AlignCenter)
         transport_action_buttons = QHBoxLayout()
         transport_action_buttons.setContentsMargins(0, 0, 0, 0)
-        transport_action_buttons.setSpacing(10)
+        transport_action_buttons.setSpacing(12)
         transport_action_buttons.addStretch(1)
         transport_action_buttons.addWidget(fill_notes_btn)
         transport_action_buttons.addWidget(apply_transport_btn)
@@ -12043,9 +12107,17 @@ class QuotesPage(QWidget):
             widget.setProperty("compact", "true")
             widget.setMaximumWidth(16777215)
             widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            widget.setMinimumWidth(146)
-            widget.setMinimumHeight(28)
+            widget.setMinimumWidth(136)
+            widget.setMinimumHeight(26)
             _repolish(widget)
+        for combo in (self.transport_combo, self.transport_carrier_combo, self.transport_zone_combo):
+            self._combo_click_targets[combo] = combo
+            combo.installEventFilter(self)
+            line_edit = combo.lineEdit()
+            if line_edit is not None:
+                line_edit.setReadOnly(True)
+                line_edit.installEventFilter(self)
+                self._combo_click_targets[line_edit] = combo
         self.notes_tabs.setMinimumHeight(318)
         self.quote_summary_card = CardFrame()
         self.quote_summary_card.set_tone("info")
@@ -12330,6 +12402,13 @@ class QuotesPage(QWidget):
         self._quote_save_feedback_timer.timeout.connect(self._reset_quote_save_button)
         self._clear_quote_detail()
         self._show_list()
+
+    def eventFilter(self, watched, event):  # type: ignore[override]
+        combo = self._combo_click_targets.get(watched)
+        if combo is not None and event.type() == QEvent.MouseButtonPress:
+            combo.showPopup()
+            return True
+        return super().eventFilter(watched, event)
 
     def refresh(self) -> None:
         previous = self.current_number
