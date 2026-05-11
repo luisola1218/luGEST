@@ -209,11 +209,21 @@ class LaserBatchQuoteDialog(QDialog):
         except Exception:
             pass
         self.machine_combo.currentTextChanged.connect(self._refresh_materials)
+        self.machine_combo.currentTextChanged.connect(lambda _text: self._invalidate_analysis())
         self.material_combo.currentTextChanged.connect(self._refresh_subtypes)
         self.batch_table.itemSelectionChanged.connect(self._sync_buttons)
         self.add_files_btn.clicked.connect(self._pick_files)
         self.remove_files_btn.clicked.connect(self._remove_selected_rows)
         self.clear_files_btn.clicked.connect(self._clear_rows)
+        self.batch_table.itemChanged.connect(self._handle_table_item_changed)
+        self.commercial_combo.currentTextChanged.connect(lambda _text: self._invalidate_analysis())
+        self.material_combo.currentTextChanged.connect(lambda _text: self._invalidate_analysis())
+        self.subtype_combo.currentTextChanged.connect(lambda _text: self._invalidate_analysis())
+        self.gas_combo.currentTextChanged.connect(lambda _text: self._invalidate_analysis())
+        self.thickness_spin.valueChanged.connect(lambda _value: self._invalidate_analysis())
+        self.marking_check.toggled.connect(lambda _checked: self._invalidate_analysis())
+        self.defilm_check.toggled.connect(lambda _checked: self._invalidate_analysis())
+        self.customer_material_check.toggled.connect(lambda _checked: self._invalidate_analysis())
         self._refresh_materials()
         self._sync_buttons()
 
@@ -291,6 +301,55 @@ class LaserBatchQuoteDialog(QDialog):
             button.setToolTip(label)
         self._set_result_cell(row_index, 5, f"{_fmt_num(float(dict(meta or {}).get('tempo_ops_unit', 0.0) or 0.0), 3)} min")
         self._set_result_cell(row_index, 6, _fmt_eur(float(dict(meta or {}).get("preco_ops_unit", 0.0) or 0.0)))
+
+    def _invalidate_analysis(self) -> None:
+        self.line_payloads = []
+        self.summary = {}
+        self._clear_summary()
+        self._sync_buttons()
+
+    def _recalculate_row_operation_meta(self, row_index: int) -> None:
+        meta = self._row_operation_meta(row_index)
+        detail_rows = [dict(row or {}) for row in list(meta.get("operacoes_detalhe", []) or []) if isinstance(row, dict)]
+        if not detail_rows:
+            self._set_row_operation_meta(row_index, {})
+            return
+        estimate = dict(
+            self.backend.operation_cost_estimate(
+                {
+                    "qtd": self._row_quantity(row_index),
+                    "costing_operations": [str(row.get("nome", "") or "").strip() for row in detail_rows],
+                    "operacoes_detalhe": detail_rows,
+                }
+            )
+            or {}
+        )
+        summary = dict(estimate.get("summary", {}) or {})
+        final_rows = [dict(row or {}) for row in list(estimate.get("operations", []) or []) if isinstance(row, dict)]
+        self._set_row_operation_meta(
+            row_index,
+            {
+                "operacoes_detalhe": final_rows,
+                "tempos_operacao": {
+                    str(row.get("nome", "") or "").strip(): float(row.get("tempo_unit_min", 0.0) or 0.0)
+                    for row in final_rows
+                    if str(row.get("nome", "") or "").strip() and row.get("tempo_unit_min") not in (None, "")
+                },
+                "custos_operacao": {
+                    str(row.get("nome", "") or "").strip(): float(row.get("custo_unit_eur", 0.0) or 0.0)
+                    for row in final_rows
+                    if str(row.get("nome", "") or "").strip() and row.get("custo_unit_eur") not in (None, "")
+                },
+                "tempo_ops_unit": round(float(summary.get("tempo_unit_total_min", 0.0) or 0.0), 4),
+                "preco_ops_unit": round(float(summary.get("custo_unit_total_eur", 0.0) or 0.0), 4),
+                "quote_cost_snapshot": {
+                    "costing_mode": str(summary.get("costing_mode", "") or ""),
+                    "tempo_total_peca_min": round(float(summary.get("tempo_unit_total_min", 0.0) or 0.0), 4),
+                    "preco_unit_total_eur": round(float(summary.get("custo_unit_total_eur", 0.0) or 0.0), 4),
+                    "qtd": self._row_quantity(row_index),
+                },
+            },
+        )
 
     def _operation_names(self) -> list[str]:
         try:
@@ -458,9 +517,7 @@ class LaserBatchQuoteDialog(QDialog):
                 },
             },
         )
-        self.line_payloads = []
-        self.summary = {}
-        self._clear_summary()
+        self._invalidate_analysis()
 
     def _apply_row_operations_to_line(self, line: dict[str, Any], row_index: int) -> dict[str, Any]:
         meta = self._row_operation_meta(row_index)
@@ -563,6 +620,16 @@ class LaserBatchQuoteDialog(QDialog):
         self._clear_summary()
         self._sync_buttons()
 
+    def _handle_table_item_changed(self, item: QTableWidgetItem) -> None:
+        if item is None:
+            return
+        row_index = item.row()
+        if row_index < 0:
+            return
+        if item.column() == 3:
+            self._recalculate_row_operation_meta(row_index)
+        self._invalidate_analysis()
+
     def _row_path(self, row_index: int) -> str:
         item = self.batch_table.item(row_index, 0)
         return str((item.data(Qt.UserRole) if item is not None else "") or "").strip()
@@ -652,6 +719,7 @@ class LaserBatchQuoteDialog(QDialog):
                 QMessageBox.warning(self, "Lote DXF/DWG", f"A linha {row_index + 1} nao tem ficheiro associado.")
                 return False
             try:
+                self._recalculate_row_operation_meta(row_index)
                 result = self.backend.laser_quote_build_line(self._row_payload(row_index))
             except Exception as exc:
                 QMessageBox.critical(self, "Lote DXF/DWG", f"Erro ao analisar {path}:\n{exc}")

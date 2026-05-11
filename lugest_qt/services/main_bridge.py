@@ -3634,11 +3634,357 @@ class LegacyBackend(
         return target
 
     def product_presets(self) -> dict[str, list[str]]:
+        return self.product_catalog_options()
+
+    def _product_catalog_slug(self, value: Any, fallback: str = "item") -> str:
+        text = str(value or "").strip().lower()
+        clean: list[str] = []
+        last_dash = False
+        for char in text:
+            if char.isalnum():
+                clean.append(char)
+                last_dash = False
+            elif not last_dash:
+                clean.append("-")
+                last_dash = True
+        slug = "".join(clean).strip("-")
+        return slug or fallback
+
+    def product_taxonomy(self) -> dict[str, Any]:
         return {
-            "categorias": [str(v) for v in list(getattr(self.desktop_main, "PROD_CATEGORIAS", []) or [])],
-            "subcats": [str(v) for v in list(getattr(self.desktop_main, "PROD_SUBCATS", []) or [])],
-            "tipos": [str(v) for v in list(getattr(self.desktop_main, "PROD_TIPOS", []) or [])],
+            "categories": [
+                {
+                    "id": "inox",
+                    "label": "Inox",
+                    "icon": "INOX",
+                    "badge": "Metal nobre",
+                    "tone": "steel",
+                    "subcategories": [
+                        {"id": "inox-tubo", "label": "Tubo", "types": ["Redondo", "Quadrado", "Retangular", "Sanitario"]},
+                        {"id": "inox-chapa", "label": "Chapa", "types": ["Escovada", "Polida", "Decapada", "Perfurada"]},
+                        {"id": "inox-perfil", "label": "Perfil", "types": ["L", "U", "T", "Cantoneira", "Rectangular"]},
+                        {"id": "inox-varao", "label": "Varao", "types": ["Redondo", "Sextavado", "Roscado"]},
+                    ],
+                },
+                {
+                    "id": "aluminio",
+                    "label": "Aluminio",
+                    "icon": "AL",
+                    "badge": "Leve",
+                    "tone": "sky",
+                    "subcategories": [
+                        {"id": "aluminio-chapa", "label": "Chapa", "types": ["Lisa", "Xadrez", "Lacada", "Perfurada"]},
+                        {"id": "aluminio-tubo", "label": "Tubo", "types": ["Redondo", "Quadrado", "Retangular"]},
+                        {"id": "aluminio-perfil", "label": "Perfil", "types": ["U", "L", "T", "Omega", "Calha"]},
+                        {"id": "aluminio-varao", "label": "Varao", "types": ["Redondo", "Sextavado"]},
+                    ],
+                },
+                {
+                    "id": "ferro",
+                    "label": "Ferro",
+                    "icon": "FE",
+                    "badge": "Estrutural",
+                    "tone": "graphite",
+                    "subcategories": [
+                        {"id": "ferro-chapa", "label": "Chapa", "types": ["S235JR", "S275JR", "S355JR", "Galvanizada", "Decapada"]},
+                        {"id": "ferro-tubo", "label": "Tubo", "types": ["Redondo", "Quadrado", "Retangular", "Mecanico"]},
+                        {"id": "ferro-perfil", "label": "Perfil", "types": ["UPN", "IPE", "HEA", "HEB", "Cantoneira"]},
+                        {"id": "ferro-varao", "label": "Varao", "types": ["Liso", "Nervurado", "Sextavado"]},
+                    ],
+                },
+                {
+                    "id": "epis",
+                    "label": "EPIs",
+                    "icon": "EPI",
+                    "badge": "Seguranca",
+                    "tone": "amber",
+                    "subcategories": [
+                        {"id": "epis-luvas", "label": "Luvas", "types": ["Corte", "Soldadura", "Nitrilo", "Termicas"]},
+                        {"id": "epis-capacetes", "label": "Capacetes", "types": ["Industrial", "Eletrico", "Com viseira"]},
+                        {"id": "epis-mascaras", "label": "Mascaras", "types": ["FFP2", "FFP3", "Soldadura", "Respiratoria"]},
+                        {"id": "epis-botas", "label": "Botas", "types": ["S1P", "S3", "Borracha", "Soldador"]},
+                        {"id": "epis-oculos", "label": "Oculos", "types": ["Transparentes", "Escuros", "Panoramicos"]},
+                    ],
+                },
+                {
+                    "id": "eletronica",
+                    "label": "Eletronica",
+                    "icon": "PCB",
+                    "badge": "Controlo",
+                    "tone": "indigo",
+                    "subcategories": [
+                        {"id": "eletronica-sensores", "label": "Sensores", "types": ["Indutivo", "Capacitivo", "Optico", "Temperatura"]},
+                        {"id": "eletronica-automacao", "label": "Automacao", "types": ["PLC", "HMI", "Reles", "Fontes"]},
+                        {"id": "eletronica-cablagem", "label": "Cablagem", "types": ["Cabo", "Ficha", "Terminal", "Calha"]},
+                    ],
+                },
+                {
+                    "id": "pneumatica",
+                    "label": "Pneumatica",
+                    "icon": "AIR",
+                    "badge": "Ar comprimido",
+                    "tone": "cyan",
+                    "subcategories": [
+                        {"id": "pneumatica-valvulas", "label": "Valvulas", "types": ["2 vias", "3 vias", "5 vias", "Proporcional"]},
+                        {"id": "pneumatica-cilindros", "label": "Cilindros", "types": ["Compacto", "ISO", "Guiado", "Sem haste"]},
+                        {"id": "pneumatica-ligacoes", "label": "Ligacoes", "types": ["Reto", "Cotovelo", "T", "Regulador"]},
+                    ],
+                },
+                {
+                    "id": "hidraulica",
+                    "label": "Hidraulica",
+                    "icon": "HYD",
+                    "badge": "Potencia",
+                    "tone": "blue",
+                    "subcategories": [
+                        {"id": "hidraulica-valvulas", "label": "Valvulas", "types": ["Esfera", "Retencao", "Alivio", "Direcional"]},
+                        {"id": "hidraulica-mangueiras", "label": "Mangueiras", "types": ["Alta pressao", "Retorno", "Aspiracao"]},
+                        {"id": "hidraulica-acessorios", "label": "Acessorios", "types": ["Conexao", "Adaptador", "Vedante", "Filtro"]},
+                    ],
+                },
+                {
+                    "id": "fixacao",
+                    "label": "Fixacao",
+                    "icon": "FIX",
+                    "badge": "Montagem",
+                    "tone": "slate",
+                    "subcategories": [
+                        {"id": "fixacao-parafusos", "label": "Parafusos", "types": ["Allen", "Sextavado", "Escareado", "Auto perfurante"]},
+                        {"id": "fixacao-porcas", "label": "Porcas", "types": ["Sextavada", "Travante", "Rebite", "Gaiola"]},
+                        {"id": "fixacao-anilhas", "label": "Anilhas", "types": ["Lisa", "Pressao", "Dentada"]},
+                        {"id": "fixacao-ancoragem", "label": "Ancoragem", "types": ["Quimica", "Mecanica", "Bucha"]},
+                    ],
+                },
+                {
+                    "id": "consumiveis",
+                    "label": "Consumiveis",
+                    "icon": "CON",
+                    "badge": "Uso diario",
+                    "tone": "orange",
+                    "subcategories": [
+                        {"id": "consumiveis-abrasivos", "label": "Abrasivos", "types": ["Disco corte", "Disco flap", "Lixa", "Escova"]},
+                        {"id": "consumiveis-quimicos", "label": "Quimicos", "types": ["Desengordurante", "Spray zincado", "Lubrificante", "Cola"]},
+                        {"id": "consumiveis-embalagem", "label": "Embalagem", "types": ["Filme", "Fita", "Cantoneira", "Caixa"]},
+                    ],
+                },
+                {
+                    "id": "corte-laser",
+                    "label": "Corte Laser",
+                    "icon": "LAS",
+                    "badge": "Processo",
+                    "tone": "violet",
+                    "subcategories": [
+                        {"id": "corte-laser-consumiveis", "label": "Consumiveis", "types": ["Bico", "Lente", "Ceramica", "Filtro"]},
+                        {"id": "corte-laser-gases", "label": "Gases", "types": ["Oxigenio", "Azoto", "Ar comprimido"]},
+                    ],
+                },
+                {
+                    "id": "quinagem",
+                    "label": "Quinagem",
+                    "icon": "QNG",
+                    "badge": "Processo",
+                    "tone": "purple",
+                    "subcategories": [
+                        {"id": "quinagem-ferramentas", "label": "Ferramentas", "types": ["Puncao", "Matriz V", "Adaptador"]},
+                        {"id": "quinagem-servicos", "label": "Servicos", "types": ["Dobragens simples", "Dobragens serie", "Ajuste"]},
+                    ],
+                },
+                {
+                    "id": "soldadura",
+                    "label": "Soldadura",
+                    "icon": "WLD",
+                    "badge": "Processo",
+                    "tone": "red",
+                    "subcategories": [
+                        {"id": "soldadura-consumiveis", "label": "Consumiveis", "types": ["Arame MIG", "Eletrodo", "Vareta TIG", "Anti salpicos"]},
+                        {"id": "soldadura-gases", "label": "Gases", "types": ["Argon", "Mistura", "CO2"]},
+                        {"id": "soldadura-acessorios", "label": "Acessorios", "types": ["Tocha", "Bocal", "Difusor", "Pinca"]},
+                    ],
+                },
+                {
+                    "id": "maquinacao",
+                    "label": "Maquinacao",
+                    "icon": "CNC",
+                    "badge": "Precisao",
+                    "tone": "emerald",
+                    "subcategories": [
+                        {"id": "maquinacao-fresas", "label": "Fresas", "types": ["Topo", "Esferica", "Chanfrar", "Disco"]},
+                        {"id": "maquinacao-brocas", "label": "Brocas", "types": ["HSS", "Carbureto", "Escalonada", "Centrar"]},
+                        {"id": "maquinacao-fixacao", "label": "Fixacao maquina", "types": ["Mordaca", "Porta ferramenta", "Pinca ER"]},
+                    ],
+                },
+                {
+                    "id": "ferramentas",
+                    "label": "Ferramentas",
+                    "icon": "TOOL",
+                    "badge": "Oficina",
+                    "tone": "stone",
+                    "subcategories": [
+                        {"id": "ferramentas-corte", "label": "Corte", "types": ["Serra", "X-ato", "Tesoura chapa", "Corta tubos"]},
+                        {"id": "ferramentas-medicao", "label": "Medicao", "types": ["Paquimetro", "Micrometro", "Esquadro", "Fita metrica"]},
+                        {"id": "ferramentas-manuais", "label": "Manuais", "types": ["Chave", "Alicate", "Martelo", "Torquimetro"]},
+                    ],
+                },
+                {
+                    "id": "rolamentos-transmissao",
+                    "label": "Rolamentos & Transmissao",
+                    "icon": "BRG",
+                    "badge": "Movimento",
+                    "tone": "teal",
+                    "subcategories": [
+                        {"id": "rolamentos", "label": "Rolamentos", "types": ["Esferas", "Rolos", "Agulhas", "Flange"]},
+                        {"id": "correntes", "label": "Correntes", "types": ["Simples", "Dupla", "Inox"]},
+                        {"id": "pinhoes-polia", "label": "Pinhoes e polias", "types": ["Pinhao", "Polia", "Correia", "Casquilho taper"]},
+                    ],
+                },
+                {
+                    "id": "motores-redutores",
+                    "label": "Motores & Redutores",
+                    "icon": "MOT",
+                    "badge": "Acionamento",
+                    "tone": "navy",
+                    "subcategories": [
+                        {"id": "motores", "label": "Motores", "types": ["Monofasico", "Trifasico", "Servo", "Passo a passo"]},
+                        {"id": "redutores", "label": "Redutores", "types": ["Coaxial", "Sem fim", "Planetario", "Eixo paralelo"]},
+                        {"id": "variadores", "label": "Variadores", "types": ["VFD", "Soft starter", "Controlador servo"]},
+                    ],
+                },
+                {
+                    "id": "plasticos-tecnicos",
+                    "label": "Plasticos Tecnicos",
+                    "icon": "PLA",
+                    "badge": "Tecnico",
+                    "tone": "sage",
+                    "subcategories": [
+                        {"id": "plasticos-chapa", "label": "Chapa", "types": ["PEAD", "PVC", "PTFE", "Policarbonato"]},
+                        {"id": "plasticos-varao", "label": "Varao", "types": ["Nylon", "POM", "PEEK", "PTFE"]},
+                        {"id": "plasticos-tubo", "label": "Tubo", "types": ["PVC", "PU", "PTFE"]},
+                    ],
+                },
+                {
+                    "id": "vedacao-borracha",
+                    "label": "Vedacao & Borracha",
+                    "icon": "SEAL",
+                    "badge": "Estanquidade",
+                    "tone": "brown",
+                    "subcategories": [
+                        {"id": "vedacao-juntas", "label": "Juntas", "types": ["O-ring", "Plana", "Espiral", "Cortica"]},
+                        {"id": "vedacao-retentores", "label": "Retentores", "types": ["Radial", "Cassete", "V-ring"]},
+                        {"id": "borracha-tecnica", "label": "Borracha tecnica", "types": ["EPDM", "NBR", "Silicone", "Neoprene"]},
+                    ],
+                },
+                {
+                    "id": "mro-manutencao",
+                    "label": "MRO & Manutencao",
+                    "icon": "MRO",
+                    "badge": "Suporte",
+                    "tone": "grey",
+                    "subcategories": [
+                        {"id": "mro-lubrificacao", "label": "Lubrificacao", "types": ["Massa", "Oleo", "Spray tecnico", "Doseador"]},
+                        {"id": "mro-limpeza", "label": "Limpeza", "types": ["Panos", "Desengordurante", "Absorvente", "Escova"]},
+                        {"id": "mro-eletrico", "label": "Material eletrico", "types": ["Disjuntor", "Contator", "Borne", "Canaleta"]},
+                    ],
+                },
+                {
+                    "id": "outros",
+                    "label": "Outros",
+                    "icon": "ETC",
+                    "badge": "Flexivel",
+                    "tone": "neutral",
+                    "subcategories": [
+                        {"id": "outros-outros", "label": "Outros", "types": ["Outros"]},
+                    ],
+                },
+            ]
+        }
+
+    def _product_taxonomy_nodes(self) -> tuple[dict[str, Any], dict[tuple[str, str], dict[str, Any]], dict[tuple[str, str, str], dict[str, Any]]]:
+        category_map: dict[str, Any] = {}
+        subcategory_map: dict[tuple[str, str], dict[str, Any]] = {}
+        type_map: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for category in list(self.product_taxonomy().get("categories", []) or []):
+            category_label = str(category.get("label", "") or "").strip()
+            if not category_label:
+                continue
+            category_map[category_label.casefold()] = dict(category)
+            for subcategory in list(category.get("subcategories", []) or []):
+                sub_label = str(subcategory.get("label", "") or "").strip()
+                if not sub_label:
+                    continue
+                subcategory_map[(category_label.casefold(), sub_label.casefold())] = dict(subcategory)
+                for type_label in list(subcategory.get("types", []) or []):
+                    clean_type = str(type_label or "").strip()
+                    if clean_type:
+                        type_map[(category_label.casefold(), sub_label.casefold(), clean_type.casefold())] = {"label": clean_type}
+        return category_map, subcategory_map, type_map
+
+    def product_catalog_options(self, category: str = "", subcategory: str = "") -> dict[str, Any]:
+        taxonomy = self.product_taxonomy()
+        categories = [dict(row or {}) for row in list(taxonomy.get("categories", []) or []) if isinstance(row, dict)]
+        category_labels = [str(row.get("label", "") or "").strip() for row in categories if str(row.get("label", "") or "").strip()]
+        selected_category = str(category or "").strip()
+        selected_subcategory = str(subcategory or "").strip()
+        category_row = next(
+            (row for row in categories if str(row.get("label", "") or "").strip().casefold() == selected_category.casefold()),
+            None,
+        )
+        subcategories = [dict(row or {}) for row in list((category_row or {}).get("subcategories", []) or []) if isinstance(row, dict)]
+        subcategory_labels = [str(row.get("label", "") or "").strip() for row in subcategories if str(row.get("label", "") or "").strip()]
+        subcategory_row = next(
+            (row for row in subcategories if str(row.get("label", "") or "").strip().casefold() == selected_subcategory.casefold()),
+            None,
+        )
+        type_labels = [str(value or "").strip() for value in list((subcategory_row or {}).get("types", []) or []) if str(value or "").strip()]
+        return {
+            "taxonomy": taxonomy,
+            "categorias": category_labels,
+            "subcats": subcategory_labels,
+            "tipos": type_labels,
             "unidades": [str(v) for v in list(getattr(self.desktop_main, "PROD_UNIDS", []) or [])],
+            "category_meta": {
+                str(row.get("label", "") or "").strip(): {
+                    "id": str(row.get("id", "") or "").strip(),
+                    "icon": str(row.get("icon", "") or "").strip(),
+                    "badge": str(row.get("badge", "") or "").strip(),
+                    "tone": str(row.get("tone", "") or "").strip(),
+                }
+                for row in categories
+                if str(row.get("label", "") or "").strip()
+            },
+        }
+
+    def _product_resolve_catalog_fields(self, payload: dict[str, Any]) -> dict[str, str]:
+        category_map, subcategory_map, type_map = self._product_taxonomy_nodes()
+        raw_category = str(payload.get("categoria", payload.get("category", "")) or "").strip()
+        raw_subcategory = str(payload.get("subcat", payload.get("subcategory", "")) or "").strip()
+        raw_type = str(payload.get("tipo", payload.get("type", "")) or "").strip()
+
+        category_row = category_map.get(raw_category.casefold()) if raw_category else None
+        category_label = str((category_row or {}).get("label", raw_category) or "").strip()
+        category_id = str((category_row or {}).get("id", self._product_catalog_slug(category_label, "categoria")) or "").strip()
+
+        subcategory_row = subcategory_map.get((category_label.casefold(), raw_subcategory.casefold())) if category_label and raw_subcategory else None
+        subcategory_label = str((subcategory_row or {}).get("label", raw_subcategory) or "").strip()
+        subcategory_id = (
+            str((subcategory_row or {}).get("id", self._product_catalog_slug(f"{category_id}-{subcategory_label}", "subcategoria")) or "").strip()
+            if subcategory_label
+            else ""
+        )
+
+        type_row = type_map.get((category_label.casefold(), subcategory_label.casefold(), raw_type.casefold())) if category_label and subcategory_label and raw_type else None
+        type_label = str((type_row or {}).get("label", raw_type) or "").strip()
+        type_id = self._product_catalog_slug(f"{subcategory_id or category_id}-{type_label}", "tipo") if type_label else ""
+        category_meta = dict(self.product_catalog_options().get("category_meta", {}) or {}).get(category_label, {})
+        return {
+            "categoria": category_label,
+            "category_id": category_id,
+            "subcat": subcategory_label,
+            "subcategory_id": subcategory_id,
+            "tipo": type_label,
+            "type_id": type_id,
+            "category_icon": str(category_meta.get("icon", "") or "").strip(),
+            "category_badge": str(category_meta.get("badge", "") or "").strip(),
+            "category_tone": str(category_meta.get("tone", "") or "").strip(),
         }
 
     def product_next_code(self) -> str:
@@ -3662,15 +4008,22 @@ class LegacyBackend(
             raise ValueError("Codigo do produto em falta.")
         if not descricao:
             raise ValueError("Descricao do produto em falta.")
-        categoria = str(payload.get("categoria", "") or "").strip()
-        tipo = str(payload.get("tipo", "") or "").strip()
+        catalog_fields = self._product_resolve_catalog_fields(payload)
+        categoria = str(catalog_fields.get("categoria", "") or "").strip()
+        tipo = str(catalog_fields.get("tipo", "") or "").strip()
         metros_unidade = self._parse_float(payload.get("metros_unidade", payload.get("metros", 0)), 0)
         prod = {
             "codigo": code,
             "descricao": descricao,
             "categoria": categoria,
-            "subcat": str(payload.get("subcat", "") or "").strip(),
+            "category_id": str(catalog_fields.get("category_id", "") or "").strip(),
+            "subcat": str(catalog_fields.get("subcat", "") or "").strip(),
+            "subcategory_id": str(catalog_fields.get("subcategory_id", "") or "").strip(),
             "tipo": tipo,
+            "type_id": str(catalog_fields.get("type_id", "") or "").strip(),
+            "category_icon": str(catalog_fields.get("category_icon", "") or "").strip(),
+            "category_badge": str(catalog_fields.get("category_badge", "") or "").strip(),
+            "category_tone": str(catalog_fields.get("category_tone", "") or "").strip(),
             "dimensoes": str(payload.get("dimensoes", "") or "").strip(),
             "comprimento": self._parse_float(payload.get("comprimento", 0), 0),
             "largura": self._parse_float(payload.get("largura", 0), 0),
@@ -3698,6 +4051,7 @@ class LegacyBackend(
         rows = []
         for index, prod in enumerate(list(self.ensure_data().get("produtos", []) or [])):
             price_unit = round(self._parse_float(self.desktop_main.produto_preco_unitario(prod), 0), 4)
+            catalog_fields = self._product_resolve_catalog_fields(prod)
             qty = self._parse_float(prod.get("qty", 0), 0)
             physical_qty = qty + max(0.0, self._parse_float(prod.get("quality_pending_qty", 0), 0))
             if in_stock_only and qty <= 0:
@@ -3715,9 +4069,15 @@ class LegacyBackend(
             row = {
                 "codigo": str(prod.get("codigo", "") or "").strip(),
                 "descricao": str(prod.get("descricao", "") or "").strip(),
-                "categoria": str(prod.get("categoria", "") or "").strip(),
-                "subcat": str(prod.get("subcat", "") or "").strip(),
-                "tipo": str(prod.get("tipo", "") or "").strip(),
+                "categoria": str(prod.get("categoria", catalog_fields.get("categoria", "")) or "").strip(),
+                "category_id": str(prod.get("category_id", catalog_fields.get("category_id", "")) or "").strip(),
+                "subcat": str(prod.get("subcat", catalog_fields.get("subcat", "")) or "").strip(),
+                "subcategory_id": str(prod.get("subcategory_id", catalog_fields.get("subcategory_id", "")) or "").strip(),
+                "tipo": str(prod.get("tipo", catalog_fields.get("tipo", "")) or "").strip(),
+                "type_id": str(prod.get("type_id", catalog_fields.get("type_id", "")) or "").strip(),
+                "category_icon": str(prod.get("category_icon", catalog_fields.get("category_icon", "")) or "").strip(),
+                "category_badge": str(prod.get("category_badge", catalog_fields.get("category_badge", "")) or "").strip(),
+                "category_tone": str(prod.get("category_tone", catalog_fields.get("category_tone", "")) or "").strip(),
                 "dimensoes": self._product_dimensoes(prod),
                 "unid": str(prod.get("unid", "UN") or "UN").strip() or "UN",
                 "qty": physical_qty,
@@ -3735,6 +4095,15 @@ class LegacyBackend(
                 "quality_pending_qty": round(self._parse_float(prod.get("quality_pending_qty", 0), 0), 4),
                 "updated_at": str(prod.get("atualizado_em", "") or "").strip(),
             }
+            if row["subcat"] and row["tipo"]:
+                row["type_display"] = f"{row['subcat']} / {row['tipo']}"
+            else:
+                row["type_display"] = row["subcat"] or row["tipo"] or "-"
+            row["category_display"] = (
+                f"{row['category_icon']} {row['categoria']}".strip()
+                if row["category_icon"]
+                else (row["categoria"] or "-")
+            )
             if query and not any(query in str(value).lower() for value in row.values()):
                 continue
             if quality_blocked:

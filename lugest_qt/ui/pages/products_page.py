@@ -125,7 +125,7 @@ class ProductsPage(QWidget):
         title_wrap.addWidget(subtitle)
         top_bar.addLayout(title_wrap, 1)
         self.filter_edit = QLineEdit()
-        self.filter_edit.setPlaceholderText("Pesquisar codigo, descricao, categoria, tipo...")
+        self.filter_edit.setPlaceholderText("Pesquisar codigo, descricao, categoria, subcategoria ou tipo...")
         self.filter_edit.textChanged.connect(self.refresh)
         self.filter_edit.setMaximumWidth(420)
         top_bar.addWidget(self.filter_edit)
@@ -134,6 +134,26 @@ class ProductsPage(QWidget):
         self.only_stock_check.toggled.connect(self.refresh)
         top_bar.addWidget(self.only_stock_check)
         top_layout.addLayout(top_bar)
+
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(8)
+        filter_row.addWidget(QLabel("Categoria"))
+        self.filter_category_combo = QComboBox()
+        self.filter_category_combo.setEditable(False)
+        self.filter_category_combo.setMinimumWidth(170)
+        filter_row.addWidget(self.filter_category_combo)
+        filter_row.addWidget(QLabel("Subcat."))
+        self.filter_subcat_combo = QComboBox()
+        self.filter_subcat_combo.setEditable(False)
+        self.filter_subcat_combo.setMinimumWidth(170)
+        filter_row.addWidget(self.filter_subcat_combo)
+        filter_row.addWidget(QLabel("Tipo"))
+        self.filter_type_combo = QComboBox()
+        self.filter_type_combo.setEditable(False)
+        self.filter_type_combo.setMinimumWidth(170)
+        filter_row.addWidget(self.filter_type_combo)
+        filter_row.addStretch(1)
+        top_layout.addLayout(filter_row)
 
         summary = QHBoxLayout()
         summary.setSpacing(14)
@@ -334,6 +354,11 @@ class ProductsPage(QWidget):
 
         for edit in (self.meters_edit, self.weight_edit, self.qty_edit, self.buy_price_edit):
             edit.textChanged.connect(self._refresh_price_labels)
+        self.category_combo.currentTextChanged.connect(self._sync_form_catalog)
+        self.subcat_combo.currentTextChanged.connect(self._sync_form_catalog)
+        self.filter_category_combo.currentTextChanged.connect(self._sync_filter_catalog)
+        self.filter_subcat_combo.currentTextChanged.connect(self._sync_filter_catalog)
+        self.filter_type_combo.currentTextChanged.connect(lambda _text: self.refresh())
 
         self._load_presets()
         self._new_product()
@@ -352,6 +377,14 @@ class ProductsPage(QWidget):
         combo.setCurrentText(current)
         combo.blockSignals(False)
 
+    def _set_filter_combo_values(self, combo: QComboBox, values: list[str], current: str = "") -> None:
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("Todas")
+        combo.addItems([value for value in values if str(value or "").strip()])
+        combo.setCurrentText(current if current in [combo.itemText(index) for index in range(combo.count())] else "Todas")
+        combo.blockSignals(False)
+
     def _set_mode_buttons(self, moves: bool) -> None:
         self.form_mode_btn.setEnabled(moves)
         self.moves_mode_btn.setEnabled(not moves)
@@ -366,11 +399,39 @@ class ProductsPage(QWidget):
         self._set_mode_buttons(True)
 
     def _load_presets(self) -> None:
-        presets = self.backend.product_presets()
+        presets = self.backend.product_catalog_options(self.category_combo.currentText().strip(), self.subcat_combo.currentText().strip())
         self._set_combo_values(self.category_combo, presets.get("categorias", []), self.category_combo.currentText())
         self._set_combo_values(self.subcat_combo, presets.get("subcats", []), self.subcat_combo.currentText())
         self._set_combo_values(self.type_combo, presets.get("tipos", []), self.type_combo.currentText())
         self._set_combo_values(self.unit_combo, presets.get("unidades", []), self.unit_combo.currentText() or "UN")
+        filter_presets = self.backend.product_catalog_options(
+            "" if self.filter_category_combo.currentText() == "Todas" else self.filter_category_combo.currentText(),
+            "" if self.filter_subcat_combo.currentText() == "Todas" else self.filter_subcat_combo.currentText(),
+        )
+        self._set_filter_combo_values(self.filter_category_combo, self.backend.product_catalog_options().get("categorias", []), self.filter_category_combo.currentText() or "Todas")
+        self._set_filter_combo_values(self.filter_subcat_combo, filter_presets.get("subcats", []), self.filter_subcat_combo.currentText() or "Todas")
+        self._set_filter_combo_values(self.filter_type_combo, filter_presets.get("tipos", []), self.filter_type_combo.currentText() or "Todas")
+
+    def _sync_form_catalog(self) -> None:
+        current_category = self.category_combo.currentText().strip()
+        current_subcat = self.subcat_combo.currentText().strip()
+        current_type = self.type_combo.currentText().strip()
+        presets = self.backend.product_catalog_options(current_category, current_subcat)
+        self._set_combo_values(self.subcat_combo, presets.get("subcats", []), current_subcat)
+        selected_subcat = self.subcat_combo.currentText().strip()
+        type_presets = self.backend.product_catalog_options(current_category, selected_subcat)
+        self._set_combo_values(self.type_combo, type_presets.get("tipos", []), current_type)
+
+    def _sync_filter_catalog(self) -> None:
+        current_category = "" if self.filter_category_combo.currentText() == "Todas" else self.filter_category_combo.currentText().strip()
+        current_subcat = "" if self.filter_subcat_combo.currentText() == "Todas" else self.filter_subcat_combo.currentText().strip()
+        current_type = self.filter_type_combo.currentText() or "Todas"
+        presets = self.backend.product_catalog_options(current_category, current_subcat)
+        self._set_filter_combo_values(self.filter_subcat_combo, presets.get("subcats", []), self.filter_subcat_combo.currentText() or "Todas")
+        selected_subcat = "" if self.filter_subcat_combo.currentText() == "Todas" else self.filter_subcat_combo.currentText().strip()
+        type_presets = self.backend.product_catalog_options(current_category, selected_subcat)
+        self._set_filter_combo_values(self.filter_type_combo, type_presets.get("tipos", []), current_type)
+        self.refresh()
 
     def _fmt_eur(self, value) -> str:
         try:
@@ -420,6 +481,9 @@ class ProductsPage(QWidget):
         ):
             widget.clear()
         self.unit_combo.setCurrentText("UN")
+        self.category_combo.setCurrentText("")
+        self.subcat_combo.setCurrentText("")
+        self.type_combo.setCurrentText("")
         self.moves_table.setRowCount(0)
         self._refresh_price_labels()
         self._show_form_page()
@@ -430,7 +494,9 @@ class ProductsPage(QWidget):
         self.code_edit.setText(self.current_code)
         self.desc_edit.setText(str(detail.get("descricao", "") or "").strip())
         self.category_combo.setCurrentText(str(detail.get("categoria", "") or "").strip())
+        self._sync_form_catalog()
         self.subcat_combo.setCurrentText(str(detail.get("subcat", "") or "").strip())
+        self._sync_form_catalog()
         self.type_combo.setCurrentText(str(detail.get("tipo", "") or "").strip())
         self.unit_combo.setCurrentText(str(detail.get("unid", "UN") or "UN").strip() or "UN")
         self.dim_edit.setText(str(detail.get("dimensoes", "") or "").strip())
@@ -548,6 +614,15 @@ class ProductsPage(QWidget):
     def refresh(self) -> None:
         self._load_presets()
         rows = self.backend.product_rows(self.filter_edit.text().strip(), in_stock_only=self.only_stock_check.isChecked())
+        category_filter = "" if self.filter_category_combo.currentText() == "Todas" else self.filter_category_combo.currentText().strip()
+        subcat_filter = "" if self.filter_subcat_combo.currentText() == "Todas" else self.filter_subcat_combo.currentText().strip()
+        type_filter = "" if self.filter_type_combo.currentText() == "Todas" else self.filter_type_combo.currentText().strip()
+        if category_filter:
+            rows = [row for row in rows if str(row.get("categoria", "") or "").strip().casefold() == category_filter.casefold()]
+        if subcat_filter:
+            rows = [row for row in rows if str(row.get("subcat", "") or "").strip().casefold() == subcat_filter.casefold()]
+        if type_filter:
+            rows = [row for row in rows if str(row.get("tipo", "") or "").strip().casefold() == type_filter.casefold()]
         self.table_count_label.setText(f"{len(rows)} registos")
         self.table.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
@@ -555,8 +630,8 @@ class ProductsPage(QWidget):
             values = [
                 row.get("codigo", "-"),
                 row.get("descricao", "-"),
-                row.get("categoria", "-"),
-                row.get("tipo", "-"),
+                row.get("category_display", row.get("categoria", "-")),
+                row.get("type_display", row.get("tipo", "-")),
                 f"{float(row.get('qty', 0) or 0):.2f}",
                 f"{float(row.get('alerta', 0) or 0):.2f}",
                 self._fmt_eur(row.get("preco_unid", 0)),

@@ -2054,14 +2054,14 @@ def _render_orc_pdf_modern(self, path, orc):
 
     cols = [
         ("Linha", 34, "center"),
-        ("Ref. Ext.", 106, "w"),
+        ("Ref. Ext.", 126, "w"),
         ("Descricao", 188, "w"),
         ("Material", 88, "w"),
-        ("Esp./Un.", 46, "center"),
+        ("Esp.", 34, "center"),
         ("Operacoes", 118, "w"),
-        ("Qtd.", 42, "e"),
+        ("Qtd.", 38, "e"),
         ("P.Unit.", 62, "e"),
-        ("IVA%", 38, "e"),
+        ("IVA%", 30, "e"),
         ("Total", 68, "e"),
     ]
     table_w = sum(width for _, width, _ in cols)
@@ -2091,6 +2091,16 @@ def _render_orc_pdf_modern(self, path, orc):
 
     def fmt_money(value):
         return f"{parse_float(value, 0):.2f} EUR"
+
+    def fmt_num(value, decimals=2):
+        try:
+            number = float(value)
+        except Exception:
+            return str(value) if value is not None else ""
+        text = f"{number:.{decimals}f}"
+        if "." in text:
+            text = text.rstrip("0").rstrip(".")
+        return text
 
     def draw_shell() -> None:
         c.saveState()
@@ -2228,11 +2238,11 @@ def _render_orc_pdf_modern(self, path, orc):
             _orc_line_ref_display(line),
             _orc_line_description_display(line),
             _orc_line_material_display(line),
-            _orc_line_unit_display(line),
+            fmt_num(_orc_line_unit_display(line), decimals=2),
             _orc_line_operacao_display(line),
-            fmt_num(line.get("qtd", 0)),
+            fmt_num(line.get("qtd", 0), decimals=2),
             fmt_num(line.get("preco_unit", 0)),
-            fmt_num(line.get("iva", iva_perc)),
+            fmt_num(line.get("iva", iva_perc), decimals=2),
             fmt_num(line.get("total", 0)),
         ]
         xx = margin

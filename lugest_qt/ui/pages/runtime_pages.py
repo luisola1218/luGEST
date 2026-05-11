@@ -11880,113 +11880,164 @@ class QuotesPage(QWidget):
         transport_page = QWidget()
         transport_page_layout = QVBoxLayout(transport_page)
         transport_page_layout.setContentsMargins(0, 0, 0, 0)
-        transport_page_layout.setSpacing(7)
+        transport_page_layout.setSpacing(5)
         transport_intro = QLabel("Define o transporte do orçamento, calcula a sugestão e aplica diretamente ao PDF e ao total final.")
         transport_intro.setProperty("role", "muted")
         transport_intro.setWordWrap(True)
-        transport_intro.setStyleSheet("font-size: 9.5px;")
+        transport_intro.setStyleSheet("font-size: 8.5px;")
         transport_page_layout.addWidget(transport_intro)
 
-        transport_grid = QGridLayout()
-        transport_grid.setContentsMargins(0, 0, 0, 0)
-        transport_grid.setHorizontalSpacing(8)
-        transport_grid.setVerticalSpacing(8)
+        transport_scroll = QScrollArea()
+        transport_scroll.setWidgetResizable(True)
+        transport_scroll.setFrameShape(QFrame.NoFrame)
+        transport_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        transport_scroll.setMinimumHeight(190)
+        transport_scroll.setStyleSheet("QScrollArea { background: transparent; border: 0; }")
+        transport_scroll_content = QWidget()
+        transport_stack = QVBoxLayout()
+        transport_scroll_content.setLayout(transport_stack)
+        transport_stack.setContentsMargins(0, 0, 6, 6)
+        transport_stack.setSpacing(6)
 
         transport_form_card = CardFrame()
         transport_form_card.set_tone("default")
         transport_form_card.setStyleSheet(
             """
             QFrame#Card {
-                background: #fffdf8;
-                border: 1px solid #e4c37f;
-                border-radius: 12px;
+                background: #fbfaf7;
+                border: 1px solid #d8d2c8;
+                border-radius: 8px;
             }
             QFrame#Card QLabel {
-                font-size: 9px;
-                color: #7a4d10;
+                font-size: 8px;
+                color: #5f5a52;
+                font-weight: 700;
             }
             QFrame#Card QLineEdit,
             QFrame#Card QComboBox,
             QFrame#Card QAbstractSpinBox {
+                background: #ffffff;
+                border: 1px solid #d2b36c;
+                border-bottom: 1px solid #b8954d;
+                border-radius: 7px;
                 font-size: 9px;
-                min-height: 26px;
-                padding: 2px 6px;
+                min-height: 22px;
+                padding: 1px 6px;
+            }
+            QFrame#Card QComboBox::drop-down,
+            QFrame#Card QAbstractSpinBox::up-button,
+            QFrame#Card QAbstractSpinBox::down-button {
+                width: 20px;
+                border-left: 1px solid #d2b36c;
+                border-bottom: 1px solid #b8954d;
+                background: #fff7e8;
+                border-top-right-radius: 7px;
+                border-bottom-right-radius: 7px;
+            }
+            QFrame#Card QComboBox::down-arrow {
+                width: 9px;
+                height: 9px;
+            }
+            QFrame#TransportFieldBox {
+                background: #ffffff;
+                border: 1px solid #caa85f;
+                border-bottom: 1px solid #9f7c37;
+                border-radius: 6px;
+            }
+            QFrame#TransportFieldBox QLineEdit,
+            QFrame#TransportFieldBox QComboBox,
+            QFrame#TransportFieldBox QAbstractSpinBox {
+                background: transparent;
+                border: 0;
+                border-radius: 0;
+                padding: 0 5px;
+                min-height: 21px;
+                font-size: 8.5px;
+            }
+            QFrame#TransportFieldBox QComboBox::drop-down,
+            QFrame#TransportFieldBox QAbstractSpinBox::up-button,
+            QFrame#TransportFieldBox QAbstractSpinBox::down-button {
+                width: 18px;
+                border-left: 1px solid #d8bf87;
+                border-bottom: 0;
+                background: #fff6e5;
+                border-top-right-radius: 5px;
+                border-bottom-right-radius: 5px;
             }
             """
         )
         transport_form_layout = QGridLayout(transport_form_card)
-        transport_form_layout.setContentsMargins(14, 12, 14, 12)
-        transport_form_layout.setHorizontalSpacing(12)
-        transport_form_layout.setVerticalSpacing(8)
-        transport_form_layout.setColumnMinimumWidth(0, 222)
-        transport_form_layout.setColumnMinimumWidth(1, 222)
-        transport_form_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        transport_form_layout.setContentsMargins(10, 8, 10, 9)
+        transport_form_layout.setHorizontalSpacing(8)
+        transport_form_layout.setVerticalSpacing(5)
+        transport_form_layout.setColumnStretch(0, 1)
+        transport_form_layout.setColumnStretch(1, 1)
 
-        def _transport_form_label(text: str) -> QLabel:
+        def _transport_field_row(text: str, widget: QWidget) -> QWidget:
+            host = QWidget()
+            host.setMinimumHeight(36)
+            host.setMaximumHeight(38)
+            host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            host_layout = QVBoxLayout(host)
+            host_layout.setContentsMargins(0, 0, 0, 0)
+            host_layout.setSpacing(2)
             label = QLabel(text)
-            label.setMinimumWidth(94)
-            label.setMaximumWidth(94)
-            label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            return label
+            label.setAlignment(Qt.AlignLeft | Qt.AlignBottom)
+            host_layout.addWidget(label)
+            field_box = QFrame()
+            field_box.setObjectName("TransportFieldBox")
+            field_box.setMinimumHeight(24)
+            field_box.setMaximumHeight(25)
+            field_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            field_layout = QHBoxLayout(field_box)
+            field_layout.setContentsMargins(1, 1, 1, 1)
+            field_layout.setSpacing(0)
+            widget.setMinimumHeight(20)
+            widget.setMaximumHeight(22)
+            widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            field_layout.addWidget(widget)
+            host_layout.addWidget(field_box)
+            return host
 
-        left_transport_form = QFormLayout()
-        left_transport_form.setContentsMargins(0, 0, 0, 0)
-        left_transport_form.setHorizontalSpacing(8)
-        left_transport_form.setVerticalSpacing(6)
-        left_transport_form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
-        left_transport_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        left_transport_form.setFormAlignment(Qt.AlignTop)
-        left_transport_form.setRowWrapPolicy(QFormLayout.DontWrapRows)
-        left_transport_form.addRow(_transport_form_label("Modo"), self.transport_combo)
-        left_transport_form.addRow(_transport_form_label("Transport."), self.transport_carrier_combo)
-        left_transport_form.addRow(_transport_form_label("Zona"), self.transport_zone_combo)
-        left_transport_form.addRow(_transport_form_label("Preço manual"), self.transport_price_spin)
-        left_transport_form.addRow(_transport_form_label("IVA %"), self.iva_spin)
-
-        right_transport_form = QFormLayout()
-        right_transport_form.setContentsMargins(0, 0, 0, 0)
-        right_transport_form.setHorizontalSpacing(8)
-        right_transport_form.setVerticalSpacing(6)
-        right_transport_form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
-        right_transport_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        right_transport_form.setFormAlignment(Qt.AlignTop)
-        right_transport_form.setRowWrapPolicy(QFormLayout.DontWrapRows)
-        right_transport_form.addRow(_transport_form_label("Distância"), self.transport_km_spin)
-        right_transport_form.addRow(_transport_form_label("Preço / km"), self.transport_rate_spin)
-        right_transport_form.addRow(_transport_form_label("Gasóleo"), self.transport_diesel_spin)
-        right_transport_form.addRow(_transport_form_label("Consumo"), self.transport_consumption_spin)
-        right_transport_form.addRow(_transport_form_label("Fator viagem"), self.transport_trip_factor_spin)
-
-        transport_form_layout.addLayout(left_transport_form, 0, 0)
-        transport_form_layout.addLayout(right_transport_form, 0, 1)
-        transport_form_layout.setColumnStretch(0, 0)
-        transport_form_layout.setColumnStretch(1, 0)
+        for index, (label_text, widget) in enumerate((
+            ("Modo", self.transport_combo),
+            ("Transportadora", self.transport_carrier_combo),
+            ("Zona", self.transport_zone_combo),
+            ("Distância", self.transport_km_spin),
+            ("Preço / km", self.transport_rate_spin),
+            ("Gasóleo", self.transport_diesel_spin),
+            ("Consumo", self.transport_consumption_spin),
+            ("Fator viagem", self.transport_trip_factor_spin),
+            ("Preço manual", self.transport_price_spin),
+            ("IVA %", self.iva_spin),
+        )):
+            transport_form_layout.addWidget(_transport_field_row(label_text, widget), index // 2, index % 2)
 
         transport_actions_card = CardFrame()
         transport_actions_card.set_tone("default")
         transport_actions_card.setStyleSheet(
             """
             QFrame#Card {
-                background: #fffdf8;
-                border: 1px solid #e4c37f;
-                border-radius: 12px;
+                background: #fbfaf7;
+                border: 1px solid #d8d2c8;
+                border-radius: 8px;
             }
             QFrame#Card QLabel {
-                font-size: 9px;
-                color: #7a4d10;
+                font-size: 8.5px;
+                color: #5f5a52;
             }
             """
         )
         transport_actions_layout = QGridLayout(transport_actions_card)
-        transport_actions_layout.setContentsMargins(14, 12, 14, 12)
-        transport_actions_layout.setHorizontalSpacing(14)
-        transport_actions_layout.setVerticalSpacing(8)
+        transport_actions_layout.setContentsMargins(10, 8, 10, 9)
+        transport_actions_layout.setHorizontalSpacing(8)
+        transport_actions_layout.setVerticalSpacing(5)
         transport_actions_title = QLabel("Cálculo e aplicação")
-        transport_actions_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #0f172a;")
+        transport_actions_title.setStyleSheet("font-size: 9px; font-weight: 800; color: #0f172a;")
         transport_actions_hint = QLabel("Usa os parâmetros do transporte para sugerir um valor coerente com a orçamentação.")
         transport_actions_hint.setProperty("role", "muted")
         transport_actions_hint.setWordWrap(True)
-        transport_actions_hint.setStyleSheet("font-size: 9.5px;")
+        transport_actions_hint.setStyleSheet("font-size: 8px;")
         transport_actions_text = QVBoxLayout()
         transport_actions_text.setContentsMargins(0, 0, 0, 0)
         transport_actions_text.setSpacing(4)
@@ -12005,19 +12056,20 @@ class QuotesPage(QWidget):
         apply_transport_btn.setToolTip("Aplica o cálculo do transporte ao orçamento atual.")
         apply_transport_btn.clicked.connect(self._apply_transport_calc)
         for button in (fill_notes_btn, apply_transport_btn):
-            button.setMinimumHeight(36)
-            button.setMinimumWidth(196)
-            button.setMaximumWidth(206)
+            button.setMinimumHeight(28)
+            button.setMaximumHeight(30)
+            button.setMinimumWidth(142)
+            button.setMaximumWidth(156)
             button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             button.setStyleSheet(
-                "QPushButton { border: 1px solid #d0b06c; border-bottom: 2px solid #b99343; border-radius: 10px; padding: 0 12px; }"
-                " QPushButton:hover { border-color: #c08b30; }"
+                "QPushButton { border: 1px solid #98a2b3; border-bottom: 1px solid #667085; border-radius: 7px; padding: 0 8px; font-size: 8.8px; font-weight: 700; background: #f8fafc; color: #0f172a; }"
+                " QPushButton:hover { border-color: #667085; background: #ffffff; }"
             )
-        self.transport_suggest_label.setStyleSheet("font-size: 14px; font-weight: 900; color: #0f172a;")
+        self.transport_suggest_label.setStyleSheet("font-size: 11px; font-weight: 900; color: #0f172a;")
         self.transport_suggest_label.setAlignment(Qt.AlignCenter)
         transport_action_buttons = QHBoxLayout()
         transport_action_buttons.setContentsMargins(0, 0, 0, 0)
-        transport_action_buttons.setSpacing(12)
+        transport_action_buttons.setSpacing(8)
         transport_action_buttons.addStretch(1)
         transport_action_buttons.addWidget(fill_notes_btn)
         transport_action_buttons.addWidget(apply_transport_btn)
@@ -12028,12 +12080,11 @@ class QuotesPage(QWidget):
         transport_actions_layout.setColumnStretch(0, 1)
         transport_actions_layout.setColumnStretch(1, 1)
 
-        transport_grid.addWidget(transport_form_card, 0, 0, 1, 3)
-        transport_grid.addWidget(transport_actions_card, 1, 0, 1, 3)
-        transport_grid.setColumnStretch(0, 1)
-        transport_grid.setColumnStretch(1, 1)
-        transport_grid.setColumnStretch(2, 1)
-        transport_page_layout.addLayout(transport_grid, 1)
+        transport_stack.addWidget(transport_form_card)
+        transport_stack.addWidget(transport_actions_card)
+        transport_stack.addStretch(1)
+        transport_scroll.setWidget(transport_scroll_content)
+        transport_page_layout.addWidget(transport_scroll, 1)
 
         operations_page = QWidget()
         operations_layout = QVBoxLayout(operations_page)
@@ -12104,11 +12155,12 @@ class QuotesPage(QWidget):
             self.transport_trip_factor_spin,
         )
         for widget in transport_widgets:
-            widget.setProperty("compact", "true")
+            widget.setProperty("compact", "false")
             widget.setMaximumWidth(16777215)
             widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            widget.setMinimumWidth(136)
-            widget.setMinimumHeight(26)
+            widget.setMinimumWidth(112)
+            widget.setMinimumHeight(22)
+            widget.setMaximumHeight(26)
             _repolish(widget)
         for combo in (self.transport_combo, self.transport_carrier_combo, self.transport_zone_combo):
             self._combo_click_targets[combo] = combo
@@ -12118,7 +12170,9 @@ class QuotesPage(QWidget):
                 line_edit.setReadOnly(True)
                 line_edit.installEventFilter(self)
                 self._combo_click_targets[line_edit] = combo
-        self.notes_tabs.setMinimumHeight(318)
+        self.notes_tabs.setMinimumHeight(245)
+        self.quote_notes_card.setMinimumHeight(302)
+        self.quote_notes_card.setMaximumHeight(340)
         self.quote_summary_card = CardFrame()
         self.quote_summary_card.set_tone("info")
         self.quote_summary_card.setMaximumWidth(16777215)
@@ -12126,27 +12180,24 @@ class QuotesPage(QWidget):
         self.quote_summary_card.setStyleSheet(
             """
             QFrame#Card {
-                background: #fffdf8;
-                border: 1.5px solid #e89b2f;
+                background: #fbfbfa;
+                border: 1px solid #d6d9dd;
                 border-radius: 16px;
             }
             QLabel {
-                color: #8a4b08;
+                color: #3d4752;
             }
             """
         )
         summary_layout = QVBoxLayout(self.quote_summary_card)
-        summary_layout.setContentsMargins(12, 10, 12, 10)
-        summary_layout.setSpacing(6)
+        summary_layout.setContentsMargins(10, 10, 10, 14)
+        summary_layout.setSpacing(8)
         summary_title = QLabel("Resumo financeiro")
         summary_title.setStyleSheet("font-size: 12px; font-weight: 800; color: #0f172a;")
         summary_hint = QLabel("Preco final do orcamento com transporte e IVA.")
         summary_hint.setProperty("role", "muted")
         summary_layout.addWidget(summary_title)
         summary_layout.addWidget(summary_hint)
-        summary_grid = QGridLayout()
-        summary_grid.setHorizontalSpacing(8)
-        summary_grid.setVerticalSpacing(7)
         self.lines_subtotal_label = QLabel("0,00 EUR")
         self.transport_total_label = QLabel("0,00 EUR")
         self.discount_value_label = QLabel("0,00 EUR")
@@ -12161,8 +12212,63 @@ class QuotesPage(QWidget):
             self.iva_total_label,
         ):
             widget.setProperty("role", "field_value")
+            widget.setMinimumWidth(92)
+            widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            widget.setStyleSheet("font-size: 9.8px; font-weight: 800; color: #344054;")
         self.total_label.setProperty("role", "field_value_strong")
-        self.total_label.setStyleSheet("font-size: 15px; font-weight: 900; color: #8a3f00;")
+        self.total_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.total_label.setMinimumWidth(0)
+        self.total_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.total_label.setStyleSheet("font-size: 12px; font-weight: 900; color: #7a4b12;")
+
+        total_panel = QWidget()
+        total_panel.setObjectName("QuoteSummaryTotalPanel")
+        total_panel.setStyleSheet(
+            """
+            QWidget#QuoteSummaryTotalPanel {
+                background: #fff4dc;
+                border: 0;
+                border-radius: 10px;
+            }
+            QWidget#QuoteSummaryTotalPanel QLabel {
+                background: transparent;
+                border: 0;
+            }
+            """
+        )
+        total_panel_layout = QVBoxLayout(total_panel)
+        total_panel_layout.setContentsMargins(10, 8, 10, 10)
+        total_panel_layout.setSpacing(6)
+        total_caption = QLabel("Total C/IVA")
+        total_caption.setStyleSheet("font-size: 10px; font-weight: 900; color: #8b5e1a;")
+        total_caption.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        total_panel_layout.addWidget(total_caption)
+        total_panel_layout.addWidget(self.total_label)
+        summary_layout.addWidget(total_panel)
+
+        summary_rows_host = QWidget()
+        summary_rows_host.setObjectName("QuoteSummaryRows")
+        summary_rows_host.setStyleSheet(
+            """
+            QWidget#QuoteSummaryRows {
+                background: transparent;
+                border: 0;
+            }
+            QWidget#QuoteSummaryRows QLabel {
+                background: transparent;
+                border: 0;
+                padding: 0;
+            }
+            QFrame#QuoteSummaryDivider {
+                background: #e6ebf2;
+                border: 0;
+            }
+            """
+        )
+        summary_rows_layout = QGridLayout(summary_rows_host)
+        summary_rows_layout.setContentsMargins(0, 2, 0, 2)
+        summary_rows_layout.setHorizontalSpacing(12)
+        summary_rows_layout.setVerticalSpacing(7)
         for row_index, (label_text, widget) in enumerate(
             (
                 ("Linhas", self.lines_subtotal_label),
@@ -12170,14 +12276,33 @@ class QuotesPage(QWidget):
                 ("Desconto", self.discount_value_label),
                 ("Subtotal s/ IVA", self.subtotal_without_iva_label),
                 ("IVA", self.iva_total_label),
-                ("Total c/ IVA", self.total_label),
             )
         ):
             label = QLabel(label_text)
             label.setProperty("role", "field_label")
-            summary_grid.addWidget(label, row_index, 0)
-            summary_grid.addWidget(widget, row_index, 1)
-        summary_layout.addLayout(summary_grid)
+            label.setWordWrap(False)
+            label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            label.setMinimumHeight(26)
+            label.setStyleSheet(
+                "font-size: 10.2px; font-weight: 700; color: #475467; text-transform: none; background: transparent; border: 0;"
+            )
+            widget.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            widget.setMinimumHeight(26)
+            widget.setStyleSheet(
+                "font-size: 9.8px; font-weight: 800; color: #344054; background: transparent; border: 0;"
+            )
+            summary_rows_layout.addWidget(label, row_index * 2, 0)
+            summary_rows_layout.addWidget(widget, row_index * 2, 1)
+            if row_index < 4:
+                divider = QFrame()
+                divider.setObjectName("QuoteSummaryDivider")
+                divider.setFrameShape(QFrame.HLine)
+                divider.setFixedHeight(1)
+                divider.setStyleSheet("background: #e6ebf2; border: 0; margin-top: 2px; margin-bottom: 2px;")
+                summary_rows_layout.addWidget(divider, row_index * 2 + 1, 0, 1, 2)
+        summary_rows_layout.setColumnStretch(0, 1)
+        summary_rows_layout.setColumnStretch(1, 0)
+        summary_layout.addWidget(summary_rows_host)
         discount_row = QHBoxLayout()
         discount_row.setContentsMargins(0, 2, 0, 0)
         discount_caption = QLabel("Desc. global")
@@ -15700,7 +15825,7 @@ class QuotesPage(QWidget):
             product_dialog.setWindowTitle("Novo produto")
             product_layout = QVBoxLayout(product_dialog)
             product_form = QFormLayout()
-            presets = dict(self.backend.product_presets() or {})
+            presets = dict(self.backend.product_catalog_options() or {})
             code_edit = QLineEdit(str(self.backend.product_next_code() or "").strip())
             desc_edit = QLineEdit()
             category_combo = QComboBox()
@@ -15740,6 +15865,24 @@ class QuotesPage(QWidget):
             pvp2_spin.setRange(0.0, 1000000.0)
             pvp2_spin.setDecimals(4)
             obs_edit = QLineEdit()
+
+            def _set_combo_items(combo: QComboBox, values: list[str], current_text: str = "") -> None:
+                combo.blockSignals(True)
+                combo.clear()
+                combo.addItems([str(value or "").strip() for value in list(values or []) if str(value or "").strip()])
+                combo.setCurrentText(current_text)
+                combo.blockSignals(False)
+
+            def _sync_catalog_combos() -> None:
+                current_category = category_combo.currentText().strip()
+                current_subcat = subcat_combo.currentText().strip()
+                current_type = type_combo.currentText().strip()
+                subcat_presets = dict(self.backend.product_catalog_options(current_category, current_subcat) or {})
+                _set_combo_items(subcat_combo, subcat_presets.get("subcats", []), current_subcat)
+                current_subcat = subcat_combo.currentText().strip()
+                type_presets = dict(self.backend.product_catalog_options(current_category, current_subcat) or {})
+                _set_combo_items(type_combo, type_presets.get("tipos", []), current_type)
+
             product_form.addRow("Codigo", code_edit)
             product_form.addRow("Descricao", desc_edit)
             product_form.addRow("Categoria", category_combo)
@@ -15764,6 +15907,9 @@ class QuotesPage(QWidget):
             product_buttons.accepted.connect(product_dialog.accept)
             product_buttons.rejected.connect(product_dialog.reject)
             product_layout.addWidget(product_buttons)
+            category_combo.currentTextChanged.connect(lambda _text: _sync_catalog_combos())
+            subcat_combo.currentTextChanged.connect(lambda _text: _sync_catalog_combos())
+            _sync_catalog_combos()
             if product_dialog.exec() != QDialog.Accepted:
                 return None
             try:

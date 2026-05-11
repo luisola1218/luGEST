@@ -2631,9 +2631,9 @@
         "material_catalog": {
           "Aco carbono": {
             "S235JR": {
-              "price_per_kg": 1.0,
+              "price_per_kg": 1.2,
               "density_kg_m3": 7850.0,
-              "scrap_credit_per_kg": 0.9
+              "scrap_credit_per_kg": 1.1
             },
             "S275JR": {
               "price_per_kg": 0.95,

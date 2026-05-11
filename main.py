@@ -509,27 +509,90 @@ _MYSQL_SAVE_LOCK_TIMEOUT_SEC = max(5, int(float(os.environ.get("LUGEST_SAVE_LOCK
 _MYSQL_SAVE_RETRY_COUNT = max(1, int(float(os.environ.get("LUGEST_SAVE_RETRY_COUNT", "3"))))
 
 PROD_CATEGORIAS = [
-    "Chapas",
-    "Tubos / Perfis",
-    "Vigas / UPN / IPE",
-    "Consumiveis Soldadura",
-    "Abrasivos",
-    "Parafusos / Fixacao",
+    "Inox",
+    "Aluminio",
+    "Ferro",
     "EPIs",
+    "Eletronica",
+    "Pneumatica",
+    "Hidraulica",
+    "Fixacao",
+    "Consumiveis",
+    "Corte Laser",
+    "Quinagem",
+    "Soldadura",
+    "Maquinacao",
     "Ferramentas",
-    "Tintas / Quimicos",
-    "Gases",
+    "Rolamentos & Transmissao",
+    "Motores & Redutores",
+    "Plasticos Tecnicos",
+    "Vedacao & Borracha",
+    "MRO & Manutencao",
     "Outros",
 ]
 MATERIA_FORMATOS = ["Chapa", "Tubo", "Perfil", "Cantoneira", "Barra", "Varão nervurado"]
 PROD_SUBCATS = [
-    "Carbono",
-    "Inox",
-    "Aluminio",
-    "Acessorios",
-    "Diversos",
+    "Tubo",
+    "Chapa",
+    "Perfil",
+    "Varao",
+    "Luvas",
+    "Capacetes",
+    "Mascaras",
+    "Botas",
+    "Oculos",
+    "Sensores",
+    "Automacao",
+    "Cablagem",
+    "Valvulas",
+    "Cilindros",
+    "Ligacoes",
+    "Mangueiras",
+    "Parafusos",
+    "Porcas",
+    "Anilhas",
+    "Abrasivos",
+    "Quimicos",
+    "Embalagem",
+    "Consumiveis",
+    "Gases",
+    "Ferramentas",
+    "Rolamentos",
+    "Correntes",
+    "Pinhoes e polias",
+    "Motores",
+    "Redutores",
+    "Variadores",
+    "Plasticos",
+    "Vedacao",
+    "Borracha tecnica",
+    "MRO",
+    "Outros",
 ]
-PROD_TIPOS = ["Chapa", "Perfil", "Tubo", "Viga", "Eletrodo", "Disco", "Spray", "Luvas", "Oculos", "Mascara", "Outros"]
+PROD_TIPOS = [
+    "Redondo", "Quadrado", "Retangular", "Sanitario",
+    "Escovada", "Polida", "Decapada", "Perfurada",
+    "UPN", "IPE", "HEA", "HEB", "Cantoneira",
+    "Corte", "Soldadura", "Nitrilo", "Termicas",
+    "Industrial", "Eletrico", "Com viseira",
+    "FFP2", "FFP3", "Respiratoria",
+    "S1P", "S3", "Panoramicos",
+    "PLC", "HMI", "Reles", "Fontes",
+    "2 vias", "3 vias", "5 vias", "Proporcional",
+    "Compacto", "ISO", "Guiado",
+    "Allen", "Sextavado", "Escareado", "Auto perfurante",
+    "Disco corte", "Disco flap", "Lixa", "Escova",
+    "Oxigenio", "Azoto", "Argon", "CO2",
+    "Puncao", "Matriz V", "Arame MIG", "Eletrodo", "Vareta TIG",
+    "Topo", "Esferica", "Chanfrar", "Broca HSS", "Carbureto",
+    "Paquimetro", "Micrometro", "Torquimetro",
+    "Esferas", "Rolos", "Pinhao", "Polia", "Correia",
+    "Monofasico", "Trifasico", "Servo", "Planetario",
+    "PEAD", "PVC", "PTFE", "POM", "PEEK",
+    "O-ring", "Retentor", "EPDM", "NBR", "Silicone",
+    "Massa", "Oleo", "Disjuntor", "Contator",
+    "Outros",
+]
 PROD_UNIDS = ["UN", "M", "KG", "CX"]
 PDF_TEXT_REPLACEMENTS = {
     "\u00e1": "a", "\u00e0": "a", "\u00e3": "a", "\u00e2": "a", "\u00e4": "a",
@@ -1999,6 +2062,58 @@ def _mysql_sync_relational_schema(cur, data):
             )
             """
         )
+    if "categories" not in tables:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS categories (
+                id VARCHAR(80) PRIMARY KEY,
+                nome VARCHAR(120) NOT NULL,
+                icon VARCHAR(30) NULL,
+                badge VARCHAR(60) NULL,
+                updated_at DATETIME NULL
+            )
+            """
+        )
+    if "subcategories" not in tables:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS subcategories (
+                id VARCHAR(80) PRIMARY KEY,
+                category_id VARCHAR(80) NOT NULL,
+                nome VARCHAR(120) NOT NULL,
+                updated_at DATETIME NULL,
+                INDEX idx_subcategories_category (category_id)
+            )
+            """
+        )
+    if "product_types" not in tables:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS product_types (
+                id VARCHAR(80) PRIMARY KEY,
+                subcategory_id VARCHAR(80) NOT NULL,
+                nome VARCHAR(120) NOT NULL,
+                updated_at DATETIME NULL,
+                INDEX idx_product_types_subcategory (subcategory_id)
+            )
+            """
+        )
+    if "product_documents" not in tables:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS product_documents (
+                id VARCHAR(80) PRIMARY KEY,
+                produto_codigo VARCHAR(20) NOT NULL,
+                tipo VARCHAR(40) NULL,
+                titulo VARCHAR(180) NULL,
+                caminho VARCHAR(512) NULL,
+                versao VARCHAR(30) NULL,
+                created_at DATETIME NULL,
+                updated_at DATETIME NULL,
+                INDEX idx_product_documents_codigo (produto_codigo)
+            )
+            """
+        )
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS quality_nonconformities (
@@ -2238,6 +2353,9 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "materiais", "quality_nc_id", "VARCHAR(30) NULL")
         _mysql_ensure_column(cur, "materiais", "supplier_claim_id", "VARCHAR(30) NULL")
     if "produtos" in tables:
+        _mysql_ensure_column(cur, "produtos", "category_id", "VARCHAR(80) NULL")
+        _mysql_ensure_column(cur, "produtos", "subcategory_id", "VARCHAR(80) NULL")
+        _mysql_ensure_column(cur, "produtos", "type_id", "VARCHAR(80) NULL")
         _mysql_ensure_column(cur, "produtos", "logistic_status", "VARCHAR(30) NULL")
         _mysql_ensure_column(cur, "produtos", "quality_status", "VARCHAR(40) NULL")
         _mysql_ensure_column(cur, "produtos", "quality_blocked", "BOOLEAN NULL")
@@ -3187,17 +3305,20 @@ def _mysql_sync_relational_schema(cur, data):
             cur.execute(
                 """
                 INSERT INTO produtos (
-                    codigo, descricao, categoria, subcat, tipo, unid, qty, alerta, p_compra, atualizado_em,
+                    codigo, descricao, categoria, category_id, subcat, subcategory_id, tipo, type_id, unid, qty, alerta, p_compra, atualizado_em,
                     logistic_status, quality_status, quality_blocked, quality_pending_qty, quality_received_qty, quality_approved_qty, quality_return_document_id,
                     inspection_defect, inspection_decision, inspection_note_number, quality_nc_id
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     codigo,
                     _clip(p.get("descricao"), 255),
                     _clip(p.get("categoria"), 100),
+                    _clip(p.get("category_id"), 80),
                     _clip(p.get("subcat"), 100),
+                    _clip(p.get("subcategory_id"), 80),
                     _clip(p.get("tipo"), 100),
+                    _clip(p.get("type_id"), 80),
                     _clip(p.get("unid"), 20),
                     _to_num(p.get("qty")),
                     _to_num(p.get("alerta")),
@@ -4761,8 +4882,11 @@ def _mysql_load_relational_data():
                         "codigo": str(r.get("codigo", "") or ""),
                         "descricao": str(r.get("descricao", "") or ""),
                         "categoria": str(r.get("categoria", "") or ""),
+                        "category_id": str(r.get("category_id", "") or ""),
                         "subcat": str(r.get("subcat", "") or ""),
+                        "subcategory_id": str(r.get("subcategory_id", "") or ""),
                         "tipo": str(r.get("tipo", "") or ""),
+                        "type_id": str(r.get("type_id", "") or ""),
                         "dimensoes": "",
                         "comprimento": 0.0,
                         "largura": 0.0,
