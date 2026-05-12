@@ -979,7 +979,9 @@ class MainWindow(QMainWindow):
             emit = dict(data.get("guia_emitente", {}) or {})
             brand_dialog = QDialog(dialog)
             brand_dialog.setWindowTitle("Empresa / PDFs")
-            brand_dialog.setMinimumSize(860, 620)
+            brand_dialog.setWindowFlags(brand_dialog.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
+            brand_dialog.setMinimumSize(1080, 760)
+            brand_dialog.resize(1180, 820)
             brand_layout = QVBoxLayout(brand_dialog)
             brand_layout.setContentsMargins(14, 14, 14, 14)
             brand_layout.setSpacing(12)
@@ -1000,6 +1002,11 @@ class MainWindow(QMainWindow):
             logo_row_layout.addWidget(use_default_logo_btn)
             logo_row_layout.addWidget(browse_logo_btn)
             primary_edit = QLineEdit(str(data.get("primary_color", "#000040") or "#000040"))
+            logo_scale_spin = QSpinBox()
+            logo_scale_spin.setRange(50, 250)
+            logo_scale_spin.setSingleStep(5)
+            logo_scale_spin.setSuffix(" %")
+            logo_scale_spin.setValue(max(50, min(250, int(data.get("logo_scale_pct", 100) or 100))))
             emit_name_edit = QLineEdit(str(emit.get("nome", "") or "").strip())
             emit_nif_edit = QLineEdit(str(emit.get("nif", "") or "").strip())
             emit_address_edit = QLineEdit(str(emit.get("morada", "") or "").strip())
@@ -1007,6 +1014,7 @@ class MainWindow(QMainWindow):
             guia_serie_edit = QLineEdit(str(data.get("guia_serie_id", "") or "").strip())
             guia_validation_edit = QLineEdit(str(data.get("guia_validation_code", "") or "").strip())
             brand_form.addRow("Logo", logo_row)
+            brand_form.addRow("Escala logo PDF", logo_scale_spin)
             brand_form.addRow("Cor principal", primary_edit)
             brand_form.addRow("Nome emitente", emit_name_edit)
             brand_form.addRow("NIF", emit_nif_edit)
@@ -1063,6 +1071,7 @@ class MainWindow(QMainWindow):
                 saver_brand(
                     {
                         "logo_path": logo_edit.text().strip(),
+                        "logo_scale_pct": int(logo_scale_spin.value()),
                         "primary_color": primary_edit.text().strip(),
                         "empresa_info_rodape": rodape_edit.toPlainText(),
                         "guia_emitente": {

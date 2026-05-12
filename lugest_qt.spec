@@ -18,7 +18,7 @@ a = Analysis(
         ('VERSION', '.'),
         ('logo.jpg', '.'),
         ('Logos/logo.png', 'Logos'),
-        ('Logos/image (1).jpg', 'Logos'),
+        ('Logos/lg.png', 'Logos'),
     ],
     hiddenimports=hiddenimports,
     hookspath=[],

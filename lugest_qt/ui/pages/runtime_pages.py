@@ -236,10 +236,17 @@ def _selected_row_index(table: QTableWidget) -> int:
     return current_row if current_row >= 0 else -1
 
 
-def _reference_catalog_dialog(parent: QWidget, references: list[dict], title: str = "Histórico de referencias") -> dict | None:
+def _reference_catalog_dialog(
+    parent: QWidget,
+    references: list[dict],
+    title: str = "Histórico de referencias",
+    *,
+    backend: object | None = None,
+    current_client: str = "",
+) -> dict | None:
     dialog = QDialog(parent)
     dialog.setWindowTitle(title)
-    dialog.resize(1080, 620)
+    dialog.resize(1280, 680)
     layout = QVBoxLayout(dialog)
     layout.setContentsMargins(14, 14, 14, 14)
     layout.setSpacing(10)
@@ -247,10 +254,28 @@ def _reference_catalog_dialog(parent: QWidget, references: list[dict], title: st
     header = QHBoxLayout()
     title_lbl = QLabel(title)
     title_lbl.setStyleSheet("font-size: 18px; font-weight: 800; color: #0f172a;")
+    client_filter = QComboBox()
+    client_filter.addItem("Todos os clientes", "")
+    client_codes = sorted(
+        {
+            str(row.get("cliente_codigo", "") or "").strip().upper()
+            for row in list(references or [])
+            if str(row.get("cliente_codigo", "") or "").strip()
+        }
+    )
+    for code in client_codes:
+        client_filter.addItem(code, code)
+    current_client_code = str(current_client or "").strip().upper()
+    if current_client_code:
+        for index in range(client_filter.count()):
+            if str(client_filter.itemData(index) or "").strip().upper() == current_client_code:
+                client_filter.setCurrentIndex(index)
+                break
     search_edit = QLineEdit()
-    search_edit.setPlaceholderText("Pesquisar por ref. interna, externa, descricao, material ou espessura")
+    search_edit.setPlaceholderText("Pesquisar por cliente, ref. interna, externa, descricao, material, qualidade ou espessura")
     header.addWidget(title_lbl)
     header.addStretch(1)
+    header.addWidget(client_filter)
     header.addWidget(search_edit, 1)
     layout.addLayout(header)
 
@@ -259,63 +284,175 @@ def _reference_catalog_dialog(parent: QWidget, references: list[dict], title: st
     card_layout = QVBoxLayout(card)
     card_layout.setContentsMargins(12, 12, 12, 12)
     card_layout.setSpacing(8)
-    table = QTableWidget(0, 7)
-    table.setHorizontalHeaderLabels(["Ref. Interna", "Ref. Externa", "Descricao", "Material", "Esp.", "Tempo", "Preco"])
+    table = QTableWidget(0, 10)
+    table.setHorizontalHeaderLabels(["Cliente", "Ref. interna", "Ref. externa", "Descricao", "Material", "Qualidade MP", "Esp.", "Tempo", "Preco", "Origem"])
     table.verticalHeader().setVisible(False)
     table.setSelectionBehavior(QTableWidget.SelectRows)
-    table.setEditTriggers(QTableWidget.NoEditTriggers)
-    _configure_table(table, stretch=(2,), contents=(0, 1, 3, 4, 5, 6))
+    table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.SelectedClicked | QTableWidget.EditKeyPressed)
+    _configure_table(table, stretch=(3,), contents=(0, 1, 2, 4, 5, 6, 7, 8, 9))
     card_layout.addWidget(table)
     layout.addWidget(card, 1)
 
     result: dict | None = None
+    visible_rows: list[dict] = []
+
+    def _editable_item(value: object, *, editable: bool = True, center: bool = False) -> QTableWidgetItem:
+        item = QTableWidgetItem(str(value or "").strip())
+        item.setTextAlignment(int((Qt.AlignCenter if center else Qt.AlignLeft) | Qt.AlignVCenter))
+        if not editable:
+            item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+        return item
+
+    def selected_payload_from_table() -> dict | None:
+        row_index = _selected_row_index(table)
+        if row_index < 0:
+            return None
+        item = table.item(row_index, 0)
+        base = dict(item.data(Qt.UserRole) or {}) if item is not None else {}
+        if not base:
+            return None
+        base.update(
+            {
+                "cliente_codigo": table.item(row_index, 0).text().strip() if table.item(row_index, 0) else "",
+                "ref_interna": table.item(row_index, 1).text().strip() if table.item(row_index, 1) else "",
+                "ref_externa": table.item(row_index, 2).text().strip() if table.item(row_index, 2) else "",
+                "descricao": table.item(row_index, 3).text().strip() if table.item(row_index, 3) else "",
+                "material": table.item(row_index, 4).text().strip() if table.item(row_index, 4) else "",
+                "material_subtype": table.item(row_index, 5).text().strip() if table.item(row_index, 5) else "",
+                "espessura": table.item(row_index, 6).text().strip() if table.item(row_index, 6) else "",
+                "tempo_peca_min": table.item(row_index, 7).text().strip().replace(",", ".") if table.item(row_index, 7) else "0",
+                "preco_unit": table.item(row_index, 8).text().strip().replace(",", ".") if table.item(row_index, 8) else "0",
+                "origem_doc": table.item(row_index, 9).text().strip() if table.item(row_index, 9) else "",
+            }
+        )
+        return base
 
     def render() -> None:
+        nonlocal visible_rows
         query = search_edit.text().strip().lower()
+        selected_client = str(client_filter.currentData() or "").strip().upper()
         filtered = []
         for row in references:
+            row_client = str(row.get("cliente_codigo", "") or "").strip().upper()
+            if selected_client and row_client != selected_client:
+                continue
             hay = " | ".join(
                 [
+                    row_client,
                     str(row.get("ref_interna", "") or ""),
                     str(row.get("ref_externa", "") or ""),
                     str(row.get("descricao", "") or ""),
                     str(row.get("material", "") or ""),
+                    str(row.get("material_subtype", "") or ""),
                     str(row.get("espessura", "") or ""),
                 ]
             ).lower()
             if query and query not in hay:
                 continue
             filtered.append(row)
+        filtered.sort(
+            key=lambda row: (
+                str(row.get("cliente_codigo", "") or ""),
+                str(row.get("ref_interna", "") or ""),
+                str(row.get("ref_externa", "") or ""),
+            )
+        )
+        visible_rows = [dict(row or {}) for row in filtered]
         table.setRowCount(len(filtered))
         for row_index, row in enumerate(filtered):
             values = [
+                str(row.get("cliente_codigo", "") or "").strip(),
                 str(row.get("ref_interna", "") or "").strip(),
                 str(row.get("ref_externa", "") or "").strip(),
                 str(row.get("descricao", "") or "").strip(),
                 str(row.get("material", "") or "").strip(),
+                str(row.get("material_subtype", "") or "").strip(),
                 str(row.get("espessura", "") or "").strip(),
                 f"{float(row.get('tempo_peca_min', row.get('tempo_pecas_min', 0)) or 0):.2f}",
                 f"{float(row.get('preco_unit', row.get('preco', 0)) or 0):.4f}",
+                str(row.get("origem_doc", "") or row.get("origem_tipo", "") or "").strip(),
             ]
             for col_index, value in enumerate(values):
-                item = QTableWidgetItem(value)
-                if col_index in (4, 5, 6):
-                    item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
+                editable = col_index in (3, 4, 5, 6, 7, 8)
+                item = _editable_item(value, editable=editable, center=col_index in (0, 6, 7, 8))
                 if col_index == 0:
                     item.setData(Qt.UserRole, dict(row))
                 table.setItem(row_index, col_index, item)
         if filtered:
             table.selectRow(0)
 
+    def refresh_from_backend() -> None:
+        nonlocal references
+        if backend is not None and hasattr(backend, "order_reference_rows"):
+            try:
+                references = list(backend.order_reference_rows("", "") or [])  # type: ignore[attr-defined]
+            except Exception:
+                references = list(references or [])
+        render()
+
+    def save_selected() -> None:
+        if backend is None or not hasattr(backend, "orc_reference_update"):
+            QMessageBox.information(dialog, "Historico de referencias", "Este ambiente nao permite guardar alteracoes ao catalogo.")
+            return
+        payload = selected_payload_from_table()
+        if not payload:
+            return
+        ref_ext = str(payload.get("ref_externa", "") or "").strip()
+        if not ref_ext:
+            QMessageBox.warning(dialog, "Historico de referencias", "A referencia externa e obrigatoria para guardar.")
+            return
+        try:
+            updated = backend.orc_reference_update(ref_ext, payload)  # type: ignore[attr-defined]
+        except Exception as exc:
+            QMessageBox.critical(dialog, "Historico de referencias", str(exc))
+            return
+        QMessageBox.information(dialog, "Historico de referencias", "Referencia atualizada no catalogo.")
+        refresh_from_backend()
+        for row_index, row in enumerate(visible_rows):
+            if str(row.get("ref_externa", "") or "").strip() == str(updated.get("ref_externa", "") or "").strip():
+                table.selectRow(row_index)
+                break
+
+    def remove_selected() -> None:
+        if backend is None or not hasattr(backend, "orc_reference_remove"):
+            QMessageBox.information(dialog, "Historico de referencias", "Este ambiente nao permite remover referencias do catalogo.")
+            return
+        payload = selected_payload_from_table()
+        if not payload:
+            return
+        ref_ext = str(payload.get("ref_externa", "") or "").strip()
+        if not ref_ext:
+            return
+        if QMessageBox.question(
+            dialog,
+            "Remover referencia",
+            f"Remover '{ref_ext}' do catalogo de referencias?\n\nOrcamentos e encomendas existentes mantem os seus dados.",
+        ) != QMessageBox.Yes:
+            return
+        try:
+            backend.orc_reference_remove(ref_ext)  # type: ignore[attr-defined]
+        except Exception as exc:
+            QMessageBox.critical(dialog, "Historico de referencias", str(exc))
+            return
+        refresh_from_backend()
+
     def accept_selected() -> None:
         nonlocal result
-        row_index = _selected_row_index(table)
-        if row_index < 0:
-            return
-        item = table.item(row_index, 0)
-        result = dict(item.data(Qt.UserRole) or {}) if item is not None else None
+        result = selected_payload_from_table()
         if result:
             dialog.accept()
+
+    actions = QHBoxLayout()
+    save_btn = QPushButton("Guardar alteracoes")
+    save_btn.setProperty("variant", "secondary")
+    save_btn.clicked.connect(save_selected)
+    remove_btn = QPushButton("Remover do catalogo")
+    remove_btn.setProperty("variant", "danger")
+    remove_btn.clicked.connect(remove_selected)
+    actions.addWidget(save_btn)
+    actions.addWidget(remove_btn)
+    actions.addStretch(1)
+    layout.addLayout(actions)
 
     buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
     buttons.accepted.connect(accept_selected)
@@ -324,6 +461,7 @@ def _reference_catalog_dialog(parent: QWidget, references: list[dict], title: st
     layout.addWidget(buttons)
 
     search_edit.textChanged.connect(render)
+    client_filter.currentIndexChanged.connect(lambda _index: render())
     table.itemDoubleClicked.connect(lambda *_args: accept_selected())
     render()
     if dialog.exec() != QDialog.Accepted:
@@ -3816,6 +3954,51 @@ class PlanningPage(QWidget):
             f"QPushButton:hover {{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #ffffff, stop:1 {accent}22);}}"
         )
 
+    def _planning_operation_options(self) -> list[str]:
+        if self.backend is not None and hasattr(self.backend, "planning_operation_options"):
+            options = list(self.backend.planning_operation_options() or [])
+        else:
+            options = []
+        if not options:
+            options = ["Corte Laser", "Quinagem", "Serralharia", "Maquinacao", "Roscagem", "Lacagem", "Montagem", "Embalamento", "Expedicao", "Furo Manual"]
+        return [str(op or "").strip() for op in options if str(op or "").strip()]
+
+    def _operation_grid_position(self, operation: str, fallback_index: int) -> tuple[int, int]:
+        layout_order = [
+            ["Corte Laser", "Quinagem", "Serralharia", "Roscagem", "Maquinacao"],
+            ["Furo Manual", "Montagem", "Embalamento", "Expedicao"],
+        ]
+        for column, names in enumerate(layout_order):
+            for row, name in enumerate(names):
+                if str(operation or "").strip() == name:
+                    return row, column
+        return fallback_index, 2
+
+    def _rebuild_operation_buttons(self) -> None:
+        operation_options = self._planning_operation_options()
+        if operation_options == list(getattr(self, "_operation_button_options", []) or []):
+            return
+        _clear_layout_widgets(self.operation_grid)
+        self.operation_buttons = {}
+        used_positions: set[tuple[int, int]] = set()
+        overflow_index = 0
+        for op_name in operation_options:
+            button = QPushButton(self._operation_display_name(str(op_name)))
+            button.setCheckable(True)
+            button.setMinimumHeight(50)
+            button.setMinimumWidth(228)
+            button.setProperty("variant", "secondary")
+            button.setStyleSheet(self._operation_button_stylesheet(str(op_name)))
+            button.clicked.connect(lambda checked=False, value=op_name: self._set_operation(value))
+            self.operation_buttons[str(op_name)] = button
+            row, column = self._operation_grid_position(str(op_name), overflow_index)
+            while (row, column) in used_positions:
+                overflow_index += 1
+                row, column = overflow_index, 2
+            used_positions.add((row, column))
+            self.operation_grid.addWidget(button, row, column)
+        self._operation_button_options = list(operation_options)
+
     def __init__(self, runtime_service, backend=None, parent=None) -> None:
         super().__init__(parent)
         self.runtime_service = runtime_service
@@ -3991,27 +4174,16 @@ class PlanningPage(QWidget):
         navigation_layout.addLayout(selector_header)
 
         self.operation_buttons: dict[str, QPushButton] = {}
-        operation_options = list(self.backend.planning_operation_options() if self.backend is not None and hasattr(self.backend, "planning_operation_options") else [])
-        if not operation_options:
-            operation_options = ["Corte Laser", "Quinagem", "Serralharia", "Maquinacao", "Roscagem", "Lacagem", "Montagem", "Embalamento", "Expedicao", "Furo Manual"]
+        self._operation_button_options: list[str] = []
         operation_grid_host = QWidget()
         self.operation_grid_host = operation_grid_host
-        operation_grid_host.setMaximumWidth(1280)
+        operation_grid_host.setMaximumWidth(500)
         operation_grid = QGridLayout(operation_grid_host)
         self.operation_grid = operation_grid
         operation_grid.setContentsMargins(0, 0, 0, 0)
         operation_grid.setHorizontalSpacing(12)
-        operation_grid.setVerticalSpacing(12)
-        for index, op_name in enumerate(operation_options):
-            button = QPushButton(self._operation_display_name(str(op_name)))
-            button.setCheckable(True)
-            button.setMinimumHeight(62)
-            button.setMinimumWidth(228)
-            button.setProperty("variant", "secondary")
-            button.setStyleSheet(self._operation_button_stylesheet(str(op_name)))
-            button.clicked.connect(lambda checked=False, value=op_name: self._set_operation(value))
-            self.operation_buttons[str(op_name)] = button
-            operation_grid.addWidget(button, index // 5, index % 5)
+        operation_grid.setVerticalSpacing(10)
+        self._rebuild_operation_buttons()
         operation_wrap = QWidget()
         self.operation_wrap = operation_wrap
         operation_wrap_layout = QHBoxLayout(operation_wrap)
@@ -4189,6 +4361,11 @@ class PlanningPage(QWidget):
         self._sync_planning_actions()
 
     def refresh(self) -> None:
+        self._rebuild_operation_buttons()
+        if self.operation_selected and str(self.current_operation or "").strip() not in self.operation_buttons:
+            self.current_operation = ""
+            self.current_resource = ""
+            self.operation_selected = False
         if not self.operation_selected or not str(self.current_operation or "").strip():
             self._set_operation_entry_state(False)
             self._apply_operation_labels()
@@ -4351,6 +4528,7 @@ class PlanningPage(QWidget):
             self.change_operation_inline_btn.setVisible(True)
             self.resource_panel_title.setStyleSheet("font-size: 12px; font-weight: 800; color: #0f172a;")
         else:
+            self._rebuild_operation_buttons()
             self.navigation_card.setMinimumHeight(270)
             self.navigation_card.setMaximumHeight(340)
             nav_layout = self.navigation_card.layout()
@@ -9268,7 +9446,13 @@ class OrdersPage(QWidget):
             apply_reference(refs_by_ext.get(raw) or refs_by_int.get(raw))
 
         def browse_refs() -> None:
-            payload = _reference_catalog_dialog(self, references, "Histórico de referencias")
+            payload = _reference_catalog_dialog(
+                self,
+                self.backend.order_reference_rows("", ""),
+                "Histórico de referencias",
+                backend=self.backend,
+                current_client=current_client,
+            )
             apply_reference(payload)
 
         def generate_ref() -> None:
@@ -9354,7 +9538,7 @@ class OrdersPage(QWidget):
         btn_generate = QPushButton("Gerar")
         btn_generate.setProperty("variant", "secondary")
         btn_generate.clicked.connect(generate_ref)
-        btn_history = QPushButton("Histórico refs")
+        btn_history = QPushButton("Referencias criadas")
         btn_history.setProperty("variant", "secondary")
         btn_history.clicked.connect(browse_refs)
         btn_load = QPushButton("Carregar ref.")
@@ -12227,7 +12411,7 @@ class QuotesPage(QWidget):
             """
             QWidget#QuoteSummaryTotalPanel {
                 background: #fff4dc;
-                border: 0;
+                border: 1px solid #d9a441;
                 border-radius: 10px;
             }
             QWidget#QuoteSummaryTotalPanel QLabel {
@@ -17360,7 +17544,13 @@ class QuotesPage(QWidget):
             apply_reference(refs_by_ext.get(key) or refs_by_int.get(key))
 
         def browse_refs() -> None:
-            payload = _reference_catalog_dialog(self, references, "Historico de referencias")
+            payload = _reference_catalog_dialog(
+                self,
+                self.backend.order_reference_rows("", ""),
+                "Historico de referencias",
+                backend=self.backend,
+                current_client=client_code,
+            )
             apply_reference(payload)
 
         def generate_ref() -> None:
@@ -17629,7 +17819,7 @@ class QuotesPage(QWidget):
         btn_generate = QPushButton("Gerar interna")
         btn_generate.setProperty("variant", "secondary")
         btn_generate.clicked.connect(generate_ref)
-        btn_history = QPushButton("Historico refs")
+        btn_history = QPushButton("Referencias criadas")
         btn_history.setProperty("variant", "secondary")
         btn_history.clicked.connect(browse_refs)
         btn_load = QPushButton("Carregar referencia")

@@ -58,8 +58,8 @@ function Resolve-MobileApkPath {
 
 function Resolve-DesktopExePath {
     foreach ($relativePath in @(
-        'dist_qt_stable\lugest_qt\lugest_qt.exe',
         'dist\lugest_qt\lugest_qt.exe',
+        'dist_qt_stable\lugest_qt\lugest_qt.exe',
         'dist\lugest_qt.exe',
         'dist_dashboard_release\main.exe',
         'dist_transportes_tarifario_release\main.exe',

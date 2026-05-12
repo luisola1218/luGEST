@@ -356,6 +356,7 @@ class LegacyBackend(
         return {
             "logo_path": str(self.logo_path or (self.base_dir / "Logos" / "image (1).jpg")),
             "primary_color": str(cfg.get("primary_color", "#000040") or "#000040"),
+            "logo_scale_pct": max(50, min(250, int(self._parse_float(cfg.get("logo_scale_pct", 100), 100)))),
             "empresa_info_rodape": list(cfg.get("empresa_info_rodape", []) or []),
             "guia_emitente": {
                 "nome": str(emit.get("nome", "") or "").strip(),
@@ -367,6 +368,13 @@ class LegacyBackend(
             "guia_serie_id": serie_id,
             "guia_validation_code": validation_code,
         }
+
+    def _branding_logo_scale_factor(self) -> float:
+        try:
+            scale_pct = max(50.0, min(250.0, float(self.branding_settings().get("logo_scale_pct", 100) or 100)))
+        except Exception:
+            scale_pct = 100.0
+        return scale_pct / 100.0
 
     def ensure_branding_logo(self, preferred_logo: str = "") -> dict[str, Any]:
         preferred = str(preferred_logo or "").strip()
@@ -414,6 +422,10 @@ class LegacyBackend(
         cfg["guia_info_extra"] = guia_extra
         if str(payload.get("primary_color", "") or "").strip():
             cfg["primary_color"] = str(payload.get("primary_color", "") or "").strip()
+        try:
+            cfg["logo_scale_pct"] = max(50, min(250, int(float(payload.get("logo_scale_pct", cfg.get("logo_scale_pct", 100)) or 100))))
+        except Exception:
+            cfg["logo_scale_pct"] = 100
 
         try:
             branding_file = self.base_dir / str(getattr(self.desktop_main, "BRANDING_FILE", "lugest_branding.json"))
@@ -529,6 +541,68 @@ class LegacyBackend(
                 changed.append(key)
         return changed
 
+    def _bucket_identity_field(self, bucket_name: str) -> str:
+        return {
+            "clientes": "codigo",
+            "fornecedores": "id",
+            "materiais": "id",
+            "produtos": "codigo",
+            "produtos_mov": "id",
+            "conjuntos": "codigo",
+            "conjuntos_modelo": "codigo",
+            "orcamentos": "numero",
+            "encomendas": "numero",
+            "notas_encomenda": "numero",
+            "expedicoes": "numero",
+            "transportes": "numero",
+            "faturacao_registos": "numero",
+            "quality_nonconformities": "id",
+            "quality_documents": "id",
+            "workcenter_catalog": "id",
+            "operations_catalog": "name",
+            "plano": "id",
+            "plano_hist": "id",
+        }.get(str(bucket_name or ""), "")
+
+    def _merge_list_bucket_by_identity(self, bucket_name: str, current_value: Any, base_value: Any, latest_value: Any) -> list[Any] | None:
+        identity = self._bucket_identity_field(bucket_name)
+        if not identity or not isinstance(current_value, list) or not isinstance(base_value, list) or not isinstance(latest_value, list):
+            return None
+
+        def item_key(item: Any) -> str:
+            if not isinstance(item, dict):
+                return ""
+            return str(item.get(identity, "") or "").strip().casefold()
+
+        current_map: dict[str, Any] = {}
+        base_map: dict[str, Any] = {}
+        latest_map: dict[str, Any] = {}
+        for collection, target in ((current_value, current_map), (base_value, base_map), (latest_value, latest_map)):
+            for item in collection:
+                key = item_key(item)
+                if not key:
+                    return None
+                target[key] = item
+
+        merged = [copy.deepcopy(item) for item in latest_value]
+        merged_index = {item_key(item): idx for idx, item in enumerate(merged)}
+
+        for key in base_map.keys():
+            if key not in current_map and key in merged_index:
+                idx = merged_index[key]
+                merged[idx] = None
+
+        for key, current_item in current_map.items():
+            base_item = base_map.get(key)
+            if key not in base_map or self._bucket_signature(current_item) != self._bucket_signature(base_item):
+                cloned = copy.deepcopy(current_item)
+                if key in merged_index and merged[merged_index[key]] is not None:
+                    merged[merged_index[key]] = cloned
+                else:
+                    merged.append(cloned)
+
+        return [item for item in merged if item is not None]
+
     def _merge_latest_for_save(self) -> tuple[dict[str, Any], list[str]]:
         current = self.ensure_data()
         changed_keys = self._changed_data_buckets(current, self._base_data_snapshot)
@@ -536,7 +610,16 @@ class LegacyBackend(
             return current, []
         latest = self.desktop_main.load_data()
         for key in changed_keys:
-            latest[key] = self._clone_data(current.get(key)) if isinstance(current.get(key), dict) else copy.deepcopy(current.get(key))
+            merged_bucket = self._merge_list_bucket_by_identity(
+                key,
+                current.get(key),
+                (self._base_data_snapshot or {}).get(key) if isinstance(self._base_data_snapshot, dict) else None,
+                latest.get(key),
+            )
+            if merged_bucket is not None:
+                latest[key] = merged_bucket
+            else:
+                latest[key] = self._clone_data(current.get(key)) if isinstance(current.get(key), dict) else copy.deepcopy(current.get(key))
         for key, value in list(current.items()):
             if str(key or "").startswith("__"):
                 latest[key] = value
@@ -4805,7 +4888,7 @@ class LegacyBackend(
     def operation_catalog_rows(self) -> list[dict[str, Any]]:
         data = self.ensure_data()
         raw_rows = list(data.get("operations_catalog", []) or [])
-        seed_rows = self._default_operation_catalog() if not raw_rows else []
+        seed_rows = self._default_operation_catalog()
         seed_rows.extend(dict(row or {}) for row in raw_rows if isinstance(row, dict))
         for row in list(self._workcenter_catalog(sync_legacy=False) or []):
             op_name = self._planning_normalize_operation(row.get("operation", row.get("name", "")), default=str(row.get("operation", row.get("name", "")) or "").strip())
@@ -6655,7 +6738,36 @@ class LegacyBackend(
         if not logo_path or not logo_path.exists():
             return
         try:
-            canvas_obj.drawImage(ImageReader(str(logo_path)), x, y, width=width, height=height, preserveAspectRatio=True, mask="auto")
+            img_reader = None
+            iw = ih = 0
+            try:
+                from PIL import Image, ImageChops
+
+                img = Image.open(logo_path).convert("RGBA")
+                bbox = img.split()[-1].getbbox()
+                if not bbox:
+                    rgb = img.convert("RGB")
+                    diff = ImageChops.difference(rgb, Image.new("RGB", rgb.size, (255, 255, 255)))
+                    bbox = diff.getbbox()
+                if bbox:
+                    img = img.crop(bbox)
+                iw, ih = img.size
+                img_reader = ImageReader(img)
+            except Exception:
+                img_reader = ImageReader(str(logo_path))
+                iw, ih = img_reader.getSize()
+            if not img_reader or iw <= 0 or ih <= 0:
+                return
+            scale = min(float(width) / float(iw), float(height) / float(ih))
+            scale *= self._branding_logo_scale_factor()
+            draw_w = max(1.0, float(iw) * scale)
+            draw_h = max(1.0, float(ih) * scale)
+            draw_x = x + (float(width) - draw_w) / 2.0
+            draw_y = y + (float(height) - draw_h) / 2.0
+            clip_path = canvas_obj.beginPath()
+            clip_path.rect(x, y, width, height)
+            canvas_obj.clipPath(clip_path, stroke=0, fill=0)
+            canvas_obj.drawImage(img_reader, draw_x, draw_y, width=draw_w, height=draw_h, preserveAspectRatio=True, mask="auto")
         except Exception:
             pass
 
@@ -6683,10 +6795,10 @@ class LegacyBackend(
         self._draw_operator_logo(
             canvas_obj,
             logo_path,
-            x + padding_x,
-            y + padding_y,
-            max(10.0, width - (padding_x * 2)),
-            max(8.0, height - (padding_y * 2)),
+            x + (padding_x / 3.2),
+            y + (padding_y / 3.2),
+            max(10.0, width - ((padding_x / 3.2) * 2)),
+            max(8.0, height - ((padding_y / 3.2) * 2)),
         )
 
     def _draw_operator_unit_label(
@@ -10072,6 +10184,8 @@ class LegacyBackend(
             ref_ext = str(line.get("ref_externa", "") or "").strip()
             if not ref_ext:
                 continue
+            if ref_ext in dict(data.get("orc_refs_removed", {}) or {}):
+                continue
             snapshot = self._quote_line_operation_snapshot(line, quote_number=numero, quote_state=estado)
             existing_ref = dict(refs_db.get(ref_ext, {}) or {})
             approved_at = str(existing_ref.get("approved_at", "") or "").strip()
@@ -10083,6 +10197,7 @@ class LegacyBackend(
                 "ref_externa": ref_ext,
                 "descricao": str(line.get("descricao", existing_ref.get("descricao", "")) or "").strip(),
                 "material": str(line.get("material", existing_ref.get("material", "")) or "").strip(),
+                "material_subtype": str(line.get("material_subtype", existing_ref.get("material_subtype", "")) or "").strip(),
                 "espessura": str(line.get("espessura", existing_ref.get("espessura", "")) or "").strip(),
                 "preco_unit": round(self._parse_float(line.get("preco_unit", existing_ref.get("preco_unit", 0)), 0), 4),
                 "operacao": str(line.get("operacao", existing_ref.get("operacao", "")) or "").strip(),
@@ -10125,6 +10240,7 @@ class LegacyBackend(
                 "ref_externa": ref_ext,
                 "descricao": record.get("descricao", ""),
                 "material": record.get("material", ""),
+                "material_subtype": record.get("material_subtype", ""),
                 "espessura": record.get("espessura", ""),
                 "Operacoes": record.get("operacao", ""),
                 "Observacoes": record.get("descricao", ""),
@@ -10221,6 +10337,8 @@ class LegacyBackend(
         ref_ext_txt = str(ref_externa or "").strip()
         if not code or not ref_ext_txt:
             return ""
+        if ref_ext_txt in dict(self.ensure_data().get("orc_refs_removed", {}) or {}):
+            return ""
         refs_db = self.ensure_data().get("orc_refs", {})
         payload = (refs_db or {}).get(ref_ext_txt)
         ref_interna = str((payload or {}).get("ref_interna", "") or "").strip().upper()
@@ -10274,6 +10392,70 @@ class LegacyBackend(
             )
         except Exception:
             pass
+
+    def orc_reference_update(self, ref_externa: str, payload: dict[str, Any]) -> dict[str, Any]:
+        ref_ext = str(ref_externa or payload.get("ref_externa", "") or "").strip()
+        if not ref_ext:
+            raise ValueError("Referencia externa obrigatoria.")
+        data = self.ensure_data()
+        refs_db = data.setdefault("orc_refs", {})
+        data.setdefault("orc_refs_removed", {}).pop(ref_ext, None)
+        existing = dict(refs_db.get(ref_ext, {}) or {})
+        record = {
+            **existing,
+            "ref_externa": ref_ext,
+            "ref_interna": str(payload.get("ref_interna", existing.get("ref_interna", "")) or "").strip(),
+            "descricao": str(payload.get("descricao", existing.get("descricao", "")) or "").strip(),
+            "material": str(payload.get("material", existing.get("material", "")) or "").strip(),
+            "material_subtype": str(payload.get("material_subtype", existing.get("material_subtype", "")) or "").strip(),
+            "espessura": str(payload.get("espessura", existing.get("espessura", "")) or "").strip(),
+            "preco_unit": round(self._parse_float(payload.get("preco_unit", payload.get("preco", existing.get("preco_unit", 0))), 0), 4),
+            "tempo_peca_min": round(self._parse_float(payload.get("tempo_peca_min", existing.get("tempo_peca_min", 0)), 0), 3),
+            "operacao": str(payload.get("operacao", payload.get("operacoes", existing.get("operacao", ""))) or "").strip(),
+            "desenho": str(payload.get("desenho", existing.get("desenho", existing.get("desenho_path", ""))) or "").strip(),
+            "cliente_codigo": str(payload.get("cliente_codigo", existing.get("cliente_codigo", "")) or "").strip(),
+            "origem_doc": str(payload.get("origem_doc", existing.get("origem_doc", "Catalogo")) or "").strip() or "Catalogo",
+            "origem_tipo": str(payload.get("origem_tipo", existing.get("origem_tipo", "Historico")) or "").strip() or "Historico",
+            "updated_at": self.desktop_main.now_iso(),
+            "operacoes_lista": list(payload.get("operacoes_lista", existing.get("operacoes_lista", [])) or []),
+            "operacoes_fluxo": [dict(item or {}) for item in list(payload.get("operacoes_fluxo", existing.get("operacoes_fluxo", [])) or []) if isinstance(item, dict)],
+            "operacoes_detalhe": [dict(item or {}) for item in list(payload.get("operacoes_detalhe", existing.get("operacoes_detalhe", [])) or []) if isinstance(item, dict)],
+            "tempos_operacao": dict(payload.get("tempos_operacao", existing.get("tempos_operacao", {})) or {}),
+            "custos_operacao": dict(payload.get("custos_operacao", existing.get("custos_operacao", {})) or {}),
+            "quote_cost_snapshot": dict(payload.get("quote_cost_snapshot", existing.get("quote_cost_snapshot", {})) or {}),
+        }
+        refs_db[ref_ext] = record
+        piece_history = data.setdefault("peca_hist", {})
+        piece_history[ref_ext] = {
+            **dict(piece_history.get(ref_ext, {}) or {}),
+            "ref_interna": record.get("ref_interna", ""),
+            "ref_externa": ref_ext,
+            "descricao": record.get("descricao", ""),
+            "material": record.get("material", ""),
+            "material_subtype": record.get("material_subtype", ""),
+            "espessura": record.get("espessura", ""),
+            "Operacoes": record.get("operacao", ""),
+            "Observacoes": record.get("descricao", ""),
+            "desenho": record.get("desenho", ""),
+            "cliente_codigo": record.get("cliente_codigo", ""),
+            "origem_doc": record.get("origem_doc", ""),
+            "origem_tipo": record.get("origem_tipo", ""),
+            "updated_at": record.get("updated_at", ""),
+        }
+        self._upsert_orc_ref_history_entry(ref_ext, record)
+        self._save(force=True)
+        return dict(record)
+
+    def orc_reference_remove(self, ref_externa: str) -> None:
+        ref_ext = str(ref_externa or "").strip()
+        if not ref_ext:
+            raise ValueError("Referencia externa obrigatoria.")
+        data = self.ensure_data()
+        data.setdefault("orc_refs", {}).pop(ref_ext, None)
+        data.setdefault("peca_hist", {}).pop(ref_ext, None)
+        data.setdefault("orc_refs_removed", {})[ref_ext] = self.desktop_main.now_iso()
+        self._delete_orc_ref_history_entry(ref_ext)
+        self._save(force=True)
 
     def _delete_orc_ref_history_entry(self, ref_ext: str) -> None:
         delete_fn = getattr(self.desktop_main, "mysql_delete_orc_referencia", None)
@@ -10515,11 +10697,15 @@ class LegacyBackend(
 
         def append_row(payload: dict[str, Any]) -> None:
             raw_operacoes = str(payload.get("operacoes", payload.get("operacao", "")) or "").strip()
+            ref_externa_txt = str(payload.get("ref_externa", "") or "").strip()
+            if ref_externa_txt and ref_externa_txt in dict(data.get("orc_refs_removed", {}) or {}):
+                return
             row = {
-                "ref_externa": str(payload.get("ref_externa", "") or "").strip(),
+                "ref_externa": ref_externa_txt,
                 "ref_interna": str(payload.get("ref_interna", "") or "").strip(),
                 "descricao": str(payload.get("descricao", "") or "").strip(),
                 "material": str(payload.get("material", "") or "").strip(),
+                "material_subtype": str(payload.get("material_subtype", "") or "").strip(),
                 "espessura": str(payload.get("espessura", "") or "").strip(),
                 "preco": round(self._parse_float(payload.get("preco", payload.get("preco_unit", 0)), 0), 4),
                 "tempo_peca_min": round(self._parse_float(payload.get("tempo_peca_min", payload.get("tempo_pecas_min", 0)), 0), 2),
@@ -10536,6 +10722,11 @@ class LegacyBackend(
                 "laser_base_preco_unit": round(self._parse_float(payload.get("laser_base_preco_unit", 0), 0), 4),
                 "origem_doc": str(payload.get("origem_doc", "") or "").strip(),
                 "origem_tipo": str(payload.get("origem_tipo", "") or "").strip(),
+                "cliente_codigo": row_client(
+                    str(payload.get("ref_interna", "") or "").strip(),
+                    str(payload.get("ref_externa", "") or "").strip(),
+                    str(payload.get("cliente_codigo", "") or payload.get("cliente", "") or "").strip(),
+                ),
             }
             if query and not any(query in str(value).lower() for value in row.values()):
                 return
@@ -10547,7 +10738,7 @@ class LegacyBackend(
                 def score(candidate: dict[str, Any]) -> int:
                     base = {"Orcamento": 30, "Encomenda": 20, "Historico": 10}.get(str(candidate.get("origem_tipo", "") or ""), 0)
                     richness = 0
-                    for field in ("descricao", "material", "espessura", "operacoes", "desenho"):
+                    for field in ("descricao", "material", "material_subtype", "espessura", "operacoes", "desenho"):
                         if str(candidate.get(field, "") or "").strip():
                             richness += 2
                     if float(candidate.get("preco", 0) or 0) > 0:
@@ -10556,7 +10747,7 @@ class LegacyBackend(
                         richness += 1
                     return base + richness
 
-                for field in ("descricao", "material", "espessura", "operacoes", "desenho"):
+                for field in ("descricao", "material", "material_subtype", "espessura", "operacoes", "desenho"):
                     if not str(existing.get(field, "") or "").strip() and str(row.get(field, "") or "").strip():
                         existing[field] = row[field]
                 if float(existing.get("preco", 0) or 0) <= 0 and float(row.get("preco", 0) or 0) > 0:
@@ -10583,6 +10774,7 @@ class LegacyBackend(
                         "ref_externa": ref_externa,
                         "descricao": str(line.get("descricao", "") or "").strip(),
                         "material": str(line.get("material", "") or "").strip(),
+                        "material_subtype": str(line.get("material_subtype", "") or "").strip(),
                         "espessura": str(line.get("espessura", "") or "").strip(),
                         "preco_unit": line.get("preco_unit", 0),
                         "tempo_peca_min": line.get("tempo_peca_min", line.get("tempo_pecas_min", 0)),
@@ -10590,6 +10782,7 @@ class LegacyBackend(
                         "desenho": str(line.get("desenho", "") or "").strip(),
                         "origem_doc": str(orc.get("numero", "") or "").strip(),
                         "origem_tipo": "Orcamento",
+                        "cliente_codigo": explicit_client,
                     }
                 )
 
@@ -10606,6 +10799,7 @@ class LegacyBackend(
                         "ref_externa": ref_externa,
                         "descricao": str(piece.get("descricao", "") or piece.get("Observacoes", "") or "").strip(),
                         "material": str(piece.get("material", "") or "").strip(),
+                        "material_subtype": str(piece.get("material_subtype", "") or "").strip(),
                         "espessura": str(piece.get("espessura", "") or "").strip(),
                         "preco_unit": piece.get("preco_unit", 0),
                         "tempo_peca_min": piece.get("tempo_peca_min", piece.get("tempo_pecas_min", 0)),
@@ -10620,6 +10814,7 @@ class LegacyBackend(
                         "desenho": str(piece.get("desenho", "") or piece.get("desenho_path", "") or "").strip(),
                         "origem_doc": str(enc.get("numero", "") or "").strip(),
                         "origem_tipo": "Encomenda",
+                        "cliente_codigo": explicit_client,
                     }
                 )
 
@@ -10634,6 +10829,7 @@ class LegacyBackend(
                     "ref_interna": ref_interna,
                     "descricao": str(payload.get("descricao", "") or "").strip(),
                     "material": str(payload.get("material", "") or "").strip(),
+                    "material_subtype": str(payload.get("material_subtype", "") or "").strip(),
                     "espessura": str(payload.get("espessura", "") or "").strip(),
                     "preco_unit": payload.get("preco_unit", 0),
                     "tempo_peca_min": payload.get("tempo_peca_min", 0),
@@ -10641,6 +10837,7 @@ class LegacyBackend(
                     "desenho": str(payload.get("desenho", "") or payload.get("desenho_path", "") or "").strip(),
                     "origem_doc": "Historico",
                     "origem_tipo": "Historico",
+                    "cliente_codigo": str(payload.get("cliente_codigo", "") or "").strip(),
                 }
             )
         rows.sort(

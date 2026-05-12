@@ -8339,39 +8339,107 @@ def handle_admin_setup_cli(argv=None):
     return 0
 
 
+def _mysql_next_counter(counter_key, initial_next=1):
+    if not USE_MYSQL_STORAGE or not MYSQL_AVAILABLE:
+        return None
+    key = str(counter_key or "").strip()
+    if not key:
+        return None
+    start = max(1, int(parse_float(initial_next, 1) or 1))
+    conn = None
+    try:
+        conn = _mysql_connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_counters (
+                    ckey VARCHAR(80) PRIMARY KEY,
+                    next_value BIGINT NOT NULL,
+                    updated_at DATETIME NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+            conn.commit()
+            cur.execute(
+                """
+                INSERT INTO app_counters (ckey, next_value, updated_at)
+                VALUES (%s, %s, NOW())
+                ON DUPLICATE KEY UPDATE next_value=next_value
+                """,
+                (key, start),
+            )
+            cur.execute("SELECT next_value FROM app_counters WHERE ckey=%s FOR UPDATE", (key,))
+            row = cur.fetchone() or {}
+            n = max(start, int(parse_float(row.get("next_value", start), start) or start))
+            cur.execute("UPDATE app_counters SET next_value=%s, updated_at=NOW() WHERE ckey=%s", (n + 1, key))
+        conn.commit()
+        return n
+    except Exception:
+        try:
+            if conn is not None:
+                conn.rollback()
+        except Exception:
+            pass
+        return None
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+
+
 def next_encomenda_numero(data):
+    seq = data.setdefault("seq", {})
     max_n = 0
     for e in data.get("encomendas", []):
         num = e.get("numero", "")
         if num.startswith("BARCELBAL") and num[9:].isdigit():
             max_n = max(max_n, int(num[9:]))
-    n = max_n + 1
-    data["seq"]["encomenda"] = n + 1
+    local_next = max(max_n + 1, int(seq.get("encomenda", 1) or 1))
+    n = _mysql_next_counter("encomenda", local_next) or local_next
+    seq["encomenda"] = n + 1
     return f"BARCELBAL{n:04d}"
 
 
 def next_orc_numero(data):
-    n = int(data.get("orc_seq", 1))
+    year = datetime.now().year
+    max_n = _next_seq_from_pattern(
+        [o.get("numero") for o in data.get("orcamentos", []) if isinstance(o, dict)],
+        rf"^ORC-{year}-(\d{{4,}})$",
+        1,
+    )
+    local_next = max(max_n, int(data.get("orc_seq", 1) or 1))
+    n = _mysql_next_counter(f"orc:{year}", local_next) or local_next
     data["orc_seq"] = n + 1
-    return f"ORC-{datetime.now().year}-{n:04d}"
+    return f"ORC-{year}-{n:04d}"
 
 
 def next_of_numero(data):
-    n = int(data.get("of_seq", 1))
+    year = datetime.now().year
+    values = [p.get("of") for e in data.get("encomendas", []) for p in encomenda_pecas(e)]
+    for o in data.get("orcamentos", []):
+        if isinstance(o, dict):
+            values.extend((line or {}).get("of") for line in list(o.get("linhas", []) or []) if isinstance(line, dict))
+    max_n = _next_seq_from_pattern(values, rf"^OF-{year}-(\d{{4,}})$", 1)
+    local_next = max(max_n, int(data.get("of_seq", 1) or 1))
+    n = _mysql_next_counter(f"of:{year}", local_next) or local_next
     data["of_seq"] = n + 1
-    return f"OF-{datetime.now().year}-{n:04d}"
+    return f"OF-{year}-{n:04d}"
 
 
 def next_produto_numero(data):
+    seq = data.setdefault("seq", {})
     # gera com base no maior ja existente para evitar saltos mesmo com dados antigos
     max_n = 0
     for p in data.get("produtos", []):
         cod = p.get("codigo", "")
         if cod.startswith("PRD-") and cod[4:].isdigit():
             max_n = max(max_n, int(cod[4:]))
-    seq_n = int(data.get("seq", {}).get("produto", 1))
-    n = max(max_n + 1, seq_n)
-    data["seq"]["produto"] = n + 1
+    seq_n = int(seq.get("produto", 1))
+    local_next = max(max_n + 1, seq_n)
+    n = _mysql_next_counter("produto", local_next) or local_next
+    seq["produto"] = n + 1
     return f"PRD-{n:04d}"
 
 
@@ -8395,6 +8463,7 @@ def ensure_produto_seq(data, codigo):
 
 
 def next_ne_numero(data):
+    seq = data.setdefault("seq", {})
     year = datetime.now().year
     max_n = 0
     for ne in data.get("notas_encomenda", []):
@@ -8404,8 +8473,9 @@ def next_ne_numero(data):
             tail = num[len(prefix):]
             if tail.isdigit():
                 max_n = max(max_n, int(tail))
-    n = max_n + 1
-    data["seq"]["ne"] = n + 1
+    local_next = max(max_n + 1, int(seq.get("ne", 1) or 1))
+    n = _mysql_next_counter(f"ne:{year}", local_next) or local_next
+    seq["ne"] = n + 1
     return f"NE-{year}-{n:04d}"
 
 
@@ -8435,7 +8505,8 @@ def next_expedicao_numero(data):
             tail = num[len(prefix):]
             if tail.isdigit():
                 max_n = max(max_n, int(tail))
-    n = max_n + 1
+    local_next = max(max_n + 1, int(data.get("exp_seq", 1) or 1))
+    n = _mysql_next_counter(f"expedicao:{year}", local_next) or local_next
     data["exp_seq"] = n + 1
     return f"GT-{year}-{n:04d}"
 
@@ -8584,7 +8655,8 @@ def next_expedicao_identifiers(
 
 
 def next_fornecedor_numero(data):
-    n = _load_fornecedor_sequence_next(data)
+    local_next = _load_fornecedor_sequence_next(data)
+    n = _mysql_next_counter("fornecedor", local_next) or local_next
     _store_fornecedor_sequence_next(data, n + 1)
     return f"FOR-{n:04d}"
 
@@ -8603,9 +8675,11 @@ def reserve_fornecedor_numero(data, supplier_id):
 
 
 def next_transporte_numero(data):
-    n = _load_transport_sequence_next(data)
+    year = datetime.now().year
+    local_next = _load_transport_sequence_next(data)
+    n = _mysql_next_counter(f"transporte:{year}", local_next) or local_next
     _store_transport_sequence_next(data, n + 1)
-    return f"TR-{datetime.now().year}-{n:04d}"
+    return f"TR-{year}-{n:04d}"
 
 
 def peek_next_transporte_numero(data):
@@ -8622,9 +8696,18 @@ def reserve_transporte_numero(data, transport_number):
 
 
 def next_opp_numero(data):
-    n = int(data.get("opp_seq", 1))
+    year = datetime.now().year
+    values = []
+    for e in data.get("encomendas", []):
+        for p in encomenda_pecas(e):
+            values.append(p.get("opp"))
+    for o in data.get("orcamentos", []):
+        if isinstance(o, dict):
+            values.extend((line or {}).get("opp") for line in list(o.get("linhas", []) or []) if isinstance(line, dict))
+    local_next = max(_next_seq_from_pattern(values, rf"^OPP-{year}-(\d{{4,}})$", 1), int(data.get("opp_seq", 1) or 1))
+    n = _mysql_next_counter(f"opp:{year}", local_next) or local_next
     data["opp_seq"] = n + 1
-    return f"OPP-{datetime.now().year}-{n:04d}"
+    return f"OPP-{year}-{n:04d}"
 
 
 def next_cliente_codigo(data):
@@ -8848,6 +8931,10 @@ def get_branding_config():
     guia_extra = [str(x).strip() for x in guia_extra if str(x).strip()]
 
     primary_color = _normalize_hex_color(cfg.get("primary_color"), CTK_PRIMARY_RED) or CTK_PRIMARY_RED
+    try:
+        logo_scale_pct = max(50, min(250, int(float(cfg.get("logo_scale_pct", 100) or 100))))
+    except Exception:
+        logo_scale_pct = 100
 
     _BRANDING_CACHE = {
         "logo_candidates": logos,
@@ -8855,6 +8942,7 @@ def get_branding_config():
         "guia_emitente": emitente,
         "guia_info_extra": guia_extra,
         "primary_color": primary_color,
+        "logo_scale_pct": logo_scale_pct,
     }
     return _BRANDING_CACHE
 
@@ -8914,14 +9002,22 @@ def draw_pdf_logo_box(c, page_h, x, y_top, box_size=34, padding=3, draw_border=T
         if not img_reader or iw <= 0 or ih <= 0:
             return
 
-        pad = max(2.0, float(padding))
+        pad = max(0.0, float(padding)) / 3.2
         max_w = max(1.0, box_w - (2.0 * pad))
         max_h = max(1.0, box_h - (2.0 * pad))
         scale = min(max_w / float(iw), max_h / float(ih))
+        try:
+            logo_scale = max(0.5, min(2.5, float(get_branding_config().get("logo_scale_pct", 100) or 100) / 100.0))
+        except Exception:
+            logo_scale = 1.0
+        scale *= logo_scale
         draw_w = max(1.0, float(iw) * scale)
         draw_h = max(1.0, float(ih) * scale)
         draw_x = x + (box_w - draw_w) / 2.0
         draw_y = y + (box_h - draw_h) / 2.0
+        clip_path = c.beginPath()
+        clip_path.rect(x, y, box_w, box_h)
+        c.clipPath(clip_path, stroke=0, fill=0)
         c.drawImage(img_reader, draw_x, draw_y, width=draw_w, height=draw_h, preserveAspectRatio=True, mask="auto")
     finally:
         c.restoreState()

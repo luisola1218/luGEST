@@ -2173,6 +2173,8 @@ def _render_orc_pdf_modern(self, path, orc):
                     return
 
     def summary_panel(x, top_y, box_w, box_h):
+        from reportlab.pdfbase import pdfmetrics
+
         c.saveState()
         c.setFillColor(colors.white)
         c.setStrokeColor(palette["line_strong"])
@@ -2199,11 +2201,16 @@ def _render_orc_pdf_modern(self, path, orc):
             c.drawRightString(x + box_w - 12, yinv(yy), ntxt(value))
             yy += 12
         c.setStrokeColor(colors.Color(1, 1, 1, alpha=0.22))
-        c.line(x + 12, yinv(top_y + 75), x + box_w - 12, yinv(top_y + 75))
-        c.setFont(fonts["bold"], 9.2)
-        c.drawString(x + 12, yinv(top_y + 87), ntxt("Total"))
-        c.setFont(fonts["bold"], 12.4)
-        c.drawRightString(x + box_w - 12, yinv(top_y + 87), ntxt(fmt_money(total)))
+        c.line(x + 12, yinv(top_y + 74), x + box_w - 12, yinv(top_y + 74))
+        total_label = _orc_pdf_clip_text("TOTAL C/IVA", box_w - 24, fonts["bold"], 7.6)
+        c.setFont(fonts["bold"], 7.6)
+        c.drawString(x + 12, yinv(top_y + 82), ntxt(total_label))
+        total_value = fmt_money(total)
+        total_value_size = 11.2
+        while total_value_size > 9.4 and pdfmetrics.stringWidth(total_value, fonts["bold"], total_value_size) > (box_w - 24):
+            total_value_size -= 0.2
+        c.setFont(fonts["bold"], total_value_size)
+        c.drawRightString(x + box_w - 12, yinv(top_y + 90), ntxt(total_value))
 
     def draw_table_header(top_y):
         c.saveState()
@@ -2309,7 +2316,7 @@ def _render_orc_pdf_modern(self, path, orc):
             metric_card(metric_grid["cols"][2], metric_grid["rows"][0], metric_grid["chip_w"], "Executado por", executado, box_h=metric_grid["chip_h"], compact=True)
             metric_card(metric_grid["cols"][0], metric_grid["rows"][1], metric_grid["chip_w"], "Subtotal", fmt_money(subtotal), box_h=metric_grid["chip_h"], compact=True)
             metric_card(metric_grid["cols"][1], metric_grid["rows"][1], metric_grid["chip_w"], "IVA", f"{fmt_num(iva_perc)}%", box_h=metric_grid["chip_h"], compact=True)
-            metric_card(metric_grid["cols"][2], metric_grid["rows"][1], metric_grid["chip_w"], "Total", fmt_money(total), box_h=metric_grid["chip_h"], accent=True, compact=True)
+            metric_card(metric_grid["cols"][2], metric_grid["rows"][1], metric_grid["chip_w"], "TOTAL C/IVA", fmt_money(total), box_h=metric_grid["chip_h"], accent=True, compact=True)
             detail_card(
                 margin,
                 126,
@@ -2359,11 +2366,11 @@ def _render_orc_pdf_modern(self, path, orc):
 
     def draw_footer(page_no, total_pages):
         footer_y = footer_start + 4
-        footer_gap = 10
-        notes_w = 326
-        cond_w = 202
-        legend_w = 104
-        summary_w = max(120, int(table_w - notes_w - cond_w - legend_w - (footer_gap * 3)))
+        footer_gap = 8
+        notes_w = 312
+        cond_w = 190
+        legend_w = 96
+        summary_w = max(146, int(table_w - notes_w - cond_w - legend_w - (footer_gap * 3)))
         notes_x = margin
         cond_x = notes_x + notes_w + footer_gap
         legend_x = cond_x + cond_w + footer_gap

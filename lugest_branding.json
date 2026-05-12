@@ -1,5 +1,8 @@
 {
   "logo_candidates": [
+    "C:\\Users\\engenharia\\VSCodeProjects\\teste\\Logos\\lg.png",
+    "C:/Users/engenharia/VSCodeProjects/teste/Logos/lg.png",
+    "C:/Users/engenharia/VSCodeProjects/teste/Logos/59edcbf6-c604-4eaa-9a3d-a33c2d99c9e1.png",
     "C:/Users/engenharia/VSCodeProjects/teste/Logos/image (1).jpg",
     "C:/Users/engenharia/VSCodeProjects/teste/Logos/logo(1).jpg",
     "C:/Users/engenharia/VSCodeProjects/teste/Logos/fe2ffaad-5ce0-43c6-a430-aceb11dc7085.jpg",
@@ -30,5 +33,6 @@
   },
   "guia_info_extra": [],
   "primary_color": "#000040",
-  "logo": "C:/Users/engenharia/VSCodeProjects/teste/Logos/image (1).jpg"
+  "logo_scale_pct": 230,
+  "logo": "C:\\Users\\engenharia\\VSCodeProjects\\teste\\Logos\\lg.png"
 }

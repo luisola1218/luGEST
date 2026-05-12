@@ -15,9 +15,9 @@ if (-not $InstallDir) {
     }
 }
 
-$exePath = Join-Path $InstallDir 'main.exe'
+$exePath = Join-Path $InstallDir 'lugest_qt.exe'
 if (-not (Test-Path $exePath)) {
-    $exePath = Join-Path $InstallDir 'lugest_qt.exe'
+    $exePath = Join-Path $InstallDir 'main.exe'
 }
 
 $internalDir = Join-Path $InstallDir '_internal'
