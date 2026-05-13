@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, QTimer, Qt
+from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, QSize, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QGuiApplication, QColor, QBrush, QIcon, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSplitter,
@@ -79,6 +80,23 @@ SECTION_DESCRIPTIONS = {
     1: "Compara cenários e valida visualmente o melhor aproveitamento de chapa.",
     2: "Fecha o estudo com pendentes, custos e decisão final.",
 }
+
+
+class NestingWorker(QObject):
+    finished = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        super().__init__()
+        self.payload = dict(payload or {})
+
+    def run(self) -> None:
+        try:
+            result = nest_parts(**self.payload)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit(dict(result or {}))
 
 
 # Normaliza a linguagem do wizard e dos estados para evitar texto com
@@ -500,6 +518,12 @@ class LaserNestingDialog(QDialog):
         self.rotate_check = QCheckBox("Permitir rotação automática")
         self.rotate_check.setChecked(bool(self.nesting_options.get("allow_rotate", True)))
         self.rotate_check.setToolTip("Afeta apenas peças em modo Automático. Peças fixadas a 0° ou 90° respeitam essa escolha.")
+        self.mirror_check = QCheckBox("Permitir espelhar peças")
+        self.mirror_check.setChecked(bool(self.nesting_options.get("allow_mirror", True)))
+        self.mirror_check.setToolTip("Testa também a geometria espelhada no nesting por contorno para melhorar aproveitamento de chapa.")
+        self.free_angle_check = QCheckBox("Rotações livres")
+        self.free_angle_check.setChecked(bool(self.nesting_options.get("free_angle_rotation", True)))
+        self.free_angle_check.setToolTip("Testa ângulos intermédios no nesting por contorno. É mais lento, mas pode encaixar muito melhor.")
         self.auto_sheet_check = QCheckBox("Escolher melhor formato automaticamente")
         self.auto_sheet_check.setChecked(bool(self.nesting_options.get("auto_select_sheet", False)))
         self.use_stock_check = QCheckBox("Usar stock e retalhos primeiro")
@@ -589,13 +613,15 @@ class LaserNestingDialog(QDialog):
         top_layout.addWidget(self.spacing_spin, 1, 2)
         top_layout.addWidget(self.edge_spin, 1, 3)
         top_layout.addWidget(self.rotate_check, 2, 0)
-        top_layout.addWidget(self.auto_sheet_check, 2, 1)
-        top_layout.addWidget(self.use_stock_check, 2, 2)
-        top_layout.addWidget(self.allow_purchase_check, 2, 3)
+        top_layout.addWidget(self.mirror_check, 2, 1)
+        top_layout.addWidget(self.auto_sheet_check, 2, 2)
+        top_layout.addWidget(self.use_stock_check, 2, 3)
         top_layout.addWidget(self.shape_check, 3, 0)
-        top_layout.addWidget(QLabel("Resolução da grelha (mm)"), 3, 1)
-        top_layout.addWidget(self.shape_grid_spin, 3, 2)
-        top_layout.addWidget(self.shape_strict_check, 3, 3)
+        top_layout.addWidget(self.free_angle_check, 3, 1)
+        top_layout.addWidget(QLabel("Resolução da grelha (mm)"), 3, 2)
+        top_layout.addWidget(self.shape_grid_spin, 3, 3)
+        top_layout.addWidget(self.allow_purchase_check, 4, 0)
+        top_layout.addWidget(self.shape_strict_check, 4, 1)
         top_layout.addWidget(sheet_btn, 4, 2)
         top_layout.addWidget(config_btn, 4, 3)
         top_layout.addWidget(self.common_line_check, 5, 0)
@@ -1203,6 +1229,29 @@ class LaserNestingDialog(QDialog):
         actions.addWidget(self.prev_section_btn)
         actions.addWidget(self.next_section_btn)
         actions.addWidget(self.analyze_btn)
+        self.nesting_progress = QProgressBar()
+        self.nesting_progress.setRange(0, 100)
+        self.nesting_progress.setValue(0)
+        self.nesting_progress.setTextVisible(True)
+        self.nesting_progress.setFormat("A otimizar nesting... %p%")
+        self.nesting_progress.setMinimumWidth(220)
+        self.nesting_progress.setStyleSheet(
+            "QProgressBar {"
+            "border:1px solid #d58a22;"
+            "border-radius:9px;"
+            "background:#fff6e8;"
+            "color:#3a2205;"
+            "font-weight:800;"
+            "text-align:center;"
+            "height:22px;"
+            "}"
+            "QProgressBar::chunk {"
+            "border-radius:8px;"
+            "background:qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #ffb347, stop:1 #f47c20);"
+            "}"
+        )
+        self.nesting_progress.hide()
+        actions.addWidget(self.nesting_progress)
         actions.addStretch(1)
         self.pdf_btn = QPushButton("PDF do estudo")
         self.pdf_btn.setProperty("variant", "secondary")
@@ -1216,6 +1265,13 @@ class LaserNestingDialog(QDialog):
         buttons.button(QDialogButtonBox.Ok).setText("Aplicar ao orçamento")
         buttons.button(QDialogButtonBox.Close).setText("Fechar")
         root.addWidget(buttons)
+        self.dialog_buttons = buttons
+        self._nesting_thread: QThread | None = None
+        self._nesting_worker: NestingWorker | None = None
+        self._nesting_progress_value = 0
+        self._nesting_progress_timer = QTimer(self)
+        self._nesting_progress_timer.setInterval(420)
+        self._nesting_progress_timer.timeout.connect(self._tick_nesting_progress)
 
         self.group_combo.currentIndexChanged.connect(self._load_group_rows)
         self.auto_sheet_check.toggled.connect(self._sync_sheet_mode)
@@ -1338,6 +1394,8 @@ class LaserNestingDialog(QDialog):
         self.header_title_label.setText("Nesting Laser")
         self.header_subtitle_label.setText("Fluxo orçamental com stock, retalhos, formatos standard e análise automática de cenários.")
         self.rotate_check.setText("Permitir rotação automática")
+        self.mirror_check.setText("Permitir espelhar peças")
+        self.free_angle_check.setText("Rotações livres")
         self.auto_sheet_check.setText("Escolher melhor formato automaticamente")
         self.use_stock_check.setText("Usar stock e retalhos primeiro")
         self.allow_purchase_check.setText("Permitir compra complementar")
@@ -1609,6 +1667,8 @@ class LaserNestingDialog(QDialog):
             "part_spacing_mm": float(self.spacing_spin.value()),
             "edge_margin_mm": float(self.edge_spin.value()),
             "allow_rotate": bool(self.rotate_check.isChecked()),
+            "allow_mirror": bool(self.mirror_check.isChecked()),
+            "free_angle_rotation": bool(self.free_angle_check.isChecked()),
             "auto_select_sheet": bool(self.auto_sheet_check.isChecked()),
             "use_stock_first": bool(self.use_stock_check.isChecked()),
             "allow_purchase_fallback": bool(self.allow_purchase_check.isChecked()),
@@ -1763,6 +1823,8 @@ class LaserNestingDialog(QDialog):
         self.sheet_profiles = list(self.nesting_options.get("sheet_profiles", []) or [])
         self._refresh_sheet_profiles(selected_sheet_name)
         self.auto_sheet_check.setChecked(bool(self.nesting_options.get("auto_select_sheet", False)))
+        self.mirror_check.setChecked(bool(self.nesting_options.get("allow_mirror", True)))
+        self.free_angle_check.setChecked(bool(self.nesting_options.get("free_angle_rotation", True)))
         self.use_stock_check.setChecked(bool(self.nesting_options.get("use_stock_first", False)))
         self.allow_purchase_check.setChecked(bool(self.nesting_options.get("allow_purchase_fallback", True)))
         self.shape_check.setChecked(bool(self.nesting_options.get("shape_aware", True)))
@@ -1783,6 +1845,8 @@ class LaserNestingDialog(QDialog):
         nesting["default_part_spacing_mm"] = float(self.spacing_spin.value())
         nesting["default_edge_margin_mm"] = float(self.edge_spin.value())
         nesting["allow_rotate"] = bool(self.rotate_check.isChecked())
+        nesting["allow_mirror"] = bool(self.mirror_check.isChecked())
+        nesting["free_angle_rotation"] = bool(self.free_angle_check.isChecked())
         nesting["auto_select_sheet"] = bool(self.auto_sheet_check.isChecked())
         nesting["use_stock_first"] = bool(self.use_stock_check.isChecked())
         nesting["allow_purchase_fallback"] = bool(self.allow_purchase_check.isChecked())
@@ -1817,6 +1881,8 @@ class LaserNestingDialog(QDialog):
         enabled = bool(self.shape_check.isChecked())
         self.shape_grid_spin.setEnabled(enabled)
         self.shape_strict_check.setEnabled(enabled)
+        self.mirror_check.setEnabled(enabled)
+        self.free_angle_check.setEnabled(enabled)
         if not enabled:
             self.shape_strict_check.setChecked(False)
 
@@ -2685,6 +2751,50 @@ class LaserNestingDialog(QDialog):
         if step_index < (len(WIZARD_STEPS) - 1):
             self._set_wizard_step(step_index + 1)
 
+    def _set_nesting_busy(self, busy: bool) -> None:
+        for widget in (
+            self.prev_section_btn,
+            self.next_section_btn,
+            self.analyze_btn,
+            self.pdf_btn,
+            self.sheet_library_btn,
+            self.dxf_settings_btn,
+            self.group_combo,
+            self.sheet_combo,
+        ):
+            widget.setEnabled(not busy)
+        if hasattr(self, "dialog_buttons"):
+            self.dialog_buttons.setEnabled(not busy)
+        self.nesting_progress.setVisible(busy)
+        if busy:
+            self._nesting_progress_value = 0
+            self.nesting_progress.setValue(0)
+            self.nesting_progress.setFormat("A otimizar nesting... %p%")
+            self._nesting_progress_timer.start()
+        else:
+            self._nesting_progress_timer.stop()
+            self.nesting_progress.setValue(0)
+
+    def _tick_nesting_progress(self) -> None:
+        if self._nesting_thread is None:
+            return
+        self._nesting_progress_value = min(95, int(self._nesting_progress_value or 0) + 1)
+        self.nesting_progress.setValue(self._nesting_progress_value)
+
+    def _cleanup_nesting_thread(self) -> None:
+        self._nesting_worker = None
+        self._nesting_thread = None
+        self._set_nesting_busy(False)
+
+    def _handle_nesting_success(self, result: dict) -> None:
+        self._nesting_progress_value = 100
+        self.nesting_progress.setValue(100)
+        self._apply_result_data(dict(result or {}))
+        self._save_current_study(silent=True)
+
+    def _handle_nesting_error(self, message: str) -> None:
+        QMessageBox.critical(self, "Nesting Laser", str(message or "Falha ao calcular nesting."))
+
     def _geometry_engine_label(self, summary: dict[str, Any]) -> str:
         requested = str(summary.get("engine_requested", "") or "").strip().lower()
         used = str(summary.get("engine_used", "") or "").strip().lower()
@@ -3379,6 +3489,8 @@ class LaserNestingDialog(QDialog):
         self._set_wizard_step(2 if self.sheet_plan_table.rowCount() > 0 else 4)
 
     def _analyze(self) -> None:
+        if self._nesting_thread is not None:
+            return
         group = self._current_group()
         rows = [dict(row or {}) for row in list(group.get("rows", []) or [])]
         for row in rows:
@@ -3404,31 +3516,41 @@ class LaserNestingDialog(QDialog):
         if needs_purchase_profile and not auto_mode and not sheet:
             QMessageBox.warning(self, "Nesting Laser", "Seleciona um formato de chapa valido.")
             return
-        try:
-            result = nest_parts(
-                rows,
-                sheet_width_mm=float(sheet.get("width_mm", 0) or 0) if not auto_mode else None,
-                sheet_height_mm=float(sheet.get("height_mm", 0) or 0) if not auto_mode else None,
-                part_spacing_mm=self.spacing_spin.value(),
-                edge_margin_mm=self.edge_spin.value(),
-                allow_rotate=bool(self.rotate_check.isChecked()),
-                laser_settings=self.settings,
-                sheet_name=str(sheet.get("name", "") or ""),
-                sheet_profiles=self.sheet_profiles,
-                auto_select_sheet=auto_mode,
-                stock_sheet_candidates=self.stock_candidates,
-                use_stock_first=use_stock,
-                allow_purchase_fallback=allow_purchase,
-                shape_aware=shape_aware,
-                strict_shape_only=bool(self.shape_strict_check.isChecked()),
-                shape_grid_mm=float(self.shape_grid_spin.value()),
-            )
-        except Exception as exc:
-            QMessageBox.critical(self, "Nesting Laser", str(exc))
-            return
-
-        self._apply_result_data(dict(result or {}))
-        self._save_current_study(silent=True)
+        payload = {
+            "rows": rows,
+            "sheet_width_mm": float(sheet.get("width_mm", 0) or 0) if not auto_mode else None,
+            "sheet_height_mm": float(sheet.get("height_mm", 0) or 0) if not auto_mode else None,
+            "part_spacing_mm": self.spacing_spin.value(),
+            "edge_margin_mm": self.edge_spin.value(),
+            "allow_rotate": bool(self.rotate_check.isChecked()),
+            "allow_mirror": bool(self.mirror_check.isChecked()),
+            "free_angle_rotation": bool(self.free_angle_check.isChecked()),
+            "laser_settings": self.settings,
+            "sheet_name": str(sheet.get("name", "") or ""),
+            "sheet_profiles": self.sheet_profiles,
+            "auto_select_sheet": auto_mode,
+            "stock_sheet_candidates": self.stock_candidates,
+            "use_stock_first": use_stock,
+            "allow_purchase_fallback": allow_purchase,
+            "shape_aware": shape_aware,
+            "strict_shape_only": bool(self.shape_strict_check.isChecked()),
+            "shape_grid_mm": float(self.shape_grid_spin.value()),
+        }
+        self._set_nesting_busy(True)
+        thread = QThread(self)
+        worker = NestingWorker(payload)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._handle_nesting_success)
+        worker.failed.connect(self._handle_nesting_error)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._cleanup_nesting_thread)
+        self._nesting_thread = thread
+        self._nesting_worker = worker
+        thread.start()
 
 
 def _laser_nesting_render_sheet_preview_v2(self: LaserNestingDialog) -> None:
@@ -3533,7 +3655,8 @@ def _laser_nesting_render_sheet_preview_v2(self: LaserNestingDialog) -> None:
         tooltip = (
             f"{placement.get('ref_externa', '-')}\n"
             f"{placement.get('display_width_mm', 0)} x {placement.get('display_height_mm', 0)} mm\n"
-            f"Rotacao: {'sim' if placement.get('rotated') else 'nao'}"
+            f"Rotação: {_fmt_num(placement.get('rotation_deg', 90 if placement.get('rotated') else 0), 1)}°"
+            f"{' | espelhada' if placement.get('mirrored') else ''}"
         )
         outer_polygons = list(placement.get("display_outer_polygons", []) or [])
         hole_polygons = list(placement.get("display_hole_polygons", []) or [])

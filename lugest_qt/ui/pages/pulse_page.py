@@ -36,7 +36,7 @@ from .runtime_common import (
 
 class PulsePage(QWidget):
     page_title = "Pulse"
-    page_subtitle = "OEE, desvios, paragens e peças em curso com o mesmo backend do mobile."
+    page_subtitle = "OEE, desvios, paragens e pecas em curso com o backend desktop."
     allow_auto_timer_refresh = True
 
     def __init__(self, runtime_service, parent=None) -> None:

@@ -98,8 +98,8 @@
       ]
     },
     "nesting": {
-      "default_part_spacing_mm": 8.0,
-      "default_edge_margin_mm": 8.0,
+      "default_part_spacing_mm": 5.0,
+      "default_edge_margin_mm": 5.0,
       "allow_rotate": true,
       "auto_select_sheet": false,
       "use_stock_first": false,
@@ -214,7 +214,9 @@
           "hole_polygons": []
         }
       ],
-      "shape_strict": false
+      "shape_strict": false,
+      "allow_mirror": true,
+      "free_angle_rotation": true
     },
     "machine_profiles": {
       "BLT641 12kW": {

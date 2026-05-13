@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from lugest_qt.services.main_bridge import LegacyBackend
-from impulse_mobile_api.app.services import pulse_runtime
+from lugest_qt.services import pulse_runtime
 
 
 def _assert(condition: bool, message: str) -> None:

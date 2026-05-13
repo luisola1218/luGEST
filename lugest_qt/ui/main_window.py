@@ -73,6 +73,10 @@ class MainWindow(QMainWindow):
         self._alerts_cache: dict | None = None
         self._alerts_loaded_at = 0.0
         self._alerts_cache_ttl_sec = 10.0
+        self._pending_page_refresh_key = ""
+        self._page_refresh_timer = QTimer(self)
+        self._page_refresh_timer.setSingleShot(True)
+        self._page_refresh_timer.timeout.connect(self._run_pending_page_refresh)
         self.page_factories = {
             "home": lambda: HomePage(self.backend),
             "stock_dashboard": lambda: StockDashboardPage(self.backend),
@@ -320,6 +324,16 @@ class MainWindow(QMainWindow):
             button.setChecked(nav_key == key)
         self.title_label.setText(str(getattr(page, "page_title", "luGEST Qt")))
         self.subtitle_label.setText(str(getattr(page, "page_subtitle", "")))
+        self._pending_page_refresh_key = key
+        self.status_label.setText("A abrir menu...")
+        self._page_refresh_timer.start(80)
+
+    def _run_pending_page_refresh(self) -> None:
+        key = str(self._pending_page_refresh_key or "").strip()
+        current = self.stack.currentWidget()
+        current_key = next((page_key for page_key, page in self.pages.items() if page is current), "")
+        if key and current_key and key != current_key:
+            return
         self.refresh_current_page(force=False, background=False)
 
     def refresh_current_page(self, force: bool = False, background: bool = False) -> None:

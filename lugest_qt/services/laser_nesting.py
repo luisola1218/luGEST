@@ -705,6 +705,10 @@ def default_nesting_options(laser_settings: dict[str, Any] | None = None) -> dic
         "use_stock_first": bool(payload.get("use_stock_first", False)),
         "allow_purchase_fallback": bool(payload.get("allow_purchase_fallback", True)),
         "shape_aware": bool(payload.get("shape_aware", True)),
+        "allow_mirror": bool(payload.get("allow_mirror", True)),
+        # Free-angle search is expensive; keep it opt-in and let 0/90 rotation
+        # cover the common production case by default.
+        "free_angle_rotation": bool(payload.get("free_angle_rotation", False)),
         "shape_grid_mm": max(2.0, _as_float(payload.get("shape_grid_mm", 10.0), 10.0)),
         "common_line_estimate": bool(payload.get("common_line_estimate", True)),
         "common_line_tolerance_mm": max(0.0, _as_float(payload.get("common_line_tolerance_mm", 1.0), 1.0)),
@@ -953,43 +957,66 @@ def _expand_items(items: list[NestItem]) -> list[dict[str, Any]]:
     return expanded
 
 
-def _candidate_orientations(item: NestItem, allow_rotate: bool) -> list[dict[str, Any]]:
+def _candidate_orientations(item: NestItem, allow_rotate: bool, allow_mirror: bool = False, free_angles: bool = False) -> list[dict[str, Any]]:
     policy = str(getattr(item, "rotation_policy", "auto") or "auto").strip().lower()
     has_rotation = bool(abs(item.bbox_width_mm - item.bbox_height_mm) > 1e-6)
     can_rotate = bool(allow_rotate and has_rotation)
+    mirror_values = (False, True) if allow_mirror else (False,)
+
+    def _variants(base: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [dict(orientation, mirrored=mirrored) for orientation in base for mirrored in mirror_values]
+
     if policy == "90":
         if has_rotation:
-            return [{"width": item.bbox_height_mm, "height": item.bbox_width_mm, "rotated": True}]
-        return [{"width": item.bbox_width_mm, "height": item.bbox_height_mm, "rotated": False}]
+            return _variants([{"width": item.bbox_height_mm, "height": item.bbox_width_mm, "rotated": True, "angle_deg": 90.0}])
+        return _variants([{"width": item.bbox_width_mm, "height": item.bbox_height_mm, "rotated": False, "angle_deg": 0.0}])
     if policy == "0" or not has_rotation:
-        return [{"width": item.bbox_width_mm, "height": item.bbox_height_mm, "rotated": False}]
-    return [
-        {"width": item.bbox_width_mm, "height": item.bbox_height_mm, "rotated": False},
-        {"width": item.bbox_height_mm, "height": item.bbox_width_mm, "rotated": True},
+        return _variants([{"width": item.bbox_width_mm, "height": item.bbox_height_mm, "rotated": False, "angle_deg": 0.0}])
+    base = [
+        {"width": item.bbox_width_mm, "height": item.bbox_height_mm, "rotated": False, "angle_deg": 0.0},
+        {"width": item.bbox_height_mm, "height": item.bbox_width_mm, "rotated": True, "angle_deg": 90.0},
     ]
+    if free_angles and policy == "auto":
+        for angle in (15.0, 30.0, 45.0, 60.0, 75.0, 105.0, 120.0, 135.0, 150.0, 165.0):
+            base.append({"width": item.bbox_width_mm, "height": item.bbox_height_mm, "rotated": abs(angle % 180.0 - 90.0) < 1e-6, "angle_deg": angle})
+    return _variants(base)
 
 
-def _item_shape_polygons(item: NestItem, rotated: bool) -> tuple[tuple[tuple[tuple[float, float], ...], ...], tuple[tuple[tuple[float, float], ...], ...], float, float]:
+def _transform_item_points(item: NestItem, points: list[tuple[float, float]], rotated: bool, mirrored: bool, angle_deg: float | None = None) -> list[tuple[float, float]]:
+    transformed: list[tuple[float, float]] = []
+    angle = 90.0 if angle_deg is None and rotated else float(angle_deg or 0.0)
+    rad = math.radians(angle)
+    cos_a = math.cos(rad)
+    sin_a = math.sin(rad)
+    for x, y in points:
+        tx = max(0.0, float(item.bbox_width_mm) - float(x)) if mirrored else float(x)
+        ty = float(y)
+        if abs(angle) < 1e-9:
+            transformed.append((round(tx, 3), round(ty, 3)))
+        else:
+            transformed.append((round((tx * cos_a) - (ty * sin_a), 3), round((tx * sin_a) + (ty * cos_a), 3)))
+    return transformed
+
+
+def _item_shape_polygons(item: NestItem, rotated: bool, mirrored: bool = False, angle_deg: float | None = None) -> tuple[tuple[tuple[tuple[float, float], ...], ...], tuple[tuple[tuple[float, float], ...], ...], float, float]:
     outer = tuple(tuple((float(x), float(y)) for x, y in list(polygon or [])) for polygon in list(item.outer_polygons or []))
     holes = tuple(tuple((float(x), float(y)) for x, y in list(polygon or [])) for polygon in list(item.hole_polygons or []))
-    if not rotated:
+    angle = 90.0 if angle_deg is None and rotated else float(angle_deg or 0.0)
+    if abs(angle) < 1e-9 and not mirrored:
         return outer, holes, item.bbox_width_mm, item.bbox_height_mm
 
     transformed_outer: list[list[tuple[float, float]]] = []
     transformed_holes: list[list[tuple[float, float]]] = []
     all_points: list[tuple[float, float]] = []
 
-    def _rotate(points: tuple[tuple[float, float], ...]) -> list[tuple[float, float]]:
-        return [(round(item.bbox_height_mm - y, 3), round(x, 3)) for x, y in list(points or [])]
-
     for polygon in outer:
-        rotated_points = _rotate(polygon)
-        transformed_outer.append(rotated_points)
-        all_points.extend(rotated_points)
+        transformed_points = _transform_item_points(item, list(polygon), rotated, mirrored, angle)
+        transformed_outer.append(transformed_points)
+        all_points.extend(transformed_points)
     for polygon in holes:
-        rotated_points = _rotate(polygon)
-        transformed_holes.append(rotated_points)
-        all_points.extend(rotated_points)
+        transformed_points = _transform_item_points(item, list(polygon), rotated, mirrored, angle)
+        transformed_holes.append(transformed_points)
+        all_points.extend(transformed_points)
     bbox = _points_bbox(all_points)
     offset_x = bbox["min_x"]
     offset_y = bbox["min_y"]
@@ -1009,21 +1036,22 @@ def _item_shape_polygons(item: NestItem, rotated: bool) -> tuple[tuple[tuple[tup
     )
 
 
-def _item_preview_paths(item: NestItem, rotated: bool) -> tuple[tuple[tuple[float, float], ...], ...]:
+def _item_preview_paths(item: NestItem, rotated: bool, mirrored: bool = False, angle_deg: float | None = None) -> tuple[tuple[tuple[float, float], ...], ...]:
     paths = tuple(tuple((float(x), float(y)) for x, y in list(path or [])) for path in list(item.preview_paths or []))
     if not paths:
         return ()
-    if not rotated:
+    angle = 90.0 if angle_deg is None and rotated else float(angle_deg or 0.0)
+    if abs(angle) < 1e-9 and not mirrored:
         return tuple(path for path in paths if len(path) >= 2)
 
     transformed_paths: list[list[tuple[float, float]]] = []
     all_points: list[tuple[float, float]] = []
     for path in list(paths or []):
-        rotated_path = [(round(item.bbox_height_mm - y, 3), round(x, 3)) for x, y in list(path or [])]
-        if len(rotated_path) < 2:
+        transformed_path = _transform_item_points(item, list(path), rotated, mirrored, angle)
+        if len(transformed_path) < 2:
             continue
-        transformed_paths.append(rotated_path)
-        all_points.extend(rotated_path)
+        transformed_paths.append(transformed_path)
+        all_points.extend(transformed_path)
     if not all_points:
         return ()
     bbox = _points_bbox(all_points)
@@ -1082,17 +1110,19 @@ def _shape_mask(
     item: NestItem,
     *,
     rotated: bool,
+    mirrored: bool = False,
+    angle_deg: float = 0.0,
     grid_mm: float,
     part_spacing_mm: float,
-    cache: dict[tuple[str, bool, float, float], dict[str, Any]],
+    cache: dict[tuple, dict[str, Any]],
 ) -> dict[str, Any]:
     cache_key = str(getattr(item, "shape_cache_key", "") or item.path)
-    key = (cache_key, bool(rotated), round(grid_mm, 4), round(part_spacing_mm, 4))
+    key = (cache_key, round(float(angle_deg or 0.0), 4), bool(mirrored), round(grid_mm, 4), round(part_spacing_mm, 4))
     cached = cache.get(key)
     if cached is not None:
         return cached
 
-    outer_polygons, hole_polygons, width_mm, height_mm = _item_shape_polygons(item, rotated)
+    outer_polygons, hole_polygons, width_mm, height_mm = _item_shape_polygons(item, rotated, mirrored, angle_deg)
     if not outer_polygons:
         fallback_polygon = _rectangle_polygon(width_mm, height_mm)
         outer_polygons = (fallback_polygon,) if fallback_polygon else ()
@@ -1208,8 +1238,8 @@ def _shape_candidate_score(
     projected = _projected_layout_metrics(sheet or {}, candidate, edge_margin_mm=edge_margin_mm)
     if "retalho" in normalized:
         return (
-            _as_float(projected.get("fragmented_remainder", 0.0), 0.0),
             -_as_float(projected.get("largest_edge_remnant", 0.0), 0.0),
+            _as_float(projected.get("fragmented_remainder", 0.0), 0.0),
             _as_float(projected.get("span_width", 0.0), 0.0),
             _as_float(projected.get("span_height", 0.0), 0.0),
             _as_float(candidate.get("x", 0.0), 0.0) + _as_float(candidate.get("place_w", 0.0), 0.0),
@@ -1285,10 +1315,12 @@ def _try_place_on_shape_sheet(
     item: NestItem,
     *,
     allow_rotate: bool,
+    allow_mirror: bool = False,
+    free_angles: bool = False,
     grid_mm: float,
     part_spacing_mm: float,
     edge_margin_mm: float,
-    cache: dict[tuple[str, bool, float, float], dict[str, Any]],
+    cache: dict[tuple, dict[str, Any]],
     strategy_name: str = "",
 ) -> dict[str, Any] | None:
     occupied = set(sheet.get("occupied_cells", set()) or set())
@@ -1297,10 +1329,13 @@ def _try_place_on_shape_sheet(
     sheet_height_cells = max(1, int(sheet.get("grid_height_cells", 1) or 1))
     best: dict[str, Any] | None = None
 
-    for orientation in _candidate_orientations(item, allow_rotate):
+    for orientation in _candidate_orientations(item, allow_rotate, allow_mirror=allow_mirror, free_angles=free_angles):
+        angle_deg = float(orientation.get("angle_deg", 90.0 if bool(orientation.get("rotated")) else 0.0) or 0.0)
         mask = _shape_mask(
             item,
             rotated=bool(orientation.get("rotated")),
+            mirrored=bool(orientation.get("mirrored")),
+            angle_deg=angle_deg,
             grid_mm=grid_mm,
             part_spacing_mm=part_spacing_mm,
             cache=cache,
@@ -1313,75 +1348,94 @@ def _try_place_on_shape_sheet(
             continue
         mask_cells = list(mask.get("cells", []) or [])
         spacing_radius_cells = max(0, int(mask.get("spacing_radius_cells", 0) or 0))
-        placed_for_orientation = False
-        for grid_y in range(sheet_height_cells - mask_height_cells + 1):
-            if placed_for_orientation:
-                break
-            for grid_x in range(sheet_width_cells - mask_width_cells + 1):
-                blocked = False
-                for cell_x, cell_y in mask_cells:
-                    index = ((grid_y + cell_y) * sheet_width_cells) + grid_x + cell_x
-                    if (allowed is not None and index not in allowed) or index in occupied:
-                        blocked = True
-                        break
-                    if spacing_radius_cells > 0:
-                        base_x = grid_x + cell_x
-                        base_y = grid_y + cell_y
-                        for delta_y in range(-spacing_radius_cells, spacing_radius_cells + 1):
-                            for delta_x in range(-spacing_radius_cells, spacing_radius_cells + 1):
-                                if delta_x == 0 and delta_y == 0:
-                                    continue
-                                if (delta_x * delta_x) + (delta_y * delta_y) > (spacing_radius_cells * spacing_radius_cells):
-                                    continue
-                                probe_x = base_x + delta_x
-                                probe_y = base_y + delta_y
-                                if probe_x < 0 or probe_y < 0 or probe_x >= sheet_width_cells or probe_y >= sheet_height_cells:
-                                    continue
-                                probe_index = (probe_y * sheet_width_cells) + probe_x
-                                if probe_index in occupied:
-                                    blocked = True
-                                    break
-                            if blocked:
+        def try_position(grid_x: int, grid_y: int) -> dict[str, Any] | None:
+            blocked = False
+            for cell_x, cell_y in mask_cells:
+                index = ((grid_y + cell_y) * sheet_width_cells) + grid_x + cell_x
+                if (allowed is not None and index not in allowed) or index in occupied:
+                    blocked = True
+                    break
+                if spacing_radius_cells > 0:
+                    base_x = grid_x + cell_x
+                    base_y = grid_y + cell_y
+                    for delta_y in range(-spacing_radius_cells, spacing_radius_cells + 1):
+                        for delta_x in range(-spacing_radius_cells, spacing_radius_cells + 1):
+                            if delta_x == 0 and delta_y == 0:
+                                continue
+                            if (delta_x * delta_x) + (delta_y * delta_y) > (spacing_radius_cells * spacing_radius_cells):
+                                continue
+                            probe_x = base_x + delta_x
+                            probe_y = base_y + delta_y
+                            if probe_x < 0 or probe_y < 0 or probe_x >= sheet_width_cells or probe_y >= sheet_height_cells:
+                                continue
+                            probe_index = (probe_y * sheet_width_cells) + probe_x
+                            if probe_index in occupied:
+                                blocked = True
                                 break
-                    if blocked:
-                        break
+                        if blocked:
+                            break
                 if blocked:
+                    break
+            if blocked:
+                return None
+            draw_x = (grid_x * grid_mm) + _as_float(mask.get("draw_offset_x_mm", 0.0), 0.0) + max(0.0, edge_margin_mm)
+            draw_y = (grid_y * grid_mm) + _as_float(mask.get("draw_offset_y_mm", 0.0), 0.0) + max(0.0, edge_margin_mm)
+            candidate_outer = tuple(
+                tuple((round(draw_x + x, 3), round(draw_y + y, 3)) for x, y in list(points or []))
+                for points in list(mask.get("shape_outer_polygons", ()) or [])
+                if points
+            )
+            candidate_holes = tuple(
+                tuple((round(draw_x + x, 3), round(draw_y + y, 3)) for x, y in list(points or []))
+                for points in list(mask.get("shape_hole_polygons", ()) or [])
+                if points
+            )
+            if _candidate_shape_conflicts(sheet, candidate_outer, candidate_holes):
+                return None
+            return {
+                "x": round(grid_x * grid_mm, 3),
+                "y": round(grid_y * grid_mm, 3),
+                "grid_x": grid_x,
+                "grid_y": grid_y,
+                "width": round(_as_float(mask.get("bbox_width_mm", orientation.get("width", 0.0)), 0.0), 3),
+                "height": round(_as_float(mask.get("bbox_height_mm", orientation.get("height", 0.0)), 0.0), 3),
+                "rotated": bool(orientation.get("rotated")),
+                "mirrored": bool(orientation.get("mirrored")),
+                "rotation_deg": round(angle_deg, 3),
+                "place_w": round(mask_width_cells * grid_mm, 3),
+                "place_h": round(mask_height_cells * grid_mm, 3),
+                "mask_cells": mask_cells,
+                "draw_offset_x_mm": round(_as_float(mask.get("draw_offset_x_mm", 0.0), 0.0), 3),
+                "draw_offset_y_mm": round(_as_float(mask.get("draw_offset_y_mm", 0.0), 0.0), 3),
+                "occupied_area_mm2": round(_as_float(mask.get("occupied_area_mm2", 0.0), 0.0), 2),
+                "shape_outer_polygons": tuple(mask.get("shape_outer_polygons", ()) or ()),
+                "shape_hole_polygons": tuple(mask.get("shape_hole_polygons", ()) or ()),
+            }
+
+        candidate_positions = _shape_anchor_positions(
+            sheet,
+            sheet_width_cells=sheet_width_cells,
+            sheet_height_cells=sheet_height_cells,
+            mask_width_cells=mask_width_cells,
+            mask_height_cells=mask_height_cells,
+            grid_mm=grid_mm,
+            edge_margin_mm=edge_margin_mm,
+        )
+        for grid_x, grid_y in candidate_positions:
+            candidate = try_position(grid_x, grid_y)
+            if candidate is None:
+                continue
+            if best is None or _shape_candidate_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm) < _shape_candidate_score(best, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm):
+                best = candidate
+        if best is not None:
+            continue
+        for grid_y in range(sheet_height_cells - mask_height_cells + 1):
+            for grid_x in range(sheet_width_cells - mask_width_cells + 1):
+                candidate = try_position(grid_x, grid_y)
+                if candidate is None:
                     continue
-                draw_x = (grid_x * grid_mm) + _as_float(mask.get("draw_offset_x_mm", 0.0), 0.0) + max(0.0, edge_margin_mm)
-                draw_y = (grid_y * grid_mm) + _as_float(mask.get("draw_offset_y_mm", 0.0), 0.0) + max(0.0, edge_margin_mm)
-                candidate_outer = tuple(
-                    tuple((round(draw_x + x, 3), round(draw_y + y, 3)) for x, y in list(points or []))
-                    for points in list(mask.get("shape_outer_polygons", ()) or [])
-                    if points
-                )
-                candidate_holes = tuple(
-                    tuple((round(draw_x + x, 3), round(draw_y + y, 3)) for x, y in list(points or []))
-                    for points in list(mask.get("shape_hole_polygons", ()) or [])
-                    if points
-                )
-                if _candidate_shape_conflicts(sheet, candidate_outer, candidate_holes):
-                    continue
-                candidate = {
-                    "x": round(grid_x * grid_mm, 3),
-                    "y": round(grid_y * grid_mm, 3),
-                    "grid_x": grid_x,
-                    "grid_y": grid_y,
-                    "width": round(_as_float(mask.get("bbox_width_mm", orientation.get("width", 0.0)), 0.0), 3),
-                    "height": round(_as_float(mask.get("bbox_height_mm", orientation.get("height", 0.0)), 0.0), 3),
-                    "rotated": bool(orientation.get("rotated")),
-                    "place_w": round(mask_width_cells * grid_mm, 3),
-                    "place_h": round(mask_height_cells * grid_mm, 3),
-                    "mask_cells": mask_cells,
-                    "draw_offset_x_mm": round(_as_float(mask.get("draw_offset_x_mm", 0.0), 0.0), 3),
-                    "draw_offset_y_mm": round(_as_float(mask.get("draw_offset_y_mm", 0.0), 0.0), 3),
-                    "occupied_area_mm2": round(_as_float(mask.get("occupied_area_mm2", 0.0), 0.0), 2),
-                    "shape_outer_polygons": tuple(mask.get("shape_outer_polygons", ()) or ()),
-                    "shape_hole_polygons": tuple(mask.get("shape_hole_polygons", ()) or ()),
-                }
                 if best is None or _shape_candidate_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm) < _shape_candidate_score(best, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm):
                     best = candidate
-                placed_for_orientation = True
-                break
     return best
 
 
@@ -1396,8 +1450,8 @@ def _placement_score(
     projected = _projected_layout_metrics(sheet or {}, candidate, edge_margin_mm=edge_margin_mm)
     if "retalho" in normalized:
         return (
-            _as_float(projected.get("fragmented_remainder", 0.0), 0.0),
             -_as_float(projected.get("largest_edge_remnant", 0.0), 0.0),
+            _as_float(projected.get("fragmented_remainder", 0.0), 0.0),
             _as_float(projected.get("span_width", 0.0), 0.0),
             _as_float(projected.get("span_height", 0.0), 0.0),
             0.0 if not bool(candidate.get("new_shelf")) else 1.0,
@@ -1565,6 +1619,8 @@ def _apply_placement(
             "material": item.material,
             "thickness_mm": item.thickness_mm,
             "rotated": bool(placement.get("rotated")),
+            "mirrored": bool(placement.get("mirrored")),
+            "rotation_deg": round(_as_float(placement.get("rotation_deg", 90.0 if bool(placement.get("rotated")) else 0.0), 0.0), 3),
             "x_mm": round(draw_x, 3),
             "y_mm": round(draw_y, 3),
             "width_mm": round(_as_float(placement.get("width", 0.0), 0.0), 3),
@@ -1576,7 +1632,16 @@ def _apply_placement(
             "shape_mode": "grid" if "mask_cells" in placement else "bbox",
             "shape_outer_polygons": _translate_polygons(tuple(placement.get("shape_outer_polygons", ()) or ()), draw_x, draw_y),
             "shape_hole_polygons": _translate_polygons(tuple(placement.get("shape_hole_polygons", ()) or ()), draw_x, draw_y),
-            "preview_paths": _translate_paths(_item_preview_paths(item, bool(placement.get("rotated"))), draw_x, draw_y),
+            "preview_paths": _translate_paths(
+                _item_preview_paths(
+                    item,
+                    bool(placement.get("rotated")),
+                    bool(placement.get("mirrored")),
+                    _as_float(placement.get("rotation_deg", 90.0 if bool(placement.get("rotated")) else 0.0), 0.0),
+                ),
+                draw_x,
+                draw_y,
+            ),
         }
     )
     sheet["placements"] = placements
@@ -2047,8 +2112,9 @@ def _pack_profile(
         raise ValueError("Seleciona um formato de chapa valido.")
     usable_width, usable_height = _profile_usable_dimensions(normalized_profile, edge_margin_mm)
     best_result: dict[str, Any] | None = None
+    strategy_names = _strategy_names(shape_mode=False, free_angles=False, part_count=len(expanded))
 
-    for strategy_name in ("retalho", "longest-side", "area", "height-first", "width-first", "compact"):
+    for strategy_name in strategy_names:
         ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(strategy_name), reverse=True)
         warnings = list(base_warnings or [])
         sheets: list[dict[str, Any]] = []
@@ -2177,6 +2243,79 @@ def _effective_shape_grid_mm(raw_grid_mm: float, part_spacing_mm: float, edge_ma
     return round(min(safe_grid, min(positive_limits)), 4)
 
 
+def _strategy_names(*, shape_mode: bool, free_angles: bool, part_count: int) -> tuple[str, ...]:
+    normalized_count = max(0, int(part_count or 0))
+    if shape_mode:
+        if free_angles:
+            return ("shape-retalho", "shape-compact")
+        if normalized_count <= 8:
+            return ("shape-retalho", "shape-compact", "shape-area")
+        return ("shape-retalho", "shape-area", "shape-height-first")
+    if normalized_count <= 8:
+        return ("retalho", "compact", "area")
+    return ("retalho", "area", "height-first")
+
+
+def _shape_anchor_positions(
+    sheet: dict[str, Any],
+    *,
+    sheet_width_cells: int,
+    sheet_height_cells: int,
+    mask_width_cells: int,
+    mask_height_cells: int,
+    grid_mm: float,
+    edge_margin_mm: float,
+) -> list[tuple[int, int]]:
+    placements = [dict(row or {}) for row in list(sheet.get("placements", []) or []) if isinstance(row, dict)]
+    if not placements:
+        return [(0, 0)]
+    x_positions: set[int] = {0}
+    y_positions: set[int] = {0}
+    for placement in placements:
+        start_x = max(0, int(math.floor((_as_float(placement.get("x_mm", 0.0), 0.0) - max(0.0, edge_margin_mm)) / grid_mm)))
+        start_y = max(0, int(math.floor((_as_float(placement.get("y_mm", 0.0), 0.0) - max(0.0, edge_margin_mm)) / grid_mm)))
+        end_x = max(0, int(math.ceil((_as_float(placement.get("x_mm", 0.0), 0.0) - max(0.0, edge_margin_mm) + _as_float(placement.get("width_mm", 0.0), 0.0)) / grid_mm)))
+        end_y = max(0, int(math.ceil((_as_float(placement.get("y_mm", 0.0), 0.0) - max(0.0, edge_margin_mm) + _as_float(placement.get("height_mm", 0.0), 0.0)) / grid_mm)))
+        for candidate_x in (start_x, start_x + 1, max(0, end_x - 1), end_x, end_x + 1):
+            x_positions.add(candidate_x)
+        for candidate_y in (start_y, start_y + 1, max(0, end_y - 1), end_y, end_y + 1):
+            y_positions.add(candidate_y)
+    max_grid_x = max(0, sheet_width_cells - mask_width_cells)
+    max_grid_y = max(0, sheet_height_cells - mask_height_cells)
+    filtered_x = sorted(value for value in x_positions if 0 <= value <= max_grid_x)
+    filtered_y = sorted(value for value in y_positions if 0 <= value <= max_grid_y)
+    return [(grid_x, grid_y) for grid_y in filtered_y for grid_x in filtered_x]
+
+
+def _polygon_has_non_orthogonal_edges(polygon: tuple[tuple[float, float], ...] | list[tuple[float, float]], tol: float = 1e-3) -> bool:
+    raw = list(polygon or [])
+    if len(raw) < 2:
+        return False
+    for index in range(len(raw)):
+        x1, y1 = raw[index]
+        x2, y2 = raw[(index + 1) % len(raw)]
+        if abs(float(x1) - float(x2)) > tol and abs(float(y1) - float(y2)) > tol:
+            return True
+    return False
+
+
+def _item_benefits_from_free_angles(item: NestItem) -> bool:
+    if not list(item.outer_polygons or []):
+        return False
+    return any(_polygon_has_non_orthogonal_edges(polygon) for polygon in list(item.outer_polygons or []))
+
+
+def _effective_free_angle_rotation(items: list[NestItem], expanded: list[dict[str, Any]], requested: bool) -> tuple[bool, str]:
+    if not requested:
+        return False, ""
+    total_parts = max(0, len(list(expanded or [])))
+    if total_parts > 2:
+        return False, "Rotações livres desativadas automaticamente neste estudo para evitar tempos excessivos; mantidas rotações 0°/90°."
+    if not any(_item_benefits_from_free_angles(item) for item in list(items or [])):
+        return False, "Rotações livres desativadas automaticamente porque as peças deste grupo não beneficiam de ângulos intermédios."
+    return True, ""
+
+
 def _pack_profile_shape(
     items: list[NestItem],
     expanded: list[dict[str, Any]],
@@ -2185,6 +2324,8 @@ def _pack_profile_shape(
     part_spacing_mm: float,
     edge_margin_mm: float,
     allow_rotate: bool,
+    allow_mirror: bool,
+    free_angles: bool,
     settings: dict[str, Any],
     base_warnings: list[str],
     selection_mode: str,
@@ -2194,9 +2335,10 @@ def _pack_profile_shape(
     if normalized_profile is None:
         raise ValueError("Seleciona um formato de chapa valido.")
     best_result: dict[str, Any] | None = None
-    shape_cache: dict[tuple[str, bool, float, float], dict[str, Any]] = {}
+    shape_cache: dict[tuple, dict[str, Any]] = {}
+    strategy_names = _strategy_names(shape_mode=True, free_angles=free_angles, part_count=len(expanded))
 
-    for strategy_name in ("shape-retalho", "shape-longest-side", "shape-area", "shape-height-first", "shape-width-first", "shape-compact"):
+    for strategy_name in strategy_names:
         ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(strategy_name), reverse=True)
         warnings = list(base_warnings or [])
         sheets: list[dict[str, Any]] = []
@@ -2211,6 +2353,8 @@ def _pack_profile_shape(
                     sheet,
                     item,
                     allow_rotate=allow_rotate,
+                    allow_mirror=allow_mirror,
+                    free_angles=free_angles,
                     grid_mm=grid_mm,
                     part_spacing_mm=part_spacing_mm,
                     edge_margin_mm=edge_margin_mm,
@@ -2233,6 +2377,8 @@ def _pack_profile_shape(
                     candidate_sheet,
                     item,
                     allow_rotate=allow_rotate,
+                    allow_mirror=allow_mirror,
+                    free_angles=free_angles,
                     grid_mm=grid_mm,
                     part_spacing_mm=part_spacing_mm,
                     edge_margin_mm=edge_margin_mm,
@@ -2344,8 +2490,9 @@ def _pack_with_stock(
         "source_label": "Apenas stock",
     }
     best_result: dict[str, Any] | None = None
+    strategy_names = _strategy_names(shape_mode=False, free_angles=False, part_count=len(expanded))
 
-    for strategy_name in ("retalho", "longest-side", "area", "height-first", "width-first", "compact"):
+    for strategy_name in strategy_names:
         ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(strategy_name), reverse=True)
         warnings = list(base_warnings or [])
         sheets: list[dict[str, Any]] = []
@@ -2496,6 +2643,8 @@ def _pack_with_stock_shape(
     part_spacing_mm: float,
     edge_margin_mm: float,
     allow_rotate: bool,
+    allow_mirror: bool,
+    free_angles: bool,
     allow_purchase_fallback: bool,
     settings: dict[str, Any],
     base_warnings: list[str],
@@ -2513,9 +2662,10 @@ def _pack_with_stock_shape(
         "source_label": "Apenas stock",
     }
     best_result: dict[str, Any] | None = None
-    shape_cache: dict[tuple[str, bool, float, float], dict[str, Any]] = {}
+    shape_cache: dict[tuple, dict[str, Any]] = {}
+    strategy_names = _strategy_names(shape_mode=True, free_angles=free_angles, part_count=len(expanded))
 
-    for strategy_name in ("shape-retalho", "shape-longest-side", "shape-area", "shape-height-first", "shape-width-first", "shape-compact"):
+    for strategy_name in strategy_names:
         ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(strategy_name), reverse=True)
         warnings = list(base_warnings or [])
         sheets: list[dict[str, Any]] = []
@@ -2532,6 +2682,8 @@ def _pack_with_stock_shape(
                     sheet,
                     item,
                     allow_rotate=allow_rotate,
+                    allow_mirror=allow_mirror,
+                    free_angles=free_angles,
                     grid_mm=grid_mm,
                     part_spacing_mm=part_spacing_mm,
                     edge_margin_mm=edge_margin_mm,
@@ -2560,6 +2712,8 @@ def _pack_with_stock_shape(
                         candidate_sheet,
                         item,
                         allow_rotate=allow_rotate,
+                        allow_mirror=allow_mirror,
+                        free_angles=free_angles,
                         grid_mm=grid_mm,
                         part_spacing_mm=part_spacing_mm,
                         edge_margin_mm=edge_margin_mm,
@@ -2590,6 +2744,8 @@ def _pack_with_stock_shape(
                         candidate_sheet,
                         item,
                         allow_rotate=allow_rotate,
+                        allow_mirror=allow_mirror,
+                        free_angles=free_angles,
                         grid_mm=grid_mm,
                         part_spacing_mm=part_spacing_mm,
                         edge_margin_mm=edge_margin_mm,
@@ -2690,6 +2846,8 @@ def nest_parts(
     use_stock_first: bool = False,
     allow_purchase_fallback: bool = True,
     shape_aware: bool | None = None,
+    allow_mirror: bool | None = None,
+    free_angle_rotation: bool | None = None,
     strict_shape_only: bool = False,
     shape_grid_mm: float | None = None,
 ) -> dict[str, Any]:
@@ -2699,6 +2857,14 @@ def nest_parts(
     expanded = _expand_items(items)
     normalized_stock = [profile for index, row in enumerate(list(stock_sheet_candidates or [])) if (profile := _normalize_stock_sheet_candidate(row, index)) is not None]
     use_shape_engine = bool(nesting_options.get("shape_aware", True) if shape_aware is None else shape_aware)
+    allow_shape_mirror = bool(nesting_options.get("allow_mirror", True) if allow_mirror is None else allow_mirror)
+    allow_free_angles, free_angle_note = _effective_free_angle_rotation(
+        items,
+        expanded,
+        bool(nesting_options.get("free_angle_rotation", False) if free_angle_rotation is None else free_angle_rotation),
+    )
+    if free_angle_note:
+        warnings.append(free_angle_note)
     requested_grid_mm = max(2.0, _as_float(nesting_options.get("shape_grid_mm", 10.0) if shape_grid_mm is None else shape_grid_mm, 10.0), 2.0)
     grid_mm = _effective_shape_grid_mm(requested_grid_mm, part_spacing_mm, edge_margin_mm)
     requested_engine = "shape" if use_shape_engine else "bbox"
@@ -2758,21 +2924,41 @@ def nest_parts(
         candidate_errors: list[str] = []
 
         if use_stock_first and normalized_stock:
-            stock_only_bbox = _pack_with_stock(
-                items,
-                expanded,
-                stock_candidates=normalized_stock,
-                purchase_profile=None,
-                part_spacing_mm=part_spacing_mm,
-                edge_margin_mm=edge_margin_mm,
-                allow_rotate=allow_rotate,
-                allow_purchase_fallback=False,
-                settings=settings,
-                base_warnings=warnings,
-                selection_mode="auto_stock",
-            )
-            stock_only_shape = (
-                _pack_with_stock_shape(
+            stock_only_bbox: dict[str, Any] | None = None
+            stock_only_shape: dict[str, Any] | None = None
+            if shape_active and requested_engine == "shape":
+                stock_only_shape = _pack_with_stock_shape(
+                    items,
+                    expanded,
+                    stock_candidates=normalized_stock,
+                    purchase_profile=None,
+                    part_spacing_mm=part_spacing_mm,
+                    edge_margin_mm=edge_margin_mm,
+                    allow_rotate=allow_rotate,
+                    allow_mirror=allow_shape_mirror,
+                    free_angles=allow_free_angles,
+                    allow_purchase_fallback=False,
+                    settings=settings,
+                    base_warnings=warnings,
+                    selection_mode="auto_stock",
+                    grid_mm=grid_mm,
+                )
+                if stock_only_shape is None and not strict_shape_only:
+                    stock_only_bbox = _pack_with_stock(
+                        items,
+                        expanded,
+                        stock_candidates=normalized_stock,
+                        purchase_profile=None,
+                        part_spacing_mm=part_spacing_mm,
+                        edge_margin_mm=edge_margin_mm,
+                        allow_rotate=allow_rotate,
+                        allow_purchase_fallback=False,
+                        settings=settings,
+                        base_warnings=warnings,
+                        selection_mode="auto_stock",
+                    )
+            else:
+                stock_only_bbox = _pack_with_stock(
                     items,
                     expanded,
                     stock_candidates=normalized_stock,
@@ -2784,11 +2970,7 @@ def nest_parts(
                     settings=settings,
                     base_warnings=warnings,
                     selection_mode="auto_stock",
-                    grid_mm=grid_mm,
                 )
-                if shape_active
-                else None
-            )
             stock_only_result = _choose_engine_variant(bbox_result=stock_only_bbox, shape_result=stock_only_shape)
             candidate_rows.append(_candidate_row_from_result("Apenas stock", stock_only_result))
             best_result = stock_only_result
@@ -2799,21 +2981,41 @@ def nest_parts(
         for profile in profiles:
             try:
                 if use_stock_first and normalized_stock:
-                    bbox_result = _pack_with_stock(
-                        items,
-                        expanded,
-                        stock_candidates=normalized_stock,
-                        purchase_profile=profile,
-                        part_spacing_mm=part_spacing_mm,
-                        edge_margin_mm=edge_margin_mm,
-                        allow_rotate=allow_rotate,
-                        allow_purchase_fallback=allow_purchase_fallback,
-                        settings=settings,
-                        base_warnings=warnings,
-                        selection_mode="auto_stock",
-                    )
-                    shape_result = (
-                        _pack_with_stock_shape(
+                    bbox_result: dict[str, Any] | None = None
+                    shape_result: dict[str, Any] | None = None
+                    if shape_active and requested_engine == "shape":
+                        shape_result = _pack_with_stock_shape(
+                            items,
+                            expanded,
+                            stock_candidates=normalized_stock,
+                            purchase_profile=profile,
+                            part_spacing_mm=part_spacing_mm,
+                            edge_margin_mm=edge_margin_mm,
+                            allow_rotate=allow_rotate,
+                            allow_mirror=allow_shape_mirror,
+                            free_angles=allow_free_angles,
+                            allow_purchase_fallback=allow_purchase_fallback,
+                            settings=settings,
+                            base_warnings=warnings,
+                            selection_mode="auto_stock",
+                            grid_mm=grid_mm,
+                        )
+                        if shape_result is None and not strict_shape_only:
+                            bbox_result = _pack_with_stock(
+                                items,
+                                expanded,
+                                stock_candidates=normalized_stock,
+                                purchase_profile=profile,
+                                part_spacing_mm=part_spacing_mm,
+                                edge_margin_mm=edge_margin_mm,
+                                allow_rotate=allow_rotate,
+                                allow_purchase_fallback=allow_purchase_fallback,
+                                settings=settings,
+                                base_warnings=warnings,
+                                selection_mode="auto_stock",
+                            )
+                    else:
+                        bbox_result = _pack_with_stock(
                             items,
                             expanded,
                             stock_candidates=normalized_stock,
@@ -2825,26 +3027,40 @@ def nest_parts(
                             settings=settings,
                             base_warnings=warnings,
                             selection_mode="auto_stock",
-                            grid_mm=grid_mm,
                         )
-                        if shape_active
-                        else None
-                    )
                     result = _choose_engine_variant(bbox_result=bbox_result, shape_result=shape_result)
                 else:
-                    bbox_result = _pack_profile(
-                        items,
-                        expanded,
-                        profile=profile,
-                        part_spacing_mm=part_spacing_mm,
-                        edge_margin_mm=edge_margin_mm,
-                        allow_rotate=allow_rotate,
-                        settings=settings,
-                        base_warnings=warnings,
-                        selection_mode="auto",
-                    )
-                    shape_result = (
-                        _pack_profile_shape(
+                    bbox_result = None
+                    shape_result = None
+                    if shape_active and requested_engine == "shape":
+                        shape_result = _pack_profile_shape(
+                            items,
+                            expanded,
+                            profile=profile,
+                            part_spacing_mm=part_spacing_mm,
+                            edge_margin_mm=edge_margin_mm,
+                            allow_rotate=allow_rotate,
+                            allow_mirror=allow_shape_mirror,
+                            free_angles=allow_free_angles,
+                            settings=settings,
+                            base_warnings=warnings,
+                            selection_mode="auto",
+                            grid_mm=grid_mm,
+                        )
+                        if shape_result is None and not strict_shape_only:
+                            bbox_result = _pack_profile(
+                                items,
+                                expanded,
+                                profile=profile,
+                                part_spacing_mm=part_spacing_mm,
+                                edge_margin_mm=edge_margin_mm,
+                                allow_rotate=allow_rotate,
+                                settings=settings,
+                                base_warnings=warnings,
+                                selection_mode="auto",
+                            )
+                    else:
+                        bbox_result = _pack_profile(
                             items,
                             expanded,
                             profile=profile,
@@ -2854,11 +3070,7 @@ def nest_parts(
                             settings=settings,
                             base_warnings=warnings,
                             selection_mode="auto",
-                            grid_mm=grid_mm,
                         )
-                        if shape_active
-                        else None
-                    )
                     result = _choose_engine_variant(bbox_result=bbox_result, shape_result=shape_result)
             except Exception as exc:
                 candidate_errors.append(f"{profile.get('name', 'Chapa')}: {exc}")
@@ -2895,21 +3107,41 @@ def nest_parts(
     if use_shape_engine and not shape_active and shape_reason:
         warnings.append(f"Nesting por contorno desativado automaticamente: {shape_reason}")
     if use_stock_first and normalized_stock:
-        bbox_result = _pack_with_stock(
-            items,
-            expanded,
-            stock_candidates=normalized_stock,
-            purchase_profile=profile,
-            part_spacing_mm=part_spacing_mm,
-            edge_margin_mm=edge_margin_mm,
-            allow_rotate=allow_rotate,
-            allow_purchase_fallback=allow_purchase_fallback,
-            settings=settings,
-            base_warnings=warnings,
-            selection_mode="manual_stock",
-        )
-        shape_result = (
-            _pack_with_stock_shape(
+        bbox_result: dict[str, Any] | None = None
+        shape_result: dict[str, Any] | None = None
+        if shape_active and requested_engine == "shape":
+            shape_result = _pack_with_stock_shape(
+                items,
+                expanded,
+                stock_candidates=normalized_stock,
+                purchase_profile=profile,
+                part_spacing_mm=part_spacing_mm,
+                edge_margin_mm=edge_margin_mm,
+                allow_rotate=allow_rotate,
+                allow_mirror=allow_shape_mirror,
+                free_angles=allow_free_angles,
+                allow_purchase_fallback=allow_purchase_fallback,
+                settings=settings,
+                base_warnings=warnings,
+                selection_mode="manual_stock",
+                grid_mm=grid_mm,
+            )
+            if shape_result is None and not strict_shape_only:
+                bbox_result = _pack_with_stock(
+                    items,
+                    expanded,
+                    stock_candidates=normalized_stock,
+                    purchase_profile=profile,
+                    part_spacing_mm=part_spacing_mm,
+                    edge_margin_mm=edge_margin_mm,
+                    allow_rotate=allow_rotate,
+                    allow_purchase_fallback=allow_purchase_fallback,
+                    settings=settings,
+                    base_warnings=warnings,
+                    selection_mode="manual_stock",
+                )
+        else:
+            bbox_result = _pack_with_stock(
                 items,
                 expanded,
                 stock_candidates=normalized_stock,
@@ -2921,27 +3153,41 @@ def nest_parts(
                 settings=settings,
                 base_warnings=warnings,
                 selection_mode="manual_stock",
-                grid_mm=grid_mm,
             )
-            if shape_active
-            else None
-        )
         return _choose_engine_variant(bbox_result=bbox_result, shape_result=shape_result)
     if profile is None:
         raise ValueError("Seleciona um formato de chapa valido.")
-    bbox_result = _pack_profile(
-        items,
-        expanded,
-        profile=profile,
-        part_spacing_mm=part_spacing_mm,
-        edge_margin_mm=edge_margin_mm,
-        allow_rotate=allow_rotate,
-        settings=settings,
-        base_warnings=warnings,
-        selection_mode="manual",
-    )
-    shape_result = (
-        _pack_profile_shape(
+    bbox_result = None
+    shape_result = None
+    if shape_active and requested_engine == "shape":
+        shape_result = _pack_profile_shape(
+            items,
+            expanded,
+            profile=profile,
+            part_spacing_mm=part_spacing_mm,
+            edge_margin_mm=edge_margin_mm,
+            allow_rotate=allow_rotate,
+            allow_mirror=allow_shape_mirror,
+            free_angles=allow_free_angles,
+            settings=settings,
+            base_warnings=warnings,
+            selection_mode="manual",
+            grid_mm=grid_mm,
+        )
+        if shape_result is None and not strict_shape_only:
+            bbox_result = _pack_profile(
+                items,
+                expanded,
+                profile=profile,
+                part_spacing_mm=part_spacing_mm,
+                edge_margin_mm=edge_margin_mm,
+                allow_rotate=allow_rotate,
+                settings=settings,
+                base_warnings=warnings,
+                selection_mode="manual",
+            )
+    else:
+        bbox_result = _pack_profile(
             items,
             expanded,
             profile=profile,
@@ -2951,9 +3197,5 @@ def nest_parts(
             settings=settings,
             base_warnings=warnings,
             selection_mode="manual",
-            grid_mm=grid_mm,
         )
-        if shape_active
-        else None
-    )
     return _choose_engine_variant(bbox_result=bbox_result, shape_result=shape_result)

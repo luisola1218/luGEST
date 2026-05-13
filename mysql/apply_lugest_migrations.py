@@ -19,10 +19,7 @@ from mysql_tooling import env_int, load_env_candidates
 load_env_candidates(
     [
         ROOT / "lugest.env",
-        ROOT / "impulse_mobile_api" / ".env",
         ROOT.parent / "Desktop App" / "lugest.env",
-        ROOT.parent / "Mobile API" / ".env",
-        ROOT.parent / "impulse_mobile_api" / ".env",
     ]
 )
 

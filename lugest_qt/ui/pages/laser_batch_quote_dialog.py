@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt
@@ -45,6 +46,7 @@ class LaserBatchQuoteDialog(QDialog):
         self.settings = dict(self.backend.laser_quote_settings() or {})
         self.line_payloads: list[dict[str, Any]] = []
         self.summary: dict[str, Any] = {}
+        self.pdf_matches: dict[str, list[str]] = {}
         self.setWindowTitle("Lote DXF/DWG")
         self.resize(1340, 860)
         self.setMinimumWidth(1240)
@@ -140,11 +142,15 @@ class LaserBatchQuoteDialog(QDialog):
         batch_layout.addWidget(self.batch_table, 1)
         batch_actions = QHBoxLayout()
         self.add_files_btn = QPushButton("Selecionar DXF/DWG")
+        self.add_pdfs_btn = QPushButton("Associar PDFs")
+        self.add_pdfs_btn.setProperty("variant", "secondary")
+        self.add_pdfs_btn.setToolTip("Associa PDFs aos desenhos CAD quando o nome do PDF coincide com o nome do DXF/DWG.")
         self.remove_files_btn = QPushButton("Remover selecionada")
         self.remove_files_btn.setProperty("variant", "secondary")
         self.clear_files_btn = QPushButton("Limpar lote")
         self.clear_files_btn.setProperty("variant", "danger")
         batch_actions.addWidget(self.add_files_btn)
+        batch_actions.addWidget(self.add_pdfs_btn)
         batch_actions.addWidget(self.remove_files_btn)
         batch_actions.addWidget(self.clear_files_btn)
         batch_actions.addStretch(1)
@@ -213,6 +219,7 @@ class LaserBatchQuoteDialog(QDialog):
         self.material_combo.currentTextChanged.connect(self._refresh_subtypes)
         self.batch_table.itemSelectionChanged.connect(self._sync_buttons)
         self.add_files_btn.clicked.connect(self._pick_files)
+        self.add_pdfs_btn.clicked.connect(self._pick_pdfs)
         self.remove_files_btn.clicked.connect(self._remove_selected_rows)
         self.clear_files_btn.clicked.connect(self._clear_rows)
         self.batch_table.itemChanged.connect(self._handle_table_item_changed)
@@ -615,10 +622,81 @@ class LaserBatchQuoteDialog(QDialog):
             self._set_result_cell(row_index, 8, "-")
             self._set_result_cell(row_index, 9, "-")
             existing.add(clean_path)
+            matched = self._auto_match_known_pdfs(clean_path)
+            if matched:
+                self.pdf_matches[clean_path] = matched
+                self._refresh_row_file_tooltip(row_index)
         self.line_payloads = []
         self.summary = {}
         self._clear_summary()
         self._sync_buttons()
+
+    def _pick_pdfs(self) -> None:
+        if self.batch_table.rowCount() == 0:
+            QMessageBox.information(self, "Associar PDFs", "Seleciona primeiro os ficheiros DXF/DWG do lote.")
+            return
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Selecionar PDFs dos desenhos",
+            "",
+            "PDF (*.pdf);;Todos (*.*)",
+        )
+        if not paths:
+            return
+        pdf_by_stem: dict[str, list[str]] = {}
+        for path in paths:
+            clean_path = str(path or "").strip()
+            if not clean_path:
+                continue
+            pdf_by_stem.setdefault(Path(clean_path).stem.casefold(), []).append(clean_path)
+        matched_count = 0
+        unmatched = set(pdf_by_stem.keys())
+        for row_index in range(self.batch_table.rowCount()):
+            cad_path = self._row_path(row_index)
+            cad_stem = Path(cad_path).stem.casefold()
+            matches = list(pdf_by_stem.get(cad_stem, []) or [])
+            if not matches:
+                continue
+            current = list(self.pdf_matches.get(cad_path, []) or [])
+            for pdf_path in matches:
+                if pdf_path not in current:
+                    current.append(pdf_path)
+                    matched_count += 1
+            self.pdf_matches[cad_path] = current
+            self._refresh_row_file_tooltip(row_index)
+            unmatched.discard(cad_stem)
+        self.line_payloads = []
+        self.summary = {}
+        self._clear_summary()
+        self._sync_buttons()
+        if matched_count <= 0:
+            QMessageBox.warning(self, "Associar PDFs", "Nao encontrei nenhum PDF com o mesmo nome dos DXF/DWG carregados.")
+        elif unmatched:
+            QMessageBox.information(self, "Associar PDFs", f"{matched_count} PDF(s) associados. Alguns PDFs nao tinham DXF/DWG com o mesmo nome.")
+        else:
+            QMessageBox.information(self, "Associar PDFs", f"{matched_count} PDF(s) associados automaticamente.")
+
+    def _auto_match_known_pdfs(self, cad_path: str) -> list[str]:
+        cad_file = Path(str(cad_path or ""))
+        if not cad_file.parent.exists():
+            return []
+        matches: list[str] = []
+        try:
+            for pdf_path in cad_file.parent.glob("*.pdf"):
+                if pdf_path.stem.casefold() == cad_file.stem.casefold():
+                    matches.append(str(pdf_path))
+        except Exception:
+            return []
+        return matches
+
+    def _refresh_row_file_tooltip(self, row_index: int) -> None:
+        item = self.batch_table.item(row_index, 0)
+        if item is None:
+            return
+        cad_path = self._row_path(row_index)
+        pdfs = list(self.pdf_matches.get(cad_path, []) or [])
+        suffix = "\n\nPDF associado:\n" + "\n".join(pdfs) if pdfs else ""
+        item.setToolTip(cad_path + suffix)
 
     def _handle_table_item_changed(self, item: QTableWidgetItem) -> None:
         if item is None:
@@ -651,6 +729,7 @@ class LaserBatchQuoteDialog(QDialog):
         if not rows:
             return
         for row_index in rows:
+            self.pdf_matches.pop(self._row_path(row_index), None)
             self.batch_table.removeRow(row_index)
         self.line_payloads = []
         self.summary = {}
@@ -659,6 +738,7 @@ class LaserBatchQuoteDialog(QDialog):
 
     def _clear_rows(self) -> None:
         self.batch_table.setRowCount(0)
+        self.pdf_matches = {}
         self.line_payloads = []
         self.summary = {}
         self._clear_summary()
@@ -670,7 +750,9 @@ class LaserBatchQuoteDialog(QDialog):
         self.clear_files_btn.setEnabled(self.batch_table.rowCount() > 0)
         total_pieces = sum(self._row_quantity(row_index) for row_index in range(self.batch_table.rowCount()))
         if self.batch_table.rowCount() > 0:
-            self.batch_info_label.setText(f"{self.batch_table.rowCount()} ficheiros | {total_pieces} pecas totais | espessura global {self.thickness_spin.value():g} mm")
+            pdf_count = sum(len(paths) for paths in self.pdf_matches.values())
+            pdf_txt = f" | {pdf_count} PDF(s) associados" if pdf_count else ""
+            self.batch_info_label.setText(f"{self.batch_table.rowCount()} ficheiros | {total_pieces} pecas totais | espessura global {self.thickness_spin.value():g} mm{pdf_txt}")
         else:
             self.batch_info_label.setText("Seleciona varios DXF/DWG da mesma espessura e preenche as quantidades.")
 
@@ -694,12 +776,14 @@ class LaserBatchQuoteDialog(QDialog):
 
     def _row_payload(self, row_index: int) -> dict[str, Any]:
         payload = self._base_payload()
+        row_path = self._row_path(row_index)
         payload.update(
             {
-                "path": self._row_path(row_index),
+                "path": row_path,
                 "description": self._row_text(row_index, 1),
                 "ref_externa": self._row_text(row_index, 2),
                 "qtd": self._row_quantity(row_index),
+                "desenhos_pdf": list(self.pdf_matches.get(row_path, []) or []),
             }
         )
         return payload
@@ -726,6 +810,10 @@ class LaserBatchQuoteDialog(QDialog):
                 return False
             analysis = dict(result.get("analysis", {}) or {})
             line = self._apply_row_operations_to_line(dict(result.get("line", {}) or {}), row_index)
+            pdf_paths = list(self.pdf_matches.get(path, []) or [])
+            if pdf_paths:
+                line["desenhos_pdf"] = pdf_paths
+                line["desenho_pdf"] = pdf_paths[0]
             pricing = dict(analysis.get("pricing", {}) or {})
             times = dict(analysis.get("times", {}) or {})
             geometry = dict(analysis.get("geometry", {}) or {})

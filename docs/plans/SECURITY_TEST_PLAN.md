@@ -37,15 +37,13 @@ py scripts\harden_local_users.py --write
 
 - Definir uma password forte de supervisor no `Extras`.
 - Confirmar `LUGEST_OWNER_USERNAME` e `LUGEST_OWNER_PASSWORD` diferentes das contas normais.
-- Definir `LUGEST_API_SECRET` com 16+ caracteres fortes.
-- Definir `LUGEST_API_ALLOWED_ORIGINS` apenas se houver frontend browser. Para app mobile nativa pode ficar vazio.
-- Guardar `lugest.env`, `impulse_mobile_api\.env` e backups fora da pasta partilhada com utilizadores.
+- Guardar `lugest.env` e backups fora da pasta partilhada com utilizadores.
 
 ## Testes funcionais de protecao
 
 ### Login e perfis
 
-- Tentar entrar com password errada em `desktop`, `mobile` e `API`.
+- Tentar entrar com password errada no desktop.
 - Confirmar que um utilizador sem permissao nao abre menus bloqueados.
 - Confirmar que um utilizador nao-admin nao entra em configuracoes criticas.
 
@@ -60,12 +58,6 @@ py scripts\harden_local_users.py --write
 - Tentar `Dar Baixa` sem password de supervisor.
 - Tentar com password errada.
 - Tentar com password certa e confirmar que o registo fica auditavel.
-
-### API mobile
-
-- Arrancar a API sem `LUGEST_API_SECRET` e confirmar que o login falha com erro de configuracao.
-- Confirmar que tokens expiram e que um token alterado e rejeitado.
-- Confirmar que a API nao depende de `CORS` aberto para a app mobile.
 
 ### Base de dados e integridade
 
@@ -82,4 +74,4 @@ py scripts\verify_data_integrity.py
 
 - Instalar a app noutro PC.
 - Confirmar que `py main.py` e `main.exe` arrancam corretamente.
-- Confirmar paths de documentos, PDF, trial e mobile API nesse ambiente.
+- Confirmar paths de documentos, PDF e trial nesse ambiente.

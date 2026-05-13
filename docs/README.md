@@ -7,9 +7,7 @@
 ## Instalacao
 
 - [Arranque Qt local](install/GUIA_ARRANQUE_QT_LOCAL.md)
-- [Instalacao total](install/GUIA_INSTALACAO_TOTAL.md)
-- [Instalacao noutro PC](install/GUIA_INSTALACAO_OUTRO_PC.md)
-- [Guia muito simples](install/GUIA_MUITO_SIMPLES.md)
+- [Atualizacao no cliente](install/UPDATE_FLOW_CLIENTE.md)
 
 ## Planos
 

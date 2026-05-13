@@ -2653,6 +2653,7 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "orcamento_linhas", "conjunto_nome", "VARCHAR(150) NULL")
         _mysql_ensure_column(cur, "orcamento_linhas", "grupo_uuid", "VARCHAR(60) NULL")
         _mysql_ensure_column(cur, "orcamento_linhas", "qtd_base", "DECIMAL(10,2) NULL")
+        _mysql_ensure_column(cur, "orcamento_linhas", "meta_json", "LONGTEXT NULL")
     if "orcamentos" in tables:
         _mysql_ensure_column(cur, "orcamentos", "ano", "INT NULL")
         _mysql_ensure_column(cur, "orcamentos", "executado_por", "VARCHAR(120) NULL")
@@ -3587,9 +3588,9 @@ def _mysql_sync_relational_schema(cur, data):
                         INSERT INTO orcamento_linhas (
                             orcamento_numero, ref_interna, ref_externa, descricao, material, espessura, operacao,
                             of_codigo, qtd, preco_unit, tempo_peca_min, operacoes_json, tempos_operacao_json,
-                            custos_operacao_json, quote_cost_snapshot_json, total, desenho_path, tipo_item,
+                            custos_operacao_json, quote_cost_snapshot_json, total, desenho_path, meta_json, tipo_item,
                             produto_codigo, produto_unid, conjunto_codigo, conjunto_nome, grupo_uuid, qtd_base
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             num,
@@ -3616,6 +3617,43 @@ def _mysql_sync_relational_schema(cur, data):
                             json.dumps(dict(l.get("quote_cost_snapshot", {}) or {}), ensure_ascii=False),
                             _to_num(l.get("total")),
                             _clip(l.get("desenho"), 512),
+                            json.dumps(
+                                {
+                                    key: l.get(key)
+                                    for key in (
+                                        "stock_material_id",
+                                        "price_per_kg",
+                                        "price_base_value",
+                                        "price_markup_pct",
+                                        "stock_metric_value",
+                                        "kg_per_m",
+                                        "meters_per_unit",
+                                        "weight_total",
+                                        "quantity_units",
+                                        "calc_mode",
+                                        "descricao_base",
+                                        "length_mm",
+                                        "width_mm",
+                                        "thickness_mm",
+                                        "density",
+                                        "diameter_mm",
+                                        "manual_unit_price",
+                                        "profile_section",
+                                        "profile_size",
+                                        "tube_section",
+                                        "quality",
+                                        "hint",
+                                        "price_base_label",
+                                        "material_family",
+                                        "material_subtype",
+                                        "desenho_pdf",
+                                        "desenhos_pdf",
+                                        "ficheiros",
+                                    )
+                                    if l.get(key) not in (None, "", [], {})
+                                },
+                                ensure_ascii=False,
+                            ),
                             _clip(normalize_orc_line_type(l.get("tipo_item")), 30),
                             _clip(l.get("produto_codigo"), 20),
                             _clip(l.get("produto_unid"), 20),
@@ -7123,6 +7161,9 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
                                     "price_base_label",
                                     "material_family",
                                     "material_subtype",
+                                    "desenho_pdf",
+                                    "desenhos_pdf",
+                                    "ficheiros",
                                 )
                                 if l.get(key) not in (None, "", [], {})
                             },

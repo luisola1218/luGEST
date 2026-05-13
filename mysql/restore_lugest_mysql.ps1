@@ -17,7 +17,7 @@ $ErrorActionPreference = 'Stop'
 $mysqlDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $scriptPath = Join-Path $mysqlDir 'restore_lugest_mysql.py'
 $pythonCandidates = @(
-    (Join-Path (Resolve-Path (Join-Path $mysqlDir '..')).Path 'impulse_mobile_api\.venv\Scripts\python.exe'),
+    (Join-Path (Resolve-Path (Join-Path $mysqlDir '..\..')).Path '.venv\Scripts\python.exe'),
     'py',
     'python'
 )

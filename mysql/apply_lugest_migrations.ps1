@@ -20,8 +20,7 @@ $releaseRoot = Resolve-Path (Join-Path $mysqlDir '..\..')
 
 function Resolve-PythonCommand {
     $candidates = @(
-        (Join-Path $releaseRoot 'Mobile API\.venv\Scripts\python.exe'),
-        (Join-Path $releaseRoot 'impulse_mobile_api\.venv\Scripts\python.exe'),
+        (Join-Path $releaseRoot '.venv\Scripts\python.exe'),
         'py',
         'python'
     )
@@ -37,7 +36,7 @@ function Resolve-PythonCommand {
             return $candidate
         }
     }
-    throw 'Nao foi encontrado Python. Instala o Python ou executa primeiro a instalacao da Mobile API.'
+    throw 'Nao foi encontrado Python. Instala o Python ou executa a partir da pasta desktop LuisGEST.'
 }
 
 $pythonCmd = Resolve-PythonCommand

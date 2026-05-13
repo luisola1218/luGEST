@@ -7,7 +7,7 @@ from pathlib import Path
 
 class RuntimeService:
     def __init__(self) -> None:
-        from impulse_mobile_api.app.services import pulse_runtime
+        from lugest_qt.services import pulse_runtime
 
         self.runtime = pulse_runtime
         self._cache: dict[tuple, tuple[float, dict]] = {}

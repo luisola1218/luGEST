@@ -5,11 +5,29 @@ import re
 import sys
 import tempfile
 from datetime import date, datetime, timedelta
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from ..config import settings
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(str(os.environ.get(name, default) or default).strip())
+    except Exception:
+        return int(default)
+
+
+@dataclass(frozen=True)
+class _RuntimeSettings:
+    db_host: str = os.environ.get("LUGEST_DB_HOST", "127.0.0.1")
+    db_port: int = _env_int("LUGEST_DB_PORT", 3306)
+    db_user: str = os.environ.get("LUGEST_DB_USER", "")
+    db_pass: str = os.environ.get("LUGEST_DB_PASS", "")
+    db_name: str = os.environ.get("LUGEST_DB_NAME", "lugest")
+
+
+settings = _RuntimeSettings()
 
 
 def _resolve_desktop_root() -> Path:
@@ -18,7 +36,7 @@ def _resolve_desktop_root() -> Path:
         candidate = Path(explicit).expanduser().resolve()
         if (candidate / "main.py").exists():
             return candidate
-    fallback = Path(__file__).resolve().parents[3]
+    fallback = Path(__file__).resolve().parents[2]
     if (fallback / "main.py").exists():
         return fallback
     return fallback
@@ -1769,7 +1787,7 @@ def build_planning_pdf(year: str | None = None, week_start: str | None = None, o
         needed = 30 + 18 + (len(rows) * 16) + 16
         if y - needed < min_y:
             c.showPage()
-            y = page_header(f"Plano {op_txt}", f"Ano {year or datetime.now().year} | Exportacao mobile")
+            y = page_header(f"Plano {op_txt}", f"Ano {year or datetime.now().year} | Exportacao desktop")
         c.setFillColor(colors.white)
         c.setStrokeColor(line)
         box_h = 24 + 18 + max(1, len(rows)) * 16 + 12
@@ -1802,7 +1820,7 @@ def build_planning_pdf(year: str | None = None, week_start: str | None = None, o
             row_y -= 16
         return y - box_h - 10
 
-    y = page_header(f"Plano {op_txt}", f"Ano {year or datetime.now().year} | Exportacao mobile")
+    y = page_header(f"Plano {op_txt}", f"Ano {year or datetime.now().year} | Exportacao desktop")
     y = summary_band(y)
     active_rows = [
         [

@@ -38,10 +38,6 @@ TRASH_PATHS = [
     ROOT / ".pytest_cache",
     ROOT / ".mypy_cache",
     ROOT / ".ruff_cache",
-    ROOT / "impulse_mobile_app" / ".dart_tool",
-    ROOT / "impulse_mobile_app" / ".idea",
-    ROOT / "impulse_mobile_app" / "android" / ".gradle",
-    ROOT / "impulse_mobile_app" / "android" / ".kotlin",
 ]
 
 
@@ -188,7 +184,6 @@ def _audit_qt_config(findings: list[Finding]) -> None:
 def _audit_env_files(findings: list[Finding]) -> None:
     runtime_main = _load_runtime_main()
     desktop_env = _load_env(ROOT / "lugest.env")
-    api_env = _load_env(ROOT / "impulse_mobile_api" / ".env")
     owner_user = str(desktop_env.get("LUGEST_OWNER_USERNAME", "") or "").strip()
     owner_pass = str(desktop_env.get("LUGEST_OWNER_PASSWORD", "") or "").strip()
     owner_pass_is_hash = bool(runtime_main and callable(getattr(runtime_main, "is_password_hash", None)) and runtime_main.is_password_hash(owner_pass))
@@ -201,49 +196,25 @@ def _audit_env_files(findings: list[Finding]) -> None:
                 ROOT / "lugest.env",
             )
         )
-    for path, env_data, label in (
-        (ROOT / "lugest.env", desktop_env, "Desktop"),
-        (ROOT / "impulse_mobile_api" / ".env", api_env, "API"),
-    ):
-        db_user = str(env_data.get("LUGEST_DB_USER", "") or "").strip().lower()
-        db_pass = str(env_data.get("LUGEST_DB_PASS", "") or "").strip()
-        db_host = str(env_data.get("LUGEST_DB_HOST", "") or "").strip()
-        if not db_user or not db_pass or not db_host:
-            findings.append(
-                Finding(
-                    "MEDIUM",
-                    "Base de Dados",
-                    f"{label} sem configuracao DB completa no ficheiro .env/lugest.env.",
-                    path,
-                )
-            )
-        elif db_user == "root":
-            findings.append(
-                Finding(
-                    "MEDIUM",
-                    "Base de Dados",
-                    f"{label} ainda usa o utilizador root na base de dados. Convem usar uma conta dedicada.",
-                    path,
-                )
-            )
-    api_secret = str(api_env.get("LUGEST_API_SECRET", "") or "").strip()
-    if _is_placeholder_secret(api_secret):
-        findings.append(
-            Finding(
-                "HIGH",
-                "API",
-                "A API mobile esta sem segredo forte configurado em LUGEST_API_SECRET.",
-                ROOT / "impulse_mobile_api" / ".env",
-            )
-        )
-    allowed_origins = str(api_env.get("LUGEST_API_ALLOWED_ORIGINS", "") or "").strip()
-    if not allowed_origins:
+    db_user = str(desktop_env.get("LUGEST_DB_USER", "") or "").strip().lower()
+    db_pass = str(desktop_env.get("LUGEST_DB_PASS", "") or "").strip()
+    db_host = str(desktop_env.get("LUGEST_DB_HOST", "") or "").strip()
+    if not db_user or not db_pass or not db_host:
         findings.append(
             Finding(
                 "MEDIUM",
-                "API",
-                "A API nao tem origens explicitamente definidas em LUGEST_API_ALLOWED_ORIGINS.",
-                ROOT / "impulse_mobile_api" / ".env",
+                "Base de Dados",
+                "Desktop sem configuracao DB completa no ficheiro lugest.env.",
+                ROOT / "lugest.env",
+            )
+        )
+    elif db_user == "root":
+        findings.append(
+            Finding(
+                "MEDIUM",
+                "Base de Dados",
+                "Desktop ainda usa o utilizador root na base de dados. Convem usar uma conta dedicada.",
+                ROOT / "lugest.env",
             )
         )
 
@@ -275,20 +246,9 @@ def _audit_source_defaults(findings: list[Finding]) -> None:
                 ROOT / "scripts" / "apply_mysql_update.py",
             )
         )
-    api_main = (ROOT / "impulse_mobile_api" / "app" / "main.py").read_text(encoding="utf-8", errors="ignore")
-    if 'allow_origins=["*"]' in api_main.replace(" ", ""):
-        findings.append(
-            Finding(
-                "MEDIUM",
-                "API",
-                "A API esta com CORS totalmente aberto.",
-                ROOT / "impulse_mobile_api" / "app" / "main.py",
-            )
-        )
-
 
 def _audit_plaintext_files(findings: list[Finding]) -> None:
-    for path in (ROOT / "lugest.env", ROOT / "impulse_mobile_api" / ".env"):
+    for path in (ROOT / "lugest.env",):
         if path.exists():
             findings.append(
                 Finding(

@@ -417,6 +417,17 @@ class QuotesBridgeMixin:
                     "preco_unit": display_price,
                     "total": round(line_qty * display_price, 2),
                     "desenho": str(row.get("desenho", "") or "").strip(),
+                    "desenho_pdf": str(row.get("desenho_pdf", "") or "").strip(),
+                    "desenhos_pdf": [
+                        str(item or "").strip()
+                        for item in list(row.get("desenhos_pdf", []) or [])
+                        if str(item or "").strip()
+                    ],
+                    "ficheiros": [
+                        str(item or "").strip()
+                        for item in list(row.get("ficheiros", []) or [])
+                        if str(item or "").strip()
+                    ],
                     "laser_base_active": laser_base_active,
                     "laser_base_tempo_unit": laser_base_tempo,
                     "laser_base_preco_unit": laser_base_preco,
@@ -958,6 +969,17 @@ class QuotesBridgeMixin:
             "qtd": round(self._parse_float(payload.get("qtd", 0), 0), 2),
             "preco_unit": round(self._parse_float(payload.get("preco_unit", 0), 0), 4),
             "desenho": str(payload.get("desenho", "") or "").strip(),
+            "desenho_pdf": str(payload.get("desenho_pdf", "") or "").strip(),
+            "desenhos_pdf": [
+                str(item or "").strip()
+                for item in list(payload.get("desenhos_pdf", []) or [])
+                if str(item or "").strip()
+            ],
+            "ficheiros": [
+                str(item or "").strip()
+                for item in list(payload.get("ficheiros", []) or [])
+                if str(item or "").strip()
+            ],
             "price_per_kg": round(self._parse_float(payload.get("price_per_kg", 0), 0), 4),
             "price_base_value": round(self._parse_float(payload.get("price_base_value", 0), 0), 4),
             "price_markup_pct": round(self._parse_float(payload.get("price_markup_pct", 0), 0), 2),
@@ -1002,6 +1024,9 @@ class QuotesBridgeMixin:
                 line["produto_unid"] = ""
                 line["operacao"] = ""
                 line["desenho"] = ""
+                line["desenho_pdf"] = ""
+                line["desenhos_pdf"] = []
+                line["ficheiros"] = []
                 line["tempo_peca_min"] = 0.0
                 line["laser_base_active"] = False
                 line["laser_base_tempo_unit"] = 0.0
@@ -1032,6 +1057,9 @@ class QuotesBridgeMixin:
             line["material_cost_included"] = False
             line["espessura"] = ""
             line["desenho"] = ""
+            line["desenho_pdf"] = ""
+            line["desenhos_pdf"] = []
+            line["ficheiros"] = []
             line["laser_base_active"] = False
             line["laser_base_tempo_unit"] = 0.0
             line["laser_base_preco_unit"] = 0.0
@@ -1050,6 +1078,9 @@ class QuotesBridgeMixin:
             line["produto_codigo"] = ""
             line["produto_unid"] = line["produto_unid"] or "SV"
             line["desenho"] = ""
+            line["desenho_pdf"] = ""
+            line["desenhos_pdf"] = []
+            line["ficheiros"] = []
             line["laser_base_active"] = False
             line["laser_base_tempo_unit"] = 0.0
             line["laser_base_preco_unit"] = 0.0
@@ -2001,6 +2032,22 @@ class QuotesBridgeMixin:
                 "Operacoes": ops_txt,
                 "Observacoes": str(line.get("descricao", "") or "").strip(),
                 "desenho": str(line.get("desenho", "") or "").strip(),
+                "desenho_pdf": str(line.get("desenho_pdf", "") or "").strip(),
+                "desenhos_pdf": [
+                    str(item or "").strip()
+                    for item in list(line.get("desenhos_pdf", []) or [])
+                    if str(item or "").strip()
+                ],
+                "ficheiros": [
+                    str(item or "").strip()
+                    for item in [
+                        line.get("desenho", ""),
+                        line.get("desenho_pdf", ""),
+                        *list(line.get("desenhos_pdf", []) or []),
+                        *list(line.get("ficheiros", []) or []),
+                    ]
+                    if str(item or "").strip()
+                ],
                 "tempo_peca_min": tempo_peca,
                 "tempos_operacao": dict(line.get("tempos_operacao", {}) or {}),
                 "custos_operacao": dict(line.get("custos_operacao", {}) or {}),

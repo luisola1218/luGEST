@@ -2,6 +2,7 @@
 
 import copy
 import csv
+import hashlib
 import json
 import math
 import os
@@ -23,7 +24,7 @@ from lugest_infra.pdf.text import fit_font_size as _pdf_fit_font_size
 from lugest_infra.pdf.text import mix_hex as _pdf_mix_hex
 from lugest_infra.pdf.text import wrap_text as _pdf_wrap_text
 
-from lugest_core.laser.quote_engine import estimate_laser_quote, estimate_profile_laser_quote, merge_laser_quote_settings
+from lugest_core.laser.quote_engine import analyze_dxf_geometry, estimate_laser_quote, estimate_profile_laser_quote, merge_laser_quote_settings
 from .bridge_mixins import (
     BillingBridgeMixin,
     DashboardBridgeMixin,
@@ -1294,6 +1295,135 @@ class LegacyBackend(
     def _resolve_file_reference(self, raw: Any) -> Path | None:
         return lugest_storage.resolve_file_reference(raw, base_dir=self.base_dir)
 
+    def _document_reference_key(self, raw: Any, digest_cache: dict[str, str] | None = None) -> str:
+        text = str(raw or "").strip()
+        if not text:
+            return ""
+        resolved = self._resolve_file_reference(text)
+        path_obj = resolved or Path(text)
+        try:
+            normalized = str(path_obj.resolve())
+        except Exception:
+            normalized = str(path_obj)
+        if path_obj.exists() and path_obj.is_file():
+            digest = ""
+            if digest_cache is not None:
+                digest = str(digest_cache.get(normalized, "") or "")
+            if not digest:
+                hasher = hashlib.sha1()
+                try:
+                    with path_obj.open("rb") as handle:
+                        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                            if not chunk:
+                                break
+                            hasher.update(chunk)
+                    digest = hasher.hexdigest()
+                except Exception:
+                    digest = ""
+                if digest_cache is not None:
+                    digest_cache[normalized] = digest
+            if digest:
+                try:
+                    stat = path_obj.stat()
+                    return f"sha1:{stat.st_size}:{digest}"
+                except Exception:
+                    return f"sha1:{digest}"
+        return f"path:{normalized.casefold()}"
+
+    def _document_reference_priority(self, raw: Any, preferred_category: str = "technical_pdfs") -> tuple[int, int, int, str]:
+        text = str(raw or "").strip()
+        if not text:
+            return (99, 99, 99, "")
+        normalized = text.replace("\\", "/").casefold()
+        preferred = preferred_category.replace("\\", "/").strip("/").casefold()
+        is_preferred = f"/{preferred}/" in f"/{normalized}/"
+        exists_score = 0 if (self._resolve_file_reference(text) or Path(text)).exists() else 1
+        suffix_match = re.search(r"_(\d+)(?=\.pdf$)", Path(text).name, re.IGNORECASE)
+        suffix_value = int(suffix_match.group(1)) if suffix_match else 0
+        return (0 if is_preferred else 1, exists_score, suffix_value, normalized)
+
+    def _dedupe_document_references(
+        self,
+        values: list[Any],
+        preferred_category: str = "technical_pdfs",
+        digest_cache: dict[str, str] | None = None,
+    ) -> list[str]:
+        chosen: dict[str, str] = {}
+        order: list[str] = []
+        for item in list(values or []):
+            item_txt = str(item or "").strip()
+            if not item_txt:
+                continue
+            key = self._document_reference_key(item_txt, digest_cache=digest_cache)
+            if not key:
+                continue
+            if key not in order:
+                order.append(key)
+                chosen[key] = item_txt
+                continue
+            current = chosen.get(key, "")
+            if self._document_reference_priority(item_txt, preferred_category) < self._document_reference_priority(current, preferred_category):
+                chosen[key] = item_txt
+        return [chosen[key] for key in order if str(chosen.get(key, "") or "").strip()]
+
+    def _piece_pdf_references(
+        self,
+        row: dict[str, Any],
+        preferred_category: str = "technical_pdfs",
+        digest_cache: dict[str, str] | None = None,
+    ) -> list[str]:
+        if not isinstance(row, dict):
+            return []
+        return self._dedupe_document_references(
+            [
+                row.get("desenho_pdf", ""),
+                *list(row.get("desenhos_pdf", []) or []),
+                *[
+                    item
+                    for item in list(row.get("ficheiros", []) or [])
+                    if str(item or "").strip().lower().endswith(".pdf")
+                ],
+            ],
+            preferred_category=preferred_category,
+            digest_cache=digest_cache,
+        )
+
+    def _apply_piece_pdf_references(
+        self,
+        row: dict[str, Any],
+        docs: list[Any],
+        preferred_category: str = "technical_pdfs",
+        digest_cache: dict[str, str] | None = None,
+    ) -> bool:
+        if not isinstance(row, dict):
+            return False
+        canonical_docs = self._dedupe_document_references(
+            list(docs or []),
+            preferred_category=preferred_category,
+            digest_cache=digest_cache,
+        )
+        current_main = str(row.get("desenho_pdf", "") or "").strip()
+        current_list = [str(item or "").strip() for item in list(row.get("desenhos_pdf", []) or []) if str(item or "").strip()]
+        current_files = [str(item or "").strip() for item in list(row.get("ficheiros", []) or []) if str(item or "").strip()]
+        non_pdf_files = [item for item in current_files if not item.lower().endswith(".pdf")]
+        merged_files = non_pdf_files + canonical_docs
+        deduped_files: list[str] = []
+        for item in merged_files:
+            if item not in deduped_files:
+                deduped_files.append(item)
+        changed = False
+        new_main = canonical_docs[0] if canonical_docs else ""
+        if current_main != new_main:
+            row["desenho_pdf"] = new_main
+            changed = True
+        if current_list != canonical_docs:
+            row["desenhos_pdf"] = canonical_docs
+            changed = True
+        if current_files != deduped_files:
+            row["ficheiros"] = deduped_files
+            changed = True
+        return changed
+
     def open_file_reference(self, raw: str) -> Path:
         target = self._resolve_file_reference(raw)
         if target is None:
@@ -1306,9 +1436,33 @@ class LegacyBackend(
 
     def _normalize_storage_paths_for_save(self) -> None:
         data = self.ensure_data()
+        digest_cache: dict[str, str] = {}
 
         def normalize_drawings(node: Any) -> None:
             if isinstance(node, dict):
+                pdf_cache: dict[str, str] = {}
+
+                def store_pdf(value: Any) -> str:
+                    raw = str(value or "").strip()
+                    if not raw:
+                        return ""
+                    if raw in pdf_cache:
+                        return pdf_cache[raw]
+                    pdf_cache[raw] = self._store_shared_file(
+                        raw,
+                        "technical_pdfs",
+                        preferred_name=self._file_reference_name(raw, "desenho.pdf"),
+                    )
+                    return pdf_cache[raw]
+
+                def dedupe(values: list[str]) -> list[str]:
+                    clean: list[str] = []
+                    for item in values:
+                        item_txt = str(item or "").strip()
+                        if item_txt and item_txt not in clean:
+                            clean.append(item_txt)
+                    return clean
+
                 for key, value in list(node.items()):
                     if key in {"desenho", "desenho_path"}:
                         node[key] = self._store_shared_file(
@@ -1316,8 +1470,53 @@ class LegacyBackend(
                             "drawings",
                             preferred_name=self._file_reference_name(value, "desenho"),
                         )
+                    elif key == "desenho_pdf":
+                        node[key] = store_pdf(value)
+                    elif key == "desenhos_pdf" and isinstance(value, list):
+                        node[key] = dedupe(
+                            [
+                                store_pdf(item)
+                                for item in value
+                                if str(item or "").strip()
+                            ]
+                        )
+                    elif key == "ficheiros" and isinstance(value, list):
+                        node[key] = dedupe(
+                            [
+                                (
+                                    store_pdf(item)
+                                    if str(item or "").strip().lower().endswith(".pdf")
+                                    else self._store_shared_file(
+                                        item,
+                                        "technical_files",
+                                        preferred_name=self._file_reference_name(item, "ficheiro"),
+                                    )
+                                )
+                                for item in value
+                                if str(item or "").strip()
+                            ]
+                        )
                     else:
                         normalize_drawings(value)
+                if str(node.get("desenho_pdf", "") or "").strip():
+                    node["desenhos_pdf"] = dedupe(
+                        [
+                            str(node.get("desenho_pdf", "") or "").strip(),
+                            *list(node.get("desenhos_pdf", []) or []),
+                        ]
+                    )
+                if isinstance(node.get("ficheiros"), list):
+                    node["ficheiros"] = dedupe(
+                        [
+                            *list(node.get("ficheiros", []) or []),
+                            *[
+                                item
+                                for item in [node.get("desenho_pdf", ""), *list(node.get("desenhos_pdf", []) or [])]
+                                if str(item or "").strip()
+                            ],
+                        ]
+                    )
+                self._apply_piece_pdf_references(node, self._piece_pdf_references(node, digest_cache=digest_cache), digest_cache=digest_cache)
             elif isinstance(node, list):
                 for item in node:
                     normalize_drawings(item)
@@ -6533,6 +6732,65 @@ class LegacyBackend(
                 return str(value or "")
         return str(value or "")
 
+    def _operation_pdf_abbrev(self, operation: Any) -> str:
+        raw = str(operation or "").strip()
+        if not raw:
+            return ""
+        normalized = str(self.desktop_main.normalize_operacao_nome(raw) or raw).strip()
+        key = str(self.desktop_main.norm_text(normalized) or normalized).casefold()
+        aliases = {
+            "corte laser": "CL",
+            "laser": "CL",
+            "quinagem": "Q",
+            "roscagem": "ROSC.",
+            "serralharia": "SR",
+            "soldadura": "SOLD.",
+            "lacagem": "LAC.",
+            "pintura": "PINT.",
+            "maquinacao": "MAQ.",
+            "maquinacao cnc": "MAQ.",
+            "montagem": "MONT.",
+            "embalamento": "EMB.",
+            "expedicao": "EXP.",
+            "furo manual": "FM",
+            "departamento de desenho": "DES.",
+            "departamento de orcamentacao": "ORC.",
+            "outros": "OUT.",
+        }
+        return aliases.get(key, normalized.upper()[:8])
+
+    def _operations_pdf_abbrev(self, operations: Any) -> str:
+        if isinstance(operations, (list, tuple, set)):
+            raw_parts = [str(item.get("nome", "") if isinstance(item, dict) else item or "").strip() for item in operations]
+        else:
+            text = str(operations or "").strip()
+            raw_parts = [part.strip() for part in re.split(r"\s*\+\s*|\s*,\s*|\s*\|\s*", text) if part.strip()]
+        parts: list[str] = []
+        for raw in raw_parts:
+            abbrev = self._operation_pdf_abbrev(raw)
+            if abbrev and abbrev not in parts:
+                parts.append(abbrev)
+        return " + ".join(parts) or "-"
+
+    def _operations_pdf_legend(self, operations: Any) -> list[str]:
+        if isinstance(operations, (list, tuple, set)):
+            raw_parts = [str(item.get("nome", "") if isinstance(item, dict) else item or "").strip() for item in operations]
+        else:
+            raw_parts = [part.strip() for part in re.split(r"\s*\+\s*|\s*,\s*|\s*\|\s*", str(operations or "")) if part.strip()]
+        lines: list[str] = []
+        seen: set[str] = set()
+        for raw in raw_parts:
+            name = str(self.desktop_main.normalize_operacao_nome(raw) or raw).strip()
+            if not name:
+                continue
+            abbrev = self._operation_pdf_abbrev(name)
+            key = f"{abbrev}|{name}"
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(f"{abbrev} - {name}")
+        return lines or ["Sem operações registadas"]
+
     def _operator_label_palette(self) -> dict[str, Any]:
         from reportlab.lib import colors
 
@@ -6737,6 +6995,7 @@ class LegacyBackend(
 
         if not logo_path or not logo_path.exists():
             return
+        canvas_obj.saveState()
         try:
             img_reader = None
             iw = ih = 0
@@ -6751,6 +7010,13 @@ class LegacyBackend(
                     bbox = diff.getbbox()
                 if bbox:
                     img = img.crop(bbox)
+                logo_scale = max(1.0, self._branding_logo_scale_factor())
+                max_px = (
+                    max(96, int(float(width) * 4.0 * logo_scale)),
+                    max(72, int(float(height) * 4.0 * logo_scale)),
+                )
+                if img.width > max_px[0] or img.height > max_px[1]:
+                    img.thumbnail(max_px)
                 iw, ih = img.size
                 img_reader = ImageReader(img)
             except Exception:
@@ -6770,6 +7036,8 @@ class LegacyBackend(
             canvas_obj.drawImage(img_reader, draw_x, draw_y, width=draw_w, height=draw_h, preserveAspectRatio=True, mask="auto")
         except Exception:
             pass
+        finally:
+            canvas_obj.restoreState()
 
     def _draw_operator_logo_plate(
         self,
@@ -7602,11 +7870,21 @@ class LegacyBackend(
                     "descricao": str(piece.get("descricao", "") or piece.get("Observacoes", "") or "").strip(),
                     "of": str(piece.get("of", "") or "").strip(),
                     "opp": str(piece.get("opp", "") or "").strip(),
+                    "peso_unid": round(self._parse_float(piece.get("peso_unid", 0), 0), 4),
+                    "tempo_peca_min": round(self._parse_float(piece.get("tempo_peca_min", piece.get("tempo_pecas_min", 0)), 0), 3),
+                    "revisao": str(piece.get("revisao", piece.get("rev", "")) or "").strip(),
+                    "prioridade": str(piece.get("prioridade", piece.get("priority", "")) or "").strip(),
                     "operacoes": " + ".join(
                         [self.desktop_main.normalize_operacao_nome(op.get("nome", "")) for op in list(ops or []) if str(op.get("nome", "")).strip()]
                     ),
                     "desenho": bool(str(piece.get("desenho", "") or piece.get("desenho_path", "") or "").strip()),
                     "desenho_path": str(piece.get("desenho", "") or piece.get("desenho_path", "") or "").strip(),
+                    "desenho_pdf": str(piece.get("desenho_pdf", "") or "").strip(),
+                    "desenhos_pdf": [
+                        str(item or "").strip()
+                        for item in list(piece.get("desenhos_pdf", []) or [])
+                        if str(item or "").strip()
+                    ],
                     "ficheiros": [
                         str(item or "").strip()
                         for item in list(piece.get("ficheiros", []) or [])
@@ -9489,6 +9767,94 @@ class LegacyBackend(
                         return mat, esp, piece
         return None, None, None
 
+    def _sync_order_piece_documents_from_quote(self, enc: dict[str, Any]) -> bool:
+        """Backfill technical PDFs into existing order pieces from their source quote."""
+        if not isinstance(enc, dict):
+            return False
+        data = self.ensure_data()
+        enc_numero = str(enc.get("numero", "") or "").strip()
+        orc_numero = str(enc.get("numero_orcamento", "") or "").strip()
+        source_quotes = []
+        for orc in list(data.get("orcamentos", []) or []):
+            if not isinstance(orc, dict):
+                continue
+            if orc_numero and str(orc.get("numero", "") or "").strip() == orc_numero:
+                source_quotes.append(orc)
+                continue
+            if enc_numero and str(orc.get("numero_encomenda", "") or "").strip() == enc_numero:
+                source_quotes.append(orc)
+        if not source_quotes:
+            return False
+        digest_cache: dict[str, str] = {}
+
+        def norm(value: Any) -> str:
+            text = str(value or "").strip()
+            norm_fn = getattr(self.desktop_main, "norm_text", None)
+            if callable(norm_fn):
+                return str(norm_fn(text) or "").strip()
+            return text.casefold()
+
+        def doc_list(row: dict[str, Any]) -> list[str]:
+            return self._piece_pdf_references(row, digest_cache=digest_cache)
+
+        def keys_for(row: dict[str, Any]) -> list[tuple[str, ...]]:
+            ref_int = norm(row.get("ref_interna", ""))
+            ref_ext = norm(row.get("ref_externa", ""))
+            material = norm(row.get("material", "") or row.get("material_subtype", ""))
+            espessura = norm(row.get("espessura", ""))
+            descricao = norm(row.get("descricao", "") or row.get("Observacoes", ""))
+            keys: list[tuple[str, ...]] = []
+            if ref_int:
+                keys.append(("int", ref_int))
+            if ref_ext:
+                keys.append(("ext", ref_ext))
+            if ref_ext and material and espessura:
+                keys.append(("extmat", ref_ext, material, espessura))
+            if descricao and material and espessura:
+                keys.append(("desc", descricao, material, espessura))
+            return keys
+
+        quote_docs: dict[tuple[str, ...], list[str]] = {}
+        for orc in source_quotes:
+            for line in list(orc.get("linhas", []) or []):
+                if not isinstance(line, dict):
+                    continue
+                docs = doc_list(line)
+                if not docs:
+                    continue
+                for key in keys_for(line):
+                    bucket = quote_docs.setdefault(key, [])
+                    for doc in docs:
+                        if doc not in bucket:
+                            bucket.append(doc)
+        if not quote_docs:
+            return False
+
+        changed = False
+        for piece in self.desktop_main.encomenda_pecas(enc):
+            if not isinstance(piece, dict):
+                continue
+            existing_docs = doc_list(piece)
+            matched_docs: list[str] = []
+            for key in keys_for(piece):
+                for doc in quote_docs.get(key, []):
+                    if doc not in matched_docs:
+                        matched_docs.append(doc)
+            merged_docs = list(existing_docs)
+            for doc in matched_docs:
+                if doc not in merged_docs:
+                    merged_docs.append(doc)
+            if not matched_docs:
+                if self._apply_piece_pdf_references(piece, existing_docs, digest_cache=digest_cache):
+                    changed = True
+                else:
+                    continue
+            if self._apply_piece_pdf_references(piece, merged_docs, digest_cache=digest_cache):
+                changed = True
+            else:
+                continue
+        return changed
+
     def order_rows(self, filter_text: str = "", estado: str = "Ativas", ano: str = "Todos", cliente: str = "Todos") -> list[dict[str, Any]]:
         data = self.ensure_data()
         query = str(filter_text or "").strip().lower()
@@ -10945,6 +11311,112 @@ class LegacyBackend(
                 changed = True
         return changed
 
+    def _sync_order_piece_metrics_from_quote(self, enc: dict[str, Any]) -> bool:
+        """Backfill unit time and weight into old orders created before these fields were copied."""
+        if not isinstance(enc, dict):
+            return False
+        data = self.ensure_data()
+        enc_numero = str(enc.get("numero", "") or "").strip()
+        orc_numero = str(enc.get("numero_orcamento", "") or "").strip()
+        source_quotes: list[dict[str, Any]] = []
+        for orc in list(data.get("orcamentos", []) or []):
+            if not isinstance(orc, dict):
+                continue
+            if orc_numero and str(orc.get("numero", "") or "").strip() == orc_numero:
+                source_quotes.append(orc)
+                continue
+            if enc_numero and str(orc.get("numero_encomenda", "") or "").strip() == enc_numero:
+                source_quotes.append(orc)
+        if not source_quotes:
+            return False
+
+        def norm(value: Any) -> str:
+            text = str(value or "").strip()
+            norm_fn = getattr(self.desktop_main, "norm_text", None)
+            return str(norm_fn(text) if callable(norm_fn) else text.casefold()).strip()
+
+        def keys_for(row: dict[str, Any]) -> list[tuple[str, ...]]:
+            ref_int = norm(row.get("ref_interna", ""))
+            ref_ext = norm(row.get("ref_externa", ""))
+            material = norm(row.get("material", "") or row.get("material_subtype", ""))
+            espessura = norm(row.get("espessura", ""))
+            descricao = norm(row.get("descricao", "") or row.get("Observacoes", ""))
+            keys: list[tuple[str, ...]] = []
+            if ref_int:
+                keys.append(("int", ref_int))
+            if ref_ext:
+                keys.append(("ext", ref_ext))
+            if ref_ext and material and espessura:
+                keys.append(("extmat", ref_ext, material, espessura))
+            if descricao and material and espessura:
+                keys.append(("desc", descricao, material, espessura))
+            return keys
+
+        analysis_cache: dict[str, float] = {}
+
+        def line_weight(line: dict[str, Any]) -> float:
+            for key in ("peso_unid", "stock_metric_value", "peso_unitario", "peso"):
+                value = self._parse_float(line.get(key, 0), 0)
+                if value > 0:
+                    return round(value, 4)
+            path_txt = str(line.get("desenho", "") or line.get("desenho_path", "") or "").strip()
+            if not path_txt:
+                return 0.0
+            resolved = self._resolve_file_reference(path_txt) or Path(path_txt)
+            try:
+                cache_key = str(resolved.resolve())
+            except Exception:
+                cache_key = str(resolved)
+            if cache_key in analysis_cache:
+                return analysis_cache[cache_key]
+            weight = 0.0
+            try:
+                if resolved.exists() and resolved.suffix.lower() == ".dxf":
+                    geometry = analyze_dxf_geometry(resolved)
+                    metrics = dict(geometry.get("metrics", {}) or {})
+                    net_area_m2 = self._parse_float(metrics.get("net_area_m2", geometry.get("net_area_m2", 0)), 0)
+                    thickness_m = self._parse_float(line.get("espessura", 0), 0) / 1000.0
+                    if net_area_m2 > 0 and thickness_m > 0:
+                        weight = round(net_area_m2 * thickness_m * 7850.0, 4)
+            except Exception:
+                weight = 0.0
+            analysis_cache[cache_key] = weight
+            return weight
+
+        quote_metrics: dict[tuple[str, ...], dict[str, float]] = {}
+        for orc in source_quotes:
+            for line in list(orc.get("linhas", []) or []):
+                if not isinstance(line, dict):
+                    continue
+                tempo = round(self._parse_float(line.get("tempo_peca_min", line.get("tempo_pecas_min", 0)), 0), 4)
+                peso = line_weight(line)
+                if tempo <= 0 and peso <= 0:
+                    continue
+                payload = {"tempo_peca_min": tempo, "peso_unid": peso}
+                for key in keys_for(line):
+                    quote_metrics.setdefault(key, payload)
+        if not quote_metrics:
+            return False
+
+        changed = False
+        for piece in self.desktop_main.encomenda_pecas(enc):
+            if not isinstance(piece, dict):
+                continue
+            metric: dict[str, float] | None = None
+            for key in keys_for(piece):
+                metric = quote_metrics.get(key)
+                if metric:
+                    break
+            if not metric:
+                continue
+            if self._parse_float(piece.get("tempo_peca_min", piece.get("tempo_pecas_min", 0)), 0) <= 0 and metric.get("tempo_peca_min", 0) > 0:
+                piece["tempo_peca_min"] = metric["tempo_peca_min"]
+                changed = True
+            if self._parse_float(piece.get("peso_unid", 0), 0) <= 0 and metric.get("peso_unid", 0) > 0:
+                piece["peso_unid"] = metric["peso_unid"]
+                changed = True
+        return changed
+
     def order_suggest_ref_interna(
         self,
         numero: str = "",
@@ -11518,18 +11990,59 @@ class LegacyBackend(
         detail["imported_items"] = imported_items
         return detail
 
-    def order_fabrication_pdf(self, numero: str, output_path: str | Path | None = None) -> Path:
+    def order_fabrication_pdf(
+        self,
+        numero: str,
+        output_path: str | Path | None = None,
+        selected_groups: list[dict[str, Any]] | None = None,
+    ) -> Path:
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
             raise ValueError("Encomenda não encontrada.")
-        if self._ensure_order_fabrication_order(enc):
+        changed = self._ensure_order_fabrication_order(enc)
+        digest_cache: dict[str, str] = {}
+        for piece in self.desktop_main.encomenda_pecas(enc):
+            if self._apply_piece_pdf_references(piece, self._piece_pdf_references(piece, digest_cache=digest_cache), digest_cache=digest_cache):
+                changed = True
+        if self._sync_order_piece_documents_from_quote(enc):
+            changed = True
+        if self._sync_order_piece_metrics_from_quote(enc):
+            changed = True
+        if changed:
             self._save(force=True)
         detail = self.order_detail(numero)
         pieces = list(detail.get("pieces", []) or [])
+        selected_lookup: set[tuple[str, str]] = set()
+        for group in list(selected_groups or []):
+            if not isinstance(group, dict):
+                continue
+            material_txt = str(group.get("material", "") or "").strip()
+            esp_txt = str(group.get("espessura", "") or "").strip()
+            if material_txt and esp_txt:
+                selected_lookup.add((material_txt, esp_txt))
+        if selected_lookup:
+            pieces = [
+                piece
+                for piece in pieces
+                if (
+                    str(piece.get("material", "") or "").strip(),
+                    str(piece.get("espessura", "") or "").strip(),
+                )
+                in selected_lookup
+            ]
         if not pieces:
-            raise ValueError("A ordem de fabrico não tem peças.")
+            raise ValueError("A ordem de fabrico não tem peças para as espessuras selecionadas.")
         of_code = str(detail.get("of_codigo", "") or self._order_of_code(enc)).strip()
-        target = Path(output_path) if output_path else Path(tempfile.gettempdir()) / f"lugest_ordem_fabrico_{of_code}.pdf"
+        if output_path:
+            target = Path(output_path)
+        elif selected_lookup:
+            suffix = "_".join(
+                re.sub(r"[^A-Za-z0-9]+", "-", f"{material}-{esp}").strip("-")
+                for material, esp in sorted(selected_lookup)
+            )[:80]
+            target = Path(tempfile.gettempdir()) / f"lugest_ordem_fabrico_{of_code}_{suffix or 'parcial'}.pdf"
+        else:
+            target = Path(tempfile.gettempdir()) / f"lugest_ordem_fabrico_{of_code}.pdf"
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
             from reportlab.lib import colors
@@ -11561,7 +12074,6 @@ class LegacyBackend(
             self._write_basic_pdf(target, lines)
             return target
         page_w, page_h = A4
-        canvas_obj = pdf_canvas.Canvas(str(target), pagesize=A4)
         palette = self._operator_label_palette()
         branding = self.branding_settings()
         logo_txt = str(branding.get("logo_path", "") or "").strip()
@@ -11571,16 +12083,16 @@ class LegacyBackend(
         inner_w = page_w - (margin * 2)
         header_h = 38 * mm
         table_header_h = 8 * mm
-        row_h = 7.4 * mm
+        row_h = 17.0 * mm
         group_h = 10.5 * mm
         footer_h = 9 * mm
         columns = [
             ("Ref.", 27 * mm),
-            ("Ref. externa", 72 * mm),
-            ("Material", 30 * mm),
-            ("Esp.", 7 * mm),
-            ("Qtd", 11 * mm),
-            ("Operacoes", inner_w - (27 + 72 + 30 + 7 + 11) * mm),
+            ("Ref. externa", 50 * mm),
+            ("Material", 26 * mm),
+            ("Esp.", 12 * mm),
+            ("Qtd", 12 * mm),
+            ("Operacoes / OPP", inner_w - (27 + 50 + 26 + 12 + 12) * mm),
         ]
         rows_per_page = max(1, int((page_h - (margin * 2) - header_h - table_header_h - footer_h) // row_h))
         grouped_pieces: list[tuple[str, str, list[dict[str, Any]]]] = []
@@ -11590,6 +12102,43 @@ class LegacyBackend(
             groups_map.setdefault(key, []).append(piece)
         for key, rows in sorted(groups_map.items(), key=lambda item: (item[0][0].lower(), item[0][1].lower())):
             grouped_pieces.append((key[0], key[1], rows))
+        def _piece_pdf_docs(piece: dict[str, Any]) -> list[Path]:
+            docs: list[Path] = []
+            for raw_doc in self._piece_pdf_references(piece, digest_cache=digest_cache):
+                doc_txt = str(raw_doc or "").strip()
+                if not doc_txt or not doc_txt.lower().endswith(".pdf"):
+                    continue
+                doc_path = self._resolve_file_reference(doc_txt)
+                if doc_path is None:
+                    doc_path = Path(doc_txt)
+                if doc_path.exists() and doc_path not in docs:
+                    docs.append(doc_path)
+            return docs
+
+        technical_groups: list[dict[str, Any]] = []
+        for material_group, esp_group, group_rows in grouped_pieces:
+            docs_rows: list[dict[str, Any]] = []
+            for piece in group_rows:
+                docs = _piece_pdf_docs(piece)
+                if docs:
+                    docs_rows.append({"piece": piece, "docs": docs})
+            if docs_rows:
+                technical_groups.append({"material": material_group, "espessura": esp_group, "pieces": group_rows, "docs_rows": docs_rows})
+        cover_target = target
+        if technical_groups:
+            cover_target = Path(tempfile.gettempdir()) / f"lugest_of_cover_{of_code}_{int(time.time() * 1000)}.pdf"
+        canvas_obj = pdf_canvas.Canvas(str(cover_target), pagesize=A4)
+        reservation_lines: list[str] = []
+        for reserva in list(enc.get("reservas", []) or []):
+            if not isinstance(reserva, dict):
+                continue
+            mat_txt = str(reserva.get("material", "") or "-").strip() or "-"
+            esp_txt = str(reserva.get("espessura", "") or "-").strip() or "-"
+            if selected_lookup and (mat_txt, esp_txt) not in selected_lookup:
+                continue
+            qty_txt = str(reserva.get("quantidade", reserva.get("qtd", reserva.get("chapas", ""))) or "-").strip() or "-"
+            state_txt = str(reserva.get("estado", reserva.get("status", reserva.get("material_estado", ""))) or "").strip() or "Reservado"
+            reservation_lines.append(f"{mat_txt} | {esp_txt} mm | {qty_txt} chapa(s) | {state_txt}")
         visual_units = len(pieces) + (len(grouped_pieces) * max(1, math.ceil(group_h / row_h)))
         total_pages = max(1, math.ceil(max(1, visual_units) / rows_per_page))
 
@@ -11621,7 +12170,27 @@ class LegacyBackend(
             canvas_obj.setFont("Helvetica", 7)
             canvas_obj.setFillColor(colors.HexColor("#64748B"))
             canvas_obj.drawRightString(page_w - margin - 8, top_y - 30 * mm, self._operator_pdf_text(f"Pagina {page_number}/{total_pages}"))
-            return top_y - header_h - 4 * mm
+            cursor_y = top_y - header_h - 4 * mm
+            if page_number == 1:
+                box_h = (8 + (max(1, min(4, len(reservation_lines))) * 4.2)) * mm
+                canvas_obj.setFillColor(colors.HexColor("#FFF8EB"))
+                canvas_obj.setStrokeColor(colors.HexColor("#E4C37F"))
+                canvas_obj.roundRect(margin, cursor_y - box_h, inner_w, box_h, 4, stroke=1, fill=1)
+                canvas_obj.setFillColor(colors.HexColor("#7A3E00"))
+                canvas_obj.setFont("Helvetica-Bold", 7.2)
+                canvas_obj.drawString(margin + 3 * mm, cursor_y - 4.6 * mm, self._operator_pdf_text("Chapas cativadas"))
+                canvas_obj.setFont("Helvetica", 6.7)
+                if reservation_lines:
+                    line_y = cursor_y - 8.6 * mm
+                    for line in reservation_lines[:4]:
+                        canvas_obj.drawString(margin + 3 * mm, line_y, self._operator_pdf_text(_pdf_clip_text(line, inner_w - 8 * mm, "Helvetica", 6.7)))
+                        line_y -= 4.2 * mm
+                    if len(reservation_lines) > 4:
+                        canvas_obj.drawRightString(page_w - margin - 3 * mm, cursor_y - 8.6 * mm, self._operator_pdf_text(f"+{len(reservation_lines) - 4} reserva(s)"))
+                else:
+                    canvas_obj.drawString(margin + 3 * mm, cursor_y - 8.6 * mm, self._operator_pdf_text("Sem chapas cativadas registadas."))
+                cursor_y -= box_h + 3 * mm
+            return cursor_y
 
         def draw_table_header(y_pos: float) -> float:
             canvas_obj.setFillColor(colors.HexColor("#05004D"))
@@ -11683,7 +12252,7 @@ class LegacyBackend(
                     str(piece.get("material", "-") or "-"),
                     str(piece.get("espessura", "-") or "-"),
                     str(piece.get("qtd_plan", "0") or "0"),
-                    str(piece.get("operacoes", "-") or "-"),
+                    self._operations_pdf_abbrev(piece.get("operacoes", "-")),
                 ]
                 x = margin
                 canvas_obj.setFillColor(colors.HexColor("#0F172A"))
@@ -11692,24 +12261,296 @@ class LegacyBackend(
                     font_name = "Helvetica-Bold" if col_index == 0 else "Helvetica"
                     font_size = 6.1 if col_index in {1, 5} else 6.5
                     canvas_obj.setFont(font_name, font_size)
-                    clipped = _pdf_clip_text(value, width - 3.5, font_name, font_size)
-                    if col_index in {3, 4}:
-                        canvas_obj.drawRightString(x + width - 2.2, row_y + 2.3 * mm, self._operator_pdf_text(clipped))
+                    if col_index == 5:
+                        opp_txt = str(piece.get("opp", "") or "").strip()
+                        barcode_w = min(width * 0.58, 52 * mm)
+                        text_w = max(18 * mm, width - barcode_w - 7 * mm)
+                        clipped = _pdf_clip_text(value, text_w, font_name, 5.7)
+                        canvas_obj.setFont("Helvetica", 5.7)
+                        canvas_obj.drawString(x + 2.2, row_y + 12.4 * mm, self._operator_pdf_text(clipped))
+                        if opp_txt:
+                            barcode_x = x + width - barcode_w - 2.2
+                            self._draw_code128_fit(canvas_obj, opp_txt, barcode_x, row_y + 3.4 * mm, barcode_w, 6.4 * mm, min_bar_width=0.24, max_bar_width=0.54)
+                            canvas_obj.setFont("Helvetica-Bold", 5.5)
+                            canvas_obj.drawCentredString(barcode_x + (barcode_w / 2), row_y + 1.5 * mm, self._operator_pdf_text(_pdf_clip_text(opp_txt, barcode_w, "Helvetica-Bold", 5.5)))
+                    elif col_index in {3, 4}:
+                        clipped = _pdf_clip_text(value, width - 3.5, font_name, font_size)
+                        canvas_obj.drawRightString(x + width - 2.2, row_y + 6.2 * mm, self._operator_pdf_text(clipped))
                     else:
-                        canvas_obj.drawString(x + 2.2, row_y + 2.3 * mm, self._operator_pdf_text(clipped))
+                        clipped = _pdf_clip_text(value, width - 3.5, font_name, font_size)
+                        canvas_obj.drawString(x + 2.2, row_y + 6.2 * mm, self._operator_pdf_text(clipped))
                     x += width
                 y = row_y
                 row_counter += 1
         draw_footer(page_number)
         canvas_obj.save()
+        if technical_groups:
+            try:
+                from pypdf import PdfReader, PdfWriter
+
+                writer = PdfWriter()
+
+                def append_pdf(path_obj: Path) -> None:
+                    reader = PdfReader(str(path_obj))
+                    for page in reader.pages:
+                        writer.add_page(page)
+
+                def build_notice_page(title: str, lines: list[str]) -> Path:
+                    notice_path = Path(tempfile.gettempdir()) / f"lugest_of_notice_{of_code}_{abs(hash(title + ''.join(lines)))}.pdf"
+                    notice_canvas = pdf_canvas.Canvas(str(notice_path), pagesize=A4)
+                    top_y = page_h - margin
+                    notice_canvas.setFillColor(colors.white)
+                    notice_canvas.setStrokeColor(colors.HexColor("#CBD5E1"))
+                    notice_canvas.roundRect(margin, top_y - 46 * mm, inner_w, 46 * mm, 6, stroke=1, fill=1)
+                    self._draw_operator_logo_plate(notice_canvas, palette, logo_path, margin + 8, top_y - 24 * mm, 34 * mm, 15 * mm, radius=4, padding_x=3, padding_y=2)
+                    notice_canvas.setFillColor(colors.HexColor("#020617"))
+                    notice_canvas.setFont("Helvetica-Bold", 15)
+                    notice_canvas.drawString(margin + 48 * mm, top_y - 12 * mm, self._operator_pdf_text(title))
+                    notice_canvas.setFont("Helvetica", 8)
+                    y_line = top_y - 25 * mm
+                    for line in lines[:22]:
+                        notice_canvas.drawString(margin + 10, y_line, self._operator_pdf_text(_pdf_clip_text(line, inner_w - 20, "Helvetica", 8)))
+                        y_line -= 5 * mm
+                    notice_canvas.save()
+                    return notice_path
+
+                def build_piece_cover(group: dict[str, Any], piece: dict[str, Any], docs: list[Path]) -> Path:
+                    ref_internal = str(piece.get("ref_interna", "-") or "-").strip() or "-"
+                    ref_external = str(piece.get("ref_externa", "-") or "-").strip() or "-"
+                    material_txt = str(piece.get("material", group.get("material", "-")) or "-").strip() or "-"
+                    esp_txt = str(piece.get("espessura", group.get("espessura", "-")) or "-").strip() or "-"
+                    qty_txt = str(piece.get("qtd_plan", "0") or "0").strip() or "0"
+                    ops_txt = str(piece.get("operacoes", "-") or "-").strip() or "-"
+                    ops_short_txt = self._operations_pdf_abbrev(ops_txt)
+                    weight_txt = self._fmt(piece.get("peso_unid", 0))
+                    time_txt = self._fmt(piece.get("tempo_peca_min", 0))
+                    dims_txt = str(piece.get("dimensao", "") or "").strip() or "-"
+                    estado_txt = str(piece.get("estado", "") or "Em produção").strip() or "Em produção"
+                    prioridade_txt = str(piece.get("prioridade", "") or "Normal").strip() or "Normal"
+                    revisao_txt = str(piece.get("revisao", "") or "-").strip() or "-"
+                    opp_txt = str(piece.get("opp", "") or "-").strip() or "-"
+                    cover_path = Path(tempfile.gettempdir()) / f"lugest_of_piece_{of_code}_{abs(hash((ref_internal, ref_external, opp_txt, tuple(str(doc) for doc in docs))))}.pdf"
+                    piece_canvas = pdf_canvas.Canvas(str(cover_path), pagesize=A4)
+                    top_y = page_h - margin
+                    black = colors.HexColor("#111111")
+                    grey = colors.HexColor("#6B7280")
+                    line = colors.HexColor("#9CA3AF")
+
+                    def section_box(x: float, y_top: float, width: float, height: float, title: str) -> float:
+                        piece_canvas.setFillColor(colors.white)
+                        piece_canvas.setStrokeColor(line)
+                        piece_canvas.roundRect(x, y_top - height, width, height, 3, stroke=1, fill=0)
+                        piece_canvas.setFillColor(black)
+                        piece_canvas.setFont("Helvetica-Bold", 10)
+                        piece_canvas.drawString(x + 4 * mm, y_top - 7 * mm, self._operator_pdf_text(title.upper()))
+                        piece_canvas.setStrokeColor(line)
+                        piece_canvas.line(x + 4 * mm, y_top - 12 * mm, x + width - 4 * mm, y_top - 12 * mm)
+                        return y_top - 19 * mm
+
+                    def detail_row(x: float, y_pos: float, width: float, label: str, value: str) -> float:
+                        piece_canvas.setFillColor(black)
+                        piece_canvas.setFont("Helvetica", 8.0)
+                        piece_canvas.drawString(x, y_pos, self._operator_pdf_text(label))
+                        piece_canvas.setStrokeColor(colors.HexColor("#D1D5DB"))
+                        piece_canvas.line(x + 22 * mm, y_pos - 1, x + width - 18 * mm, y_pos - 1)
+                        value_width = max(18 * mm, width - 34 * mm)
+                        value_size = _pdf_fit_font_size(str(value or "-"), "Helvetica", value_width, 8.3, 5.6)
+                        piece_canvas.setFont("Helvetica", value_size)
+                        piece_canvas.drawRightString(x + width, y_pos, self._operator_pdf_text(_pdf_clip_text(value, value_width, "Helvetica", value_size)))
+                        return y_pos - 9 * mm
+
+                    def bullet_lines(x: float, y_pos: float, width: float, lines: list[str], size: float = 8.5, max_count: int = 5) -> float:
+                        piece_canvas.setFillColor(black)
+                        piece_canvas.setFont("Helvetica", size)
+                        for raw_line in lines[:max_count]:
+                            text = _pdf_clip_text(str(raw_line or "-"), width - 7 * mm, "Helvetica", size)
+                            piece_canvas.drawString(x, y_pos, self._operator_pdf_text("•"))
+                            piece_canvas.drawString(x + 5 * mm, y_pos, self._operator_pdf_text(text))
+                            y_pos -= 7 * mm
+                        return y_pos
+
+                    piece_canvas.setFillColor(colors.white)
+                    piece_canvas.rect(0, 0, page_w, page_h, stroke=0, fill=1)
+
+                    logo_x = margin
+                    logo_y = top_y - 24 * mm
+                    self._draw_operator_logo_plate(piece_canvas, palette, logo_path, logo_x, logo_y, 38 * mm, 17 * mm, radius=0, padding_x=0, padding_y=0)
+                    piece_canvas.setStrokeColor(line)
+                    piece_canvas.line(margin + 43 * mm, top_y - 5 * mm, margin + 43 * mm, top_y - 27 * mm)
+                    piece_canvas.setFillColor(black)
+                    title_max_w = 66 * mm
+                    title_size = _pdf_fit_font_size("FOLHA DE ROSTO DA PEÇA", "Helvetica-Bold", title_max_w, 12.2, 9.4)
+                    piece_canvas.setFont("Helvetica-Bold", title_size)
+                    piece_canvas.drawString(margin + 50 * mm, top_y - 10 * mm, self._operator_pdf_text("FOLHA DE ROSTO DA PEÇA"))
+                    piece_canvas.setFont("Helvetica-Bold", 9.2)
+                    piece_canvas.drawString(margin + 50 * mm, top_y - 18 * mm, self._operator_pdf_text("ORDEM DE FABRICO"))
+
+                    right_x = page_w - margin - 62 * mm
+                    piece_canvas.line(right_x - 7 * mm, top_y - 4 * mm, right_x - 7 * mm, top_y - 32 * mm)
+                    piece_canvas.setFont("Helvetica-Bold", 15)
+                    piece_canvas.drawString(right_x, top_y - 9 * mm, self._operator_pdf_text(of_code))
+                    piece_canvas.setFont("Helvetica-Bold", 9)
+                    piece_canvas.drawString(right_x, top_y - 17 * mm, self._operator_pdf_text(f"{material_txt}  |  {esp_txt} mm"))
+                    self._draw_code128_fit(piece_canvas, opp_txt, right_x, top_y - 29 * mm, 56 * mm, 8.2 * mm, min_bar_width=0.30, max_bar_width=0.70)
+                    piece_canvas.setFont("Helvetica", 7)
+                    piece_canvas.drawString(right_x, top_y - 34 * mm, self._operator_pdf_text(f"OPP: {opp_txt}"))
+
+                    piece_canvas.setStrokeColor(line)
+                    piece_canvas.line(margin, top_y - 43 * mm, page_w - margin, top_y - 43 * mm)
+
+                    hero_top = top_y - 52 * mm
+                    hero_h = 37 * mm
+                    piece_canvas.setStrokeColor(line)
+                    piece_canvas.roundRect(margin, hero_top - hero_h, inner_w, hero_h, 3, stroke=1, fill=0)
+                    piece_canvas.setFillColor(black)
+                    piece_canvas.setFont("Helvetica-Bold", 8)
+                    piece_canvas.drawString(margin + 6 * mm, hero_top - 9 * mm, self._operator_pdf_text("CÓDIGO DA PEÇA"))
+                    piece_canvas.setFont("Helvetica-Bold", 19)
+                    piece_canvas.drawString(margin + 6 * mm, hero_top - 22 * mm, self._operator_pdf_text(_pdf_clip_text(ref_internal, 76 * mm, "Helvetica-Bold", 19)))
+                    piece_canvas.setStrokeColor(line)
+                    x1 = margin + 82 * mm
+                    x2 = margin + 119 * mm
+                    x3 = margin + 152 * mm
+                    for sx in (x1, x2, x3):
+                        piece_canvas.line(sx, hero_top - 5 * mm, sx, hero_top - hero_h + 5 * mm)
+                    hero_items = [
+                        (x1 + 9 * mm, "TEMPO PREVISTO", f"{time_txt} min", 8.2, 28 * mm, 2),
+                        (x2 + 8 * mm, "PROCESSO", ops_short_txt, 8.0, 29 * mm, 3),
+                        (x3 + 9 * mm, "PRIORIDADE", prioridade_txt, 8.2, 28 * mm, 2),
+                    ]
+                    for item_x, label, value, value_size, value_width, max_lines in hero_items:
+                        piece_canvas.setFillColor(black)
+                        piece_canvas.setFont("Helvetica", 7)
+                        piece_canvas.drawCentredString(item_x + 14 * mm, hero_top - 13 * mm, self._operator_pdf_text(label))
+                        piece_canvas.setFont("Helvetica-Bold", value_size)
+                        for idx_line, wrapped in enumerate(_pdf_wrap_text(value, "Helvetica-Bold", value_size, value_width, max_lines=max_lines) or ["-"]):
+                            piece_canvas.drawCentredString(item_x + 14 * mm, hero_top - (21 + (idx_line * 4.2)) * mm, self._operator_pdf_text(wrapped))
+
+                    upper_top = hero_top - hero_h - 7 * mm
+                    left_w = 90 * mm
+                    right_w = inner_w - left_w - 5 * mm
+                    data_body = section_box(margin, upper_top, left_w, 86 * mm, "Dados da peça")
+                    y_info = data_body
+                    for label, value in [
+                        ("Ref. externa", ref_external),
+                        ("Material", material_txt),
+                        ("Espessura", f"{esp_txt} mm"),
+                        ("Quantidade", f"{qty_txt} un"),
+                        ("Peso unit.", f"{weight_txt} kg"),
+                        ("Revisão", revisao_txt),
+                        ("Prioridade", prioridade_txt),
+                    ]:
+                        y_info = detail_row(margin + 4 * mm, y_info, left_w - 8 * mm, label, value)
+
+                    doc_body = section_box(margin + left_w + 5 * mm, upper_top, right_w, 38 * mm, "Documentação anexa")
+                    doc_lines = [
+                        f"Desenho técnico ({Path(docs[0]).name if docs else '-'})",
+                        "Desenho de sequência / notas técnicas",
+                        f"Total de PDF(s) associado(s): {len(docs)}",
+                    ]
+                    bullet_lines(margin + left_w + 9 * mm, doc_body, right_w - 12 * mm, doc_lines, size=8.4, max_count=3)
+
+                    ops_body = section_box(margin + left_w + 5 * mm, upper_top - 43 * mm, right_w, 43 * mm, "Operações")
+                    ops_lines = self._operations_pdf_legend(ops_txt)
+                    bullet_lines(margin + left_w + 9 * mm, ops_body, right_w - 12 * mm, ops_lines, size=8.1, max_count=4)
+
+                    lower_top = upper_top - 93 * mm
+                    third_gap = 5 * mm
+                    third_w = (inner_w - (third_gap * 2)) / 3
+                    prod_body = section_box(margin, lower_top, third_w, 43 * mm, "Produção")
+                    for line_txt in ["Posto:", "Operador:", "Data / Hora:"]:
+                        piece_canvas.setFont("Helvetica", 8.4)
+                        piece_canvas.setFillColor(black)
+                        piece_canvas.drawString(margin + 4 * mm, prod_body, self._operator_pdf_text(line_txt))
+                        piece_canvas.setStrokeColor(line)
+                        piece_canvas.line(margin + 22 * mm, prod_body - 1, margin + third_w - 5 * mm, prod_body - 1)
+                        prod_body -= 9 * mm
+
+                    qual_body = section_box(margin + third_w + third_gap, lower_top, third_w, 43 * mm, "Qualidade & controlo")
+                    for line_txt in ["Conferir material e espessura", "Confirmar revisão do desenho", "Registar desvios ou não conformidades"]:
+                        piece_canvas.circle(margin + third_w + third_gap + 7 * mm, qual_body + 1, 1.8 * mm, stroke=1, fill=0)
+                        piece_canvas.setFont("Helvetica", 7.6)
+                        piece_canvas.drawString(margin + third_w + third_gap + 13 * mm, qual_body, self._operator_pdf_text(_pdf_clip_text(line_txt, third_w - 17 * mm, "Helvetica", 7.6)))
+                        qual_body -= 8 * mm
+
+                    obs_body = section_box(margin + (third_w + third_gap) * 2, lower_top, third_w, 43 * mm, "Observações")
+                    obs_text = str(piece.get("descricao", "") or ref_external or "Sem observações.").strip()
+                    for line_txt in _pdf_wrap_text(obs_text, "Helvetica", 8.2, third_w - 8 * mm, max_lines=4) or ["Sem observações."]:
+                        piece_canvas.setFont("Helvetica", 8.2)
+                        piece_canvas.drawString(margin + (third_w + third_gap) * 2 + 4 * mm, obs_body, self._operator_pdf_text(line_txt))
+                        obs_body -= 6 * mm
+
+                    trace_top = lower_top - 49 * mm
+                    trace_body = section_box(margin, trace_top, inner_w, 27 * mm, "Rastreabilidade")
+                    piece_canvas.setFont("Helvetica", 8)
+                    piece_canvas.setFillColor(black)
+                    trace_items = [
+                        f"Dimensões: {dims_txt}",
+                        f"Documento principal: {Path(docs[0]).name if docs else '-'}",
+                        f"Material/Espessura: {material_txt} | {esp_txt} mm",
+                    ]
+                    trace_x = margin + 4 * mm
+                    for idx_trace, value in enumerate(trace_items):
+                        piece_canvas.drawString(trace_x + (idx_trace * 61 * mm), trace_body, self._operator_pdf_text(_pdf_clip_text(value, 56 * mm, "Helvetica", 8)))
+
+                    piece_canvas.setStrokeColor(line)
+                    piece_canvas.line(margin, margin + 10 * mm, page_w - margin, margin + 10 * mm)
+                    piece_canvas.setFillColor(grey)
+                    piece_canvas.setFont("Helvetica", 7.4)
+                    piece_canvas.drawString(margin, margin + 3 * mm, self._operator_pdf_text(f"Impresso em: {printed_at}"))
+                    piece_canvas.setFillColor(black)
+                    piece_canvas.setFont("Helvetica", 8.2)
+                    piece_canvas.drawRightString(page_w - margin, margin + 3 * mm, self._operator_pdf_text(f"LUGEST  |  OF: {of_code}  |  {ref_internal}"))
+                    piece_canvas.save()
+                    return cover_path
+
+                append_pdf(cover_target)
+                for group in technical_groups:
+                    for doc_row in list(group.get("docs_rows", []) or []):
+                        piece = dict(doc_row.get("piece", {}) or {})
+                        docs_for_piece = [Path(doc_path) for doc_path in list(doc_row.get("docs", []) or [])]
+                        append_pdf(build_piece_cover(group, piece, docs_for_piece))
+                        for doc_path in docs_for_piece:
+                            try:
+                                append_pdf(Path(doc_path))
+                            except Exception as exc:
+                                append_pdf(
+                                    build_notice_page(
+                                        "PDF técnico não anexado",
+                                        [
+                                            f"Referência: {piece.get('ref_interna', '-') or '-'} | {piece.get('ref_externa', '-') or '-'}",
+                                            f"Ficheiro: {Path(doc_path).name}",
+                                            f"Caminho: {doc_path}",
+                                            f"Erro: {exc}",
+                                        ],
+                                    )
+                                )
+                with target.open("wb") as handle:
+                    writer.write(handle)
+            except Exception:
+                try:
+                    shutil.copy2(cover_target, target)
+                except Exception:
+                    pass
         return target
 
-    def order_open_fabrication_pdf(self, numero: str) -> Path:
-        path = self.order_fabrication_pdf(numero)
+    def order_open_fabrication_pdf(self, numero: str, selected_groups: list[dict[str, Any]] | None = None) -> Path:
+        path = self.order_fabrication_pdf(numero, selected_groups=selected_groups)
         try:
             os.startfile(str(path))
         except Exception:
             pass
+        return path
+
+    def order_print_fabrication_pdf(self, numero: str, selected_groups: list[dict[str, Any]] | None = None) -> Path:
+        path = self.order_fabrication_pdf(numero, selected_groups=selected_groups)
+        try:
+            os.startfile(str(path), "print")
+        except Exception:
+            try:
+                os.startfile(str(path))
+            except Exception:
+                pass
         return path
 
     def operator_scan_code(self, code: str, current_posto: str = "Geral") -> dict[str, Any]:

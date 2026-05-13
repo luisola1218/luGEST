@@ -105,23 +105,41 @@ def apply_theme(app: QApplication, branding: dict) -> None:
             border: 1px solid {primary};
         }}
         QPushButton {{
-            background: {primary};
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {primary_soft},
+                stop:0.12 {primary},
+                stop:1 {primary_dark});
             color: #ffffff;
-            border: 0;
-            border-radius: 6px;
-            padding: 9px 13px;
-            font-weight: 700;
+            border: 1px solid {primary_dark};
+            border-bottom: 2px solid #071b48;
+            border-radius: 9px;
+            padding: 9px 14px 8px 14px;
+            font-weight: 800;
         }}
         QPushButton:hover {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {primary_surface},
+                stop:0.18 {primary},
+                stop:1 {primary_dark});
+        }}
+        QPushButton:pressed {{
+            padding-top: 10px;
+            padding-bottom: 7px;
+            border-bottom-width: 1px;
             background: {primary_dark};
         }}
         QPushButton[variant="secondary"] {{
-            background: #eef4fa;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #ffffff,
+                stop:1 #e6eef8);
             color: #17314f;
             border: 1px solid #b7c7d8;
+            border-bottom: 2px solid #8fa4bc;
         }}
         QPushButton[variant="secondary"]:hover {{
-            background: #dde8f4;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #ffffff,
+                stop:1 #dbe7f4);
         }}
         QPushButton[variant="logout"] {{
             color: #ffffff;
@@ -146,24 +164,48 @@ def apply_theme(app: QApplication, branding: dict) -> None:
             background: #a31d1d;
         }}
         QPushButton[variant="danger"] {{
-            background: #b42318;
+            border: 1px solid #8f1d14;
+            border-bottom: 2px solid #67130e;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #e8564d,
+                stop:0.55 #d92d20,
+                stop:1 #b42318);
         }}
         QPushButton[variant="danger"]:hover {{
-            background: #8f1d14;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #f06a62,
+                stop:0.55 #e63a2e,
+                stop:1 #bd271d);
         }}
         QPushButton[variant="success"] {{
-            background: #0f8a6a;
+            border: 1px solid #0b6f56;
+            border-bottom: 2px solid #084c3c;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #1fb894,
+                stop:0.55 #0f8a6a,
+                stop:1 #0b6f56);
             color: #ffffff;
         }}
         QPushButton[variant="success"]:hover {{
-            background: #0b6f56;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #2bc9a4,
+                stop:0.55 #129676,
+                stop:1 #0c795e);
         }}
         QPushButton[variant="warning"] {{
-            background: #f59e0b;
+            border: 1px solid #d97706;
+            border-bottom: 2px solid #9a4f03;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #ffc857,
+                stop:0.55 #f59e0b,
+                stop:1 #d97706);
             color: #ffffff;
         }}
         QPushButton[variant="warning"]:hover {{
-            background: #d97706;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #ffd36f,
+                stop:0.55 #f7a928,
+                stop:1 #e0840b);
         }}
         QLineEdit[compact="true"], QComboBox[compact="true"], QTextEdit[compact="true"], QPlainTextEdit[compact="true"], QSpinBox[compact="true"], QDoubleSpinBox[compact="true"] {{
             padding: 4px 6px;

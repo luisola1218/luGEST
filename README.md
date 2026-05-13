@@ -1,14 +1,13 @@
 # luGEST
 
 ERP industrial desktop para orcamentos, encomendas, producao, planeamento,
-operador, expedicao, faturacao, compras, stock e apoio mobile.
+operador, expedicao, faturacao, compras e stock.
 
 ## Stack
 
 - Python + PySide6 para a aplicacao desktop
 - MySQL para persistencia central
 - ReportLab/Pillow para PDF e imagem
-- Flutter + API Python no modulo mobile opcional
 
 ## Arranque rapido
 
@@ -16,7 +15,7 @@ operador, expedicao, faturacao, compras, stock e apoio mobile.
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements-qt.txt
-.\arrancar_lugest_qt.bat
+.\.venv\Scripts\python.exe -m lugest_qt.app
 ```
 
 Para criar o ambiente local:
@@ -43,8 +42,6 @@ lugest_qt/                      UI Qt, paginas e bridge da aplicacao
 lugest_core/                    logica de dominio reutilizavel
 lugest_infra/                   infraestrutura, storage e PDF
 lugest_desktop/legacy/          codigo historico ainda usado pelo Qt
-impulse_mobile_api/             API mobile opcional
-impulse_mobile_app/             app Flutter opcional
 mysql/                          schema, patches e tooling MySQL
 scripts/                        verificacoes, seeds, release e manutencao
 docs/                           manuais, instalacao, planos e arquitetura

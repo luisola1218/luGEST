@@ -1,4 +1,0 @@
-storeFile=../certs/lugest-release.jks
-storePassword=trocar-password
-keyAlias=lugest
-keyPassword=trocar-password

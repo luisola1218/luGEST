@@ -1883,11 +1883,25 @@ class OperatorPage(QWidget):
                 error=True,
             )
             return
+        if piece_id:
+            self.checked_piece_ids.clear()
+            self.checked_piece_ids.add(piece_id)
         if not self._select_operator_target(enc_num, piece_id):
             self.refresh()
             if not self._select_operator_target(enc_num, piece_id):
                 self._set_feedback(f"OPP {code} encontrada, mas nao esta visivel neste posto/filtro.", error=True)
                 return
+        if piece_id:
+            for row_index in range(self.pieces_table.rowCount()):
+                item = self.pieces_table.item(row_index, 0)
+                if item is None:
+                    continue
+                if str(item.data(Qt.UserRole) or "").strip() == piece_id:
+                    item.setCheckState(Qt.Checked)
+                    self.pieces_table.selectRow(row_index)
+                    self.pieces_table.scrollToItem(item)
+                    break
+            self._sync_piece_multi_state()
         if operation:
             self.operation_combo.setCurrentText(operation)
         self._set_feedback(f"OPP {code} aberta" + (f" | {operation}" if operation else ""))
@@ -3943,14 +3957,14 @@ class PlanningPage(QWidget):
                 "QPushButton {"
                 f"background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {accent}, stop:1 #0f172a);"
                 "color:#ffffff; border:1px solid rgba(15,23,42,0.28); border-bottom:4px solid #0f172a;"
-                "border-radius:18px; padding:14px 18px; font-size:16px; font-weight:900;}"
-                "QPushButton:hover {filter:brightness(1.05);}"
+                "border-radius:22px; padding:18px 24px; font-size:18px; font-weight:900;}"
+                f"QPushButton:hover {{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {accent}, stop:1 #111827);}}"
             )
         return (
             "QPushButton {"
             "background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #ffffff, stop:0.55 #f8fbff, stop:1 #e6eef9);"
             f"border:1px solid {accent}; border-bottom:4px solid {accent};"
-            "color:#0f172a; border-radius:18px; padding:14px 18px; font-size:16px; font-weight:800;}"
+            "color:#0f172a; border-radius:22px; padding:18px 24px; font-size:18px; font-weight:850;}"
             f"QPushButton:hover {{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #ffffff, stop:1 {accent}22);}}"
         )
 
@@ -3965,14 +3979,17 @@ class PlanningPage(QWidget):
 
     def _operation_grid_position(self, operation: str, fallback_index: int) -> tuple[int, int]:
         layout_order = [
-            ["Corte Laser", "Quinagem", "Serralharia", "Roscagem", "Maquinacao"],
-            ["Furo Manual", "Montagem", "Embalamento", "Expedicao"],
+            ["Corte Laser", "Furo Manual"],
+            ["Quinagem", "Montagem"],
+            ["Roscagem", "Embalamento"],
+            ["Maquinacao", "Expedicao"],
+            ["Serralharia", "Lacagem"],
         ]
-        for column, names in enumerate(layout_order):
-            for row, name in enumerate(names):
+        for row, names in enumerate(layout_order):
+            for column, name in enumerate(names):
                 if str(operation or "").strip() == name:
                     return row, column
-        return fallback_index, 2
+        return 5 + (fallback_index // 2), fallback_index % 2
 
     def _rebuild_operation_buttons(self) -> None:
         operation_options = self._planning_operation_options()
@@ -3985,8 +4002,9 @@ class PlanningPage(QWidget):
         for op_name in operation_options:
             button = QPushButton(self._operation_display_name(str(op_name)))
             button.setCheckable(True)
-            button.setMinimumHeight(50)
-            button.setMinimumWidth(228)
+            button.setMinimumHeight(72)
+            button.setMinimumWidth(340)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             button.setProperty("variant", "secondary")
             button.setStyleSheet(self._operation_button_stylesheet(str(op_name)))
             button.clicked.connect(lambda checked=False, value=op_name: self._set_operation(value))
@@ -3997,6 +4015,8 @@ class PlanningPage(QWidget):
                 row, column = overflow_index, 2
             used_positions.add((row, column))
             self.operation_grid.addWidget(button, row, column)
+        for column in range(2):
+            self.operation_grid.setColumnStretch(column, 1)
         self._operation_button_options = list(operation_options)
 
     def __init__(self, runtime_service, backend=None, parent=None) -> None:
@@ -4136,19 +4156,21 @@ class PlanningPage(QWidget):
         navigation_card = CardFrame()
         self.navigation_card = navigation_card
         navigation_card.set_tone("default")
-        navigation_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        navigation_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         navigation_layout = QVBoxLayout(navigation_card)
-        navigation_layout.setContentsMargins(14, 5, 14, 5)
-        navigation_layout.setSpacing(2)
+        navigation_layout.setContentsMargins(30, 24, 30, 26)
+        navigation_layout.setSpacing(18)
         selector_header = QHBoxLayout()
         selector_header.setSpacing(8)
         selector_title = QLabel("Seleciona a operação")
         self.selector_title_label = selector_title
-        selector_title.setStyleSheet("font-size: 15px; font-weight: 900; color: #0f172a;")
+        selector_title.setStyleSheet("font-size: 24px; font-weight: 900; color: #0f172a;")
         selector_subtitle = QLabel("Primeiro escolhes a área de trabalho. Depois, dentro da operação, selecionas a máquina/recurso para ver o quadro.")
         self.selector_subtitle_label = selector_subtitle
         selector_subtitle.setProperty("role", "muted")
         selector_subtitle.setWordWrap(True)
+        selector_subtitle.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+        selector_subtitle.setStyleSheet("font-size: 13px; color: #475569;")
         selector_title_host = QWidget()
         selector_title_layout = QVBoxLayout(selector_title_host)
         selector_title_layout.setContentsMargins(0, 0, 0, 0)
@@ -4177,22 +4199,25 @@ class PlanningPage(QWidget):
         self._operation_button_options: list[str] = []
         operation_grid_host = QWidget()
         self.operation_grid_host = operation_grid_host
-        operation_grid_host.setMaximumWidth(500)
+        operation_grid_host.setMinimumWidth(780)
+        operation_grid_host.setMaximumWidth(1040)
+        operation_grid_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         operation_grid = QGridLayout(operation_grid_host)
         self.operation_grid = operation_grid
         operation_grid.setContentsMargins(0, 0, 0, 0)
-        operation_grid.setHorizontalSpacing(12)
-        operation_grid.setVerticalSpacing(10)
+        operation_grid.setHorizontalSpacing(20)
+        operation_grid.setVerticalSpacing(14)
         self._rebuild_operation_buttons()
         operation_wrap = QWidget()
         self.operation_wrap = operation_wrap
+        operation_wrap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         operation_wrap_layout = QHBoxLayout(operation_wrap)
-        operation_wrap_layout.setContentsMargins(0, 8, 0, 4)
+        operation_wrap_layout.setContentsMargins(0, 8, 0, 8)
         operation_wrap_layout.setSpacing(0)
         operation_wrap_layout.addStretch(1)
-        operation_wrap_layout.addWidget(operation_grid_host, 0, Qt.AlignHCenter | Qt.AlignTop)
+        operation_wrap_layout.addWidget(operation_grid_host, 4, Qt.AlignHCenter | Qt.AlignVCenter)
         operation_wrap_layout.addStretch(1)
-        navigation_layout.addWidget(operation_wrap)
+        navigation_layout.addWidget(operation_wrap, 1)
 
         resource_host = QWidget()
         self.resource_host = resource_host
@@ -4510,6 +4535,7 @@ class PlanningPage(QWidget):
         self.change_operation_inline_btn.setVisible(self.operation_selected)
         self.operation_summary_label.setVisible(self.operation_selected)
         if self.operation_selected:
+            self.navigation_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
             self.navigation_card.setMinimumHeight(58)
             self.navigation_card.setMaximumHeight(62)
             nav_layout = self.navigation_card.layout()
@@ -4521,6 +4547,7 @@ class PlanningPage(QWidget):
             self.selector_title_label.setStyleSheet("font-size: 12px; font-weight: 900; color: #0f172a;")
             self.selector_subtitle_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             self.selector_title_layout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.selector_title_host.setVisible(True)
             self.selector_subtitle_label.setVisible(False)
             self.resource_panel_hint.setVisible(False)
             self.operation_summary_label.setVisible(False)
@@ -4529,20 +4556,23 @@ class PlanningPage(QWidget):
             self.resource_panel_title.setStyleSheet("font-size: 12px; font-weight: 800; color: #0f172a;")
         else:
             self._rebuild_operation_buttons()
-            self.navigation_card.setMinimumHeight(270)
-            self.navigation_card.setMaximumHeight(340)
+            self.navigation_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+            self.navigation_card.setMinimumHeight(520)
+            self.navigation_card.setMaximumHeight(16777215)
             nav_layout = self.navigation_card.layout()
             if nav_layout is not None:
-                nav_layout.setContentsMargins(14, 6, 14, 6)
-                nav_layout.setSpacing(4)
+                nav_layout.setContentsMargins(30, 18, 30, 22)
+                nav_layout.setSpacing(8)
             self.selector_title_label.setText("Seleciona a operação")
             self.selector_subtitle_label.setText("Primeiro escolhes a área de trabalho. Depois, dentro da operação, selecionas a máquina/recurso para ver o quadro.")
             self.selector_title_label.setStyleSheet("font-size: 24px; font-weight: 900; color: #0f172a;")
+            self.selector_subtitle_label.setStyleSheet("font-size: 13px; color: #475569;")
             self.selector_subtitle_label.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
             self.selector_title_layout.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
-            self.selector_subtitle_label.setVisible(True)
+            self.selector_title_host.setVisible(False)
+            self.selector_subtitle_label.setVisible(False)
             self.resource_panel_hint.setVisible(True)
-            self.operation_summary_label.setVisible(True)
+            self.operation_summary_label.setVisible(False)
             self.change_operation_btn.setVisible(False)
             self.change_operation_inline_btn.setVisible(False)
             self.resource_panel_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
@@ -4553,6 +4583,7 @@ class PlanningPage(QWidget):
         if not selected:
             self.active_card.hide()
             self.history_card.hide()
+            self.operation_wrap.setFocus()
         self._apply_operation_labels()
 
     def _set_resource(self, resource: str) -> None:
@@ -9790,17 +9821,102 @@ class OrdersPage(QWidget):
         self.refresh()
         self._select_order(numero)
 
+    def _fabrication_group_options(self) -> list[dict[str, Any]]:
+        groups: dict[tuple[str, str], dict[str, Any]] = {}
+        for piece in list(self.current_detail.get("pieces", []) or []):
+            material = str(piece.get("material", "") or "").strip()
+            espessura = str(piece.get("espessura", "") or "").strip()
+            if not material or not espessura:
+                continue
+            key = (material, espessura)
+            row = groups.setdefault(key, {"material": material, "espessura": espessura, "pecas": 0, "qtd": 0.0})
+            row["pecas"] = int(row.get("pecas", 0) or 0) + 1
+            try:
+                row["qtd"] = float(row.get("qtd", 0) or 0) + float(piece.get("qtd_plan", 0) or 0)
+            except Exception:
+                pass
+        def thickness_sort(value: Any) -> float:
+            try:
+                return float(str(value or "0").replace(",", "."))
+            except Exception:
+                return 0.0
+
+        return sorted(groups.values(), key=lambda row: (str(row.get("material", "")).lower(), thickness_sort(row.get("espessura", "0"))))
+
+    def _pick_fabrication_groups(self) -> list[dict[str, Any]] | None:
+        options = self._fabrication_group_options()
+        if not options:
+            QMessageBox.warning(self, "Ordem de Fabrico", "Esta encomenda não tem espessuras para imprimir.")
+            return None
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Imprimir OF por espessura")
+        dialog.setMinimumWidth(520)
+        layout = QVBoxLayout(dialog)
+        title = QLabel("Seleciona as espessuras/material a incluir na Ordem de Fabrico.")
+        title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
+        hint = QLabel("Mantém todas selecionadas para imprimir a OF completa, ou deixa apenas as espessuras que vão para esta máquina.")
+        hint.setWordWrap(True)
+        hint.setProperty("role", "muted")
+        layout.addWidget(title)
+        layout.addWidget(hint)
+        checks: list[tuple[QCheckBox, dict[str, Any]]] = []
+        for row in options:
+            label = (
+                f"{row.get('material', '-')} | {row.get('espessura', '-')} mm"
+                f"   ·   {int(row.get('pecas', 0) or 0)} referência(s)"
+                f"   ·   qtd {float(row.get('qtd', 0) or 0):.0f}"
+            )
+            check = QCheckBox(label)
+            check.setChecked(True)
+            check.setStyleSheet("font-size: 12px; font-weight: 700; padding: 4px;")
+            checks.append((check, row))
+            layout.addWidget(check)
+        actions = QHBoxLayout()
+        all_btn = QPushButton("Selecionar todas")
+        none_btn = QPushButton("Limpar")
+        all_btn.setProperty("variant", "secondary")
+        none_btn.setProperty("variant", "secondary")
+        all_btn.clicked.connect(lambda: [check.setChecked(True) for check, _row in checks])
+        none_btn.clicked.connect(lambda: [check.setChecked(False) for check, _row in checks])
+        actions.addWidget(all_btn)
+        actions.addWidget(none_btn)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Imprimir selecionadas")
+        buttons.button(QDialogButtonBox.Cancel).setText("Cancelar")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        selected = [dict(row) for check, row in checks if check.isChecked()]
+        if not selected:
+            QMessageBox.warning(self, "Ordem de Fabrico", "Seleciona pelo menos uma espessura.")
+            return None
+        if len(selected) == len(options):
+            return []
+        return selected
+
     def _print_fabrication_order(self) -> None:
         numero = str(self.current_detail.get("numero", "") or "").strip()
         if not numero:
             QMessageBox.warning(self, "Ordem de Fabrico", "Seleciona uma encomenda.")
             return
+        selected_groups = self._pick_fabrication_groups()
+        if selected_groups is None:
+            return
         try:
-            path = self.backend.order_open_fabrication_pdf(numero)
+            print_fn = getattr(self.backend, "order_print_fabrication_pdf", None)
+            if callable(print_fn):
+                path = print_fn(numero, selected_groups=selected_groups or None)
+            else:
+                path = self.backend.order_open_fabrication_pdf(numero, selected_groups=selected_groups or None)
         except Exception as exc:
             QMessageBox.critical(self, "Ordem de Fabrico", str(exc))
             return
-        QMessageBox.information(self, "Ordem de Fabrico", f"PDF criado:\n{path}")
+        scope = "completa" if not selected_groups else f"{len(selected_groups)} espessura(s)"
+        QMessageBox.information(self, "Ordem de Fabrico", f"OF {scope} enviada para impressão:\n{path}")
 
     def _add_material(self) -> None:
         numero = str(self.current_detail.get("numero", "") or "").strip()
@@ -11530,14 +11646,20 @@ class LegacyPlanningPage(PlanningPage):
         if nav_widget is not None:
             nav_layout = nav_widget.layout()
             if bool(getattr(self, "operation_selected", False)):
+                nav_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
                 nav_widget.setMinimumHeight(58)
                 nav_widget.setMaximumHeight(62)
             else:
-                nav_widget.setMinimumHeight(270)
-                nav_widget.setMaximumHeight(340)
+                nav_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+                nav_widget.setMinimumHeight(520)
+                nav_widget.setMaximumHeight(16777215)
             if nav_layout is not None:
-                nav_layout.setContentsMargins(12, 6, 12, 6)
-                nav_layout.setSpacing(4)
+                if bool(getattr(self, "operation_selected", False)):
+                    nav_layout.setContentsMargins(12, 6, 12, 6)
+                    nav_layout.setSpacing(4)
+                else:
+                    nav_layout.setContentsMargins(30, 18, 30, 22)
+                    nav_layout.setSpacing(8)
 
         cards_widget = cards_item.widget() if cards_item and cards_item.widget() is not None else None
         if cards_widget is not None:
@@ -13317,6 +13439,15 @@ class QuotesPage(QWidget):
                 f"Preco unitario comercial: {_fmt_eur(float(row.get('preco_unit', 0) or 0))}",
                 f"Preco unitario com desconto: {_fmt_eur(float(row.get('preco_unit_desconto', row.get('preco_unit', 0)) or 0))}",
             ]
+            pdf_docs = [
+                str(item or "").strip()
+                for item in [row.get("desenho_pdf", ""), *list(row.get("desenhos_pdf", []) or [])]
+                if str(item or "").strip()
+            ]
+            if pdf_docs:
+                tooltip_lines.append(f"Documentacao PDF: {len(dict.fromkeys(pdf_docs))} ficheiro(s) associado(s).")
+            else:
+                tooltip_lines.append("Documentacao PDF: sem PDF associado.")
             if bool(row.get("material_supplied_by_client", False) or row.get("material_fornecido_cliente", False)):
                 tooltip_lines.append("Materia-prima: fornecida pelo cliente. A linha considera apenas transformacao/processo.")
             quote_snapshot = dict(row.get("quote_cost_snapshot", {}) or {})
@@ -17060,9 +17191,21 @@ class QuotesPage(QWidget):
         initial = dict(initial or {})
         dialog = QDialog(self)
         dialog.setWindowTitle("Item do conjunto" if template_mode else "Linha de orcamento")
-        dialog.setMinimumWidth(820)
+        dialog.setWindowFlag(Qt.WindowMinimizeButtonHint, True)
+        dialog.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
+        dialog.setMinimumSize(860, 560)
+        try:
+            screen_geo = QApplication.primaryScreen().availableGeometry()
+            dialog.resize(min(980, max(860, screen_geo.width() - 120)), min(760, max(560, screen_geo.height() - 110)))
+        except Exception:
+            dialog.resize(960, 720)
         layout = QVBoxLayout(dialog)
-        form = QFormLayout()
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        form_host = QWidget()
+        form = QFormLayout(form_host)
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setVerticalSpacing(7)
         client_code = self._client_code_from_text(self.client_combo.currentText())
         references = self.backend.order_reference_rows("", client_code)
         refs_by_ext = {str(row.get("ref_externa", "") or "").strip(): row for row in references if str(row.get("ref_externa", "") or "").strip()}
@@ -17227,6 +17370,15 @@ class QuotesPage(QWidget):
         price_spin.setDecimals(4)
         price_spin.setValue(float(initial.get("preco_unit", 0) or 0))
         drawing_edit = QLineEdit(str(initial.get("desenho", "") or "").strip())
+        pdf_docs: list[str] = []
+        for raw_doc in [initial.get("desenho_pdf", ""), *list(initial.get("desenhos_pdf", []) or [])]:
+            doc_txt = str(raw_doc or "").strip()
+            if doc_txt and doc_txt.lower().endswith(".pdf") and doc_txt not in pdf_docs:
+                pdf_docs.append(doc_txt)
+        for raw_doc in list(initial.get("ficheiros", []) or []):
+            doc_txt = str(raw_doc or "").strip()
+            if doc_txt and doc_txt.lower().endswith(".pdf") and doc_txt not in pdf_docs:
+                pdf_docs.append(doc_txt)
         initial_ref_int = str(initial.get("ref_interna", "") or "").strip()
         operation_meta = {
             "operacoes_lista": list(initial.get("operacoes_lista", []) or []),
@@ -17574,6 +17726,145 @@ class QuotesPage(QWidget):
             if path:
                 drawing_edit.setText(path)
 
+        docs_label = QLabel("")
+        docs_label.setProperty("role", "muted")
+        docs_table = QTableWidget(0, 3)
+        docs_table.setHorizontalHeaderLabels(["PDF", "Estado", "Caminho"])
+        docs_table.verticalHeader().setVisible(False)
+        docs_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        docs_table.setSelectionBehavior(QTableWidget.SelectRows)
+        docs_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        docs_table.setMinimumHeight(118)
+        docs_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        docs_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        docs_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+
+        def _resolve_pdf_doc_path(raw: str) -> Path:
+            resolver = getattr(self.backend, "_resolve_file_reference", None)
+            if callable(resolver):
+                try:
+                    resolved = resolver(raw)
+                    if resolved is not None:
+                        return Path(resolved)
+                except Exception:
+                    pass
+            return Path(raw)
+
+        def _selected_doc_index() -> int:
+            current = docs_table.currentItem()
+            if current is None or current.row() >= len(pdf_docs):
+                return -1
+            return current.row()
+
+        def _render_pdf_docs() -> None:
+            docs_table.setRowCount(len(pdf_docs))
+            for row_index, pdf_path in enumerate(pdf_docs):
+                path_obj = _resolve_pdf_doc_path(pdf_path)
+                values = [path_obj.name or pdf_path, "OK" if path_obj.exists() else "Em falta", pdf_path]
+                for col_index, value in enumerate(values):
+                    item = QTableWidgetItem(str(value))
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    if col_index == 1:
+                        item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
+                        item.setForeground(QBrush(QColor("#166534" if path_obj.exists() else "#b42318")))
+                    docs_table.setItem(row_index, col_index, item)
+            docs_label.setText(
+                f"{len(pdf_docs)} PDF(s) associado(s)." if pdf_docs else "Sem PDFs técnicos associados a esta peça."
+            )
+
+        def _add_pdf_docs() -> None:
+            paths, _ = QFileDialog.getOpenFileNames(
+                dialog,
+                "Adicionar PDFs técnicos",
+                "",
+                "PDF (*.pdf);;Todos (*.*)",
+            )
+            for path in paths:
+                clean = str(path or "").strip()
+                if clean and clean.lower().endswith(".pdf") and clean not in pdf_docs:
+                    pdf_docs.append(clean)
+            _render_pdf_docs()
+
+        def _open_pdf_doc() -> None:
+            index = _selected_doc_index()
+            if index < 0:
+                QMessageBox.information(dialog, "PDFs associados", "Seleciona um PDF.")
+                return
+            path = _resolve_pdf_doc_path(pdf_docs[index])
+            if not path.exists():
+                QMessageBox.critical(dialog, "PDFs associados", f"PDF não encontrado:\n{path}")
+                return
+            os.startfile(str(path))
+
+        def _download_pdf_doc() -> None:
+            index = _selected_doc_index()
+            if index < 0:
+                QMessageBox.information(dialog, "PDFs associados", "Seleciona um PDF.")
+                return
+            source = _resolve_pdf_doc_path(pdf_docs[index])
+            if not source.exists():
+                QMessageBox.critical(dialog, "PDFs associados", f"PDF não encontrado:\n{source}")
+                return
+            target, _ = QFileDialog.getSaveFileName(dialog, "Guardar cópia do PDF", source.name, "PDF (*.pdf)")
+            if not target:
+                return
+            try:
+                import shutil
+
+                shutil.copy2(source, target)
+            except Exception as exc:
+                QMessageBox.critical(dialog, "PDFs associados", str(exc))
+
+        def _replace_pdf_doc() -> None:
+            index = _selected_doc_index()
+            if index < 0:
+                QMessageBox.information(dialog, "PDFs associados", "Seleciona um PDF.")
+                return
+            path, _ = QFileDialog.getOpenFileName(dialog, "Substituir PDF", "", "PDF (*.pdf);;Todos (*.*)")
+            clean = str(path or "").strip()
+            if clean:
+                pdf_docs[index] = clean
+                _render_pdf_docs()
+                docs_table.selectRow(index)
+
+        def _remove_pdf_doc() -> None:
+            index = _selected_doc_index()
+            if index < 0:
+                QMessageBox.information(dialog, "PDFs associados", "Seleciona um PDF.")
+                return
+            del pdf_docs[index]
+            _render_pdf_docs()
+
+        docs_buttons = QHBoxLayout()
+        docs_buttons.setSpacing(8)
+        btn_doc_open = QPushButton("Visualizar")
+        btn_doc_open.setProperty("variant", "secondary")
+        btn_doc_download = QPushButton("Download")
+        btn_doc_download.setProperty("variant", "secondary")
+        btn_doc_add = QPushButton("Adicionar PDF")
+        btn_doc_replace = QPushButton("Substituir")
+        btn_doc_replace.setProperty("variant", "secondary")
+        btn_doc_remove = QPushButton("Apagar")
+        btn_doc_remove.setProperty("variant", "danger")
+        for button in (btn_doc_open, btn_doc_download, btn_doc_add, btn_doc_replace, btn_doc_remove):
+            docs_buttons.addWidget(button)
+        docs_buttons.addStretch(1)
+        docs_buttons_host = QWidget()
+        docs_buttons_host.setLayout(docs_buttons)
+        docs_host = QWidget()
+        docs_layout = QVBoxLayout(docs_host)
+        docs_layout.setContentsMargins(0, 0, 0, 0)
+        docs_layout.setSpacing(6)
+        docs_layout.addWidget(docs_label)
+        docs_layout.addWidget(docs_table)
+        docs_layout.addWidget(docs_buttons_host)
+        btn_doc_open.clicked.connect(_open_pdf_doc)
+        btn_doc_download.clicked.connect(_download_pdf_doc)
+        btn_doc_add.clicked.connect(_add_pdf_docs)
+        btn_doc_replace.clicked.connect(_replace_pdf_doc)
+        btn_doc_remove.clicked.connect(_remove_pdf_doc)
+        _render_pdf_docs()
+
         def selected_operation_names() -> list[str]:
             selected_ops: list[str] = []
             for token in _operation_tokens(operation_edit.text().strip()):
@@ -17877,7 +18168,12 @@ class QuotesPage(QWidget):
         form.addRow("Preco unit.", price_spin)
         form.addRow("Desenho", drawing_edit)
         form.addRow("", ref_buttons_host)
-        layout.addLayout(form)
+        form.addRow("PDFs associados", docs_host)
+        form_scroll = QScrollArea()
+        form_scroll.setWidgetResizable(True)
+        form_scroll.setFrameShape(QFrame.NoFrame)
+        form_scroll.setWidget(form_host)
+        layout.addWidget(form_scroll, 1)
 
         def sync_mode() -> None:
             token = current_type_token()
@@ -17917,6 +18213,7 @@ class QuotesPage(QWidget):
             operation_buttons_host.setVisible(show_operations)
             set_form_row_visible(tempo_spin, show_operations, "Tempo peca (min)")
             set_form_row_visible(drawing_edit, show_operations, "Desenho")
+            set_form_row_visible(docs_host, show_operations, "PDFs associados")
             ref_buttons_host.setVisible(show_operations)
             set_form_row_visible(mp_metric_spin, show_stock_commercial, stock_price_state.get("metric_label", "Kg por unid."))
             set_form_row_visible(mp_price_kg_spin, show_stock_commercial, f"Preco compra ({stock_price_state.get('base_label', 'EUR/kg')})")
@@ -18103,6 +18400,13 @@ class QuotesPage(QWidget):
             "qtd_base": float(qtd_spin.value() if template_mode else initial.get("qtd_base", qtd_spin.value())),
             "preco_unit": final_price_unit,
             "desenho": drawing_edit.text().strip() if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE and not is_raw_stock_line else "",
+            "desenho_pdf": pdf_docs[0] if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE and not is_raw_stock_line and pdf_docs else "",
+            "desenhos_pdf": list(pdf_docs) if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE and not is_raw_stock_line else [],
+            "ficheiros": [
+                item
+                for item in [drawing_edit.text().strip(), *pdf_docs]
+                if item
+            ] if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE and not is_raw_stock_line else [],
             "stock_material_id": str(stock_line_meta.get("stock_material_id", "") or "").strip() if (token == "stock_mp" and stock_material_detail()[0]) or str(initial.get("stock_material_id", "") or "").strip() else "",
             "price_per_kg": float(stock_update_payload.get("price_kg", stock_price_kg_value) or 0.0) if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE else 0.0,
             "price_base_value": float(stock_price_base_value or 0.0) if token == "stock_mp" else float(initial.get("price_base_value", 0) or 0.0),
