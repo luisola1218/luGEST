@@ -735,9 +735,9 @@ def _mysql_ops_finish(enc_num, peca_id, operacoes, operador, ok, nok, qual, vali
                         SET estado=%s,
                             operador_atual=%s,
                             fim_ts=NOW(),
-                            ok_qty=%s,
-                            nok_qty=%s,
-                            qual_qty=%s,
+                            ok_qty=COALESCE(ok_qty, 0) + %s,
+                            nok_qty=COALESCE(nok_qty, 0) + %s,
+                            qual_qty=COALESCE(qual_qty, 0) + %s,
                             updated_at=NOW()
                         WHERE encomenda_numero=%s
                           AND peca_id=%s
@@ -767,9 +767,9 @@ def _mysql_ops_finish(enc_num, peca_id, operacoes, operador, ok, nok, qual, vali
                                 SET estado=%s,
                                     operador_atual=%s,
                                     fim_ts=NOW(),
-                                    ok_qty=%s,
-                                    nok_qty=%s,
-                                    qual_qty=%s,
+                                    ok_qty=COALESCE(ok_qty, 0) + %s,
+                                    nok_qty=COALESCE(nok_qty, 0) + %s,
+                                    qual_qty=COALESCE(qual_qty, 0) + %s,
                                     updated_at=NOW()
                                 WHERE encomenda_numero=%s AND peca_id=%s AND operacao=%s
                                 """,
@@ -885,7 +885,7 @@ def _mysql_ops_status_for_piece(enc_num, peca_id):
             _mysql_ops_schema_ensure(cur)
             cur.execute(
                 """
-                SELECT operacao, estado, operador_atual
+                SELECT operacao, estado, operador_atual, ok_qty, nok_qty, qual_qty
                 FROM peca_operacoes_execucao
                 WHERE encomenda_numero=%s
                   AND peca_id=%s
@@ -901,6 +901,9 @@ def _mysql_ops_status_for_piece(enc_num, peca_id):
                             "operacao": normalize_operacao_nome(r.get("operacao", "")),
                             "estado": str(r.get("estado", "") or ""),
                             "operador": str(r.get("operador_atual", "") or ""),
+                            "ok_qty": r.get("ok_qty", 0),
+                            "nok_qty": r.get("nok_qty", 0),
+                            "qual_qty": r.get("qual_qty", 0),
                         }
                     )
     except Exception:
@@ -945,7 +948,7 @@ def _mysql_ops_status_for_order(enc_num, cache_owner=None, force=False, ttl_sec=
             _mysql_ops_schema_ensure(cur)
             cur.execute(
                 """
-                SELECT peca_id, operacao, estado, operador_atual
+                SELECT peca_id, operacao, estado, operador_atual, ok_qty, nok_qty, qual_qty
                 FROM peca_operacoes_execucao
                 WHERE encomenda_numero=%s
                 ORDER BY peca_id, operacao
@@ -964,6 +967,9 @@ def _mysql_ops_status_for_order(enc_num, cache_owner=None, force=False, ttl_sec=
                         "operacao": normalize_operacao_nome(r.get("operacao", "")),
                         "estado": str(r.get("estado", "") or ""),
                         "operador": str(r.get("operador_atual", "") or ""),
+                        "ok_qty": r.get("ok_qty", 0),
+                        "nok_qty": r.get("nok_qty", 0),
+                        "qual_qty": r.get("qual_qty", 0),
                     }
                 )
     except Exception:
@@ -6199,4 +6205,3 @@ def show_rejeitadas_hist(self):
             item.get("ref_externa",""),
             item.get("nok",0),
         ))
-

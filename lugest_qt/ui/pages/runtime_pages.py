@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import tempfile
+import unicodedata
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
@@ -640,7 +641,8 @@ def _piece_ops_progress(piece: dict, current_operation: str = "") -> dict[str, f
 
 
 def _normalize_operation_text(raw: str) -> str:
-    txt = str(raw or "").strip().lower()
+    txt = unicodedata.normalize("NFKD", str(raw or "").strip().lower())
+    txt = "".join(ch for ch in txt if not unicodedata.combining(ch))
     if "laser" in txt:
         return "Corte Laser"
     if "quin" in txt:
@@ -659,7 +661,8 @@ def _normalize_operation_text(raw: str) -> str:
 
 
 def _operations_for_posto(posto: str, operations: list[str]) -> list[str]:
-    posto_norm = str(posto or "").strip().lower()
+    posto_norm = unicodedata.normalize("NFKD", str(posto or "").strip().lower())
+    posto_norm = "".join(ch for ch in posto_norm if not unicodedata.combining(ch))
     normalized = [_normalize_operation_text(op) for op in list(operations or []) if str(op or "").strip()]
     if not posto_norm or posto_norm == "geral":
         seen: set[str] = set()
@@ -673,10 +676,17 @@ def _operations_for_posto(posto: str, operations: list[str]) -> list[str]:
     keyword_map = {
         "laser": "laser",
         "quinagem": "quin",
+        "quinadora": "quin",
+        "quinadeira": "quin",
+        "quinadeiras": "quin",
+        "quinad": "quin",
         "roscagem": "rosc",
+        "roscadora": "rosc",
         "embalamento": "embal",
+        "embalar": "embal",
         "montagem": "mont",
         "soldadura": "sold",
+        "serralharia": "serral",
         "furo manual": "furo",
     }
     keyword = next((token for key, token in keyword_map.items() if key in posto_norm), "")
@@ -1522,7 +1532,7 @@ class OperatorPage(QWidget):
         )
         self.groups_table.itemSelectionChanged.connect(self._handle_group_selection)
         self.pieces_table = QTableWidget(0, 11)
-        self.pieces_table.setHorizontalHeaderLabels(["Sel.", "Ref. Int.", "Ref. Ext.", "Estado", "Operacao", "Operador", "Produzido", "Tempo", "Plan", "Progress", "Pendentes"])
+        self.pieces_table.setHorizontalHeaderLabels(["Sel.", "Ref. Int.", "Ref. Ext.", "Estado", "Operacao", "Operador", "Prod. final", "Tempo", "Plan", "Progress", "Pendentes"])
         self.pieces_table.verticalHeader().setVisible(False)
         self.pieces_table.verticalHeader().setDefaultSectionSize(28)
         self.pieces_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -1756,17 +1766,21 @@ class OperatorPage(QWidget):
 
     def _current_piece(self) -> dict:
         row_index = _selected_row_index(self.pieces_table)
-        if row_index < 0:
-            return {}
-        row_item = self.pieces_table.item(row_index, 0)
-        piece_id = str(row_item.data(Qt.UserRole) or "").strip()
-        if piece_id:
+        if row_index >= 0:
+            row_item = self.pieces_table.item(row_index, 0)
+            piece_id = str((row_item.data(Qt.UserRole) if row_item is not None else "") or "").strip()
+            if piece_id:
+                for piece in self.current_pieces:
+                    if str(piece.get("id", "") or "").strip() == piece_id:
+                        return piece
+            if row_index < len(self.current_pieces):
+                return self.current_pieces[row_index]
+        target_piece_id = str(getattr(self, "selected_piece_id", "") or "").strip()
+        if target_piece_id:
             for piece in self.current_pieces:
-                if str(piece.get("id", "") or "").strip() == piece_id:
+                if str(piece.get("id", "") or "").strip() == target_piece_id:
                     return piece
-        if row_index >= len(self.current_pieces):
-            return {}
-        return self.current_pieces[row_index]
+        return {}
 
     def _select_operator_target(self, enc_num: str, piece_id: str = "") -> bool:
         enc_txt = str(enc_num or "").strip()
@@ -1874,6 +1888,7 @@ class OperatorPage(QWidget):
             else:
                 self._set_feedback(f"Espessura {material} {espessura} nao esta visivel neste posto/filtro.", error=True)
             return
+        is_operation_scan = scan_type == "OPR"
         enc_num = str(result.get("encomenda_numero", "") or "").strip()
         piece_id = str(result.get("piece_id", "") or "").strip()
         operation = str(result.get("operacao", "") or "").strip()
@@ -1904,6 +1919,28 @@ class OperatorPage(QWidget):
             self._sync_piece_multi_state()
         if operation:
             self.operation_combo.setCurrentText(operation)
+        if is_operation_scan:
+            operator_name = self._current_operator()
+            if not operator_name:
+                self._set_feedback("Seleciona o operador antes de iniciar a operação.", error=True)
+                return
+            if not piece_id or not operation:
+                self._set_feedback("Código de operação incompleto.", error=True)
+                return
+            try:
+                self.backend.operator_start_piece(
+                    enc_num,
+                    piece_id,
+                    operator_name,
+                    operation=operation,
+                    posto=self._current_posto(),
+                )
+            except Exception as exc:
+                self._set_feedback(str(exc), error=True)
+                return
+            self.refresh()
+            self._set_feedback(f"Operação {operation} iniciada por código de barras.")
+            return
         self._set_feedback(f"OPP {code} aberta" + (f" | {operation}" if operation else ""))
 
     def _is_order_detail_active(self) -> bool:
@@ -1972,14 +2009,48 @@ class OperatorPage(QWidget):
         piece_id = str(piece.get("id", "") or "").strip()
         return [piece_id] if piece_id else []
 
+    def _order_number_for_piece_id(self, piece_id: str, fallback: str = "") -> str:
+        piece_txt = str(piece_id or "").strip()
+        if not piece_txt:
+            return str(fallback or "").strip()
+        sources: list[dict] = []
+        current_group = self._current_group()
+        if current_group:
+            sources.append(current_group)
+        sources.extend(list(getattr(self, "items", []) or []))
+        sources.extend(list(getattr(self, "all_items", []) or []))
+        seen_groups: set[tuple[str, str, str]] = set()
+        for item in sources:
+            if not isinstance(item, dict):
+                continue
+            key = self._group_key(item)
+            if key in seen_groups:
+                continue
+            seen_groups.add(key)
+            for piece in list(item.get("pieces", []) or []):
+                if str(piece.get("id", "") or "").strip() == piece_txt:
+                    enc_num = str(item.get("encomenda", "") or "").strip()
+                    if enc_num:
+                        return enc_num
+        return str(fallback or "").strip()
+
     def _selected_piece_refs(self, *, allow_multiple: bool = True) -> list[tuple[str, str]] | None:
         group = self._current_group()
         enc_num = str(group.get("encomenda", "") or "").strip()
         piece_ids = self._selected_piece_ids()
-        if not enc_num or not piece_ids:
+        if not piece_ids:
             QMessageBox.warning(self, "Operador", "Seleciona pelo menos uma peca.")
             return None
-        refs = [(enc_num, piece_id) for piece_id in piece_ids if piece_id]
+        refs: list[tuple[str, str]] = []
+        for piece_id in piece_ids:
+            if not piece_id:
+                continue
+            piece_enc_num = self._order_number_for_piece_id(piece_id, enc_num)
+            if piece_enc_num:
+                refs.append((piece_enc_num, piece_id))
+        if not refs:
+            QMessageBox.warning(self, "Operador", "Seleciona pelo menos uma peca.")
+            return None
         if not allow_multiple and len(refs) > 1:
             QMessageBox.warning(self, "Operador", "Esta acao exige apenas uma peca selecionada.")
             return None
@@ -1997,9 +2068,22 @@ class OperatorPage(QWidget):
             return
         if item.checkState() == Qt.Checked:
             self.checked_piece_ids.add(piece_id)
+            self.selected_piece_id = piece_id
+            self.pieces_table.selectRow(item.row())
+            self.pieces_table.scrollToItem(item)
         else:
             self.checked_piece_ids.discard(piece_id)
+            if str(getattr(self, "selected_piece_id", "") or "").strip() == piece_id:
+                self.selected_piece_id = ""
+                for row_index in range(self.pieces_table.rowCount()):
+                    row_item = self.pieces_table.item(row_index, 0)
+                    row_piece_id = str((row_item.data(Qt.UserRole) if row_item is not None else "") or "").strip()
+                    if row_piece_id and row_piece_id in self.checked_piece_ids:
+                        self.selected_piece_id = row_piece_id
+                        self.pieces_table.selectRow(row_index)
+                        break
         self._sync_piece_multi_state()
+        self._update_piece_context()
 
     def _toggle_all_piece_checks(self, checked: bool) -> None:
         if self._syncing_piece_checks:
@@ -2236,10 +2320,14 @@ class OperatorPage(QWidget):
         self.piece_title_label.setToolTip(full_piece_title)
         _apply_state_chip(self.piece_state_chip, state)
         current_op_txt = str(ctx.get("current_operation", "") or piece.get("operacao_atual", "") or "-").strip() or "-"
+        op_done_map = dict(ctx.get("operation_done", {}) or {})
+        op_limit_map = dict(ctx.get("operation_limits", {}) or {})
+        current_op_done = float(ctx.get("current_operation_done", 0) or 0)
+        current_op_limit = float(ctx.get("current_operation_limit", 0) or 0)
         self.piece_meta_label.setText(
             f"Enc. {enc_num} | Cliente {_format_client_label(group.get('cliente', '-'), show_name=self._show_client_name())}\n"
             f"Material {group.get('material', '-')} | Esp. {group.get('espessura', '-')} mm | Op. atual {current_op_txt}\n"
-            f"Oper. {piece.get('operador', '-') or '-'} | Qtd {float(ctx.get('produzido_ok', 0) or 0):.1f}/{float(ctx.get('quantidade_pedida', 0) or 0):.1f} | Tempo {float(ctx.get('current_operation_elapsed_min', 0) or 0):.1f} min | Fluxo {int(ops_progress.get('done', 0))}/{int(ops_progress.get('total', 0))}"
+            f"Oper. {piece.get('operador', '-') or '-'} | Qtd op. {current_op_done:.1f}/{current_op_limit:.1f} | Tempo {float(ctx.get('current_operation_elapsed_min', 0) or 0):.1f} min | Fluxo {int(ops_progress.get('done', 0))}/{int(ops_progress.get('total', 0))}"
         )
         self.issue_label.setText(issue_text)
         self.issue_label.setVisible(bool(issue_text))
@@ -2255,8 +2343,10 @@ class OperatorPage(QWidget):
         for op in list(piece.get("ops", []) or []):
             chip = QLabel()
             op_name = str(op.get("nome", "") or "-")
-            op_state = str(op.get("estado", "") or "-")
-            _apply_state_chip(chip, op_state, _elide_middle(op_name, 16))
+            op_done = float(op_done_map.get(op_name, 0) or 0)
+            op_limit = float(op_limit_map.get(op_name, 0) or 0)
+            op_state = "Concluida" if op_limit > 0 and op_done >= op_limit - 1e-9 else str(op.get("estado", "") or "-")
+            _apply_state_chip(chip, op_state, _elide_middle(f"{op_name} {op_done:.1f}/{op_limit:.1f}", 22))
             chip.setStyleSheet(
                 chip.styleSheet()
                 + " min-height: 21px; max-height: 21px; padding: 3px 8px; font-size: 8.4px; margin-top: 6px;"
@@ -2347,16 +2437,62 @@ class OperatorPage(QWidget):
     ) -> str | None:
         dialog = QDialog(self)
         dialog.setWindowTitle("Iniciar operacao")
-        dialog.setMinimumWidth(460)
+        dialog.setMinimumSize(560, 380)
+        dialog.setStyleSheet(
+            """
+            QDialog { background: #eaf2fb; }
+            QLabel#startTitle { color: #06133f; font-size: 19px; font-weight: 900; }
+            QLabel#startMeta { color: #475467; font-size: 11px; }
+            QListWidget {
+                background: #f8fbff;
+                border: 1px solid #9fb7d4;
+                border-radius: 12px;
+                padding: 8px;
+                outline: 0;
+            }
+            QListWidget::item {
+                min-height: 42px;
+                border: 1px solid #c8d7ea;
+                border-radius: 10px;
+                padding: 8px 12px;
+                margin: 4px;
+                color: #06133f;
+                font-weight: 800;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #e8f0fa);
+            }
+            QListWidget::item:selected {
+                color: #ffffff;
+                border: 1px solid #020348;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #182a70, stop:1 #020348);
+            }
+            QDialogButtonBox QPushButton {
+                min-width: 92px;
+                min-height: 34px;
+                border-radius: 10px;
+                border: 1px solid #020348;
+                color: white;
+                font-weight: 900;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #101a64, stop:1 #020348);
+            }
+            QDialogButtonBox QPushButton:hover { background: #142174; }
+            """
+        )
         layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(18, 16, 18, 14)
+        layout.setSpacing(10)
+        title_label = QLabel("Iniciar operação")
+        title_label.setObjectName("startTitle")
+        layout.addWidget(title_label)
         intro = QLabel(
             f"Selecionaste {len(refs_list)} peca(s). Escolhe a operacao que queres iniciar. "
             "So aparecem operacoes realmente pendentes nas pecas selecionadas."
         )
+        intro.setObjectName("startMeta")
         intro.setWordWrap(True)
         layout.addWidget(intro)
         posto = str(self._current_posto() or "").strip() or "Geral"
         posto_label = QLabel(f"Posto atual: {posto}")
+        posto_label.setObjectName("startMeta")
         posto_label.setProperty("role", "muted")
         layout.addWidget(posto_label)
         if skipped_without_ops:
@@ -2367,6 +2503,7 @@ class OperatorPage(QWidget):
             skipped_label.setProperty("role", "muted")
             layout.addWidget(skipped_label)
         list_widget = QListWidget()
+        list_widget.setAlternatingRowColors(False)
         for op_name in list(ordered_ops or []):
             compatible = len(list(targets.get(op_name, []) or []))
             item = QListWidgetItem(f"{op_name} ({compatible} peca{'s' if compatible != 1 else ''})")
@@ -2399,29 +2536,62 @@ class OperatorPage(QWidget):
     def _prompt_finish(self, ctx: dict, *, batch_idx: int = 0, batch_total: int = 0, preferred_operation: str = "") -> dict[str, float | str] | None:
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Finalizar operacao ({batch_idx}/{batch_total})" if batch_idx and batch_total else "Finalizar operacao")
-        dialog.setMinimumWidth(480)
+        dialog.setMinimumWidth(540)
+        dialog.setStyleSheet(
+            """
+            QDialog { background: #eaf2fb; }
+            QLabel#finishTitle { color: #06133f; font-size: 17px; font-weight: 900; }
+            QLabel#finishMeta { color: #475467; font-size: 11px; }
+            QComboBox, QDoubleSpinBox {
+                min-height: 32px;
+                border: 1px solid #9fb7d4;
+                border-radius: 8px;
+                padding: 4px 8px;
+                background: #ffffff;
+                color: #06133f;
+                font-weight: 700;
+            }
+            QDialogButtonBox QPushButton {
+                min-width: 92px;
+                min-height: 34px;
+                border-radius: 10px;
+                border: 1px solid #020348;
+                color: white;
+                font-weight: 900;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #101a64, stop:1 #020348);
+            }
+            QDialogButtonBox QPushButton:hover { background: #142174; }
+            """
+        )
         layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(18, 16, 18, 14)
+        layout.setSpacing(10)
         piece = dict(ctx.get("piece") or {})
         ref_int = str(piece.get("ref_interna", "") or "-").strip() or "-"
         ref_ext = str(piece.get("ref_externa", "") or "-").strip() or "-"
         title = QLabel(f"{ref_int} | {ref_ext}")
-        title.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
+        title.setObjectName("finishTitle")
         meta = QLabel(
             f"Qtd {float(ctx.get('produzido_ok', 0) or 0):.1f}/{float(ctx.get('quantidade_pedida', 0) or 0):.1f}"
             f" | Pendentes: {', '.join(list(ctx.get('pending_ops', []) or [])[:3]) or '-'}"
         )
+        meta.setObjectName("finishMeta")
         meta.setProperty("role", "muted")
         meta.setWordWrap(True)
         layout.addWidget(title)
         layout.addWidget(meta)
         form = QFormLayout()
         op_combo = QComboBox()
-        finish_ops = list(ctx.get("active_pending_ops", []) or []) or list(ctx.get("pending_ops", []) or [])
+        raw_finish_ops = list(ctx.get("active_pending_ops", []) or []) or list(ctx.get("pending_ops", []) or [])
+        posto_finish_ops = _operations_for_posto(self._current_posto(), raw_finish_ops)
+        finish_ops = posto_finish_ops or raw_finish_ops
         self._set_combo_items(
             op_combo,
             finish_ops,
             preferred=preferred_operation or self._current_operation(),
         )
+        op_limits = dict(ctx.get("operation_limits", {}) or {})
+        op_done = dict(ctx.get("operation_done", {}) or {})
         ok_spin = QDoubleSpinBox()
         nok_spin = QDoubleSpinBox()
         qual_spin = QDoubleSpinBox()
@@ -2429,7 +2599,16 @@ class OperatorPage(QWidget):
             spin.setRange(0.0, 1000000.0)
             spin.setDecimals(1)
             spin.setSingleStep(1.0)
-        ok_spin.setValue(float(ctx.get("default_ok", 0) or 0))
+
+        def _suggest_remaining() -> None:
+            op_name = op_combo.currentText().strip()
+            limit = float(op_limits.get(op_name, ctx.get("current_operation_limit", 0)) or 0)
+            done = float(op_done.get(op_name, ctx.get("current_operation_done", 0)) or 0)
+            remaining = max(0.0, round(limit - done, 1))
+            ok_spin.setValue(remaining)
+
+        _suggest_remaining()
+        op_combo.currentTextChanged.connect(lambda _text: _suggest_remaining())
         form.addRow("Operacao", op_combo)
         form.addRow("OK", ok_spin)
         form.addRow("NOK", nok_spin)
@@ -8615,7 +8794,7 @@ class OrdersPage(QWidget):
         self.import_model_btn = QPushButton("Modelo")
         self.import_model_btn.setProperty("variant", "secondary")
         self.import_model_btn.clicked.connect(self._import_model)
-        self.print_of_btn = QPushButton("Imprimir OF")
+        self.print_of_btn = QPushButton("PREVIEW OF")
         self.print_of_btn.setProperty("variant", "secondary")
         self.print_of_btn.clicked.connect(self._print_fabrication_order)
         self.edit_piece_btn = QPushButton("Editar")
@@ -9849,12 +10028,12 @@ class OrdersPage(QWidget):
             QMessageBox.warning(self, "Ordem de Fabrico", "Esta encomenda não tem espessuras para imprimir.")
             return None
         dialog = QDialog(self)
-        dialog.setWindowTitle("Imprimir OF por espessura")
+        dialog.setWindowTitle("Previsualizar OF por espessura")
         dialog.setMinimumWidth(520)
         layout = QVBoxLayout(dialog)
         title = QLabel("Seleciona as espessuras/material a incluir na Ordem de Fabrico.")
         title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
-        hint = QLabel("Mantém todas selecionadas para imprimir a OF completa, ou deixa apenas as espessuras que vão para esta máquina.")
+        hint = QLabel("Mantém todas selecionadas para gerar a OF completa, ou deixa apenas as espessuras que vão para esta máquina.")
         hint.setWordWrap(True)
         hint.setProperty("role", "muted")
         layout.addWidget(title)
@@ -9883,7 +10062,7 @@ class OrdersPage(QWidget):
         actions.addStretch(1)
         layout.addLayout(actions)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.button(QDialogButtonBox.Ok).setText("Imprimir selecionadas")
+        buttons.button(QDialogButtonBox.Ok).setText("Previsualizar selecionadas")
         buttons.button(QDialogButtonBox.Cancel).setText("Cancelar")
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
@@ -9916,7 +10095,11 @@ class OrdersPage(QWidget):
             QMessageBox.critical(self, "Ordem de Fabrico", str(exc))
             return
         scope = "completa" if not selected_groups else f"{len(selected_groups)} espessura(s)"
-        QMessageBox.information(self, "Ordem de Fabrico", f"OF {scope} enviada para impressão:\n{path}")
+        QMessageBox.information(
+            self,
+            "Ordem de Fabrico",
+            f"OF {scope} criada para previsualização:\n{path}\n\nPodes guardar ou imprimir a partir do visualizador de PDF.",
+        )
 
     def _add_material(self) -> None:
         numero = str(self.current_detail.get("numero", "") or "").strip()

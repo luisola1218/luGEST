@@ -3508,6 +3508,8 @@ class LegacyBackend(
         outer_y = margin
         outer_w = page_width - (margin * 2)
         outer_h = page_height - (margin * 2)
+        body_left = outer_x + 14
+        body_w = outer_w - 28
         header_h = 70
         banner_y = outer_y + outer_h - header_h
         card_w = 112
@@ -3518,12 +3520,12 @@ class LegacyBackend(
         logo_box_w = 88
         logo_box_h = 42
         logo_gap = 14
-        logo_x = outer_x + 16
+        banner_x = body_left
+        banner_w = body_w
+        logo_x = banner_x + 14
         logo_y = banner_y + 14
-        banner_x = logo_x + logo_box_w + logo_gap
-        banner_w = outer_w - (banner_x - outer_x)
-        group_x = banner_x + banner_w - card_group_w - 18
-        title_left = banner_x + 18
+        group_x = banner_x + banner_w - card_group_w - 14
+        title_left = logo_x + logo_box_w + logo_gap
         title_right = group_x - 14
         title_w = max(150.0, title_right - title_left)
         material_title = f"{str(record.get('material', '-') or '-').strip()} | {str(record.get('espessura', '-') or '-').strip()} mm"
@@ -3535,7 +3537,6 @@ class LegacyBackend(
         tipo_text = str(record.get("tipo", "") or "").strip() or ("Retalho" if is_retalho else "Chapa / Palete")
         local_text = self._localizacao(record) or "-"
         barcode_value = str(record.get("id", "") or "-").strip() or "-"
-        updated_text = str(record.get("atualizado_em", "") or "").replace("T", " ")[:16] or printed_at[:16]
 
         canvas_obj.setFillColor(palette["surface"])
         canvas_obj.setStrokeColor(palette["line_strong"])
@@ -3595,8 +3596,6 @@ class LegacyBackend(
             canvas_obj.setFont(bold_font, value_font)
             canvas_obj.drawString(box_x + 8, box_y + 5.4, self._operator_pdf_text(_pdf_clip_text(value, card_w - 16, bold_font, value_font)))
 
-        body_left = outer_x + 14
-        body_w = outer_w - 28
         body_top = banner_y - 16
         section_gap = 12
         hero_h = 74
@@ -3683,11 +3682,12 @@ class LegacyBackend(
         info_y = dim_y - 56
         info_gap = 10
         info_w = (body_w - (info_gap * 3)) / 4.0
+        estado_text = "Disponivel" if disponivel > 0 else "Reservado / sem stock"
         info_cards = [
             ("Lote", lot_text),
             ("Peso / un.", f"{self._fmt(record.get('peso_unid', 0))} kg"),
-            ("Compra / un.", f"{self._fmt(record.get('preco_unid', 0))} EUR"),
-            ("Atualizado", updated_text),
+            ("Localizacao", local_text),
+            ("Estado", estado_text),
         ]
         for index, (label, value) in enumerate(info_cards):
             box_x = body_left + (index * (info_w + info_gap))
@@ -5890,8 +5890,16 @@ class LegacyBackend(
                 return op
         return None
 
-    def _piece_operation_limit(self, piece: dict[str, Any], operation: str) -> float:
-        return self._parse_float(getattr(self.desktop_main, "operacao_input_qtd")(piece, operation), 0)
+    def _piece_operation_limit(self, piece: dict[str, Any], operation: str, enc_num: str = "") -> float:
+        target = self.desktop_main.normalize_operacao_nome(operation or "")
+        planned_qty = self._parse_float(piece.get("quantidade_pedida", 0), 0)
+        if not target:
+            return planned_qty
+        for op in list(self.desktop_main.ensure_peca_operacoes(piece) or []):
+            op_name = self.desktop_main.normalize_operacao_nome(op.get("nome", "")) or str(op.get("nome", "") or "").strip()
+            if op_name == target:
+                return round(planned_qty, 4)
+        return planned_qty
 
     def _piece_operation_total(self, op_row: dict[str, Any] | None, limit: float = 0.0) -> float:
         if not isinstance(op_row, dict):
@@ -5907,21 +5915,164 @@ class LegacyBackend(
             return round(limit, 4)
         return 0.0
 
+    def _piece_operation_history_quantities(self, piece: dict[str, Any], operation: str) -> dict[str, float]:
+        op_norm = self.desktop_main.normalize_operacao_nome(operation or "") or str(operation or "").strip()
+        if not op_norm:
+            return {"ok": 0.0, "nok": 0.0, "qual": 0.0, "total": 0.0}
+        ok_total = 0.0
+        nok_total = 0.0
+        qual_total = 0.0
+        for row in list((piece or {}).get("hist", []) or []):
+            if not isinstance(row, dict):
+                continue
+            action_norm = self.desktop_main.norm_text(row.get("acao", ""))
+            if "fim" not in action_norm and "registo" not in action_norm:
+                continue
+            row_ops = [
+                self.desktop_main.normalize_operacao_nome(op) or str(op or "").strip()
+                for op in list(row.get("operacoes", []) or [])
+                if str(op or "").strip()
+            ]
+            if row_ops and op_norm not in row_ops:
+                continue
+            if not row_ops:
+                single_op = self.desktop_main.normalize_operacao_nome(row.get("operacao", "")) or str(row.get("operacao", "") or "").strip()
+                if single_op != op_norm:
+                    continue
+            ok_total += self._parse_float(row.get("ok", row.get("qtd_ok", 0)), 0)
+            nok_total += self._parse_float(row.get("nok", row.get("qtd_nok", 0)), 0)
+            qual_total += self._parse_float(row.get("qual", row.get("qtd_qual", 0)), 0)
+        total = round(ok_total + nok_total + qual_total, 4)
+        return {
+            "ok": round(ok_total, 4),
+            "nok": round(nok_total, 4),
+            "qual": round(qual_total, 4),
+            "total": total,
+        }
+
+    def _piece_operation_event_quantities(self, enc_num: str, piece_id: str, operation: str, piece: dict[str, Any] | None = None) -> dict[str, float]:
+        enc_txt = str(enc_num or "").strip()
+        piece_txt = str(piece_id or "").strip()
+        op_norm = self.desktop_main.normalize_operacao_nome(operation or "") or str(operation or "").strip()
+        if not enc_txt or not piece_txt or not op_norm:
+            return {"ok": 0.0, "nok": 0.0, "qual": 0.0, "total": 0.0}
+        ok_total = 0.0
+        nok_total = 0.0
+        qual_total = 0.0
+        for row in list(self.ensure_data().get("op_eventos", []) or []):
+            if not isinstance(row, dict):
+                continue
+            event_norm = self.desktop_main.norm_text(row.get("evento", ""))
+            if event_norm != "finish_op":
+                continue
+            if str(row.get("encomenda_numero", "") or row.get("encomenda", "") or "").strip() != enc_txt:
+                continue
+            if str(row.get("peca_id", "") or "").strip() != piece_txt:
+                continue
+            row_op = self.desktop_main.normalize_operacao_nome(row.get("operacao", "")) or str(row.get("operacao", "") or "").strip()
+            if row_op != op_norm:
+                continue
+            ok_total += self._parse_float(row.get("qtd_ok", row.get("ok", 0)), 0)
+            nok_total += self._parse_float(row.get("qtd_nok", row.get("nok", 0)), 0)
+            qual_total += self._parse_float(row.get("qtd_qual", row.get("qual", 0)), 0)
+        total = round(ok_total + nok_total + qual_total, 4)
+        if total <= 0 and isinstance(piece, dict):
+            return self._piece_operation_history_quantities(piece, op_norm)
+        return {
+            "ok": round(ok_total, 4),
+            "nok": round(nok_total, 4),
+            "qual": round(qual_total, 4),
+            "total": total,
+        }
+
+    def _piece_operation_mysql_quantities(self, enc_num: str, piece_id: str, operation: str) -> dict[str, float]:
+        op_norm = self.desktop_main.normalize_operacao_nome(operation or "") or str(operation or "").strip()
+        status_fn = getattr(self.operador_actions, "_mysql_ops_status_for_piece", None)
+        if not callable(status_fn) or not op_norm:
+            return {"ok": 0.0, "nok": 0.0, "qual": 0.0, "total": 0.0}
+        try:
+            rows = list(status_fn(str(enc_num or "").strip(), str(piece_id or "").strip()) or [])
+        except Exception:
+            return {"ok": 0.0, "nok": 0.0, "qual": 0.0, "total": 0.0}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            row_op = self.desktop_main.normalize_operacao_nome(row.get("operacao", "")) or str(row.get("operacao", "") or "").strip()
+            if row_op != op_norm:
+                continue
+            ok = self._parse_float(row.get("ok_qty", row.get("qtd_ok", 0)), 0)
+            nok = self._parse_float(row.get("nok_qty", row.get("qtd_nok", 0)), 0)
+            qual = self._parse_float(row.get("qual_qty", row.get("qtd_qual", 0)), 0)
+            return {"ok": round(ok, 4), "nok": round(nok, 4), "qual": round(qual, 4), "total": round(ok + nok + qual, 4)}
+        return {"ok": 0.0, "nok": 0.0, "qual": 0.0, "total": 0.0}
+
+    def _piece_operation_recorded_total(self, enc_num: str, piece: dict[str, Any], operation: str, limit: float = 0.0) -> float:
+        op_row = self._piece_operation_row(piece, operation)
+        row_total = self._piece_operation_total(op_row, limit)
+        events = self._piece_operation_event_quantities(enc_num, str(piece.get("id", "") or ""), operation, piece)
+        event_total = self._parse_float(events.get("total", 0), 0)
+        mysql_quantities = self._piece_operation_mysql_quantities(enc_num, str(piece.get("id", "") or ""), operation)
+        mysql_total = self._parse_float(mysql_quantities.get("total", 0), 0)
+        if mysql_total > 0 and event_total <= 0:
+            event_total = mysql_total
+            events = mysql_quantities
+        if event_total <= 0:
+            return row_total
+        row_qual = self._parse_float((op_row or {}).get("qtd_qual", 0), 0)
+        event_with_row_qual = round(event_total + row_qual, 4)
+        if row_total > event_with_row_qual + 1e-9:
+            return event_with_row_qual
+        return max(row_total, event_with_row_qual)
+
+    def _repair_operation_quantities_from_events(self, enc_num: str, piece: dict[str, Any], operation: str) -> None:
+        op_row = self._piece_operation_row(piece, operation)
+        if not isinstance(op_row, dict):
+            return
+        events = self._piece_operation_event_quantities(enc_num, str(piece.get("id", "") or ""), operation, piece)
+        event_total = self._parse_float(events.get("total", 0), 0)
+        mysql_quantities = self._piece_operation_mysql_quantities(enc_num, str(piece.get("id", "") or ""), operation)
+        mysql_total = self._parse_float(mysql_quantities.get("total", 0), 0)
+        if mysql_total > 0 and event_total <= 0:
+            event_total = mysql_total
+            events = mysql_quantities
+        if event_total <= 0:
+            return
+        row_qual = self._parse_float(op_row.get("qtd_qual", 0), 0)
+        row_total = (
+            self._parse_float(op_row.get("qtd_ok", 0), 0)
+            + self._parse_float(op_row.get("qtd_nok", 0), 0)
+            + row_qual
+        )
+        expected_total = round(event_total + row_qual, 4)
+        if row_total <= expected_total + 1e-9:
+            return
+        op_row["qtd_ok"] = self._parse_float(events.get("ok", 0), 0)
+        op_row["qtd_nok"] = self._parse_float(events.get("nok", 0), 0)
+        op_row["qtd_qual"] = row_qual
+
     def _sync_piece_output_from_flow(self, piece: dict[str, Any]) -> None:
         fluxo = list(self.desktop_main.ensure_peca_operacoes(piece) or [])
-        final_ok = 0.0
-        final_nok = 0.0
-        final_qual = 0.0
+        produced_totals: list[float] = []
+        final_ok_candidates: list[float] = []
+        final_nok_candidates: list[float] = []
+        final_qual_candidates: list[float] = []
         for op in fluxo:
             total = self._piece_operation_total(op, self._piece_operation_limit(piece, op.get("nome", "")))
-            if total <= 0:
+            if not str(op.get("nome", "") or "").strip():
                 continue
-            final_ok = self._parse_float(op.get("qtd_ok", 0), 0)
-            final_nok = self._parse_float(op.get("qtd_nok", 0), 0)
-            final_qual = self._parse_float(op.get("qtd_qual", 0), 0)
-        piece["produzido_ok"] = round(final_ok, 4)
-        piece["produzido_nok"] = round(final_nok, 4)
-        piece["produzido_qualidade"] = round(final_qual, 4)
+            produced_totals.append(total)
+            final_ok_candidates.append(self._parse_float(op.get("qtd_ok", 0), 0))
+            final_nok_candidates.append(self._parse_float(op.get("qtd_nok", 0), 0))
+            final_qual_candidates.append(self._parse_float(op.get("qtd_qual", 0), 0))
+        if not produced_totals:
+            piece["produzido_ok"] = 0.0
+            piece["produzido_nok"] = 0.0
+            piece["produzido_qualidade"] = 0.0
+            return
+        # Compatibilidade: o produzido global deixa de ser input de validação e passa a ser derivado.
+        piece["produzido_ok"] = round(min(final_ok_candidates) if final_ok_candidates else min(produced_totals), 4)
+        piece["produzido_nok"] = round(max(final_nok_candidates) if final_nok_candidates else 0.0, 4)
+        piece["produzido_qualidade"] = round(max(final_qual_candidates) if final_qual_candidates else 0.0, 4)
 
     def operator_laser_stock_state(self, enc_num: str, material: str, espessura: str) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(enc_num)
@@ -6162,17 +6313,21 @@ class LegacyBackend(
         ok = self._parse_float(piece.get("produzido_ok", 0), 0)
         nok = self._parse_float(piece.get("produzido_nok", 0), 0)
         qual = self._parse_float(piece.get("produzido_qualidade", 0), 0)
-        raw_pending_ops = list(self.desktop_main.peca_operacoes_pendentes(piece))
-        done_ops = list(self.desktop_main.peca_operacoes_concluidas(piece))
         pending_ops: list[str] = []
+        done_ops: list[str] = []
         op_limits: dict[str, float] = {}
         op_totals: dict[str, float] = {}
-        for op_name in raw_pending_ops:
-            limit = self._piece_operation_limit(piece, op_name)
-            total_done = self._piece_operation_total(self._piece_operation_row(piece, op_name), limit)
+        for op_row in list(self.desktop_main.ensure_peca_operacoes(piece) or []):
+            op_name = self.desktop_main.normalize_operacao_nome(op_row.get("nome", "")) or str(op_row.get("nome", "") or "").strip()
+            if not op_name:
+                continue
+            limit = self._piece_operation_limit(piece, op_name, str(enc.get("numero", "") or ""))
+            total_done = self._piece_operation_recorded_total(str(enc.get("numero", "") or ""), piece, op_name, limit)
             op_limits[op_name] = limit
             op_totals[op_name] = total_done
-            if limit > total_done:
+            if limit > 0 and total_done >= limit - 1e-9:
+                done_ops.append(op_name)
+            else:
                 pending_ops.append(op_name)
         live_status_map: dict[str, dict[str, Any]] = {}
         status_fn = getattr(self.operador_actions, "_mysql_ops_status_for_piece", None)
@@ -6190,8 +6345,8 @@ class LegacyBackend(
             if "produ" in live_state:
                 active_pending_ops.append(op_name)
         current_op = active_pending_ops[0] if active_pending_ops else (self.desktop_main.normalize_operacao_nome(piece.get("operacao_atual", "")) or (pending_ops[0] if pending_ops else ""))
-        current_limit = op_limits.get(current_op, self._piece_operation_limit(piece, current_op))
-        current_done = op_totals.get(current_op, self._piece_operation_total(self._piece_operation_row(piece, current_op), current_limit))
+        current_limit = op_limits.get(current_op, self._piece_operation_limit(piece, current_op, str(enc.get("numero", "") or "")))
+        current_done = op_totals.get(current_op, self._piece_operation_recorded_total(str(enc.get("numero", "") or ""), piece, current_op, current_limit))
         avaria_closed_min = self.operador_actions._op_piece_closed_avaria_minutes(self.ensure_data(), enc_num, piece)
         avaria_open_min = self.operador_actions._op_piece_current_avaria_minutes(self.ensure_data(), enc_num, piece, live_row=live_row)
         return {
@@ -6232,8 +6387,8 @@ class LegacyBackend(
         selected_op = self.desktop_main.normalize_operacao_nome(operation or pending[0])
         if selected_op not in pending:
             raise ValueError("A opera??o selecionada n?o est? pendente.")
-        available_qty = self._piece_operation_limit(piece, selected_op)
-        current_qty = self._piece_operation_total(self._piece_operation_row(piece, selected_op), available_qty)
+        available_qty = self._piece_operation_limit(piece, selected_op, str(enc.get("numero", "") or ""))
+        current_qty = self._piece_operation_recorded_total(str(enc.get("numero", "") or ""), piece, selected_op, available_qty)
         if available_qty <= current_qty:
             raise ValueError("Esta opera??o n?o tem quantidade dispon?vel do posto anterior.")
         result = self.operador_actions._mysql_ops_acquire(
@@ -6310,11 +6465,16 @@ class LegacyBackend(
         if selected_op not in active_pending_ops:
             raise ValueError("Inicia primeiro a operacao antes de a concluir.")
         op_row = self._piece_operation_row(piece, selected_op)
-        operation_limit = self._piece_operation_limit(piece, selected_op)
+        self._repair_operation_quantities_from_events(str(enc.get("numero", "") or ""), piece, selected_op)
+        op_row = self._piece_operation_row(piece, selected_op)
+        operation_limit = self._piece_operation_limit(piece, selected_op, str(enc.get("numero", "") or ""))
         if operation_limit <= 0:
             raise ValueError("Nao existe quantidade produzida no posto anterior para esta operacao.")
         ctx_done = self._parse_float(dict(ctx.get("operation_done", {}) or {}).get(selected_op, 0), 0)
-        current_done = max(self._piece_operation_total(op_row, operation_limit), ctx_done)
+        current_done = max(
+            self._piece_operation_recorded_total(str(enc.get("numero", "") or ""), piece, selected_op, operation_limit),
+            ctx_done,
+        )
         remaining_limit = round(max(0.0, operation_limit - current_done), 4)
         delta_val = round(ok_val + nok_val + qual_val, 4)
         if delta_val <= 0:
@@ -6325,6 +6485,12 @@ class LegacyBackend(
         existing_nok = self._parse_float((op_row or {}).get("qtd_nok", 0), 0)
         existing_qual = self._parse_float((op_row or {}).get("qtd_qual", 0), 0)
         existing_total = round(existing_ok + existing_nok + existing_qual, 4)
+        event_qty = self._piece_operation_event_quantities(str(enc.get("numero", "") or ""), str(piece.get("id", "") or ""), selected_op, piece)
+        event_total = self._parse_float(event_qty.get("total", 0), 0)
+        if event_total > 0 and existing_total > event_total + existing_qual + 1e-9:
+            existing_ok = self._parse_float(event_qty.get("ok", 0), 0)
+            existing_nok = self._parse_float(event_qty.get("nok", 0), 0)
+            existing_total = round(existing_ok + existing_nok + existing_qual, 4)
         if current_done > existing_total + 1e-9:
             # Registos antigos podem ter o acumulado correto no contexto mas não na linha da operação.
             existing_ok = round(existing_ok + (current_done - existing_total), 4)
@@ -6707,6 +6873,19 @@ class LegacyBackend(
         refs_db = self.ensure_data().get("orc_refs", {})
         ref_ext = str(piece.get("ref_externa", "") or "").strip()
         ref_info = refs_db.get(ref_ext, {}) if isinstance(refs_db, dict) and ref_ext else {}
+
+        pdf_candidates = self._piece_pdf_references(piece)
+        if isinstance(ref_info, dict):
+            pdf_candidates.extend(self._piece_pdf_references(ref_info))
+        for raw in self._dedupe_document_references(pdf_candidates):
+            path_txt = str(raw or "").strip()
+            if not path_txt:
+                continue
+            path = self._resolve_file_reference(path_txt)
+            if path is not None and path.exists():
+                os.startfile(str(path))
+                return str(path)
+
         candidates = [
             piece.get("desenho"),
             piece.get("desenho_path"),
@@ -6721,7 +6900,7 @@ class LegacyBackend(
             if path is not None and path.exists():
                 os.startfile(str(path))
                 return str(path)
-        raise ValueError("Esta peça não tem desenho associado ou o ficheiro não existe.")
+        raise ValueError("Esta peça não tem PDF/desenho associado ou o ficheiro não existe.")
 
     def _operator_pdf_text(self, value: Any) -> str:
         formatter = getattr(self.desktop_main, "pdf_normalize_text", None)
@@ -7079,151 +7258,156 @@ class LegacyBackend(
         logo_path: Path | None,
         printed_at: str,
     ) -> None:
-        from reportlab.graphics.barcode import code128
-
         regular_font = "Helvetica"
         bold_font = "Helvetica-Bold"
         outer_x = 8
-        outer_y = 7
+        outer_y = 8
         outer_w = page_width - (outer_x * 2)
         outer_h = page_height - (outer_y * 2)
-        banner_h = 30
-        right_chip_w = 86
-        right_meta_w = 104
-        body_left_w = outer_w - right_meta_w - 28
-        logo_box_w = 42
-        logo_gap = 8
-        banner_x = outer_x + 9 + logo_box_w + logo_gap
-        banner_w = outer_w - (banner_x - outer_x)
-        logo_box_x = outer_x + 9
-        logo_box_y = outer_y + outer_h - banner_h + 5
-        chip_x = outer_x + outer_w - right_chip_w - 8
-        chip_y = outer_y + outer_h - banner_h + 5
+        pad = 10
+        body_x = outer_x + pad
+        body_w = outer_w - (pad * 2)
+        header_h = 42
+        header_y = outer_y + outer_h - header_h - 8
+        logo_box_w = 58
+        logo_box_h = 24
+        chip_w = 96
+        chip_h = 24
 
         canvas_obj.setFillColor(palette["surface"])
         canvas_obj.setStrokeColor(palette["line_strong"])
-        canvas_obj.setLineWidth(1)
-        canvas_obj.roundRect(outer_x, outer_y, outer_w, outer_h, 11, stroke=1, fill=1)
+        canvas_obj.setLineWidth(1.2)
+        canvas_obj.roundRect(outer_x, outer_y, outer_w, outer_h, 12, stroke=1, fill=1)
 
-        canvas_obj.setFillColor(palette["primary"])
-        canvas_obj.roundRect(banner_x, outer_y + outer_h - banner_h, banner_w, banner_h, 11, stroke=0, fill=1)
-        self._draw_operator_logo_plate(
-            canvas_obj,
-            palette,
-            logo_path,
-            logo_box_x,
-            logo_box_y,
-            42,
-            20,
-            radius=6,
-            padding_x=3,
-            padding_y=2,
-            line_width=0.8,
-        )
+        canvas_obj.setFillColor(palette["surface_alt"])
+        canvas_obj.setStrokeColor(palette["line"])
+        canvas_obj.roundRect(body_x, header_y, body_w, header_h, 10, stroke=1, fill=1)
+        self._draw_operator_logo_plate(canvas_obj, palette, logo_path, body_x + 8, header_y + 9, logo_box_w, logo_box_h, radius=7, padding_x=3, padding_y=2, line_width=0.8)
 
+        chip_x = body_x + body_w - chip_w - 8
+        chip_y = header_y + 9
         canvas_obj.setFillColor(palette["surface"])
-        canvas_obj.roundRect(chip_x, chip_y, right_chip_w, 20, 7, stroke=0, fill=1)
+        canvas_obj.setStrokeColor(palette["line"])
+        canvas_obj.roundRect(chip_x, chip_y, chip_w, chip_h, 8, stroke=1, fill=1)
         canvas_obj.setFillColor(palette["muted"])
         canvas_obj.setFont(regular_font, 6.2)
-        canvas_obj.drawString(chip_x + 6, chip_y + 12, self._operator_pdf_text("Seguinte"))
-        next_font = _pdf_fit_font_size(row.get("proximo_posto", "-"), bold_font, right_chip_w - 12, 8.6, 6.7)
+        canvas_obj.drawString(chip_x + 8, chip_y + 15.0, self._operator_pdf_text("Seguinte"))
+        next_value = str(row.get("proximo_posto", "-") or "-")
+        next_font = _pdf_fit_font_size(next_value, bold_font, chip_w - 16, 9.6, 7.0)
         canvas_obj.setFillColor(palette["primary_dark"])
         canvas_obj.setFont(bold_font, next_font)
-        canvas_obj.drawString(
-            chip_x + 6,
-            chip_y + 4.5,
-            self._operator_pdf_text(_pdf_clip_text(row.get("proximo_posto", "-"), right_chip_w - 10, bold_font, next_font)),
-        )
+        canvas_obj.drawString(chip_x + 8, chip_y + 5.0, self._operator_pdf_text(_pdf_clip_text(next_value, chip_w - 16, bold_font, next_font)))
 
-        title_x_left = banner_x + 10
-        title_x_right = chip_x - 10
-        title_width = max(50.0, title_x_right - title_x_left)
-        title_font = _pdf_fit_font_size("Etiqueta OPP", bold_font, title_width, 11.6, 8.8)
-        canvas_obj.setFillColor(palette["surface"])
-        canvas_obj.setFont(bold_font, title_font)
-        canvas_obj.drawCentredString(title_x_left + (title_width / 2.0), chip_y + 12.8, self._operator_pdf_text("Etiqueta OPP"))
-        subtitle = f"{row.get('encomenda', '-') or '-'} | {row.get('cliente', '-') or '-'}"
-        subtitle_font = _pdf_fit_font_size(subtitle, regular_font, title_width, 6.2, 5.4)
-        canvas_obj.setFont(regular_font, subtitle_font)
-        canvas_obj.drawCentredString(
-            title_x_left + (title_width / 2.0),
-            chip_y + 4.2,
-            self._operator_pdf_text(_pdf_clip_text(subtitle, title_width, regular_font, subtitle_font)),
-        )
-
-        meta_x = outer_x + outer_w - right_meta_w - 10
-        meta_y = outer_y + 47
-        meta_h = 42
-        canvas_obj.setFillColor(palette["primary_soft_2"])
-        canvas_obj.setStrokeColor(palette["line"])
-        canvas_obj.roundRect(meta_x, meta_y, right_meta_w, meta_h, 8, stroke=1, fill=1)
-        canvas_obj.setFillColor(palette["muted"])
-        canvas_obj.setFont(regular_font, 6.2)
-        canvas_obj.drawString(meta_x + 8, meta_y + meta_h - 10, self._operator_pdf_text("OPP"))
-        canvas_obj.drawString(meta_x + 8, meta_y + meta_h - 25, self._operator_pdf_text("Qtd"))
+        title_left = body_x + 8 + logo_box_w + 14
+        title_right = chip_x - 10
+        title_width = max(100.0, title_right - title_left)
+        title_font = _pdf_fit_font_size("Etiqueta OPP", bold_font, title_width, 17.0, 11.0)
         canvas_obj.setFillColor(palette["ink"])
-        opp_font = _pdf_fit_font_size(row.get("opp", "-"), bold_font, right_meta_w - 16, 10.8, 7.2)
-        canvas_obj.setFont(bold_font, opp_font)
-        canvas_obj.drawString(meta_x + 8, meta_y + meta_h - 19, self._operator_pdf_text(_pdf_clip_text(row.get("opp", "-"), right_meta_w - 16, bold_font, opp_font)))
-        qty_text = row.get("quantidade_txt", "0")
-        qty_font = _pdf_fit_font_size(qty_text, bold_font, right_meta_w - 16, 10.6, 7.6)
-        canvas_obj.setFont(bold_font, qty_font)
-        canvas_obj.drawString(meta_x + 8, meta_y + 8, self._operator_pdf_text(_pdf_clip_text(qty_text, right_meta_w - 16, bold_font, qty_font)))
+        canvas_obj.setFont(bold_font, title_font)
+        canvas_obj.drawString(title_left, header_y + 24.5, self._operator_pdf_text("Etiqueta OPP"))
+        subtitle = f"{row.get('encomenda', '-') or '-'} | {row.get('cliente', '-') or '-'}"
+        subtitle_font = _pdf_fit_font_size(subtitle, regular_font, title_width, 7.2, 5.4)
+        canvas_obj.setFillColor(palette["muted"])
+        canvas_obj.setFont(regular_font, subtitle_font)
+        canvas_obj.drawString(title_left, header_y + 11.5, self._operator_pdf_text(_pdf_clip_text(subtitle, title_width, regular_font, subtitle_font)))
 
-        text_x = outer_x + 10
-        top_y = outer_y + outer_h - 42
-        ref_font = _pdf_fit_font_size(row.get("ref_interna", "-"), bold_font, body_left_w, 11.5, 8.4)
+        hero_h = 52
+        hero_y = header_y - 9 - hero_h
+        summary_w = 116
+        summary_x = body_x + body_w - summary_w
+        main_w = body_w - summary_w - 8
+        canvas_obj.setFillColor(palette["surface"])
+        canvas_obj.setStrokeColor(palette["line"])
+        canvas_obj.roundRect(body_x, hero_y, main_w, hero_h, 9, stroke=1, fill=1)
+        canvas_obj.setFillColor(palette["muted"])
+        canvas_obj.setFont(regular_font, 6.6)
+        canvas_obj.drawString(body_x + 10, hero_y + hero_h - 13, self._operator_pdf_text("Referencia interna"))
+        ref_value = str(row.get("ref_interna", "-") or "-")
+        ref_font = _pdf_fit_font_size(ref_value, bold_font, main_w - 20, 17.5, 10.0)
         canvas_obj.setFillColor(palette["ink"])
         canvas_obj.setFont(bold_font, ref_font)
-        canvas_obj.drawString(text_x, top_y, self._operator_pdf_text(_pdf_clip_text(row.get("ref_interna", "-"), body_left_w, bold_font, ref_font)))
+        canvas_obj.drawString(body_x + 10, hero_y + 17.0, self._operator_pdf_text(_pdf_clip_text(ref_value, main_w - 20, bold_font, ref_font)))
 
-        description = row.get("descricao", "") or row.get("ref_externa", "") or "-"
-        desc_lines = _pdf_wrap_text(description, regular_font, 7.0, body_left_w, max_lines=2) or ["-"]
-        desc_line_gap = 7.6
-        desc_start_y = top_y - 10
-        canvas_obj.setFont(regular_font, 7.0)
+        canvas_obj.setFillColor(palette["surface_alt"])
+        canvas_obj.setStrokeColor(palette["line"])
+        canvas_obj.roundRect(summary_x, hero_y, summary_w, hero_h, 9, stroke=1, fill=1)
+        opp_value = str(row.get("opp", "-") or "-")
         canvas_obj.setFillColor(palette["muted"])
-        for line_index, line in enumerate(desc_lines[:2]):
-            canvas_obj.drawString(text_x, desc_start_y - (line_index * desc_line_gap), self._operator_pdf_text(line))
+        canvas_obj.setFont(regular_font, 6.6)
+        canvas_obj.drawString(summary_x + 10, hero_y + hero_h - 13, self._operator_pdf_text("OPP"))
+        opp_font = _pdf_fit_font_size(opp_value, bold_font, summary_w - 20, 12.0, 7.5)
+        canvas_obj.setFillColor(palette["primary_dark"])
+        canvas_obj.setFont(bold_font, opp_font)
+        canvas_obj.drawString(summary_x + 10, hero_y + 27.5, self._operator_pdf_text(_pdf_clip_text(opp_value, summary_w - 20, bold_font, opp_font)))
+        qty_text = f"Qtd {row.get('quantidade_txt', '0')}"
+        qty_font = _pdf_fit_font_size(qty_text, bold_font, summary_w - 20, 9.5, 6.6)
+        canvas_obj.setFillColor(palette["ink"])
+        canvas_obj.setFont(bold_font, qty_font)
+        canvas_obj.drawString(summary_x + 10, hero_y + 10.5, self._operator_pdf_text(_pdf_clip_text(qty_text, summary_w - 20, bold_font, qty_font)))
 
+        details_h = 45
+        details_y = hero_y - 8 - details_h
+        canvas_obj.setFillColor(palette["surface"])
+        canvas_obj.setStrokeColor(palette["line"])
+        canvas_obj.roundRect(body_x, details_y, body_w, details_h, 9, stroke=1, fill=1)
+        desc_w = body_w * 0.56
+        canvas_obj.setFillColor(palette["muted"])
+        canvas_obj.setFont(regular_font, 6.0)
+        canvas_obj.drawString(body_x + 10, details_y + details_h - 11, self._operator_pdf_text("Descricao / referencia externa"))
+        description = row.get("descricao", "") or row.get("ref_externa", "") or "-"
+        desc_lines = _pdf_wrap_text(description, regular_font, 7.0, desc_w - 18, max_lines=2) or ["-"]
+        canvas_obj.setFont(regular_font, 7.0)
+        for line_index, line in enumerate(desc_lines[:2]):
+            canvas_obj.drawString(body_x + 10, details_y + 24.0 - (line_index * 8.4), self._operator_pdf_text(line))
+
+        meta_x = body_x + desc_w + 10
+        meta_w = body_w - desc_w - 20
+        canvas_obj.setFillColor(palette["muted"])
+        canvas_obj.setFont(regular_font, 6.0)
+        canvas_obj.drawString(meta_x, details_y + details_h - 11, self._operator_pdf_text("Dados de producao"))
         meta_lines = [
             f"OF {row.get('of', '-') or '-'} | Ref. Ext. {row.get('ref_externa', '-') or '-'}",
             f"{row.get('material', '-') or '-'} {row.get('espessura', '-') or '-'} mm | Estado {row.get('estado', '-') or '-'}",
         ]
-        meta_line_gap = 6.6
-        desc_last_y = desc_start_y - ((max(1, len(desc_lines[:2])) - 1) * desc_line_gap)
-        meta_start_y = desc_last_y - 10.5
         for line_index, line in enumerate(meta_lines):
-            meta_font = _pdf_fit_font_size(line, regular_font, body_left_w - 2, 5.5 if line_index == 0 else 5.3, 4.8)
+            meta_font = _pdf_fit_font_size(line, regular_font, meta_w, 6.8, 5.0)
             canvas_obj.setFont(regular_font, meta_font)
-            canvas_obj.drawString(
-                text_x,
-                meta_start_y - (line_index * meta_line_gap),
-                self._operator_pdf_text(_pdf_clip_text(line, body_left_w - 2, regular_font, meta_font)),
-            )
+            canvas_obj.drawString(meta_x, details_y + 24.0 - (line_index * 8.4), self._operator_pdf_text(_pdf_clip_text(line, meta_w, regular_font, meta_font)))
 
-        route_y = outer_y + 24
-        route_h = 16
-        canvas_obj.setFillColor(palette["primary_soft"])
+        bottom_y = outer_y + 8
+        bottom_h = details_y - bottom_y - 8
+        route_w = body_w * 0.47
+        canvas_obj.setFillColor(palette["surface_alt"])
         canvas_obj.setStrokeColor(palette["line"])
-        canvas_obj.roundRect(outer_x + 8, route_y, outer_w - 16, route_h, 7, stroke=1, fill=1)
+        canvas_obj.roundRect(body_x, bottom_y, route_w, bottom_h, 9, stroke=1, fill=1)
+        canvas_obj.setFillColor(palette["muted"])
+        canvas_obj.setFont(regular_font, 6.0)
+        canvas_obj.drawString(body_x + 10, bottom_y + bottom_h - 11, self._operator_pdf_text("Fluxo operacional"))
         route_left = f"Origem: {row.get('posto_origem', '-') or '-'}"
         route_right = f"Seguinte: {row.get('proximo_posto', '-') or '-'}"
         canvas_obj.setFillColor(palette["primary_dark"])
-        canvas_obj.setFont(bold_font, 6.7)
-        canvas_obj.drawString(outer_x + 14, route_y + 5.1, self._operator_pdf_text(_pdf_clip_text(route_left, outer_w - 170, bold_font, 6.7)))
-        canvas_obj.drawRightString(
-            outer_x + outer_w - 14,
-            route_y + 5.1,
-            self._operator_pdf_text(_pdf_clip_text(route_right, 150, bold_font, 6.7)),
-        )
+        canvas_obj.setFont(bold_font, 7.0)
+        canvas_obj.drawString(body_x + 10, bottom_y + 18, self._operator_pdf_text(_pdf_clip_text(route_left, route_w - 20, bold_font, 7.0)))
+        canvas_obj.drawString(body_x + 10, bottom_y + 7, self._operator_pdf_text(_pdf_clip_text(route_right, route_w - 20, bold_font, 7.0)))
 
         barcode_value = str(row.get("opp", "") or row.get("piece_id", "") or "-").strip() or "-"
-        barcode = code128.Code128(barcode_value, barHeight=12, barWidth=0.46)
-        barcode.drawOn(canvas_obj, outer_x + 10, outer_y + 8)
+        barcode_x = body_x + route_w + 14
+        barcode_w = body_w - route_w - 14
+        canvas_obj.setFillColor(palette["surface"])
+        canvas_obj.setStrokeColor(palette["line"])
+        canvas_obj.roundRect(barcode_x, bottom_y, barcode_w, bottom_h, 9, stroke=1, fill=1)
         canvas_obj.setFillColor(palette["muted"])
-        canvas_obj.setFont(regular_font, 5.8)
-        canvas_obj.drawRightString(outer_x + outer_w - 10, outer_y + 11, self._operator_pdf_text(printed_at))
+        canvas_obj.setFont(regular_font, 6.0)
+        canvas_obj.drawString(barcode_x + 10, bottom_y + bottom_h - 11, self._operator_pdf_text("Codigo OPP para picagem"))
+        self._draw_code128_fit(canvas_obj, barcode_value, barcode_x + 12, bottom_y + 13, barcode_w - 24, 22, min_bar_width=0.34, max_bar_width=0.86, align="center")
+        human_font = _pdf_fit_font_size(barcode_value, bold_font, barcode_w - 24, 7.2, 5.4)
+        canvas_obj.setFillColor(palette["ink"])
+        canvas_obj.setFont(bold_font, human_font)
+        canvas_obj.drawCentredString(barcode_x + (barcode_w / 2), bottom_y + 4, self._operator_pdf_text(_pdf_clip_text(barcode_value, barcode_w - 24, bold_font, human_font)))
+
+        canvas_obj.setFillColor(palette["muted"])
+        canvas_obj.setFont(regular_font, 5.2)
+        canvas_obj.drawRightString(outer_x + outer_w - 8, outer_y + 2.5, self._operator_pdf_text(printed_at))
 
     def _draw_operator_pallet_page(
         self,
@@ -7446,7 +7630,7 @@ class LegacyBackend(
         _enc, rows = self._operator_selected_label_rows(enc_num, piece_ids, source_posto=source_posto)
         target = Path(output_path) if output_path else self._operator_label_tmp_path(enc_num, "operator_unit_labels")
         target.parent.mkdir(parents=True, exist_ok=True)
-        width, height = (110 * mm, 50 * mm)
+        width, height = (150 * mm, 100 * mm)
         palette = self._operator_label_palette()
         branding = self.branding_settings()
         logo_txt = str(branding.get("logo_path", "") or "").strip()
@@ -10256,7 +10440,7 @@ class LegacyBackend(
         source_posto = self._operator_posto_for_operation(str(piece.get("operacao_atual", "") or "").strip()) or "Geral"
         row = self._operator_label_row(enc, piece, source_posto=source_posto)
         target = self._operator_label_tmp_path(str(enc.get("numero", "") or "").strip(), "opp_label")
-        width, height = (110 * mm, 50 * mm)
+        width, height = (150 * mm, 100 * mm)
         palette = self._operator_label_palette()
         branding = self.branding_settings()
         logo_txt = str(branding.get("logo_path", "") or "").strip()
@@ -12347,6 +12531,17 @@ class LegacyBackend(
                         piece_canvas.line(x + 4 * mm, y_top - 12 * mm, x + width - 4 * mm, y_top - 12 * mm)
                         return y_top - 19 * mm
 
+                    def compact_section_box(x: float, y_top: float, width: float, height: float, title: str) -> float:
+                        piece_canvas.setFillColor(colors.white)
+                        piece_canvas.setStrokeColor(line)
+                        piece_canvas.roundRect(x, y_top - height, width, height, 3, stroke=1, fill=0)
+                        piece_canvas.setFillColor(black)
+                        piece_canvas.setFont("Helvetica-Bold", 7.1)
+                        piece_canvas.drawString(x + 3 * mm, y_top - 5 * mm, self._operator_pdf_text(title.upper()))
+                        piece_canvas.setStrokeColor(line)
+                        piece_canvas.line(x + 3 * mm, y_top - 8 * mm, x + width - 3 * mm, y_top - 8 * mm)
+                        return y_top - 12 * mm
+
                     def detail_row(x: float, y_pos: float, width: float, label: str, value: str) -> float:
                         piece_canvas.setFillColor(black)
                         piece_canvas.setFont("Helvetica", 8.0)
@@ -12429,7 +12624,7 @@ class LegacyBackend(
                     upper_top = hero_top - hero_h - 7 * mm
                     left_w = 90 * mm
                     right_w = inner_w - left_w - 5 * mm
-                    data_body = section_box(margin, upper_top, left_w, 86 * mm, "Dados da peça")
+                    data_body = section_box(margin, upper_top, left_w, 75 * mm, "Dados da peça")
                     y_info = data_body
                     for label, value in [
                         ("Ref. externa", ref_external),
@@ -12450,57 +12645,103 @@ class LegacyBackend(
                     ]
                     bullet_lines(margin + left_w + 9 * mm, doc_body, right_w - 12 * mm, doc_lines, size=8.4, max_count=3)
 
-                    ops_body = section_box(margin + left_w + 5 * mm, upper_top - 43 * mm, right_w, 43 * mm, "Operações")
+                    ops_top = upper_top - 81 * mm
+                    ops_h = 47 * mm
+                    ops_body = section_box(margin, ops_top, inner_w, ops_h, "Operações / picagem")
                     ops_lines = self._operations_pdf_legend(ops_txt)
-                    bullet_lines(margin + left_w + 9 * mm, ops_body, right_w - 12 * mm, ops_lines, size=8.1, max_count=4)
+                    op_names: list[str] = []
+                    for legend_line in ops_lines:
+                        legend_txt = str(legend_line or "").strip()
+                        if not legend_txt:
+                            continue
+                        op_name = legend_txt.split(" - ", 1)[1].strip() if " - " in legend_txt else legend_txt
+                        if op_name and op_name.lower() != "sem operações registadas" and op_name not in op_names:
+                            op_names.append(op_name)
+                    if op_names:
+                        row_x = margin + 5 * mm
+                        row_w = inner_w - 10 * mm
+                        row_h = 7.4 * mm
+                        row_top = ops_body + 2.0 * mm
+                        max_ops = 5
+                        for op_index, op_name in enumerate(op_names[:max_ops]):
+                            cell_top = row_top - (op_index * row_h)
+                            cell_y = cell_top - row_h + 1.0 * mm
+                            op_abbrev = self._operation_pdf_abbrev(op_name)
+                            op_code = f"OPR|{opp_txt}|{op_abbrev}"
+                            piece_canvas.setStrokeColor(colors.HexColor("#D1D5DB"))
+                            piece_canvas.setFillColor(colors.HexColor("#F8FAFC"))
+                            piece_canvas.roundRect(row_x, cell_y, row_w, row_h - 0.7 * mm, 2, stroke=1, fill=1)
+                            piece_canvas.setFillColor(black)
+                            piece_canvas.setFont("Helvetica-Bold", 6.4)
+                            piece_canvas.drawString(row_x + 2.6 * mm, cell_top - 3.0 * mm, self._operator_pdf_text(_pdf_clip_text(op_abbrev, 17 * mm, "Helvetica-Bold", 6.4)))
+                            piece_canvas.setFont("Helvetica", 5.6)
+                            piece_canvas.setFillColor(grey)
+                            piece_canvas.drawString(row_x + 21 * mm, cell_top - 3.0 * mm, self._operator_pdf_text(_pdf_clip_text(op_name, 43 * mm, "Helvetica", 5.6)))
+                            barcode_x = row_x + 68 * mm
+                            barcode_w = row_w - 72 * mm
+                            self._draw_code128_fit(piece_canvas, op_code, barcode_x, cell_y + 2.0 * mm, barcode_w, row_h - 3.6 * mm, min_bar_width=0.22, max_bar_width=0.48)
+                            piece_canvas.setFont("Helvetica", 3.5)
+                            piece_canvas.setFillColor(grey)
+                            piece_canvas.drawCentredString(barcode_x + (barcode_w / 2), cell_y + 0.6 * mm, self._operator_pdf_text(_pdf_clip_text(op_code, barcode_w, "Helvetica", 3.5)))
+                        if len(op_names) > max_ops:
+                            piece_canvas.setFont("Helvetica", 5.5)
+                            piece_canvas.setFillColor(grey)
+                            piece_canvas.drawRightString(page_w - margin - 5 * mm, ops_top - ops_h + 4 * mm, self._operator_pdf_text(f"+{len(op_names) - max_ops} operação(ões)"))
+                    else:
+                        bullet_lines(margin + 5 * mm, ops_body, inner_w - 10 * mm, ops_lines, size=8.1, max_count=5)
 
-                    lower_top = upper_top - 93 * mm
+                    lower_top = ops_top - ops_h - 6 * mm
                     third_gap = 5 * mm
                     third_w = (inner_w - (third_gap * 2)) / 3
-                    prod_body = section_box(margin, lower_top, third_w, 43 * mm, "Produção")
+                    lower_card_h = 28 * mm
+                    prod_body = compact_section_box(margin, lower_top, third_w, lower_card_h, "Produção")
                     for line_txt in ["Posto:", "Operador:", "Data / Hora:"]:
-                        piece_canvas.setFont("Helvetica", 8.4)
+                        piece_canvas.setFont("Helvetica", 6.4)
                         piece_canvas.setFillColor(black)
                         piece_canvas.drawString(margin + 4 * mm, prod_body, self._operator_pdf_text(line_txt))
                         piece_canvas.setStrokeColor(line)
                         piece_canvas.line(margin + 22 * mm, prod_body - 1, margin + third_w - 5 * mm, prod_body - 1)
-                        prod_body -= 9 * mm
+                        prod_body -= 4.8 * mm
 
-                    qual_body = section_box(margin + third_w + third_gap, lower_top, third_w, 43 * mm, "Qualidade & controlo")
+                    qual_body = compact_section_box(margin + third_w + third_gap, lower_top, third_w, lower_card_h, "Qualidade & controlo")
                     for line_txt in ["Conferir material e espessura", "Confirmar revisão do desenho", "Registar desvios ou não conformidades"]:
-                        piece_canvas.circle(margin + third_w + third_gap + 7 * mm, qual_body + 1, 1.8 * mm, stroke=1, fill=0)
-                        piece_canvas.setFont("Helvetica", 7.6)
-                        piece_canvas.drawString(margin + third_w + third_gap + 13 * mm, qual_body, self._operator_pdf_text(_pdf_clip_text(line_txt, third_w - 17 * mm, "Helvetica", 7.6)))
-                        qual_body -= 8 * mm
+                        piece_canvas.circle(margin + third_w + third_gap + 7 * mm, qual_body + 0.8, 1.25 * mm, stroke=1, fill=0)
+                        piece_canvas.setFont("Helvetica", 5.7)
+                        piece_canvas.drawString(margin + third_w + third_gap + 11 * mm, qual_body, self._operator_pdf_text(_pdf_clip_text(line_txt, third_w - 15 * mm, "Helvetica", 5.7)))
+                        qual_body -= 4.5 * mm
 
-                    obs_body = section_box(margin + (third_w + third_gap) * 2, lower_top, third_w, 43 * mm, "Observações")
+                    obs_body = compact_section_box(margin + (third_w + third_gap) * 2, lower_top, third_w, lower_card_h, "Observações")
                     obs_text = str(piece.get("descricao", "") or ref_external or "Sem observações.").strip()
-                    for line_txt in _pdf_wrap_text(obs_text, "Helvetica", 8.2, third_w - 8 * mm, max_lines=4) or ["Sem observações."]:
-                        piece_canvas.setFont("Helvetica", 8.2)
+                    for line_txt in _pdf_wrap_text(obs_text, "Helvetica", 5.9, third_w - 8 * mm, max_lines=2) or ["Sem observações."]:
+                        piece_canvas.setFont("Helvetica", 5.9)
                         piece_canvas.drawString(margin + (third_w + third_gap) * 2 + 4 * mm, obs_body, self._operator_pdf_text(line_txt))
-                        obs_body -= 6 * mm
+                        obs_body -= 4.5 * mm
 
-                    trace_top = lower_top - 49 * mm
-                    trace_body = section_box(margin, trace_top, inner_w, 27 * mm, "Rastreabilidade")
-                    piece_canvas.setFont("Helvetica", 8)
+                    trace_y = margin + 7 * mm
+                    piece_canvas.setStrokeColor(line)
+                    piece_canvas.line(margin, trace_y + 4 * mm, page_w - margin, trace_y + 4 * mm)
+                    piece_canvas.setFont("Helvetica-Bold", 5.8)
+                    piece_canvas.setFillColor(black)
+                    piece_canvas.drawString(margin, trace_y, self._operator_pdf_text("RASTREABILIDADE"))
+                    piece_canvas.setFont("Helvetica", 5.4)
                     piece_canvas.setFillColor(black)
                     trace_items = [
                         f"Dimensões: {dims_txt}",
                         f"Documento principal: {Path(docs[0]).name if docs else '-'}",
                         f"Material/Espessura: {material_txt} | {esp_txt} mm",
                     ]
-                    trace_x = margin + 4 * mm
+                    trace_x = margin + 28 * mm
                     for idx_trace, value in enumerate(trace_items):
-                        piece_canvas.drawString(trace_x + (idx_trace * 61 * mm), trace_body, self._operator_pdf_text(_pdf_clip_text(value, 56 * mm, "Helvetica", 8)))
+                        piece_canvas.drawString(trace_x + (idx_trace * 51 * mm), trace_y, self._operator_pdf_text(_pdf_clip_text(value, 47 * mm, "Helvetica", 5.4)))
 
                     piece_canvas.setStrokeColor(line)
-                    piece_canvas.line(margin, margin + 10 * mm, page_w - margin, margin + 10 * mm)
+                    piece_canvas.line(margin, margin + 4.5 * mm, page_w - margin, margin + 4.5 * mm)
                     piece_canvas.setFillColor(grey)
-                    piece_canvas.setFont("Helvetica", 7.4)
-                    piece_canvas.drawString(margin, margin + 3 * mm, self._operator_pdf_text(f"Impresso em: {printed_at}"))
+                    piece_canvas.setFont("Helvetica", 5.8)
+                    piece_canvas.drawString(margin, margin + 1.4 * mm, self._operator_pdf_text(f"Impresso em: {printed_at}"))
                     piece_canvas.setFillColor(black)
-                    piece_canvas.setFont("Helvetica", 8.2)
-                    piece_canvas.drawRightString(page_w - margin, margin + 3 * mm, self._operator_pdf_text(f"LUGEST  |  OF: {of_code}  |  {ref_internal}"))
+                    piece_canvas.setFont("Helvetica", 6.2)
+                    piece_canvas.drawRightString(page_w - margin, margin + 1.4 * mm, self._operator_pdf_text(f"LUGEST  |  OF: {of_code}  |  {ref_internal}"))
                     piece_canvas.save()
                     return cover_path
 
@@ -12545,12 +12786,9 @@ class LegacyBackend(
     def order_print_fabrication_pdf(self, numero: str, selected_groups: list[dict[str, Any]] | None = None) -> Path:
         path = self.order_fabrication_pdf(numero, selected_groups=selected_groups)
         try:
-            os.startfile(str(path), "print")
+            os.startfile(str(path))
         except Exception:
-            try:
-                os.startfile(str(path))
-            except Exception:
-                pass
+            pass
         return path
 
     def operator_scan_code(self, code: str, current_posto: str = "Geral") -> dict[str, Any]:
@@ -12558,6 +12796,42 @@ class LegacyBackend(
         if not code_txt:
             raise ValueError("Código vazio.")
         posto_txt = str(current_posto or "").strip() or "Geral"
+        if code_txt.upper().startswith("OPR|"):
+            parts = code_txt.split("|")
+            if len(parts) < 3:
+                raise ValueError("Código de operação inválido.")
+            opp_code = str(parts[1] or "").strip()
+            op_token = str(parts[2] or "").strip()
+            enc, piece = self._find_piece_by_opp(opp_code)
+            ctx = self.operator_piece_context(str(enc.get("numero", "") or ""), str(piece.get("id", "") or ""))
+            pending_ops = list(ctx.get("pending_ops", []) or [])
+            all_ops = [
+                str(self.desktop_main.normalize_operacao_nome(op.get("nome", "")) or op.get("nome", "") or "").strip()
+                for op in list(self.desktop_main.ensure_peca_operacoes(piece) or [])
+                if str(op.get("nome", "") or "").strip()
+            ]
+            candidates = pending_ops or all_ops
+            selected_op = ""
+            token_norm = self.desktop_main.norm_text(op_token).casefold()
+            for op_name in candidates:
+                abbrev_norm = self.desktop_main.norm_text(self._operation_pdf_abbrev(op_name)).casefold()
+                op_norm = self.desktop_main.norm_text(op_name).casefold()
+                if token_norm and token_norm in {abbrev_norm, op_norm}:
+                    selected_op = op_name
+                    break
+            if not selected_op:
+                raise ValueError("Operação do código de barras não encontrada nesta OPP.")
+            return {
+                "tipo": "OPR",
+                "encomenda_numero": str(enc.get("numero", "") or "").strip(),
+                "piece_id": str(piece.get("id", "") or "").strip(),
+                "opp": str(piece.get("opp", "") or "").strip(),
+                "of": str(piece.get("of", "") or "").strip(),
+                "posto": posto_txt,
+                "operacao": selected_op,
+                "pending_ops": pending_ops,
+                "context": ctx,
+            }
         if code_txt.upper().startswith("GRP|"):
             parts = code_txt.split("|")
             if len(parts) >= 4:
@@ -14726,8 +15000,10 @@ class LegacyBackend(
         canvas_obj.roundRect(outer_margin, outer_margin, page_w - (outer_margin * 2), page_h - (outer_margin * 2), 10, stroke=1, fill=1)
 
         header_y = page_h - outer_margin - header_h
-        canvas_obj.setFillColor(palette["primary"])
-        canvas_obj.roundRect(outer_margin, header_y, page_w - (outer_margin * 2), header_h, 10, stroke=0, fill=1)
+        canvas_obj.setFillColor(palette["surface_alt"])
+        canvas_obj.setStrokeColor(palette["line"])
+        canvas_obj.setLineWidth(0.8)
+        canvas_obj.roundRect(outer_margin, header_y, page_w - (outer_margin * 2), header_h, 10, stroke=1, fill=1)
         self._draw_operator_logo_plate(
             canvas_obj,
             palette,
@@ -14754,10 +15030,11 @@ class LegacyBackend(
             padding_y=1.5,
             line_width=0.6,
         )
-        canvas_obj.setFillColor(colors.white)
+        canvas_obj.setFillColor(palette["ink"])
         canvas_obj.setFont("Helvetica-Bold", 16)
         canvas_obj.drawString(content_left, header_y + (14.5 * mm), self._operator_pdf_text(title))
         if subtitle:
+            canvas_obj.setFillColor(palette["muted"])
             canvas_obj.setFont("Helvetica", 8.6)
             canvas_obj.drawString(content_left, header_y + (7.8 * mm), self._operator_pdf_text(_pdf_clip_text(subtitle, 120 * mm, "Helvetica", 8.6)))
 
@@ -14897,115 +15174,177 @@ class LegacyBackend(
                     ("Eficacia", [row.get("eficacia", "") or "-"]),
                 ],
             )
-            self._append_audit_event(self.ensure_data(), action="PDF NC gerado", entity_type="Nao conformidade", entity_id=nc_id_txt, summary=str(path))
-            self._save(force=True, audit=False)
             return path
         canvas_obj = pdf_canvas.Canvas(str(target), pagesize=A4)
         page_w, page_h = A4
         printed_at = str(self.desktop_main.now_iso() or "").replace("T", " ")[:19]
         page_number = 1
 
-        def begin_page() -> tuple[float, float, float, float]:
-            frame = self._quality_pdf_draw_page_frame(
+        def begin_page() -> dict[str, Any]:
+            return self._quality_pdf_draw_page_frame(
                 canvas_obj,
                 page_w,
                 page_h,
-                title="Nao conformidade",
-                subtitle=f"{nc_id_txt} | {str(row.get('estado', '') or '-').strip()} | {str(row.get('fornecedor_nome', '') or row.get('entidade_label', '') or '-').strip()}",
+                title="Nao Conformidade",
+                subtitle=f"{nc_id_txt} | {str(row.get('estado', '') or '-').strip()} | {str(row.get('gravidade', '') or '-').strip()}",
                 printed_at=printed_at,
                 page_label=f"Pagina {page_number}",
             )
-            return (
-                float(frame["content_top"]),
-                float(frame["content_left"]),
-                float(frame["content_right"]),
-                float(frame["content_bottom"]),
-            )
 
-        y, content_left, content_right, bottom_limit = begin_page()
-        field_gap = 4.0
+        frame = begin_page()
+        palette = frame["palette"]
+        content_left = float(frame["content_left"])
+        content_right = float(frame["content_right"])
+        content_top = float(frame["content_top"])
+        bottom_limit = float(frame["content_bottom"])
+        y = content_top
+
+        def clean(value: Any) -> str:
+            return str(value or "-").replace("\r", " ").replace("\n", " ").strip() or "-"
 
         def next_page() -> None:
-            nonlocal page_number, y, content_left, content_right, bottom_limit
+            nonlocal page_number, frame, palette, content_left, content_right, content_top, bottom_limit, y
             canvas_obj.showPage()
             page_number += 1
-            y, content_left, content_right, bottom_limit = begin_page()
+            frame = begin_page()
+            palette = frame["palette"]
+            content_left = float(frame["content_left"])
+            content_right = float(frame["content_right"])
+            content_top = float(frame["content_top"])
+            bottom_limit = float(frame["content_bottom"])
+            y = content_top
 
         def ensure_space(required_height: float) -> None:
-            if y - required_height >= bottom_limit:
-                return
-            next_page()
+            if y - required_height < bottom_limit:
+                next_page()
 
-        def draw_field(label: str, value: Any) -> None:
-            nonlocal y
-            text = str(value or "-").strip() or "-"
-            label_w = 32 * mm
-            value_w = max(60.0, content_right - content_left - label_w - (6 * mm))
-            lines = _pdf_wrap_text(text, "Helvetica", 9, value_w - 10, max_lines=None) or ["-"]
-            box_h = max(12 * mm, 8 + (len(lines) * 12))
-            ensure_space(box_h + field_gap)
-            canvas_obj.setFillColor(colors.HexColor("#334155"))
-            canvas_obj.setFont("Helvetica-Bold", 8)
-            canvas_obj.drawString(content_left, y - 10, self._operator_pdf_text(label))
-            canvas_obj.setFillColor(colors.white)
-            canvas_obj.setStrokeColor(colors.HexColor("#CBD5E1"))
-            canvas_obj.roundRect(content_left + label_w, y - box_h, value_w, box_h, 4, stroke=1, fill=1)
-            canvas_obj.setFillColor(colors.black)
-            canvas_obj.setFont("Helvetica", 9)
-            line_y = y - 14
-            for line in lines:
-                canvas_obj.drawString(content_left + label_w + 6, line_y, self._operator_pdf_text(line))
-                line_y -= 12
-            y -= box_h + field_gap
+        def card(x: float, top: float, width: float, height: float, title: str) -> float:
+            canvas_obj.setFillColor(palette["surface"])
+            canvas_obj.setStrokeColor(palette["line"])
+            canvas_obj.setLineWidth(0.8)
+            canvas_obj.roundRect(x, top - height, width, height, 7, stroke=1, fill=1)
+            canvas_obj.setFillColor(palette["surface_alt"])
+            canvas_obj.roundRect(x, top - 17, width, 17, 7, stroke=0, fill=1)
+            canvas_obj.setFillColor(palette["ink"])
+            canvas_obj.setFont("Helvetica-Bold", 8.8)
+            canvas_obj.drawString(x + 8, top - 11.5, self._operator_pdf_text(title))
+            canvas_obj.setStrokeColor(palette["line"])
+            canvas_obj.line(x + 8, top - 22, x + width - 8, top - 22)
+            return top - 30
 
-        def draw_section(label: str, value: Any) -> None:
-            nonlocal y
-            raw = str(value or "-").strip() or "-"
-            lines = _pdf_wrap_text(raw, "Helvetica", 9, content_right - content_left - 12, max_lines=None) or ["-"]
-            box_h = 12 + (len(lines) * 12)
-            ensure_space(box_h + 16)
-            canvas_obj.setFillColor(colors.HexColor("#0F172A"))
-            canvas_obj.setFont("Helvetica-Bold", 10.5)
-            canvas_obj.drawString(content_left, y - 6, self._operator_pdf_text(label))
-            canvas_obj.setFillColor(colors.HexColor("#F8FAFC"))
-            canvas_obj.setStrokeColor(colors.HexColor("#CBD5E1"))
-            canvas_obj.roundRect(content_left, y - box_h - 14, content_right - content_left, box_h + 6, 5, stroke=1, fill=1)
-            canvas_obj.setFillColor(colors.black)
-            canvas_obj.setFont("Helvetica", 9)
-            line_y = y - 20
-            for line in lines:
-                canvas_obj.drawString(content_left + 6, line_y, self._operator_pdf_text(line))
-                line_y -= 12
-            y -= box_h + 20
+        def draw_kpi(x: float, top: float, width: float, label: str, value: Any, accent: Any | None = None) -> None:
+            canvas_obj.setFillColor(palette["surface_alt"])
+            canvas_obj.setStrokeColor(palette["line"])
+            canvas_obj.roundRect(x, top - 34, width, 34, 7, stroke=1, fill=1)
+            canvas_obj.setFillColor(palette["muted"])
+            canvas_obj.setFont("Helvetica", 6.4)
+            canvas_obj.drawString(x + 7, top - 10, self._operator_pdf_text(label))
+            value_txt = clean(value)
+            value_font = _pdf_fit_font_size(value_txt, "Helvetica-Bold", width - 14, 11.2, 7.2)
+            canvas_obj.setFillColor(accent or palette["ink"])
+            canvas_obj.setFont("Helvetica-Bold", value_font)
+            canvas_obj.drawString(x + 7, top - 23.5, self._operator_pdf_text(_pdf_clip_text(value_txt, width - 14, "Helvetica-Bold", value_font)))
 
+        def draw_pair(label: str, value: Any, x: float, y_pos: float, width: float) -> None:
+            label_w = min(34 * mm, width * 0.38)
+            value_w = max(20.0, width - label_w - 8)
+            canvas_obj.setFillColor(palette["muted"])
+            canvas_obj.setFont("Helvetica", 7.2)
+            canvas_obj.drawString(x, y_pos, self._operator_pdf_text(label))
+            canvas_obj.setStrokeColor(palette["line"])
+            canvas_obj.line(x + label_w, y_pos - 1.5, x + label_w + value_w, y_pos - 1.5)
+            value_txt = clean(value)
+            value_font = _pdf_fit_font_size(value_txt, "Helvetica-Bold", value_w, 8.0, 6.0)
+            canvas_obj.setFillColor(palette["ink"])
+            canvas_obj.setFont("Helvetica-Bold", value_font)
+            canvas_obj.drawRightString(x + label_w + value_w, y_pos, self._operator_pdf_text(_pdf_clip_text(value_txt, value_w, "Helvetica-Bold", value_font)))
+
+        status = clean(row.get("estado", ""))
+        severity = clean(row.get("gravidade", ""))
+        decision = clean(row.get("decisao", ""))
+        accent = palette["primary_dark"]
+        if any(token in f"{status} {severity} {decision}".casefold() for token in ("rejeit", "crit", "devolver")):
+            accent = palette["danger"]
+        elif any(token in f"{status} {severity} {decision}".casefold() for token in ("aguard", "pend", "anal")):
+            accent = palette["warning"]
+
+        kpi_gap = 6
+        kpi_w = (content_right - content_left - (kpi_gap * 3)) / 4.0
+        for index, (label, key) in enumerate((("NC", "id"), ("Estado", "estado"), ("Gravidade", "gravidade"), ("Tipo", "tipo"))):
+            draw_kpi(content_left + (index * (kpi_w + kpi_gap)), y, kpi_w, label, row.get(key, ""), accent if index in (1, 2) else None)
+        y -= 44
+
+        main_gap = 8 * mm
+        left_w = (content_right - content_left - main_gap) * 0.56
+        right_w = content_right - content_left - main_gap - left_w
+        row_top = y
+        card_y = card(content_left, row_top, left_w, 96, "Identificacao e origem")
         for label, key in (
-            ("ID", "id"),
-            ("Estado", "estado"),
-            ("Gravidade", "gravidade"),
-            ("Tipo", "tipo"),
-            ("Origem", "origem"),
             ("Referencia", "referencia"),
             ("Entidade", "entidade_label"),
             ("Fornecedor", "fornecedor_nome"),
-            ("Lote", "lote_fornecedor"),
-            ("NE", "ne_numero"),
-            ("Guia", "guia"),
-            ("Decisao", "decisao"),
-            ("Qtd recebida", "qtd_recebida"),
-            ("Qtd aprovada", "qtd_aprovada"),
-            ("Qtd rejeitada", "qtd_rejeitada"),
-            ("Qtd pendente", "qtd_pendente"),
-            ("Responsavel", "responsavel"),
-            ("Prazo", "prazo"),
-            ("Criada em", "created_at"),
-            ("Fechada em", "closed_at"),
+            ("NE / Guia", "ne_numero"),
+            ("Lote fornecedor", "lote_fornecedor"),
         ):
-            draw_field(label, row.get(key, ""))
-        for label, key in (("Descricao", "descricao"), ("Causa", "causa"), ("Acao corretiva", "acao"), ("Eficacia", "eficacia")):
-            draw_section(label, row.get(key, ""))
+            draw_pair(label, row.get(key, ""), content_left + 8, card_y, left_w - 16)
+            card_y -= 12
+
+        right_x = content_left + left_w + main_gap
+        card_y = card(right_x, row_top, right_w, 96, "Quantidades")
+        qty_pairs = [
+            ("Recebida", row.get("qtd_recebida", "")),
+            ("Aprovada", row.get("qtd_aprovada", "")),
+            ("Rejeitada", row.get("qtd_rejeitada", "")),
+            ("Pendente", row.get("qtd_pendente", "")),
+        ]
+        for label, value in qty_pairs:
+            draw_pair(label, value, right_x + 8, card_y, right_w - 16)
+            card_y -= 13
+        y = row_top - 108
+
+        meta_top = y
+        half_w = (content_right - content_left - main_gap) / 2.0
+        card_y = card(content_left, meta_top, half_w, 60, "Responsabilidade")
+        draw_pair("Responsavel", row.get("responsavel", ""), content_left + 8, card_y, half_w - 16)
+        draw_pair("Prazo", row.get("prazo", ""), content_left + 8, card_y - 13, half_w - 16)
+        draw_pair("Criada em", row.get("created_at", ""), content_left + 8, card_y - 26, half_w - 16)
+
+        card_y = card(content_left + half_w + main_gap, meta_top, half_w, 60, "Decisao")
+        decision_lines = _pdf_wrap_text(decision, "Helvetica-Bold", 8.0, half_w - 18, max_lines=3) or ["-"]
+        canvas_obj.setFillColor(accent)
+        canvas_obj.setFont("Helvetica-Bold", 8.0)
+        line_y = card_y
+        for line in decision_lines[:3]:
+            canvas_obj.drawString(content_left + half_w + main_gap + 8, line_y, self._operator_pdf_text(line))
+            line_y -= 10
+        y = meta_top - 72
+
+        def draw_text_section(title: str, value: Any, min_h: float = 54) -> None:
+            nonlocal y
+            text = clean(value)
+            width = content_right - content_left
+            lines = _pdf_wrap_text(text, "Helvetica", 8.6, width - 18, max_lines=None) or ["-"]
+            height = max(min_h, 34 + (len(lines) * 10))
+            ensure_space(height + 8)
+            text_y = card(content_left, y, width, height, title)
+            canvas_obj.setFillColor(palette["ink"])
+            canvas_obj.setFont("Helvetica", 8.6)
+            for line in lines:
+                if text_y < bottom_limit + 12:
+                    next_page()
+                    text_y = card(content_left, y, width, height, title + " (cont.)")
+                    canvas_obj.setFillColor(palette["ink"])
+                    canvas_obj.setFont("Helvetica", 8.6)
+                canvas_obj.drawString(content_left + 8, text_y, self._operator_pdf_text(line))
+                text_y -= 10
+            y -= height + 8
+
+        draw_text_section("Descricao da nao conformidade", row.get("descricao", ""), 62)
+        draw_text_section("Causa provavel", row.get("causa", ""), 52)
+        draw_text_section("Acao corretiva / contencao", row.get("acao", ""), 58)
+        draw_text_section("Eficacia / fecho", row.get("eficacia", ""), 48)
+
         canvas_obj.save()
-        self._append_audit_event(self.ensure_data(), action="PDF NC gerado", entity_type="Nao conformidade", entity_id=nc_id_txt, summary=str(target))
-        self._save(force=True, audit=False)
         return target
 
     def quality_supplier_label_pdf(self, nc_id: str, output_path: str | Path | None = None, status_override: str = "") -> Path:

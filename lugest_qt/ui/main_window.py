@@ -72,7 +72,8 @@ class MainWindow(QMainWindow):
         self._screen_fitted = False
         self._alerts_cache: dict | None = None
         self._alerts_loaded_at = 0.0
-        self._alerts_cache_ttl_sec = 10.0
+        self._alerts_cache_ttl_sec = 30.0
+        self._alerts_last_render_key = ""
         self._pending_page_refresh_key = ""
         self._page_refresh_timer = QTimer(self)
         self._page_refresh_timer.setSingleShot(True)
@@ -547,6 +548,10 @@ class MainWindow(QMainWindow):
         if not banner:
             banner = " | ".join([str(item.get("text", "") or "").strip() for item in items[:2] if str(item.get("text", "") or "").strip()])
         count = int(payload.get("count", 0) or len(items))
+        render_key = f"{count}|{banner}"
+        if render_key == self._alerts_last_render_key and self.alert_bar.isVisible():
+            return
+        self._alerts_last_render_key = render_key
         self.alert_label.setText(f"{count} alerta(s) ativos | {banner}")
         self.alert_bar.setProperty("tone", "danger")
         style = self.alert_bar.style()

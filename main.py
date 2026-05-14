@@ -7445,6 +7445,11 @@ def trial_owner_configured():
     return bool(trial_owner_username() and trial_owner_password())
 
 
+def trial_bind_device_enabled():
+    raw = str(os.environ.get("LUGEST_TRIAL_BIND_DEVICE", "") or "").strip().lower()
+    return raw in {"1", "true", "yes", "sim", "on"}
+
+
 def verify_owner_credentials(username, password):
     owner_username = trial_owner_username()
     owner_password = trial_owner_password()
@@ -7569,7 +7574,7 @@ def get_trial_status(now_dt=None):
             message = "Trial invalido. Falta a data de inicio."
         else:
             expires_dt = started_dt + timedelta(days=max(1, int(cfg.get("duration_days", 60) or 60)))
-            device_mismatch = str(cfg.get("device_fingerprint", "") or "").strip() not in ("", current_fingerprint)
+            device_mismatch = trial_bind_device_enabled() and str(cfg.get("device_fingerprint", "") or "").strip() not in ("", current_fingerprint)
             expired = now_obj > expires_dt
             days_remaining = max(0, (expires_dt.date() - now_obj.date()).days)
             if device_mismatch:
