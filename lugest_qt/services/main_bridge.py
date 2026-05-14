@@ -327,7 +327,7 @@ class LegacyBackend(
             add_candidate(self.desktop_main.get_orc_logo_path() or "")
         except Exception:
             pass
-        for fallback in ("Logos/image (1).jpg", "Logos/image.jpg", "Logos/logo.png", "logo.jpg", "logo.png", "Logos/logo(1).jpg"):
+        for fallback in ("Logos/lg.png", "lg.png", "Logos/image (1).jpg", "Logos/image.jpg", "Logos/logo.png", "logo.jpg", "logo.png", "Logos/logo(1).jpg"):
             add_candidate(fallback)
         for candidate in candidates:
             if not candidate:
@@ -1266,6 +1266,31 @@ class LegacyBackend(
             except Exception:
                 continue
         return f"MAT{highest + 1:05d}"
+
+    def _next_material_internal_lot(self) -> str:
+        year = datetime.now().year
+        prefix = f"LOTE{year}"
+        data = self.ensure_data()
+        highest = 0
+        for row in list(data.get("materiais", []) or []):
+            value = str(row.get("lote_interno", "") or "").strip().upper()
+            if value.startswith(prefix) and value[len(prefix):].isdigit():
+                try:
+                    highest = max(highest, int(value[len(prefix):]))
+                except Exception:
+                    continue
+        seq_key = f"material_lote:{year}"
+        local_next = max(highest + 1, int(data.setdefault("seq", {}).get(seq_key, 1) or 1))
+        counter_fn = getattr(self.desktop_main, "_mysql_next_counter", None)
+        n = None
+        if callable(counter_fn):
+            try:
+                n = counter_fn(seq_key, local_next)
+            except Exception:
+                n = None
+        n = int(n or local_next)
+        data.setdefault("seq", {})[seq_key] = n + 1
+        return f"{prefix}{n:05d}"
 
     def _file_reference_name(self, raw: Any, fallback: str = "ficheiro") -> str:
         current = str(raw or "").strip()
@@ -2387,7 +2412,11 @@ class LegacyBackend(
         data = self.ensure_data()
         query = str(filter_text or "").strip().lower()
         rows: list[dict[str, Any]] = []
+        assigned_internal_lots = False
         for index, material in enumerate(data.get("materiais", [])):
+            if not str(material.get("lote_interno", "") or "").strip():
+                material["lote_interno"] = self._next_material_internal_lot()
+                assigned_internal_lots = True
             if bool(material.get("is_sobra")) or str(material.get("Localizacao", material.get("Localização", "")) or "").strip().upper() == "RETALHO":
                 self.materia_actions._hydrate_retalho_record(data, material)
             preview = self.material_price_preview(material)
@@ -2408,7 +2437,9 @@ class LegacyBackend(
             secao_txt = str(preview.get("secao_label", "") or "").strip()
             if secao_txt and secao_txt != "-":
                 tipo = f"{tipo} / {secao_txt}"
-            lote_txt = str(material.get("lote_fornecedor", "") or "").strip()
+            lote_interno_txt = str(material.get("lote_interno", "") or "").strip()
+            lote_fornecedor_txt = str(material.get("lote_fornecedor", "") or "").strip()
+            lote_txt = lote_interno_txt or lote_fornecedor_txt
             origem_lotes = list(material.get("origem_lotes_baixa", []) or [])
             if bool(material.get("is_sobra")) and origem_lotes:
                 lote_txt = " + ".join(str(item or "").strip() for item in origem_lotes if str(item or "").strip()) or lote_txt
@@ -2417,6 +2448,7 @@ class LegacyBackend(
             espessura_raw = str(material.get("espessura", "") or "").strip()
             values = {
                 "lote": lote_txt,
+                "lote_fornecedor": lote_fornecedor_txt,
                 "material": str(material.get("material", "")).strip(),
                 "comprimento": str(preview.get("dim_a_text", self._fmt(material.get("comprimento", 0))) or "-"),
                 "largura": str(preview.get("dim_b_text", self._fmt(material.get("largura", 0))) or "-"),
@@ -2555,6 +2587,7 @@ class LegacyBackend(
         kg_m = self._parse_float(payload.get("kg_m", payload.get("peso_metro", 0)), 0)
         p_compra = self._parse_float(payload.get("p_compra", 0), 0)
         local = str(payload.get("local", "")).strip()
+        lote_interno = str(payload.get("lote_interno", "") or "").strip()
         lote = str(payload.get("lote_fornecedor", "")).strip()
         secao_tipo = str(payload.get("secao_tipo", payload.get("tipo_secao", "")) or "").strip()
         contorno_points = self._parse_material_contour_points(payload.get("contorno_points", payload.get("shape_points", [])))
@@ -2658,6 +2691,7 @@ class LegacyBackend(
             "peso_unid": peso_unid,
             "p_compra": p_compra,
             "local": local,
+            "lote_interno": lote_interno,
             "lote_fornecedor": lote,
             "secao_tipo": secao_tipo,
             "material_familia": material_familia,
@@ -2669,6 +2703,7 @@ class LegacyBackend(
         values = self._normalise_material_payload(payload)
         record = {
             "id": self._next_material_id(),
+            "lote_interno": values["lote_interno"] or self._next_material_internal_lot(),
             "formato": values["formato"],
             "material": values["material"],
             "espessura": values["espessura"],
@@ -2737,6 +2772,7 @@ class LegacyBackend(
                 "reservado": values["reservado"],
                 "Localização": values["local"],
                 "Localizacao": values["local"],
+                "lote_interno": str(record.get("lote_interno", "") or values["lote_interno"] or self._next_material_internal_lot()).strip(),
                 "lote_fornecedor": values["lote_fornecedor"],
                 "secao_tipo": values["secao_tipo"],
                 "material_familia": values["material_familia"],
@@ -2827,6 +2863,7 @@ class LegacyBackend(
                 raise ValueError("Quantidade do retalho invalida.")
             retalho_row = {
                 "id": self._next_material_id(),
+                "lote_interno": self._next_material_internal_lot(),
                 "formato": record.get("formato", self.desktop_main.detect_materia_formato(record)),
                 "material": record.get("material", ""),
                 "espessura": record.get("espessura", ""),
@@ -2837,6 +2874,7 @@ class LegacyBackend(
                 "reservado": 0.0,
                 "Localizacao": self._localizacao(record),
                 "lote_fornecedor": record.get("lote_fornecedor", ""),
+                "origem_lote_interno": str(record.get("lote_interno", "") or "").strip(),
                 "peso_unid": 0.0,
                 "p_compra": record.get("p_compra", 0),
                 "preco_unid": 0.0,
@@ -2901,7 +2939,8 @@ class LegacyBackend(
                     "quantidade_total": round(total_qty, 2),
                     "reservado": round(reserved, 2),
                     "local": self._localizacao(stock),
-                    "lote": str(stock.get("lote_fornecedor", "") or "").strip(),
+                    "lote": str(stock.get("lote_interno", "") or stock.get("lote_fornecedor", "") or "").strip(),
+                    "lote_fornecedor": str(stock.get("lote_fornecedor", "") or "").strip(),
                     "origem_lote": str(stock.get("origem_lote", "") or "").strip(),
                     "origem_encomenda": str(stock.get("origem_encomenda", "") or "").strip(),
                     "peso_unid": round(self._parse_float(stock.get("peso_unid", 0), 0), 3),
@@ -3215,6 +3254,11 @@ class LegacyBackend(
                     "detalhes": str(entry.get("detalhes", "")),
                 }
             )
+        if assigned_internal_lots:
+            try:
+                self._save(force=True)
+            except Exception:
+                pass
         return rows
 
     def _material_history_entry_row(self, entry: dict[str, Any], record: dict[str, Any] | None = None) -> dict[str, str]:
@@ -3435,9 +3479,12 @@ class LegacyBackend(
         return bool((record or {}).get("is_sobra")) or self._localizacao(record).strip().upper() == "RETALHO"
 
     def _material_label_lot_text(self, record: dict[str, Any]) -> str:
+        lote_interno = str((record or {}).get("lote_interno", "") or "").strip()
         origem_lotes = [str(item or "").strip() for item in list((record or {}).get("origem_lotes_baixa", []) or []) if str(item or "").strip()]
         lote = str((record or {}).get("lote_fornecedor", "") or "").strip()
         origem_lote = str((record or {}).get("origem_lote", "") or "").strip()
+        if lote_interno:
+            return lote_interno
         if origem_lotes:
             return " + ".join(origem_lotes)
         if lote:
@@ -3681,10 +3728,11 @@ class LegacyBackend(
 
         info_y = dim_y - 56
         info_gap = 10
-        info_w = (body_w - (info_gap * 3)) / 4.0
+        info_w = (body_w - (info_gap * 4)) / 5.0
         estado_text = "Disponivel" if disponivel > 0 else "Reservado / sem stock"
         info_cards = [
-            ("Lote", lot_text),
+            ("Lote interno", lot_text),
+            ("Lote fornec.", str(record.get("lote_fornecedor", "") or "-").strip() or "-"),
             ("Peso / un.", f"{self._fmt(record.get('peso_unid', 0))} kg"),
             ("Localizacao", local_text),
             ("Estado", estado_text),
@@ -12923,7 +12971,8 @@ class LegacyBackend(
                     "dimensao": f"{stock.get('comprimento', '')}x{stock.get('largura', '')}",
                     "disponivel": round(disponivel, 2),
                     "local": self._localizacao(stock),
-                    "lote": str(stock.get("lote_fornecedor", "") or "").strip(),
+                    "lote": str(stock.get("lote_interno", "") or stock.get("lote_fornecedor", "") or "").strip(),
+                    "lote_fornecedor": str(stock.get("lote_fornecedor", "") or "").strip(),
                 }
             )
         return rows

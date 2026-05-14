@@ -121,6 +121,7 @@ def _extract_encomenda_from_text(txt):
         r"\bencomenda\s*=\s*([A-Za-z0-9\-_]+)",
         r"\benc\s*=\s*([A-Za-z0-9\-_]+)",
         r"\b(BARCELBAL[0-9]{3,6})\b",
+        r"\b([A-Z][A-Z0-9]{2,15}[0-9]{4,6})\b",
     ):
         try:
             m = re.search(pat, s, flags=re.IGNORECASE)

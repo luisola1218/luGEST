@@ -1949,9 +1949,9 @@ def render_orc_pdf(self, path, orc):
         for line in get_empresa_rodape_lines():
             c.drawString(margin, yb, line)
             yb += 9
-        executado = str(orc.get("executado_por", "") or "").strip() or "Claudio"
+        executado = str(orc.get("executado_por", "") or "").strip()
         set_font(False, 8)
-        c.drawRightString(width - margin - 6, yinv(height - margin - 14), f"Executado por: {executado}")
+        c.drawRightString(width - margin - 6, yinv(height - margin - 14), f"Executado por: {executado}" if executado else "")
 
     def rows_fit_for(first_page, bottom_space):
         y_table_top = margin + header_h + (client_h + gap if first_page else gap)
@@ -2035,7 +2035,7 @@ def _render_orc_pdf_modern(self, path, orc):
     iva = subtotal * (iva_perc / 100.0)
     total = parse_float(orc.get("total", subtotal + iva), subtotal + iva)
     estado = str(orc.get("estado", "") or "Em edicao").strip() or "Em edicao"
-    executado = str(orc.get("executado_por", "") or "").strip() or "Claudio"
+    executado = str(orc.get("executado_por", "") or "").strip()
     nota_transporte = str(orc.get("nota_transporte", "") or "").strip()
     nota_cliente = str(orc.get("nota_cliente", "") or "").strip()
     numero_encomenda = str(orc.get("numero_encomenda", "") or "").strip()
@@ -2313,7 +2313,7 @@ def _render_orc_pdf_modern(self, path, orc):
             metric_grid = _orc_pdf_metric_grid_layout(width - margin - 8, 126, 64, cols=3, rows=2, group_w=360, gap=8)
             metric_card(metric_grid["cols"][0], metric_grid["rows"][0], metric_grid["chip_w"], "Documento", doc_num, box_h=metric_grid["chip_h"], compact=True)
             metric_card(metric_grid["cols"][1], metric_grid["rows"][0], metric_grid["chip_w"], "Data", fmt_display_date(orc.get("data", "")), box_h=metric_grid["chip_h"], compact=True)
-            metric_card(metric_grid["cols"][2], metric_grid["rows"][0], metric_grid["chip_w"], "Executado por", executado, box_h=metric_grid["chip_h"], compact=True)
+            metric_card(metric_grid["cols"][2], metric_grid["rows"][0], metric_grid["chip_w"], "Executado por", executado or "-", box_h=metric_grid["chip_h"], compact=True)
             metric_card(metric_grid["cols"][0], metric_grid["rows"][1], metric_grid["chip_w"], "Subtotal", fmt_money(subtotal), box_h=metric_grid["chip_h"], compact=True)
             metric_card(metric_grid["cols"][1], metric_grid["rows"][1], metric_grid["chip_w"], "IVA", f"{fmt_num(iva_perc)}%", box_h=metric_grid["chip_h"], compact=True)
             metric_card(metric_grid["cols"][2], metric_grid["rows"][1], metric_grid["chip_w"], "TOTAL C/IVA", fmt_money(total), box_h=metric_grid["chip_h"], accent=True, compact=True)
@@ -2413,7 +2413,8 @@ def _render_orc_pdf_modern(self, path, orc):
         right_text = footer_company[2] if len(footer_company) > 2 else (footer_company[1] if len(footer_company) > 1 else "")
         c.drawString(margin + 10, yinv(562), ntxt(_orc_pdf_clip_text(left_text, 320, fonts["regular"], 7.0)))
         c.drawRightString(width - margin - 10, yinv(562), ntxt(_orc_pdf_clip_text(right_text, 260, fonts["regular"], 7.0)))
-        c.drawRightString(width - margin - 10, yinv(574), ntxt(f"Executado por {executado} | Pagina {page_no}/{total_pages}"))
+        footer_left = f"Executado por {executado} | " if executado else ""
+        c.drawRightString(width - margin - 10, yinv(574), ntxt(f"{footer_left}Pagina {page_no}/{total_pages}"))
 
     def paginate_items(items):
         if not items:

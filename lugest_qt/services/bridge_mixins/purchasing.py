@@ -558,6 +558,7 @@ class PurchasingBridgeMixin:
         geometry = self.material_geometry_preview(line)
         record = {
             "id": self._next_material_id(),
+            "lote_interno": self._next_material_internal_lot(),
             "formato": formato_txt,
             "material": material_txt,
             "material_familia": str(line.get("material_familia", "") or "").strip(),
@@ -1447,6 +1448,8 @@ class PurchasingBridgeMixin:
                             + "."
                         )
                 else:
+                    if not str(material.get("lote_interno", "") or "").strip():
+                        material["lote_interno"] = self._next_material_internal_lot()
                     if lote_override:
                         material["lote_fornecedor"] = lote_override
                     if local_override:

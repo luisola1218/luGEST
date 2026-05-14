@@ -5,7 +5,8 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import QPoint, QRect, QSize, QProcess, Qt, QTimer
+from PySide6.QtCore import QPoint, QRect, QRectF, QSize, QProcess, Qt, QTimer
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -56,6 +57,42 @@ from .pages.runtime_pages import (
     TransportsPage,
 )
 from .pages.stock_dashboard_page import StockDashboardPage
+
+
+class _BrandMark(QWidget):
+    """Small vector mark inspired by the LuGEST icon, independent from image files."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setFixedSize(40, 34)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+
+        sx = self.width() / 40.0
+        sy = self.height() / 34.0
+
+        def rect(x: float, y: float, w: float, h: float) -> QRectF:
+            return QRectF(x * sx, y * sy, w * sx, h * sy)
+
+        def rounded(x: float, y: float, w: float, h: float, color: str, radius: float = 4.0) -> None:
+            painter.setBrush(QColor(color))
+            painter.drawRoundedRect(rect(x, y, w, h), radius * sx, radius * sy)
+
+        dark = "#24313c"
+        orange = "#f47a18"
+        # The mark is drawn as two stepped blocks with deliberate white channels,
+        # so it stays crisp at header size and still echoes the real LuGEST icon.
+        rounded(3.0, 2.0, 12.0, 29.0, dark)
+        rounded(3.0, 22.0, 27.0, 10.0, dark)
+        rounded(19.0, 3.0, 17.0, 12.0, orange)
+        rounded(27.0, 3.0, 9.0, 28.0, orange)
+        rounded(15.0, 13.0, 12.5, 9.0, "#ffffff", radius=2.2)
+        rounded(15.0, 15.0, 5.0, 7.5, "#ffffff", radius=1.6)
 
 
 class MainWindow(QMainWindow):
@@ -116,16 +153,30 @@ class MainWindow(QMainWindow):
         shell_layout.setContentsMargins(16, 10, 16, 10)
         shell_layout.setSpacing(10)
 
-        brand_col = QVBoxLayout()
-        brand_col.setContentsMargins(0, 0, 0, 0)
-        brand_col.setSpacing(2)
-        brand = QLabel("luGEST")
-        brand.setStyleSheet("font-size: 24px; font-weight: 900; color: #0f172a;")
+        brand_frame = QFrame()
+        brand_frame.setObjectName("AppBrandPlate")
+        brand_frame.setMinimumWidth(154)
+        brand_frame.setFixedHeight(48)
+        brand_layout = QHBoxLayout(brand_frame)
+        brand_layout.setContentsMargins(0, 1, 0, 0)
+        brand_layout.setSpacing(9)
+
+        brand_mark = _BrandMark()
+        brand_layout.addWidget(brand_mark, 0, Qt.AlignTop)
+
+        brand_text_col = QVBoxLayout()
+        brand_text_col.setContentsMargins(0, 0, 0, 0)
+        brand_text_col.setSpacing(1)
+        brand_label = QLabel("LUGEST")
+        brand_label.setStyleSheet("font-size: 23px; font-weight: 950; letter-spacing: 0.7px; color: #24313c;")
         brand_sub = QLabel("ERP industrial")
         brand_sub.setProperty("role", "muted")
-        brand_col.addWidget(brand)
-        brand_col.addWidget(brand_sub)
-        shell_layout.addLayout(brand_col)
+        brand_sub.setStyleSheet("font-size: 10px; letter-spacing: 0.8px; color: #f47a18; font-weight: 800;")
+        brand_text_col.addWidget(brand_label)
+        brand_text_col.addWidget(brand_sub)
+        brand_text_col.addStretch(1)
+        brand_layout.addLayout(brand_text_col)
+        shell_layout.addWidget(brand_frame, 0, Qt.AlignTop)
 
         shell_layout.addSpacing(18)
 

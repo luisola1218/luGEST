@@ -695,6 +695,7 @@ class _MaterialEditorDialog(QDialog):
         self.secao_tipo_combo = self._make_combo()
         self.espessura_combo = self._make_combo()
         self.local_combo = self._make_combo()
+        self.lote_interno_edit = QLineEdit()
         self.lote_edit = QLineEdit()
         self.comprimento_edit = QLineEdit()
         self.largura_edit = QLineEdit()
@@ -712,6 +713,8 @@ class _MaterialEditorDialog(QDialog):
         self.preco_unit_edit.setFocusPolicy(Qt.NoFocus)
         self.preco_unit_edit.setPlaceholderText("0,00 EUR")
         self.peso_edit.setReadOnly(True)
+        self.lote_interno_edit.setReadOnly(True)
+        self.lote_interno_edit.setPlaceholderText("Gerado automaticamente")
         self.preco_compra_edit.setPlaceholderText("EUR/kg ou EUR/m")
         self.contorno_edit.setPlaceholderText("Opcional: 0,0; 1000,0; 900,400; 0,400")
         self.kg_m_edit.setPlaceholderText("Auto por tabela / fórmula")
@@ -733,7 +736,8 @@ class _MaterialEditorDialog(QDialog):
             ("Família", self.material_family_combo),
             ("Tipo secção", self.secao_tipo_combo),
             ("Espessura", self.espessura_combo),
-            ("Lote", self.lote_edit),
+            ("Lote interno", self.lote_interno_edit),
+            ("Lote fornecedor", self.lote_edit),
             ("Comprimento", self.comprimento_edit),
             ("Largura", self.largura_edit),
             ("Altura", self.altura_edit),
@@ -782,6 +786,7 @@ class _MaterialEditorDialog(QDialog):
         self.material_family_combo.currentIndexChanged.connect(self._on_form_value_changed)
         for edit in (
             self.lote_edit,
+            self.lote_interno_edit,
             self.comprimento_edit,
             self.largura_edit,
             self.altura_edit,
@@ -885,6 +890,7 @@ class _MaterialEditorDialog(QDialog):
         self.local_combo.setCurrentText("")
         for edit in (
             self.lote_edit,
+            self.lote_interno_edit,
             self.comprimento_edit,
             self.largura_edit,
             self.altura_edit,
@@ -915,6 +921,7 @@ class _MaterialEditorDialog(QDialog):
         self.secao_tipo_combo.setCurrentText(str(preview.get("secao_tipo", record.get("secao_tipo", "")) or "").strip())
         self.espessura_combo.setCurrentText(str(record.get("espessura", "") or ""))
         self.lote_edit.setText(str(record.get("lote_fornecedor", "") or ""))
+        self.lote_interno_edit.setText(str(record.get("lote_interno", "") or ""))
         self.comprimento_edit.setText(self.backend._fmt(preview.get("comprimento", record.get("comprimento", 0))))
         self.largura_edit.setText(self.backend._fmt(preview.get("largura", record.get("largura", 0))))
         self.altura_edit.setText(self.backend._fmt(preview.get("altura", record.get("altura", 0))))
@@ -949,6 +956,7 @@ class _MaterialEditorDialog(QDialog):
             "quantidade": self.quantidade_edit.text().strip(),
             "reservado": self.reservado_edit.text().strip(),
             "local": self.local_combo.currentText().strip(),
+            "lote_interno": self.lote_interno_edit.text().strip(),
             "lote_fornecedor": self.lote_edit.text().strip(),
         }
 
@@ -1202,6 +1210,7 @@ class MaterialsPage(QWidget):
         self.secao_tipo_combo = self._make_combo()
         self.espessura_combo = self._make_combo()
         self.local_combo = self._make_combo()
+        self.lote_interno_edit = QLineEdit()
         self.lote_edit = QLineEdit()
         self.comprimento_edit = QLineEdit()
         self.largura_edit = QLineEdit()
@@ -1219,6 +1228,8 @@ class MaterialsPage(QWidget):
         self.preco_unit_edit.setFocusPolicy(Qt.NoFocus)
         self.preco_unit_edit.setPlaceholderText("0,00 EUR")
         self.peso_edit.setReadOnly(True)
+        self.lote_interno_edit.setReadOnly(True)
+        self.lote_interno_edit.setPlaceholderText("Gerado automaticamente")
         self.preco_compra_edit.setPlaceholderText("EUR/kg ou EUR/m")
         self.contorno_edit.setPlaceholderText("Opcional: 0,0; 1000,0; 900,400; 0,400")
         self.kg_m_edit.setPlaceholderText("Auto por tabela / fórmula")
@@ -1239,7 +1250,8 @@ class MaterialsPage(QWidget):
             ("Família", self.material_family_combo),
             ("Tipo secção", self.secao_tipo_combo),
             ("Espessura", self.espessura_combo),
-            ("Lote", self.lote_edit),
+            ("Lote interno", self.lote_interno_edit),
+            ("Lote fornecedor", self.lote_edit),
             ("Comprimento", self.comprimento_edit),
             ("Largura", self.largura_edit),
             ("Altura", self.altura_edit),
@@ -1351,7 +1363,7 @@ class MaterialsPage(QWidget):
         table_header.addStretch(1)
         table_header.addWidget(self.table_count_label)
         table_layout.addLayout(table_header)
-        self.table = QTableWidget(0, 17)
+        self.table = QTableWidget(0, 18)
         self.table.setObjectName("StockTable")
         self.table.setStyleSheet(
             "QTableWidget {"
@@ -1369,7 +1381,8 @@ class MaterialsPage(QWidget):
         )
         self.table.setHorizontalHeaderLabels(
             [
-                "Lote",
+                "Lote interno",
+                "Lote fornecedor",
                 "Material",
                 "Dim. A",
                 "Dim. B",
@@ -1401,23 +1414,24 @@ class MaterialsPage(QWidget):
         header.setStretchLastSection(False)
         header.setMinimumSectionSize(48)
         column_specs = [
-            (0, QHeaderView.Interactive, 126),  # Lote
-            (1, QHeaderView.Interactive, 280),  # Material
-            (2, QHeaderView.Fixed, 72),         # Dim. A
-            (3, QHeaderView.Fixed, 72),         # Dim. B
-            (4, QHeaderView.Fixed, 78),         # Espessura
-            (5, QHeaderView.Fixed, 86),         # Quantidade
-            (6, QHeaderView.Fixed, 72),         # Reserva
-            (7, QHeaderView.Fixed, 92),         # Formato
-            (8, QHeaderView.Fixed, 92),         # Metros
-            (9, QHeaderView.Interactive, 112),  # Peso/Un.
-            (10, QHeaderView.Fixed, 104),       # Compra
-            (11, QHeaderView.Fixed, 104),       # Preço
-            (12, QHeaderView.Fixed, 104),       # Disponível
-            (13, QHeaderView.Interactive, 210), # Tipo
-            (14, QHeaderView.Interactive, 132), # Localização
-            (15, QHeaderView.Fixed, 86),        # ID
-            (16, QHeaderView.Interactive, 118), # Estado
+            (0, QHeaderView.Interactive, 134),  # Lote interno
+            (1, QHeaderView.Interactive, 130),  # Lote fornecedor
+            (2, QHeaderView.Interactive, 260),  # Material
+            (3, QHeaderView.Fixed, 72),         # Dim. A
+            (4, QHeaderView.Fixed, 72),         # Dim. B
+            (5, QHeaderView.Fixed, 78),         # Espessura
+            (6, QHeaderView.Fixed, 86),         # Quantidade
+            (7, QHeaderView.Fixed, 72),         # Reserva
+            (8, QHeaderView.Fixed, 92),         # Formato
+            (9, QHeaderView.Fixed, 92),         # Metros
+            (10, QHeaderView.Interactive, 112), # Peso/Un.
+            (11, QHeaderView.Fixed, 104),       # Compra
+            (12, QHeaderView.Fixed, 104),       # Preço
+            (13, QHeaderView.Fixed, 104),       # Disponível
+            (14, QHeaderView.Interactive, 210), # Tipo
+            (15, QHeaderView.Interactive, 132), # Localização
+            (16, QHeaderView.Fixed, 86),        # ID
+            (17, QHeaderView.Interactive, 118), # Estado
         ]
         for column, mode, width in column_specs:
             header.setSectionResizeMode(column, mode)
@@ -1431,6 +1445,7 @@ class MaterialsPage(QWidget):
         self.material_family_combo.currentIndexChanged.connect(self._on_form_value_changed)
         for edit in (
             self.lote_edit,
+            self.lote_interno_edit,
             self.comprimento_edit,
             self.largura_edit,
             self.altura_edit,
@@ -1487,6 +1502,7 @@ class MaterialsPage(QWidget):
         self.local_combo.setCurrentText("")
         for edit in (
             self.lote_edit,
+            self.lote_interno_edit,
             self.comprimento_edit,
             self.largura_edit,
             self.altura_edit,
@@ -1550,12 +1566,14 @@ class MaterialsPage(QWidget):
         material = str(record.get("material", "") or "").strip() or "Sem material"
         formato = str(record.get("formato", "") or "").strip() or "-"
         local = self.backend._localizacao(record) or "Sem localização"
-        lote = str(record.get("lote_fornecedor", "") or "").strip() or "Sem lote"
+        lote = str(record.get("lote_interno", "") or "").strip() or "Sem lote interno"
+        lote_fornecedor = str(record.get("lote_fornecedor", "") or "").strip()
         quantidade = self.backend._parse_float(record.get("quantidade", 0), 0)
         reservado = self.backend._parse_float(record.get("reservado", 0), 0)
         disponivel = quantidade - reservado
         self.detail_title.setText(f"{material} | {material_id}")
-        self.detail_meta.setText(f"{formato} | Lote: {lote} | Localização: {local}")
+        fornecedor_txt = f" | Fornecedor: {lote_fornecedor}" if lote_fornecedor else ""
+        self.detail_meta.setText(f"{formato} | Lote interno: {lote}{fornecedor_txt} | Localização: {local}")
         severity = self._severity_for_record(record)
         if severity == "critical":
             self.detail_status.setText("Stock crítico")
@@ -1597,6 +1615,7 @@ class MaterialsPage(QWidget):
             self.secao_tipo_combo,
             self.espessura_combo,
             self.local_combo,
+            self.lote_interno_edit,
             self.lote_edit,
             self.comprimento_edit,
             self.largura_edit,
@@ -1633,6 +1652,7 @@ class MaterialsPage(QWidget):
             "quantidade": self.quantidade_edit.text().strip(),
             "reservado": self.reservado_edit.text().strip(),
             "local": self.local_combo.currentText().strip(),
+            "lote_interno": self.lote_interno_edit.text().strip(),
             "lote_fornecedor": self.lote_edit.text().strip(),
         }
 
@@ -1756,7 +1776,7 @@ class MaterialsPage(QWidget):
                 continue
             item.setBackground(QBrush(background))
             item.setForeground(QBrush(foreground))
-        available_item = self.table.item(row_index, 12)
+        available_item = self.table.item(row_index, 13)
         if available_item is None:
             return
         if severity == "critical":
@@ -1788,7 +1808,7 @@ class MaterialsPage(QWidget):
         return "Disponível"
 
     def _apply_state_cell_style(self, row_index: int, severity: str, state_label: str) -> None:
-        item = self.table.item(row_index, 16)
+        item = self.table.item(row_index, 17)
         if item is None:
             return
         state_norm = state_label.casefold()
@@ -1810,7 +1830,7 @@ class MaterialsPage(QWidget):
         rows = selection_model.selectedRows()
         if not rows:
             return ""
-        item = self.table.item(rows[0].row(), 15)
+        item = self.table.item(rows[0].row(), 16)
         return item.text().strip() if item else ""
 
     def _selected_material_record(self) -> dict | None:
@@ -1849,6 +1869,7 @@ class MaterialsPage(QWidget):
             state_label = self._stock_state_label(payload.get("record"), str(payload.get("severity", "ok")))
             columns = [
                 values["lote"],
+                values.get("lote_fornecedor", ""),
                 values["material"],
                 values["comprimento"],
                 values["largura"],
@@ -1869,7 +1890,7 @@ class MaterialsPage(QWidget):
             for col_index, value in enumerate(columns):
                 item = QTableWidgetItem(str(value))
                 item.setToolTip(str(value))
-                if col_index not in (0, 1, 13, 14, 15):
+                if col_index not in (0, 1, 2, 14, 15, 16):
                     item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
                 self.table.setItem(row_index, col_index, item)
             self._apply_row_colors(row_index, payload["severity"], payload["band"])
@@ -1879,7 +1900,7 @@ class MaterialsPage(QWidget):
             except Exception:
                 available_value = 0.0
             if available_value <= 0:
-                zero_item = self.table.item(row_index, 12)
+                zero_item = self.table.item(row_index, 13)
                 if zero_item is not None:
                     zero_item.setForeground(QBrush(QColor("#b42318")))
         self.table.setUpdatesEnabled(True)
@@ -1887,7 +1908,7 @@ class MaterialsPage(QWidget):
 
         if selected_id:
             for row_index in range(self.table.rowCount()):
-                item = self.table.item(row_index, 15)
+                item = self.table.item(row_index, 16)
                 if item and item.text().strip() == selected_id:
                     self.table.selectRow(row_index)
                     self.current_material_id = selected_id
@@ -1935,6 +1956,7 @@ class MaterialsPage(QWidget):
         self.quantidade_edit.setText(self.backend._fmt(record.get("quantidade", 0)))
         self.reservado_edit.setText(self.backend._fmt(record.get("reservado", 0)))
         self.local_combo.setCurrentText(self.backend._localizacao(record))
+        self.lote_interno_edit.setText(str(record.get("lote_interno", "")))
         self.lote_edit.setText(str(record.get("lote_fornecedor", "")))
         self._refresh_form_state()
         self._refresh_price_preview()

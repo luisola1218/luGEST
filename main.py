@@ -634,7 +634,7 @@ DEFAULT_DATA = {
     "conjuntos_modelo": [],
     "of_seq": 1,
     "opp_seq": 1,
-    "orcamentistas": ["Orçamentista 1"],
+    "orcamentistas": [],
     "produtos": [],
     "notas_encomenda": [],
     "expedicoes": [],
@@ -2325,6 +2325,7 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "fornecedores", "website", "VARCHAR(255) NULL")
         _mysql_ensure_column(cur, "fornecedores", "obs", "TEXT NULL")
     if "materiais" in tables:
+        _mysql_ensure_column(cur, "materiais", "lote_interno", "VARCHAR(100) NULL")
         _mysql_ensure_column(cur, "materiais", "preco_unid", "DECIMAL(12,4) NULL")
         _mysql_ensure_column(cur, "materiais", "origem_lote", "VARCHAR(100) NULL")
         _mysql_ensure_column(cur, "materiais", "origem_encomenda", "VARCHAR(30) NULL")
@@ -3244,15 +3245,16 @@ def _mysql_sync_relational_schema(cur, data):
             cur.execute(
                 """
                 INSERT INTO materiais (
-                    id, lote_fornecedor, formato, material, material_familia, espessura, comprimento, largura, altura, diametro, metros, kg_m, peso_unid, p_compra, preco_unid,
+                    id, lote_interno, lote_fornecedor, formato, material, material_familia, espessura, comprimento, largura, altura, diametro, metros, kg_m, peso_unid, p_compra, preco_unid,
                     quantidade, reservado, tipo, localizacao, is_sobra, atualizado_em, origem_lote, origem_encomenda, secao_tipo, logistic_status,
                     quality_status, quality_blocked, quality_pending_qty, quality_received_qty, quality_approved_qty, quality_return_document_id,
                     inspection_status, inspection_defect, inspection_decision, inspection_at, inspection_by,
                     inspection_note_number, inspection_supplier_id, inspection_supplier_name, inspection_guia, inspection_fatura, quality_nc_id, supplier_claim_id
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     mid,
+                    _clip(m.get("lote_interno"), 100),
                     _clip(m.get("lote_fornecedor"), 100),
                     _clip(m.get("formato"), 50),
                     _clip(m.get("material"), 100),
@@ -4680,10 +4682,21 @@ def _rebuild_runtime_sequences(data):
         ),
         _load_fornecedor_sequence_next(data),
     )
-    seq["encomenda"] = _next_seq_from_pattern(
-        [e.get("numero") for e in data.get("encomendas", [])],
-        r"^BARCELBAL(\d{4,})$",
-        1,
+    try:
+        encomenda_prefix = _encomenda_prefix_from_branding()
+    except Exception:
+        encomenda_prefix = "LUGEST"
+    seq["encomenda"] = max(
+        _next_seq_from_pattern(
+            [e.get("numero") for e in data.get("encomendas", [])],
+            rf"^{re.escape(encomenda_prefix)}(\d{{4,}})$",
+            1,
+        ),
+        _next_seq_from_pattern(
+            [e.get("numero") for e in data.get("encomendas", [])],
+            r"^BARCELBAL(\d{4,})$",
+            1,
+        ),
     )
     seq["ne"] = _next_seq_from_pattern(
         [n.get("numero") for n in data.get("notas_encomenda", [])],
@@ -4868,6 +4881,7 @@ def _mysql_load_relational_data():
                 data["materiais"].append(
                     {
                         "id": str(r.get("id", "") or ""),
+                        "lote_interno": str(r.get("lote_interno", "") or ""),
                         "lote_fornecedor": str(r.get("lote_fornecedor", "") or ""),
                         "formato": str(r.get("formato", "") or ""),
                         "material": str(r.get("material", "") or ""),
@@ -7865,7 +7879,7 @@ def load_data():
     data.setdefault("conjuntos", [])
     data.setdefault("of_seq", 1)
     data.setdefault("opp_seq", 1)
-    data.setdefault("orcamentistas", ["Orçamentista 1"])
+    data.setdefault("orcamentistas", [])
     # novos modulos
     data["seq"].setdefault("produto", 1)
     data["seq"].setdefault("ne", 1)
@@ -7925,6 +7939,7 @@ def load_data():
         m.setdefault("reservado", 0.0)
         m.setdefault("is_sobra", False)
         m.setdefault("Localizacao", "")
+        m.setdefault("lote_interno", "")
         m.setdefault("lote_fornecedor", "")
         m.setdefault("formato", detect_materia_formato(m))
     for e in data["encomendas"]:
@@ -8435,17 +8450,40 @@ def _mysql_next_counter(counter_key, initial_next=1):
             pass
 
 
+def _encomenda_prefix_from_branding():
+    try:
+        emit = dict(get_guia_emitente_info() or {})
+    except Exception:
+        emit = {}
+    raw_name = str(emit.get("nome", "") or "").strip()
+    if not raw_name:
+        try:
+            lines = list(get_empresa_rodape_lines() or [])
+            raw_name = str(lines[0] if lines else "" or "").strip()
+        except Exception:
+            raw_name = ""
+    if not raw_name:
+        raw_name = "LUGEST"
+    prefix = "".join(ch for ch in raw_name.upper() if ch.isalnum())
+    if not prefix:
+        prefix = "ENCOMENDA"
+    return prefix[:12]
+
+
 def next_encomenda_numero(data):
     seq = data.setdefault("seq", {})
+    prefix = _encomenda_prefix_from_branding()
     max_n = 0
     for e in data.get("encomendas", []):
-        num = e.get("numero", "")
-        if num.startswith("BARCELBAL") and num[9:].isdigit():
-            max_n = max(max_n, int(num[9:]))
-    local_next = max(max_n + 1, int(seq.get("encomenda", 1) or 1))
-    n = _mysql_next_counter("encomenda", local_next) or local_next
-    seq["encomenda"] = n + 1
-    return f"BARCELBAL{n:04d}"
+        num = str(e.get("numero", "") or "").strip().upper()
+        if num.startswith(prefix) and num[len(prefix):].isdigit():
+            max_n = max(max_n, int(num[len(prefix):]))
+    seq_key = f"encomenda:{prefix}"
+    local_next = max(max_n + 1, int(seq.get(seq_key, seq.get("encomenda", 1)) or 1))
+    n = _mysql_next_counter(seq_key, local_next) or local_next
+    seq[seq_key] = n + 1
+    seq["encomenda"] = max(int(seq.get("encomenda", 1) or 1), n + 1)
+    return f"{prefix}{n:04d}"
 
 
 def next_orc_numero(data):

@@ -17,7 +17,7 @@ REQUIRED = {
     "conjuntos_modelo": {"codigo", "descricao", "ativo", "updated_at"},
     "conjuntos_modelo_itens": {"conjunto_codigo", "linha_ordem", "tipo_item", "qtd", "preco_unit"},
     "fornecedores": {"id", "nome"},
-    "materiais": {"id", "material", "espessura", "quantidade", "reservado", "lote_fornecedor"},
+    "materiais": {"id", "material", "espessura", "quantidade", "reservado", "lote_interno", "lote_fornecedor"},
     "encomendas": {"numero", "cliente_codigo", "estado", "data_entrega"},
     "encomenda_espessuras": {"encomenda_numero", "material", "espessura", "tempo_min", "estado"},
     "encomenda_montagem_itens": {"encomenda_numero", "linha_ordem", "tipo_item", "qtd_planeada", "qtd_consumida", "estado"},

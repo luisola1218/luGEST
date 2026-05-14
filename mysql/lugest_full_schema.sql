@@ -126,6 +126,7 @@ CREATE TABLE IF NOT EXISTS `fornecedores` (
 
 CREATE TABLE IF NOT EXISTS `materiais` (
   `id` varchar(20) NOT NULL,
+  `lote_interno` varchar(100) DEFAULT NULL,
   `lote_fornecedor` varchar(100) DEFAULT NULL,
   `formato` varchar(50) DEFAULT NULL,
   `material` varchar(100) DEFAULT NULL,
