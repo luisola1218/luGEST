@@ -853,6 +853,9 @@ class MainWindow(QMainWindow):
         updates_btn = QPushButton("Atualizacoes")
         updates_btn.setProperty("variant", "secondary")
         tools_row.addWidget(updates_btn)
+        info_btn = QPushButton("Inf. LuGEST")
+        info_btn.setProperty("variant", "secondary")
+        tools_row.addWidget(info_btn)
         trial_manage_allowed = bool(getattr(self.backend, "is_owner_session", lambda: False)())
         trial_btn = None
         if trial_manage_allowed:
@@ -1159,6 +1162,104 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(brand_dialog, "Empresa / PDFs", str(exc))
                 return
             QMessageBox.information(brand_dialog, "Empresa / PDFs", "Informacao da empresa atualizada.")
+
+        def open_lugest_info_dialog() -> None:
+            info_dialog = QDialog(dialog)
+            info_dialog.setWindowTitle("Informacao LuGEST")
+            info_dialog.setWindowFlag(Qt.WindowMinimizeButtonHint, True)
+            info_dialog.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
+            info_dialog.setWindowFlag(Qt.WindowSystemMenuHint, True)
+            info_dialog.setMinimumSize(760, 560)
+            info_dialog.resize(860, 620)
+            info_layout = QVBoxLayout(info_dialog)
+            info_layout.setContentsMargins(18, 18, 18, 18)
+            info_layout.setSpacing(12)
+
+            header = QFrame()
+            header.setObjectName("Panel")
+            header.setStyleSheet(
+                """
+                QFrame#Panel {
+                    background: #ffffff;
+                    border: 1px solid #b7c7d8;
+                    border-radius: 14px;
+                }
+                """
+            )
+            header_layout = QHBoxLayout(header)
+            header_layout.setContentsMargins(18, 14, 18, 14)
+            header_layout.setSpacing(12)
+            header_layout.addWidget(_BrandMark(), 0, Qt.AlignVCenter)
+            title_col = QVBoxLayout()
+            title_col.setContentsMargins(0, 0, 0, 0)
+            title_col.setSpacing(2)
+            title = QLabel("LuGEST")
+            title.setStyleSheet("font-size: 26px; font-weight: 950; color: #24313c; letter-spacing: 0.8px;")
+            subtitle = QLabel("Software ERP Industrial")
+            subtitle.setStyleSheet("font-size: 12px; font-weight: 800; color: #f47a18; letter-spacing: 0.8px;")
+            title_col.addWidget(title)
+            title_col.addWidget(subtitle)
+            header_layout.addLayout(title_col, 1)
+            info_layout.addWidget(header)
+
+            legal_text = QTextEdit()
+            legal_text.setReadOnly(True)
+            legal_text.setStyleSheet(
+                """
+                QTextEdit {
+                    background: #fbfdff;
+                    border: 1px solid #b7c7d8;
+                    border-radius: 12px;
+                    padding: 14px;
+                    font-size: 12px;
+                    line-height: 1.35;
+                }
+                """
+            )
+            legal_text.setPlainText(
+                "\n".join(
+                    [
+                        "INFORMACAO LEGAL E DIREITOS DE AUTOR",
+                        "",
+                        "O software LuGEST foi criado e desenvolvido por Luis Fernandez.",
+                        "NIF do autor/titular: 243324243.",
+                        "",
+                        "Todos os direitos sao reservados.",
+                        "",
+                        "E proibida a copia, reproducao, distribuicao, venda, cedencia, aluguer, engenharia inversa, "
+                        "descompilacao, alteracao, remocao de marcas, reaproveitamento de codigo, utilizacao de partes "
+                        "do software em produtos concorrentes ou qualquer tentativa de apropriacao total ou parcial do "
+                        "LuGEST sem autorizacao expressa e escrita do titular.",
+                        "",
+                        "O acesso, instalacao ou utilizacao do LuGEST nao transfere propriedade intelectual, codigo-fonte, "
+                        "metodologias, estrutura de base de dados, desenho funcional, identidade visual, documentos, "
+                        "modelos, relatorios ou automatismos para qualquer cliente, colaborador, fornecedor, consultor "
+                        "ou terceira entidade.",
+                        "",
+                        "Qualquer utilizacao do LuGEST em ambiente empresarial deve respeitar a licenca concedida pelo "
+                        "titular. A posse de uma copia instalada nao concede direito de revenda, sublicenciamento, "
+                        "replicacao, publicacao ou exploracao comercial independente.",
+                        "",
+                        "Tentativas de apropriacao indevida, copia nao autorizada ou utilizacao fora dos termos "
+                        "autorizados poderao originar responsabilidade civil e/ou criminal nos termos legais aplicaveis.",
+                        "",
+                        "Para efeitos de rastreabilidade, esta instalacao pode conter dados tecnicos de configuracao, "
+                        "licenciamento, auditoria e identificacao operacional necessarios para suporte e protecao do software.",
+                        "",
+                        "Nota: este aviso reforca a comunicacao de autoria e reserva de direitos no software. Para protecao "
+                        "juridica maxima, recomenda-se complementar com contrato/licenca de utilizacao assinada e, quando "
+                        "aplicavel, registo formal da marca/obra junto das entidades competentes.",
+                    ]
+                )
+            )
+            info_layout.addWidget(legal_text, 1)
+
+            buttons = QDialogButtonBox(QDialogButtonBox.Close)
+            buttons.button(QDialogButtonBox.Close).setText("Fechar")
+            buttons.rejected.connect(info_dialog.reject)
+            buttons.accepted.connect(info_dialog.accept)
+            info_layout.addWidget(buttons)
+            info_dialog.exec()
 
         def open_trial_dialog() -> None:
             if not trial_manage_allowed:
@@ -2239,6 +2340,7 @@ class MainWindow(QMainWindow):
         operations_btn.clicked.connect(open_operations_dialog)
         workcenters_btn.clicked.connect(open_workcenters_dialog)
         updates_btn.clicked.connect(self._open_updates_dialog)
+        info_btn.clicked.connect(open_lugest_info_dialog)
         if trial_btn is not None:
             trial_btn.clicked.connect(open_trial_dialog)
         password_toggle.toggled.connect(sync_password_echo)

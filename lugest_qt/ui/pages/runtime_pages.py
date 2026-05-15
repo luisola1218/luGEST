@@ -1434,6 +1434,9 @@ class OperatorPage(QWidget):
         self.manual_consume_btn = QPushButton("Dar Baixa")
         self.manual_consume_btn.setProperty("variant", "secondary")
         self.manual_consume_btn.clicked.connect(self._manual_consume_material)
+        self.partial_consume_btn = QPushButton("Baixa Parcial")
+        self.partial_consume_btn.setProperty("variant", "warning")
+        self.partial_consume_btn.clicked.connect(self._partial_consume_reserved_material)
         self.drawing_btn = QPushButton("Ver desenho")
         self.drawing_btn.setProperty("variant", "secondary")
         self.drawing_btn.clicked.connect(self._open_drawing)
@@ -1455,6 +1458,7 @@ class OperatorPage(QWidget):
         for button in (
             self.alert_btn,
             self.manual_consume_btn,
+            self.partial_consume_btn,
             self.drawing_btn,
             self.labels_btn,
             self.local_refresh_btn,
@@ -2803,7 +2807,13 @@ class OperatorPage(QWidget):
         table = QTableWidget(len(candidates), 6)
         table.setHorizontalHeaderLabels(["Dimensao", "Disponivel", "Local", "Lote", "Peso/Un.", "Baixar"])
         table.verticalHeader().setVisible(False)
-        table.verticalHeader().setDefaultSectionSize(28)
+        table.verticalHeader().setDefaultSectionSize(26)
+        table.setStyleSheet(
+            "QTableWidget { font-size: 11px; } "
+            "QHeaderView::section { font-size: 11px; font-weight: 700; } "
+            "QDoubleSpinBox { font-size: 11px; } "
+            "QDoubleSpinBox#consumeCellSpin { border: none; background: transparent; padding: 0 8px; }"
+        )
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -2828,6 +2838,9 @@ class OperatorPage(QWidget):
             spin.setDecimals(2)
             spin.setButtonSymbols(QDoubleSpinBox.NoButtons)
             spin.setAlignment(Qt.AlignCenter)
+            spin.setFrame(False)
+            spin.setObjectName("consumeCellSpin")
+            spin.setMinimumWidth(104)
             table.setCellWidget(row_index, 5, spin)
             spinners.append((row, spin))
         table.setMinimumHeight(_table_visible_height(table, max(6, len(candidates)), extra=22))
@@ -2930,6 +2943,194 @@ class OperatorPage(QWidget):
             QMessageBox.critical(self, "Dar Baixa", str(exc))
             return
         message = f"Baixa registada: {float(result.get('consumed_total', 0) or 0):.2f}"
+        if str(result.get("retalho_id", "") or "").strip():
+            message = f"{message} | Retalho {result.get('retalho_id')}"
+        self._set_feedback(message, error=False)
+        self.refresh()
+
+    def _prompt_partial_reserved_consumption(self, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Baixa Parcial")
+        dialog.resize(980, 620)
+        layout = QVBoxLayout(dialog)
+        info = QLabel(
+            "Seleciona o material cativado que foi parcialmente consumido. "
+            "Esta baixa nao fecha o grupo de laser; apenas atualiza o stock e permite registar retalho."
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        table = QTableWidget(len(rows), 7)
+        table.setHorizontalHeaderLabels(["Sel.", "Material", "Esp.", "Qtd cativada", "Lote", "Dimensao", "Baixar"])
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(27)
+        table.setStyleSheet(
+            "QTableWidget { font-size: 11px; } "
+            "QHeaderView::section { font-size: 11px; font-weight: 700; } "
+            "QDoubleSpinBox { font-size: 11px; } "
+            "QDoubleSpinBox#partialConsumeCellSpin { border: none; background: transparent; padding: 0 8px; }"
+        )
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SingleSelection)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        header = table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.Fixed)
+        header.resizeSection(0, 44)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.Stretch)
+        header.setSectionResizeMode(5, QHeaderView.Stretch)
+        header.setSectionResizeMode(6, QHeaderView.Fixed)
+        header.resizeSection(6, 148)
+        checks: list[tuple[dict[str, Any], QCheckBox, QDoubleSpinBox]] = []
+        for row_index, row in enumerate(rows):
+            check = QCheckBox()
+            check.setStyleSheet("margin-left: 10px;")
+            table.setCellWidget(row_index, 0, check)
+            table.setItem(row_index, 1, QTableWidgetItem(str(row.get("material", "-"))))
+            table.setItem(row_index, 2, QTableWidgetItem(str(row.get("espessura", "-"))))
+            table.setItem(row_index, 3, QTableWidgetItem(f"{float(row.get('quantidade', 0) or 0):.2f}"))
+            table.setItem(row_index, 4, QTableWidgetItem(str(row.get("lote", "-"))))
+            table.setItem(row_index, 5, QTableWidgetItem(str(row.get("dimensao", "-"))))
+            spin = QDoubleSpinBox()
+            spin.setRange(0.0, float(row.get("quantidade", 0) or 0))
+            spin.setDecimals(2)
+            spin.setSingleStep(1.0)
+            spin.setButtonSymbols(QDoubleSpinBox.NoButtons)
+            spin.setAlignment(Qt.AlignCenter)
+            spin.setMinimumWidth(126)
+            spin.setFrame(False)
+            spin.setObjectName("partialConsumeCellSpin")
+            spin.setValue(float(row.get("quantidade", 0) or 0))
+            table.setCellWidget(row_index, 6, spin)
+            checks.append((row, check, spin))
+        if checks:
+            checks[0][1].setChecked(True)
+
+        def _single_select(changed: QCheckBox) -> None:
+            if not changed.isChecked():
+                return
+            for _row, check, _spin in checks:
+                if check is not changed:
+                    check.setChecked(False)
+
+        for _row, check, _spin in checks:
+            check.toggled.connect(lambda _checked, box=check: _single_select(box))
+        table.setMinimumHeight(_table_visible_height(table, max(6, len(rows)), extra=24))
+        layout.addWidget(table, 1)
+
+        retalho_box = QCheckBox("Sobrou retalho e quero inserir em stock")
+        retalho_box.setChecked(False)
+        layout.addWidget(retalho_box)
+        retalho_card = CardFrame()
+        retalho_card.set_tone("warning")
+        retalho_layout = QGridLayout(retalho_card)
+        retalho_layout.setContentsMargins(12, 10, 12, 10)
+        retalho_layout.setHorizontalSpacing(8)
+        retalho_layout.setVerticalSpacing(6)
+        retalho_layout.addWidget(QLabel("Retalho comprimento"), 0, 0)
+        retalho_layout.addWidget(QLabel("Retalho largura"), 0, 1)
+        retalho_layout.addWidget(QLabel("Qtd retalho"), 0, 2)
+        retalho_layout.addWidget(QLabel("Metros"), 0, 3)
+        comp_spin = QDoubleSpinBox()
+        larg_spin = QDoubleSpinBox()
+        qtd_retalho_spin = QDoubleSpinBox()
+        metros_spin = QDoubleSpinBox()
+        for spin in (comp_spin, larg_spin, qtd_retalho_spin, metros_spin):
+            spin.setRange(0.0, 1000000.0)
+            spin.setDecimals(2)
+            spin.setAlignment(Qt.AlignCenter)
+            spin.setEnabled(False)
+        retalho_layout.addWidget(comp_spin, 1, 0)
+        retalho_layout.addWidget(larg_spin, 1, 1)
+        retalho_layout.addWidget(qtd_retalho_spin, 1, 2)
+        retalho_layout.addWidget(metros_spin, 1, 3)
+        layout.addWidget(retalho_card)
+
+        def _toggle_retalho(enabled: bool) -> None:
+            for spin in (comp_spin, larg_spin, qtd_retalho_spin, metros_spin):
+                spin.setEnabled(enabled)
+
+        retalho_box.toggled.connect(_toggle_retalho)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Confirmar baixa parcial")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        selected = next(((row, spin) for row, check, spin in checks if check.isChecked()), None)
+        if selected is None:
+            QMessageBox.warning(self, "Baixa Parcial", "Seleciona um material cativado.")
+            return None
+        row, qty_spin = selected
+        quantity = float(qty_spin.value() or 0)
+        if quantity <= 0:
+            QMessageBox.warning(self, "Baixa Parcial", "Indica uma quantidade para dar baixa.")
+            return None
+        retalho = {
+            "comprimento": comp_spin.value(),
+            "largura": larg_spin.value(),
+            "quantidade": qtd_retalho_spin.value(),
+            "metros": metros_spin.value(),
+        }
+        has_retalho = bool(retalho_box.isChecked()) and any(float(retalho[key] or 0) > 0 for key in ("comprimento", "largura", "quantidade", "metros"))
+        return {
+            "material_id": str(row.get("material_id", "") or "").strip(),
+            "material": str(row.get("material", "") or "").strip(),
+            "espessura": str(row.get("espessura", "") or "").strip(),
+            "quantity": quantity,
+            "retalho": retalho if has_retalho else {},
+            "source_material_id": str(row.get("material_id", "") or "").strip() if has_retalho else "",
+        }
+
+    def _partial_consume_reserved_material(self) -> None:
+        group = self._current_group()
+        enc_num = str(group.get("encomenda", "") or "").strip()
+        material = str(group.get("material", "") or "").strip()
+        espessura = str(group.get("espessura", "") or "").strip()
+        if not enc_num:
+            QMessageBox.warning(self, "Baixa Parcial", "Seleciona primeiro uma encomenda/grupo.")
+            return
+        if not self._prompt_supervisor_password():
+            return
+        rows_fn = getattr(self.backend, "operator_reserved_materials", None)
+        consume_fn = getattr(self.backend, "operator_partial_reserved_material_consumption", None)
+        if not callable(rows_fn) or not callable(consume_fn):
+            QMessageBox.critical(self, "Baixa Parcial", "Backend sem suporte para baixa parcial.")
+            return
+        try:
+            rows = list(rows_fn(enc_num, material, espessura) or [])
+        except Exception as exc:
+            QMessageBox.critical(self, "Baixa Parcial", str(exc))
+            return
+        if not rows:
+            QMessageBox.information(self, "Baixa Parcial", "Esta encomenda/grupo nao tem material cativado para baixar parcialmente.")
+            return
+        payload = self._prompt_partial_reserved_consumption(rows)
+        if payload is None:
+            return
+        try:
+            result = dict(
+                consume_fn(
+                    enc_num,
+                    material_id=str(payload.get("material_id", "") or "").strip(),
+                    quantidade=float(payload.get("quantity", 0) or 0),
+                    material=str(payload.get("material", "") or "").strip(),
+                    espessura=str(payload.get("espessura", "") or "").strip(),
+                    retalho=payload.get("retalho", {}),
+                    source_material_id=str(payload.get("source_material_id", "") or "").strip(),
+                )
+                or {}
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Baixa Parcial", str(exc))
+            return
+        message = f"Baixa parcial registada: {float(result.get('consumed_total', 0) or 0):.2f}"
         if str(result.get("retalho_id", "") or "").strip():
             message = f"{message} | Retalho {result.get('retalho_id')}"
         self._set_feedback(message, error=False)
@@ -5384,14 +5585,41 @@ class PlanningPage(QWidget):
     def _plan_order_dialog(self, rows: list[dict]) -> list[dict] | None:
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Ordem de planeamento - {self.current_operation}")
-        dialog.resize(880, 520)
+        dialog.resize(980, 600)
         layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 16, 16, 14)
+        layout.setSpacing(12)
+        info_card = CardFrame()
+        info_card.set_tone("info")
+        info_layout = QVBoxLayout(info_card)
+        info_layout.setContentsMargins(14, 10, 14, 10)
+        title = QLabel(f"Ordem de planeamento - {self.current_operation}")
+        title.setStyleSheet("font-size: 18px; font-weight: 900; color: #0f172a;")
         info = QLabel("Seleciona os pendentes pela ordem desejada. A lista da direita pode ser arrastada para reordenar.")
         info.setProperty("role", "muted")
-        layout.addWidget(info)
+        info_layout.addWidget(title)
+        info_layout.addWidget(info)
+        layout.addWidget(info_card)
         body = QHBoxLayout()
+        body.setSpacing(12)
+        left_card = CardFrame()
+        left_card.set_tone("default")
+        left_layout = QVBoxLayout(left_card)
+        left_layout.setContentsMargins(12, 12, 12, 12)
+        left_title = QLabel("Pendentes disponiveis")
+        left_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
         left = QListWidget()
+        left.setAlternatingRowColors(True)
+        left.setStyleSheet("QListWidget { border-radius: 10px; padding: 4px; } QListWidget::item { padding: 7px 8px; }")
+        right_card = CardFrame()
+        right_card.set_tone("success")
+        right_layout = QVBoxLayout(right_card)
+        right_layout.setContentsMargins(12, 12, 12, 12)
+        right_title = QLabel("Ordem planeada")
+        right_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
         right = QListWidget()
+        right.setAlternatingRowColors(True)
+        right.setStyleSheet("QListWidget { border-radius: 10px; padding: 4px; } QListWidget::item { padding: 7px 8px; }")
         right.setDragDropMode(QAbstractItemView.InternalMove)
         right.setDefaultDropAction(Qt.MoveAction)
         label_map: dict[str, dict] = {}
@@ -5403,6 +5631,7 @@ class PlanningPage(QWidget):
             label_map[label] = row
             left.addItem(label)
         buttons = QVBoxLayout()
+        buttons.setSpacing(8)
         add_btn = QPushButton("Adicionar ->")
         remove_btn = QPushButton("<- Remover")
         add_all_btn = QPushButton("Tudo ->")
@@ -5410,11 +5639,17 @@ class PlanningPage(QWidget):
         remove_btn.clicked.connect(lambda: self._move_plan_items(right, left))
         add_all_btn.clicked.connect(lambda: self._move_all_plan_items(left, right))
         for button in (add_btn, remove_btn, add_all_btn):
+            button.setMinimumWidth(118)
+            button.setMinimumHeight(40)
             buttons.addWidget(button)
         buttons.addStretch(1)
-        body.addWidget(left, 1)
+        left_layout.addWidget(left_title)
+        left_layout.addWidget(left, 1)
+        right_layout.addWidget(right_title)
+        right_layout.addWidget(right, 1)
+        body.addWidget(left_card, 1)
         body.addLayout(buttons)
-        body.addWidget(right, 1)
+        body.addWidget(right_card, 1)
         layout.addLayout(body)
         box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         box.accepted.connect(dialog.accept)
@@ -8629,6 +8864,8 @@ class OrdersPage(QWidget):
         self.release_btn = QPushButton("Descativar MP")
         self.release_btn.setProperty("variant", "secondary")
         self.release_btn.clicked.connect(self._release_stock)
+        self.reserve_btn.setProperty("compact", "true")
+        self.release_btn.setProperty("compact", "true")
         self.reserve_btn.setMinimumWidth(138)
         self.release_btn.setMinimumWidth(138)
         info_layout.addWidget(self.reserve_btn, 4, 4)
@@ -9841,7 +10078,7 @@ class OrdersPage(QWidget):
     def _reserve_dialog(self, candidates: list[dict]) -> list[dict] | None:
         dialog = QDialog(self)
         dialog.setWindowTitle("Cativar stock")
-        dialog.setMinimumSize(940, 420)
+        dialog.setMinimumSize(1020, 440)
         dialog.setStyleSheet(
             """
             QDialog { font-size: 12px; }
@@ -9851,6 +10088,12 @@ class OrdersPage(QWidget):
                 font-size: 12px;
                 min-height: 32px;
                 padding: 3px 8px;
+            }
+            QDoubleSpinBox#reserveCellSpin {
+                border: none;
+                background: transparent;
+                min-height: 26px;
+                padding: 0 8px;
             }
             QPushButton { min-width: 116px; min-height: 36px; font-size: 12px; }
             """
@@ -9869,11 +10112,13 @@ class OrdersPage(QWidget):
         header = table.horizontalHeader()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Fixed)
+        header.resizeSection(1, 110)
+        header.setSectionResizeMode(2, QHeaderView.Fixed)
+        header.resizeSection(2, 120)
         header.setSectionResizeMode(3, QHeaderView.Stretch)
         header.setSectionResizeMode(4, QHeaderView.Fixed)
-        header.resizeSection(4, 172)
+        header.resizeSection(4, 196)
         spinners = []
         for row_index, row in enumerate(candidates):
             table.setItem(row_index, 0, QTableWidgetItem(str(row.get("dimensao", "-"))))
@@ -9885,14 +10130,9 @@ class OrdersPage(QWidget):
             spin.setDecimals(2)
             spin.setButtonSymbols(QDoubleSpinBox.NoButtons)
             spin.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            spin.setMinimumHeight(30)
-            spin.setMinimumWidth(144)
-            cell_host = QWidget()
-            cell_layout = QHBoxLayout(cell_host)
-            cell_layout.setContentsMargins(8, 3, 8, 3)
-            cell_layout.setAlignment(Qt.AlignCenter)
-            cell_layout.addWidget(spin)
-            table.setCellWidget(row_index, 4, cell_host)
+            spin.setFrame(False)
+            spin.setObjectName("reserveCellSpin")
+            table.setCellWidget(row_index, 4, spin)
             spinners.append((row, spin))
         table.setMinimumHeight(_table_visible_height(table, max(6, len(candidates)), extra=20))
         layout.addWidget(table, 1)
@@ -10842,7 +11082,7 @@ class LegacyOperatorPage(OperatorPage):
         for widget, width in ((self.operator_combo, 176), (self.posto_combo, 128), (self.operation_combo, 292)):
             widget.setProperty("compact", "true")
             widget.setMinimumWidth(width)
-        for button in (self.start_btn, self.finish_btn, self.resume_btn, self.pause_btn, self.avaria_btn, self.close_avaria_btn, self.alert_btn, self.manual_consume_btn, self.drawing_btn, self.labels_btn, self.local_refresh_btn):
+        for button in (self.start_btn, self.finish_btn, self.resume_btn, self.pause_btn, self.avaria_btn, self.close_avaria_btn, self.alert_btn, self.manual_consume_btn, self.partial_consume_btn, self.drawing_btn, self.labels_btn, self.local_refresh_btn):
             button.setProperty("compact", "true")
             button.setMinimumWidth(0)
             button.setMinimumHeight(28)
@@ -11160,12 +11400,14 @@ class LegacyOperatorPage(OperatorPage):
                     (self.resume_btn, 92),
                     (self.pause_btn, 102),
                     (self.manual_consume_btn, 96),
+                    (self.partial_consume_btn, 112),
                     (self.drawing_btn, 102),
                     (self.labels_btn, 98),
                     (self.local_refresh_btn, 96),
                 ):
                     button.setMinimumWidth(width)
                 self.pause_btn.setProperty("variant", "secondary")
+                self.partial_consume_btn.setProperty("variant", "warning")
                 self.local_refresh_btn.setProperty("variant", "secondary")
                 header_layout.addWidget(self.pieces_title_label)
                 header_layout.addStretch(1)
@@ -11174,6 +11416,7 @@ class LegacyOperatorPage(OperatorPage):
                 header_layout.addWidget(self.resume_btn)
                 header_layout.addWidget(self.pause_btn)
                 header_layout.addWidget(self.manual_consume_btn)
+                header_layout.addWidget(self.partial_consume_btn)
                 header_layout.addWidget(self.drawing_btn)
                 header_layout.addWidget(self.labels_btn)
                 header_layout.addWidget(self.local_refresh_btn)

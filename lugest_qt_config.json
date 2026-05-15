@@ -1,6 +1,6 @@
 {
   "ui_options": {
-    "operator_supervisor_password": "pbkdf2_sha256$260000$Dczo8e8M2yEItuYtcXoFrw$vu-Hulnz4b-uXf06C1gJshEomlwANc4maY-dIpDSXMo",
+    "operator_supervisor_password": "pbkdf2_sha256$260000$DoX_DwM1E7ptPIPcUFLUkg$HBhF2w5r6_oLQFf9kB3XjJpbYGImC_RfABDY20s5AR0",
     "operator_show_client_name": true
   },
   "user_profiles": {

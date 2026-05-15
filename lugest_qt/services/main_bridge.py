@@ -6166,6 +6166,198 @@ class LegacyBackend(
             "reserved_sources": reserved_sources,
         }
 
+    def operator_reserved_materials(self, enc_num: str, material: str = "", espessura: str = "") -> list[dict[str, Any]]:
+        enc = self.get_encomenda_by_numero(enc_num)
+        if enc is None:
+            raise ValueError("Encomenda nao encontrada.")
+        material_norm = self._norm_material_token(material)
+        esp_norm = self._norm_esp_token(espessura)
+        rows: list[dict[str, Any]] = []
+        for index, reserva in enumerate(list(enc.get("reservas", []) or [])):
+            if not isinstance(reserva, dict):
+                continue
+            if material_norm and self._norm_material_token(reserva.get("material")) != material_norm:
+                continue
+            if esp_norm and self._norm_esp_token(reserva.get("espessura")) != esp_norm:
+                continue
+            qty = self._parse_float(reserva.get("quantidade", 0), 0)
+            if qty <= 0:
+                continue
+            material_id = str(reserva.get("material_id", "") or "").strip()
+            stock = self.material_by_id(material_id) if material_id else None
+            mat_txt = str(reserva.get("material", "") or (stock or {}).get("material", "") or "").strip()
+            esp_txt = str(reserva.get("espessura", "") or (stock or {}).get("espessura", "") or "").strip()
+            rows.append(
+                {
+                    "index": index,
+                    "material_id": material_id,
+                    "material": mat_txt,
+                    "espessura": esp_txt,
+                    "quantidade": round(qty, 4),
+                    "lote": str((stock or {}).get("lote_interno", "") or (stock or {}).get("lote_fornecedor", "") or reserva.get("lote", "") or "").strip(),
+                    "lote_fornecedor": str((stock or {}).get("lote_fornecedor", "") or reserva.get("lote", "") or "").strip(),
+                    "dimensao": f"{(stock or {}).get('comprimento', '-') } x {(stock or {}).get('largura', '-')}",
+                    "local": self._localizacao(stock) if stock else "-",
+                    "stock_quantidade": round(self._parse_float((stock or {}).get("quantidade", 0), 0), 4) if stock else 0.0,
+                    "stock_reservado": round(self._parse_float((stock or {}).get("reservado", 0), 0), 4) if stock else 0.0,
+                }
+            )
+        return rows
+
+    def _create_retalho_from_stock(
+        self,
+        source_stock: dict[str, Any],
+        retalho_payload: dict[str, Any],
+        *,
+        enc_num: str = "",
+        reason: str = "",
+        lote_sel: str = "",
+    ) -> dict[str, Any] | None:
+        retalho_payload = dict(retalho_payload or {})
+        has_retalho = any(str(retalho_payload.get(key, "")).strip() for key in ("comprimento", "largura", "quantidade", "metros"))
+        if not has_retalho:
+            return None
+        comp = self._parse_float(retalho_payload.get("comprimento", 0), 0)
+        larg = self._parse_float(retalho_payload.get("largura", 0), 0)
+        q_retalho = self._parse_float(retalho_payload.get("quantidade", 0), 0)
+        metros = self._parse_float(retalho_payload.get("metros", 0), 0)
+        if q_retalho <= 0:
+            raise ValueError("Quantidade do retalho invalida.")
+        created_retalho = {
+            "id": self._next_material_id(),
+            "lote_interno": self._next_material_internal_lot(),
+            "formato": source_stock.get("formato", self.desktop_main.detect_materia_formato(source_stock)),
+            "material": source_stock.get("material", ""),
+            "espessura": source_stock.get("espessura", ""),
+            "comprimento": comp,
+            "largura": larg,
+            "metros": metros,
+            "quantidade": q_retalho,
+            "reservado": 0.0,
+            "Localização": "RETALHO",
+            "Localizacao": "RETALHO",
+            "lote_fornecedor": source_stock.get("lote_fornecedor", ""),
+            "peso_unid": 0.0,
+            "p_compra": source_stock.get("p_compra", 0),
+            "preco_unid": 0.0,
+            "is_sobra": True,
+            "origem_material_id": str(source_stock.get("id", "") or "").strip(),
+            "origem_lote_interno": str(source_stock.get("lote_interno", "") or "").strip(),
+            "origem_lote": str(source_stock.get("lote_fornecedor", "") or "").strip(),
+            "origem_lotes_baixa": [
+                lot
+                for lot in list(
+                    dict.fromkeys(
+                        [
+                            str(lote_sel or "").strip(),
+                            str(source_stock.get("lote_interno", "") or "").strip(),
+                            str(source_stock.get("lote_fornecedor", "") or "").strip(),
+                        ]
+                    )
+                )
+                if lot
+            ],
+            "atualizado_em": self.desktop_main.now_iso(),
+        }
+        self.materia_actions._hydrate_retalho_record(self.ensure_data(), created_retalho, template=source_stock)
+        self.ensure_data().setdefault("materiais", []).append(created_retalho)
+        self.desktop_main.log_stock(
+            self.ensure_data(),
+            "RETALHO",
+            f"{source_stock.get('id', '')} qtd={created_retalho.get('quantidade', 0)} encomenda={enc_num} motivo={reason or 'retalho'}",
+            operador=self._current_user_label(),
+        )
+        return created_retalho
+
+    def operator_partial_reserved_material_consumption(
+        self,
+        enc_num: str,
+        material_id: str,
+        quantidade: Any,
+        material: str = "",
+        espessura: str = "",
+        retalho: dict[str, Any] | None = None,
+        source_material_id: str = "",
+    ) -> dict[str, Any]:
+        enc = self.get_encomenda_by_numero(enc_num)
+        if enc is None:
+            raise ValueError("Encomenda nao encontrada.")
+        target_material_id = str(material_id or "").strip()
+        qty = self._parse_float(quantidade, 0)
+        if not target_material_id:
+            raise ValueError("Seleciona o material cativado.")
+        if qty <= 0:
+            raise ValueError("Quantidade de baixa invalida.")
+        reservas = list(enc.get("reservas", []) or [])
+        target_index = None
+        target_reserva: dict[str, Any] | None = None
+        for index, reserva in enumerate(reservas):
+            if not isinstance(reserva, dict):
+                continue
+            if str(reserva.get("material_id", "") or "").strip() != target_material_id:
+                continue
+            if material and self._norm_material_token(reserva.get("material")) != self._norm_material_token(material):
+                continue
+            if espessura and self._norm_esp_token(reserva.get("espessura")) != self._norm_esp_token(espessura):
+                continue
+            target_index = index
+            target_reserva = reserva
+            break
+        if target_reserva is None or target_index is None:
+            raise ValueError("Reserva de material cativado nao encontrada.")
+        reserved_qty = self._parse_float(target_reserva.get("quantidade", 0), 0)
+        if qty > reserved_qty + 1e-9:
+            raise ValueError(f"Quantidade superior ao material cativado. Maximo: {reserved_qty:.2f}")
+        stock = self.material_by_id(target_material_id)
+        if stock is None:
+            raise ValueError("Material cativado nao encontrado no stock.")
+        if self._material_quality_is_blocked(stock):
+            raise ValueError(f"Material reservado {target_material_id} bloqueado pela qualidade.")
+        stock_qty = self._parse_float(stock.get("quantidade", 0), 0)
+        stock_reserved = self._parse_float(stock.get("reservado", 0), 0)
+        if qty > stock_qty + 1e-9:
+            raise ValueError(f"Quantidade superior ao stock do material. Maximo: {stock_qty:.2f}")
+        stock["quantidade"] = max(0.0, stock_qty - qty)
+        stock["reservado"] = max(0.0, stock_reserved - qty)
+        stock["atualizado_em"] = self.desktop_main.now_iso()
+        remaining_reserva = round(max(0.0, reserved_qty - qty), 4)
+        if remaining_reserva <= 1e-9:
+            reservas.pop(target_index)
+        else:
+            target_reserva["quantidade"] = remaining_reserva
+            reservas[target_index] = target_reserva
+        enc["reservas"] = reservas
+        enc["cativar"] = bool(reservas)
+        lote_sel = str(stock.get("lote_interno", "") or stock.get("lote_fornecedor", "") or target_reserva.get("lote", "") or "").strip()
+        self.desktop_main.log_stock(
+            self.ensure_data(),
+            "BAIXA PARCIAL CATIVADA",
+            f"{target_material_id} qtd={qty} encomenda={enc.get('numero', '')}",
+            operador=self._current_user_label(),
+        )
+        created_retalho = None
+        source_id = str(source_material_id or target_material_id or "").strip()
+        if retalho:
+            source_stock = self.material_by_id(source_id)
+            if source_stock is None:
+                raise ValueError("Lote de origem do retalho nao encontrado.")
+            created_retalho = self._create_retalho_from_stock(
+                source_stock,
+                dict(retalho or {}),
+                enc_num=str(enc.get("numero", "") or "").strip(),
+                reason="baixa_parcial_laser_qt",
+                lote_sel=lote_sel,
+            )
+        self._sync_ne_from_materia()
+        self._save_operator_state(enc)
+        return {
+            "resolved": True,
+            "consumed_total": round(qty, 4),
+            "remaining_reserved": remaining_reserva,
+            "retalho_id": str((created_retalho or {}).get("id", "") or "").strip(),
+            "material_id": target_material_id,
+        }
+
     def operator_resolve_laser_stock(
         self,
         enc_num: str,
