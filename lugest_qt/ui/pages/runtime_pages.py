@@ -1434,6 +1434,9 @@ class OperatorPage(QWidget):
         self.manual_consume_btn = QPushButton("Dar Baixa")
         self.manual_consume_btn.setProperty("variant", "secondary")
         self.manual_consume_btn.clicked.connect(self._manual_consume_material)
+        self.consume_components_btn = QPushButton("Consumir comp.")
+        self.consume_components_btn.setProperty("variant", "success")
+        self.consume_components_btn.clicked.connect(self._consume_montagem_components)
         self.partial_consume_btn = QPushButton("Baixa Parcial")
         self.partial_consume_btn.setProperty("variant", "warning")
         self.partial_consume_btn.clicked.connect(self._partial_consume_reserved_material)
@@ -1458,6 +1461,7 @@ class OperatorPage(QWidget):
         for button in (
             self.alert_btn,
             self.manual_consume_btn,
+            self.consume_components_btn,
             self.partial_consume_btn,
             self.drawing_btn,
             self.labels_btn,
@@ -1626,6 +1630,7 @@ class OperatorPage(QWidget):
         data = self.runtime_service.operator_board(username=str(user.get("username", "")), role=str(user.get("role", "")))
         summary = data.get("summary", {})
         all_items = self._hydrate_operator_items(list(data.get("items", [])))
+        all_items = self._append_montagem_stock_groups(all_items)
         op_total = 0
         op_done = 0
         op_running = 0
@@ -1753,6 +1758,47 @@ class OperatorPage(QWidget):
             item["cliente_label"] = client_label or client_raw or "-"
             hydrated.append(item)
         return hydrated
+
+    def _append_montagem_stock_groups(self, rows: list[dict]) -> list[dict]:
+        """Add one virtual operator group per order with stock components to consume."""
+        getter = getattr(self.backend, "operator_montagem_stock_group", None)
+        if not callable(getter):
+            return rows
+        result = list(rows or [])
+        seen_orders: set[str] = set()
+        for item in list(rows or []):
+            enc_num = str(item.get("encomenda", "") or "").strip()
+            if enc_num:
+                seen_orders.add(enc_num)
+        data_getter = getattr(self.backend, "ensure_data", None)
+        if callable(data_getter):
+            try:
+                for enc in list((data_getter() or {}).get("encomendas", []) or []):
+                    enc_num = str((enc or {}).get("numero", "") or "").strip()
+                    estado = str((enc or {}).get("estado", "") or "").strip().lower()
+                    is_closed = any(token in estado for token in ("conclu", "cancel", "expedid", "fechad"))
+                    if enc_num and not is_closed and list((enc or {}).get("montagem_itens", []) or []):
+                        seen_orders.add(enc_num)
+            except Exception:
+                pass
+        existing_keys = {"|".join(self._group_key(item)) for item in result}
+        for enc_num in sorted(seen_orders):
+            try:
+                group = dict(getter(enc_num) or {})
+            except Exception:
+                continue
+            if not group or not group.get("is_montagem_stock_group"):
+                continue
+            key = "|".join(self._group_key(group))
+            if key in existing_keys:
+                continue
+            result.append(group)
+            existing_keys.add(key)
+        return result
+
+    def _is_montagem_stock_group(self, item: dict | None = None) -> bool:
+        group = item if item is not None else self._current_group()
+        return bool(isinstance(group, dict) and group.get("is_montagem_stock_group"))
 
     def _current_group(self) -> dict:
         row_index = _selected_row_index(self.groups_table)
@@ -1891,6 +1937,64 @@ class OperatorPage(QWidget):
                 self._set_feedback(f"Espessura {material} {espessura} aberta.")
             else:
                 self._set_feedback(f"Espessura {material} {espessura} nao esta visivel neste posto/filtro.", error=True)
+            return
+        if scan_type == "CPI":
+            enc_num = str(result.get("encomenda_numero", "") or "").strip()
+            item_id = str(result.get("item_id", "") or "").strip()
+            codigo = str(result.get("codigo", "") or "").strip()
+            espessura = str(result.get("espessura", "") or "").strip()
+            if detail_mode and current_order and enc_num != current_order:
+                self._set_feedback(
+                    f"O componente {codigo or item_id} pertence a outra encomenda ({enc_num}). Nesta pagina trabalha-se dentro da encomenda atual.",
+                    error=True,
+                )
+                return
+            target_group = None
+            for item in list(getattr(self, "all_items", []) or []):
+                if str(item.get("encomenda", "") or "").strip() == enc_num and self._is_montagem_stock_group(item):
+                    target_group = self._group_key(item)
+                    break
+            if target_group and hasattr(self, "_apply_order_filter"):
+                self._apply_order_filter(enc_num, previous_group=target_group)
+                self._show_order_detail()
+                self._show_group_detail()
+                for row_index, piece in enumerate(list(getattr(self, "current_pieces", []) or [])):
+                    if str(piece.get("id", "") or "").strip() == item_id:
+                        self.pieces_table.selectRow(row_index)
+                        self._update_piece_context()
+                        break
+                self._set_feedback(f"Componente {codigo or item_id} aberto em {espessura or 'stock'}.")
+            else:
+                self._set_feedback(f"Componente {codigo or item_id} nao esta visivel neste posto/filtro.", error=True)
+            return
+        if scan_type == "COMP":
+            enc_num = str(result.get("encomenda_numero", "") or "").strip()
+            if detail_mode and current_order and enc_num != current_order:
+                self._set_feedback(
+                    f"Os componentes pertencem a outra encomenda ({enc_num}). Nesta pagina trabalha-se dentro da encomenda atual.",
+                    error=True,
+                )
+                return
+            target_group = None
+            for item in list(getattr(self, "all_items", []) or []):
+                if str(item.get("encomenda", "") or "").strip() == enc_num and self._is_montagem_stock_group(item):
+                    target_group = self._group_key(item)
+                    break
+            if target_group and hasattr(self, "_apply_order_filter"):
+                self._apply_order_filter(enc_num, previous_group=target_group)
+                self._show_order_detail()
+                self._show_group_detail()
+                self._set_feedback(f"Componentes de montagem da encomenda {enc_num} abertos.")
+            elif self._select_operator_target(enc_num):
+                for row_index, item in enumerate(list(getattr(self, "items", []) or [])):
+                    if str(item.get("encomenda", "") or "").strip() == enc_num and self._is_montagem_stock_group(item):
+                        self.groups_table.selectRow(row_index)
+                        self._handle_group_selection()
+                        self._set_feedback(f"Componentes de montagem da encomenda {enc_num} abertos.")
+                        return
+                self._set_feedback(f"Componentes da encomenda {enc_num} nao estao visiveis neste posto/filtro.", error=True)
+            else:
+                self._set_feedback(f"Componentes da encomenda {enc_num} nao estao visiveis neste posto/filtro.", error=True)
             return
         is_operation_scan = scan_type == "OPR"
         enc_num = str(result.get("encomenda_numero", "") or "").strip()
@@ -2181,7 +2285,32 @@ class OperatorPage(QWidget):
         self._sync_piece_multi_state()
         self._set_button_states(False, False, False, False, False, False)
 
-    def _set_button_states(self, has_piece: bool, has_operator: bool, has_pending: bool, has_open_avaria: bool, can_resume: bool, can_finish: bool | None = None) -> None:
+    def _set_button_states(
+        self,
+        has_piece: bool,
+        has_operator: bool,
+        has_pending: bool,
+        has_open_avaria: bool,
+        can_resume: bool,
+        can_finish: bool | None = None,
+        *,
+        component_group: bool = False,
+        can_consume_components: bool = False,
+    ) -> None:
+        if component_group:
+            self.start_btn.setEnabled(False)
+            self.finish_btn.setEnabled(False)
+            self.resume_btn.setEnabled(False)
+            self.pause_btn.setEnabled(False)
+            self.avaria_btn.setEnabled(False)
+            self.close_avaria_btn.setEnabled(False)
+            self.alert_btn.setEnabled(False)
+            self.drawing_btn.setEnabled(False)
+            self.manual_consume_btn.setEnabled(False)
+            self.partial_consume_btn.setEnabled(False)
+            self.labels_btn.setEnabled(False)
+            self.consume_components_btn.setEnabled(bool(can_consume_components))
+            return
         finish_enabled = has_piece and has_operator and (can_finish if can_finish is not None else has_pending) and not has_open_avaria
         self.start_btn.setEnabled(has_piece and has_operator and has_pending and not has_open_avaria)
         self.finish_btn.setEnabled(finish_enabled)
@@ -2192,6 +2321,8 @@ class OperatorPage(QWidget):
         self.alert_btn.setEnabled(has_piece and has_operator)
         self.drawing_btn.setEnabled(has_piece)
         self.manual_consume_btn.setEnabled(has_piece)
+        self.consume_components_btn.setEnabled(False)
+        self.partial_consume_btn.setEnabled(has_piece)
         self.labels_btn.setEnabled(has_piece)
 
     def _handle_group_selection(self) -> None:
@@ -2206,6 +2337,9 @@ class OperatorPage(QWidget):
         client_label = _format_client_label(item.get("cliente", "-"), show_name=self._show_client_name())
         material = str(item.get("material", "-") or "-").strip() or "-"
         espessura = str(item.get("espessura", "-") or "-").strip() or "-"
+        if self._is_montagem_stock_group(item):
+            self._render_montagem_stock_group(item, client_label)
+            return
         self.pieces_title_label.setText(
             f"Pecas da encomenda {item.get('encomenda', '-')} | Cliente {client_label} | {material} {espessura} mm"
         )
@@ -2287,6 +2421,59 @@ class OperatorPage(QWidget):
         self._sync_piece_multi_state()
         self._update_piece_context()
 
+    def _render_montagem_stock_group(self, item: dict, client_label: str) -> None:
+        enc_num = str(item.get("encomenda", "") or "").strip()
+        rows = list(item.get("montagem_items", []) or [])
+        self.pieces_title_label.setText(
+            f"Componentes Montagem/Stock | Encomenda {enc_num or '-'} | Cliente {client_label}"
+        )
+        self.current_pieces = rows
+        self.checked_piece_ids.intersection_update({str(row.get("id", "") or "").strip() for row in rows})
+        self.pieces_table.setSortingEnabled(False)
+        self.pieces_table.blockSignals(True)
+        self.pieces_table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            row_id = str(row.get("id", "") or "").strip() or f"COMP::{enc_num}::{row_index}"
+            plan = float(row.get("qtd_planeada", 0) or 0)
+            done = float(row.get("qtd_consumida", 0) or 0)
+            pending = max(0.0, plan - done)
+            progress = 0.0 if plan <= 0 else min(100.0, (done / plan) * 100.0)
+            check_item = QTableWidgetItem("")
+            check_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
+            check_item.setCheckState(Qt.Checked if row_id in self.checked_piece_ids else Qt.Unchecked)
+            check_item.setData(Qt.UserRole, row_id)
+            check_item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
+            self.pieces_table.setItem(row_index, 0, check_item)
+            row_values = [
+                row.get("codigo", "-") or "-",
+                row.get("descricao", "-") or "-",
+                row.get("estado", "-") or "-",
+                row.get("tipo_label", "Stock") or "Stock",
+                row.get("unidade", "-") or "-",
+                f"{done:.1f}",
+                "-",
+                f"{plan:.1f}",
+                "",
+                f"Pendente {pending:.1f} | Falta {float(row.get('falta', 0) or 0):.1f}",
+            ]
+            for offset, value in enumerate(row_values, start=1):
+                cell = QTableWidgetItem(str(value))
+                cell.setToolTip(str(value))
+                if offset in (6, 7, 8):
+                    cell.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
+                self.pieces_table.setItem(row_index, offset, cell)
+            self.pieces_table.setCellWidget(row_index, 9, _make_inline_progress(progress))
+            _paint_table_row(self.pieces_table, row_index, str(row.get("estado", "")))
+        self.pieces_table.blockSignals(False)
+        self.pieces_table.setSortingEnabled(False)
+        if self.pieces_table.rowCount() == 0:
+            self.selected_piece_id = ""
+            self._clear_piece_context()
+            return
+        self.pieces_table.selectRow(0)
+        self._sync_piece_multi_state()
+        self._update_piece_context()
+
     def _update_piece_context(self) -> None:
         group = self._current_group()
         piece = self._current_piece()
@@ -2297,6 +2484,9 @@ class OperatorPage(QWidget):
         enc_num = str(group.get("encomenda", "") or "").strip()
         piece_id = str(piece.get("id", "") or "").strip()
         self.selected_piece_id = piece_id
+        if self._is_montagem_stock_group(group):
+            self._update_montagem_stock_context(group, piece)
+            return
         try:
             ctx = self.backend.operator_piece_context(enc_num, piece_id)
         except Exception as exc:
@@ -2378,6 +2568,53 @@ class OperatorPage(QWidget):
             bool(ctx.get("has_open_avaria")),
             can_resume,
             can_finish=bool(filtered_active_pending),
+        )
+
+    def _update_montagem_stock_context(self, group: dict, row: dict) -> None:
+        enc_num = str(group.get("encomenda", "") or "").strip()
+        code = str(row.get("codigo", "") or "-").strip() or "-"
+        desc = str(row.get("descricao", "") or "-").strip() or "-"
+        plan = float(row.get("qtd_planeada", 0) or 0)
+        done = float(row.get("qtd_consumida", 0) or 0)
+        pending = max(0.0, plan - done)
+        falta = float(row.get("falta", 0) or 0)
+        progress = 0 if plan <= 0 else int(round(min(100.0, (done / plan) * 100.0)))
+        state = str(row.get("estado", "") or ("Consumido" if pending <= 0 else "Pendente")).strip()
+        title = f"{code} | {desc}"
+        self.piece_title_label.setText(_elide_middle(title, 72))
+        self.piece_title_label.setToolTip(title)
+        _apply_state_chip(self.piece_state_chip, state)
+        self.piece_meta_label.setText(
+            f"Enc. {enc_num} | Cliente {_format_client_label(group.get('cliente', '-'), show_name=self._show_client_name())}\n"
+            f"Grupo: Componentes Montagem/Stock | Tipo {row.get('tipo_label', 'Stock') or 'Stock'} | Unidade {row.get('unidade', '-') or '-'}\n"
+            f"Planeado {plan:.1f} | Consumido {done:.1f} | Pendente {pending:.1f} | Falta stock {falta:.1f}"
+        )
+        issue = ""
+        if falta > 0:
+            issue = f"Stock insuficiente neste componente: faltam {falta:.1f}."
+        self.issue_label.setText(issue)
+        self.issue_label.setVisible(bool(issue))
+        self.issue_label.setStyleSheet("font-size: 8.4px; color: #b42318; font-weight: 700;")
+        self.pending_label.setText("Este grupo não inicia OPP. Usa Consumir comp. para dar baixa aos produtos/stock pendentes.")
+        _clear_layout_widgets(self.operation_strip_layout)
+        chip = QLabel()
+        _apply_state_chip(chip, state, f"Stock {done:.1f}/{plan:.1f}")
+        chip.setStyleSheet(chip.styleSheet() + " min-height: 21px; max-height: 21px; padding: 3px 8px; font-size: 8.4px; margin-top: 6px;")
+        self.operation_strip_layout.addWidget(chip)
+        self.operation_strip_layout.addStretch(1)
+        self.piece_progress.setValue(progress)
+        self.operation_combo.clear()
+        _set_panel_tone(self.context_card, "warning" if pending > 0 else "success")
+        self._sync_piece_multi_state()
+        self._set_button_states(
+            True,
+            bool(self._current_operator()),
+            False,
+            False,
+            False,
+            False,
+            component_group=True,
+            can_consume_components=bool(group.get("can_consume_montagem")),
         )
 
     def _prompt_reason(self, title: str, label: str, options: list[str], default_value: str = "") -> str | None:
@@ -2913,8 +3150,49 @@ class OperatorPage(QWidget):
             "source_material_id": source_material_id if has_retalho else "",
         }
 
+    def _consume_montagem_components(self) -> None:
+        group = self._current_group()
+        if not self._is_montagem_stock_group(group):
+            QMessageBox.information(self, "Componentes", "Seleciona primeiro o grupo Componentes Montagem/Stock.")
+            return
+        enc_num = str(group.get("encomenda", "") or "").strip()
+        if not enc_num:
+            return
+        pending_count = sum(
+            1
+            for row in list(group.get("montagem_items", []) or [])
+            if float(row.get("qtd_planeada", 0) or 0) > float(row.get("qtd_consumida", 0) or 0)
+        )
+        if pending_count <= 0:
+            QMessageBox.information(self, "Componentes", "Nao existem componentes pendentes para consumir.")
+            return
+        if (
+            QMessageBox.question(
+                self,
+                "Componentes",
+                f"Consumir os produtos/componentes de stock pendentes da encomenda {enc_num}?",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            != QMessageBox.Yes
+        ):
+            return
+        consume_fn = getattr(self.backend, "operator_consume_montagem_stock", None)
+        if not callable(consume_fn):
+            QMessageBox.critical(self, "Componentes", "Backend sem suporte para consumo de componentes no operador.")
+            return
+        try:
+            consume_fn(enc_num, operador=self._current_operator())
+        except Exception as exc:
+            QMessageBox.critical(self, "Componentes", str(exc))
+            return
+        self._set_feedback(f"Componentes de montagem consumidos na encomenda {enc_num}.", error=False)
+        self.refresh()
+
     def _manual_consume_material(self) -> None:
         group = self._current_group()
+        if self._is_montagem_stock_group(group):
+            self._consume_montagem_components()
+            return
         material = str(group.get("material", "") or "").strip()
         espessura = str(group.get("espessura", "") or "").strip()
         if not material or not espessura:
@@ -11082,7 +11360,7 @@ class LegacyOperatorPage(OperatorPage):
         for widget, width in ((self.operator_combo, 176), (self.posto_combo, 128), (self.operation_combo, 292)):
             widget.setProperty("compact", "true")
             widget.setMinimumWidth(width)
-        for button in (self.start_btn, self.finish_btn, self.resume_btn, self.pause_btn, self.avaria_btn, self.close_avaria_btn, self.alert_btn, self.manual_consume_btn, self.partial_consume_btn, self.drawing_btn, self.labels_btn, self.local_refresh_btn):
+        for button in (self.start_btn, self.finish_btn, self.resume_btn, self.pause_btn, self.avaria_btn, self.close_avaria_btn, self.alert_btn, self.manual_consume_btn, self.consume_components_btn, self.partial_consume_btn, self.drawing_btn, self.labels_btn, self.local_refresh_btn):
             button.setProperty("compact", "true")
             button.setMinimumWidth(0)
             button.setMinimumHeight(28)
@@ -11384,9 +11662,9 @@ class LegacyOperatorPage(OperatorPage):
         groups_visible_height = _table_visible_height(self.groups_table, 8, extra=18)
         self.groups_table.setMinimumHeight(groups_visible_height)
         self.groups_table.setMaximumHeight(16777215)
-        self.pieces_table.setMinimumHeight(620)
+        self.pieces_table.setMinimumHeight(260)
         self.pieces_table.setSizeAdjustPolicy(QAbstractItemView.AdjustIgnored)
-        self.pieces_card.setMinimumHeight(620)
+        self.pieces_card.setMinimumHeight(300)
         pieces_layout = self.pieces_card.layout()
         if pieces_layout is not None and pieces_layout.count() > 0:
             header_item = pieces_layout.itemAt(0)
@@ -11400,6 +11678,7 @@ class LegacyOperatorPage(OperatorPage):
                     (self.resume_btn, 92),
                     (self.pause_btn, 102),
                     (self.manual_consume_btn, 96),
+                    (self.consume_components_btn, 118),
                     (self.partial_consume_btn, 112),
                     (self.drawing_btn, 102),
                     (self.labels_btn, 98),
@@ -11416,6 +11695,7 @@ class LegacyOperatorPage(OperatorPage):
                 header_layout.addWidget(self.resume_btn)
                 header_layout.addWidget(self.pause_btn)
                 header_layout.addWidget(self.manual_consume_btn)
+                header_layout.addWidget(self.consume_components_btn)
                 header_layout.addWidget(self.partial_consume_btn)
                 header_layout.addWidget(self.drawing_btn)
                 header_layout.addWidget(self.labels_btn)
@@ -11485,7 +11765,8 @@ class LegacyOperatorPage(OperatorPage):
         self.nesting_info_hint = None
         self.nesting_info_table = None
         if pieces_widget is not None:
-            pieces_widget.setMinimumHeight(620)
+            pieces_widget.setMinimumHeight(300)
+            pieces_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         _adopt_layout_item(detail_group_layout, pieces_item, 1)
 
         self.group_overview_stack.addWidget(overview_page)
@@ -11571,6 +11852,7 @@ class LegacyOperatorPage(OperatorPage):
         data = self.runtime_service.operator_board(username=str(user.get("username", "")), role=str(user.get("role", "")))
         summary = data.get("summary", {})
         all_items = self._hydrate_operator_items(list(data.get("items", [])))
+        all_items = self._append_montagem_stock_groups(all_items)
         op_total = 0
         op_done = 0
         op_running = 0

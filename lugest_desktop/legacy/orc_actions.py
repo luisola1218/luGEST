@@ -103,27 +103,198 @@ def _orc_pdf_clip_text(value, max_w, font_name, font_size):
 def _orc_pdf_wrap_text(value, font_name, font_size, max_w, max_lines=None):
     from reportlab.pdfbase import pdfmetrics
 
-    text = str(value or "").replace("\r", " ").replace("\n", " ").strip()
+    text = str(value or "").replace("\r", "\n").strip()
     if not text:
         return []
-    words = text.split()
-    lines = []
-    current = ""
-    for word in words:
-        candidate = f"{current} {word}".strip() if current else word
-        if pdfmetrics.stringWidth(candidate, font_name, font_size) <= max_w:
-            current = candidate
-            continue
+
+    def split_token(token):
+        parts = []
+        current = ""
+        for ch in str(token or ""):
+            candidate = f"{current}{ch}"
+            if current and pdfmetrics.stringWidth(candidate, font_name, font_size) > max_w:
+                parts.append(current)
+                current = ch
+            else:
+                current = candidate
         if current:
+            parts.append(current)
+        return parts or [""]
+
+    lines = []
+    for raw_paragraph in text.split("\n"):
+        paragraph = raw_paragraph.strip()
+        if not paragraph:
+            if lines and lines[-1] != "":
+                lines.append("")
+            continue
+        current = ""
+        for token in paragraph.split():
+            pieces = [token]
+            if pdfmetrics.stringWidth(token, font_name, font_size) > max_w:
+                pieces = split_token(token)
+            for piece in pieces:
+                candidate = f"{current} {piece}".strip() if current else piece
+                if current and pdfmetrics.stringWidth(candidate, font_name, font_size) > max_w:
+                    lines.append(current)
+                    current = piece
+                else:
+                    current = candidate
+                if max_lines and len(lines) >= max_lines:
+                    break
+            if max_lines and len(lines) >= max_lines:
+                break
+        if current and (not max_lines or len(lines) < max_lines):
             lines.append(current)
-        current = word
         if max_lines and len(lines) >= max_lines:
             break
-    if current and (not max_lines or len(lines) < max_lines):
-        lines.append(current)
-    if max_lines and len(lines) > max_lines:
-        lines = lines[:max_lines]
-    return lines
+    return lines[:max_lines] if max_lines else lines
+
+
+def _orc_pdf_fit_text_block(value, font_name, preferred_size, min_size, max_w, max_h, *, max_lines=None, leading_ratio=1.18):
+    text = str(value or "").strip()
+    if not text:
+        size = max(float(min_size), min(float(preferred_size), float(preferred_size)))
+        return {"font_size": round(size, 2), "leading": round(size * leading_ratio, 2), "lines": []}
+    max_w = max(8.0, float(max_w))
+    max_h = max(6.0, float(max_h))
+    size = float(preferred_size)
+    min_size = float(min_size)
+    best = None
+    while size >= min_size - 1e-9:
+        leading = max(size * 1.02, size * float(leading_ratio))
+        lines = _orc_pdf_wrap_text(text, font_name, size, max_w, max_lines=max_lines)
+        if not lines:
+            lines = [""]
+        needed_h = len(lines) * leading
+        current = {"font_size": round(size, 2), "leading": round(leading, 2), "lines": lines, "height": needed_h}
+        best = current
+        if needed_h <= max_h:
+            return current
+        size = round(size - 0.2, 2)
+    return best or {"font_size": round(min_size, 2), "leading": round(min_size * leading_ratio, 2), "lines": [text], "height": max_h}
+
+
+_ORC_OPERATION_ABBREVIATIONS = {
+    "Corte Laser": "CL",
+    "Quinagem": "Q",
+    "Roscagem": "R",
+    "Furo Manual": "F",
+    "Soldadura": "S",
+    "Pintura": "P",
+    "Serralharia": "SR",
+    "Lacagem": "L",
+    "Maquinacao": "MQ",
+    "Montagem": "M",
+    "Embalamento": "EMB",
+}
+
+
+def _orc_operation_abbreviation(name):
+    raw = str(name or "").strip()
+    if not raw:
+        return ""
+    normalized = normalize_operacao_nome(raw)
+    if normalized in _ORC_OPERATION_ABBREVIATIONS:
+        return _ORC_OPERATION_ABBREVIATIONS[normalized]
+    token = "".join(ch for ch in normalized if ch.isalnum() or ch.isspace()).strip()
+    if not token:
+        return raw
+    pieces = [part[:1].upper() for part in token.split() if part]
+    return "".join(pieces[:3]) or raw
+
+
+def _orc_format_operations(value, *, unique=False, separator=" / "):
+    ops = list(parse_operacoes_lista(value) or [])
+    formatted = []
+    seen = set()
+    for item in ops:
+        label = _orc_operation_abbreviation(item)
+        key = norm_text(label)
+        if unique and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        if label:
+            formatted.append(label)
+    return separator.join(formatted)
+
+
+def _orc_material_is_client_supplied(row):
+    row = dict(row or {})
+    return bool(
+        row.get("material_supplied_by_client", False)
+        or row.get("material_fornecido_cliente", False)
+        or row.get("exclude_material_cost", False)
+    )
+
+
+def _orc_line_discount_key(row):
+    row = dict(row or {})
+    return str(row.get("discount_group_key", "") or row.get("grupo_uuid", "") or "").strip()
+
+
+def _orc_apply_discount_snapshot(orc, row):
+    row = dict(row or {})
+    qtd = round(parse_float(row.get("qtd", 0), 0), 4)
+    preco_unit = round(parse_float(row.get("preco_unit", 0), 0), 4)
+    bruto_total = round(qtd * preco_unit, 2)
+    desconto_perc = round(max(0.0, min(100.0, parse_float((orc or {}).get("desconto_perc", 0), 0))), 2)
+    desconto_modo = str((orc or {}).get("desconto_modo", "total") or "total").strip().lower() or "total"
+    desconto_grupos = {
+        str(item or "").strip()
+        for item in list((orc or {}).get("desconto_grupos", []) or [])
+        if str(item or "").strip()
+    }
+    discount_key = _orc_line_discount_key(row)
+    apply_discount = desconto_perc > 0 and (desconto_modo == "total" or discount_key in desconto_grupos)
+    preco_unit_desc = round(preco_unit * (1.0 - (desconto_perc / 100.0)), 4) if apply_discount else preco_unit
+    total_desc = round(qtd * preco_unit_desc, 2)
+    desconto_valor = round(max(0.0, bruto_total - total_desc), 2)
+    return {
+        "qtd": qtd,
+        "preco_unit_bruto": preco_unit,
+        "total_bruto": bruto_total,
+        "preco_unit_desconto": preco_unit_desc,
+        "total_desconto": total_desc,
+        "desconto_aplicado": desconto_valor,
+        "desconto_perc": desconto_perc if apply_discount else 0.0,
+        "desconto_ativo": desconto_valor > 0.0,
+    }
+
+
+def _orc_compute_totals(orc):
+    subtotal_bruto_linhas = 0.0
+    subtotal_liquido_linhas = 0.0
+    desconto_valor_linhas = 0.0
+    for line in list((orc or {}).get("linhas", []) or []):
+        snapshot = _orc_apply_discount_snapshot(orc, line)
+        line["preco_unit_desconto"] = snapshot["preco_unit_desconto"]
+        line["total_desconto"] = snapshot["total_desconto"]
+        line["desconto_aplicado"] = snapshot["desconto_aplicado"]
+        line["desconto_perc_aplicado"] = snapshot["desconto_perc"]
+        line["total"] = snapshot["total_desconto"]
+        subtotal_bruto_linhas = round(subtotal_bruto_linhas + snapshot["total_bruto"], 2)
+        subtotal_liquido_linhas = round(subtotal_liquido_linhas + snapshot["total_desconto"], 2)
+        desconto_valor_linhas = round(desconto_valor_linhas + snapshot["desconto_aplicado"], 2)
+    preco_transporte = round(parse_float((orc or {}).get("preco_transporte", 0), 0), 2)
+    subtotal_bruto = round(subtotal_bruto_linhas + preco_transporte, 2)
+    subtotal = round(subtotal_liquido_linhas + preco_transporte, 2)
+    iva_perc = round(parse_float((orc or {}).get("iva_perc", 0), 0), 2)
+    iva = round(subtotal * (iva_perc / 100.0), 2)
+    total = round(subtotal + iva, 2)
+    orc["subtotal_bruto"] = subtotal_bruto
+    orc["desconto_valor"] = desconto_valor_linhas
+    orc["subtotal"] = subtotal
+    orc["total"] = total
+    return {
+        "subtotal_bruto": subtotal_bruto,
+        "desconto_valor": desconto_valor_linhas,
+        "subtotal": subtotal,
+        "iva": iva,
+        "iva_perc": iva_perc,
+        "total": total,
+    }
 
 
 def _orc_pdf_metric_grid_layout(group_right, banner_top, banner_height, cols=2, rows=2, group_w=230, gap=6):
@@ -327,6 +498,15 @@ def _reload_orcamentos_from_mysql(self, year_value=None):
         orc_linhas_map = {}
         for l in linhas_rows:
             num = str(l.get("orcamento_numero", "") or "")
+            meta_payload = {}
+            try:
+                raw_meta_json = l.get("meta_json")
+                if raw_meta_json:
+                    parsed_meta = json.loads(raw_meta_json)
+                    if isinstance(parsed_meta, dict):
+                        meta_payload = parsed_meta
+            except Exception:
+                meta_payload = {}
             orc_linhas_map.setdefault(num, []).append(
                 {
                     "ref_interna": str(l.get("ref_interna", "") or ""),
@@ -341,12 +521,22 @@ def _reload_orcamentos_from_mysql(self, year_value=None):
                     "preco_unit": _to_num(l.get("preco_unit")) or 0.0,
                     "total": _to_num(l.get("total")) or 0.0,
                     "desenho": str(l.get("desenho_path", "") or ""),
+                    **dict(meta_payload or {}),
                 }
             )
 
         new_orc = []
         for o in orc_rows:
             num = str(o.get("numero", "") or "")
+            meta_payload = {}
+            try:
+                raw_meta_json = o.get("meta_json")
+                if raw_meta_json:
+                    parsed_meta = json.loads(raw_meta_json)
+                    if isinstance(parsed_meta, dict):
+                        meta_payload = parsed_meta
+            except Exception:
+                meta_payload = {}
             new_orc.append(
                 {
                     "numero": num,
@@ -355,6 +545,9 @@ def _reload_orcamentos_from_mysql(self, year_value=None):
                     "cliente": _normalize_orc_cliente(str(o.get("cliente_codigo", "") or ""), self.data),
                     "linhas": orc_linhas_map.get(num, []),
                     "iva_perc": _to_num(o.get("iva_perc")) or 0.0,
+                    "desconto_perc": _to_num(o.get("desconto_perc")) or 0.0,
+                    "desconto_valor": _to_num(o.get("desconto_valor")) or 0.0,
+                    "subtotal_bruto": _to_num(o.get("subtotal_bruto")) or 0.0,
                     "preco_transporte": _to_num(o.get("preco_transporte")) or 0.0,
                     "subtotal": _to_num(o.get("subtotal")) or 0.0,
                     "total": _to_num(o.get("total")) or 0.0,
@@ -364,6 +557,7 @@ def _reload_orcamentos_from_mysql(self, year_value=None):
                     "nota_transporte": str(o.get("nota_transporte", "") or ""),
                     "notas_pdf": str(o.get("notas_pdf", "") or ""),
                     "nota_cliente": str(o.get("nota_cliente", "") or ""),
+                    **dict(meta_payload or {}),
                 }
             )
         if year_num:
@@ -581,13 +775,14 @@ def refresh_orc_linhas(self, orc):
             s = s.rstrip("0").rstrip(".")
         return s
     for idx, l in enumerate(orc.get("linhas", [])):
+        snapshot = _orc_apply_discount_snapshot(orc, l)
         self.orc_linhas.insert("", END, values=(
             l.get("ref_interna", ""), l.get("ref_externa", ""), l.get("descricao", ""), l.get("material", ""),
             fmt_num(l.get("espessura", "")),
             l.get("operacao", ""),
             fmt_num(l.get("qtd", 0), decimals=2),
-            fmt_num(l.get("preco_unit", 0), decimals=2),
-            fmt_num(l.get("total", 0), decimals=2),
+            fmt_num(snapshot.get("preco_unit_desconto", l.get("preco_unit", 0)), decimals=2),
+            fmt_num(snapshot.get("total_desconto", l.get("total", 0)), decimals=2),
         ), tags=("odd" if idx % 2 else "even",))
     self.orc_linhas.tag_configure("even", background="#eef7ff")
     self.orc_linhas.tag_configure("odd", background="#fff8f9")
@@ -794,18 +989,9 @@ def open_orc_linha_desenho(self):
 
 def recalc_orc(self, orc):
     _ensure_configured()
-    subtotal = 0.0
-    for l in orc.get("linhas", []):
-        qtd = float(l.get("qtd", 0) or 0)
-        preco = float(l.get("preco_unit", 0) or 0)
-        l["total"] = qtd * preco
-        subtotal += l["total"]
-    iva = subtotal * (float(orc.get("iva_perc", 0) or 0) / 100.0)
-    total = subtotal + iva
-    orc["subtotal"] = subtotal
-    orc["total"] = total
-    self.orc_subtotal.set(f"{subtotal:.2f}")
-    self.orc_total.set(f"{total:.2f}")
+    totals = _orc_compute_totals(orc)
+    self.orc_subtotal.set(f"{totals['subtotal']:.2f}")
+    self.orc_total.set(f"{totals['total']:.2f}")
 
 def _orc_get_notes_text(self):
     _ensure_configured()
@@ -876,6 +1062,21 @@ def _extract_orc_operacoes(self, orc=None):
     return ops
 
 
+def _extract_orc_operacoes_resumo(self, orc=None):
+    _ensure_configured()
+    formatted = []
+    seen = set()
+    for raw in list(_extract_orc_operacoes(self, orc) or []):
+        for item in list(parse_operacoes_lista(raw) or []):
+            label = _orc_operation_abbreviation(item)
+            key = norm_text(label)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            formatted.append(label)
+    return formatted
+
+
 def _orc_line_type_value(line):
     _ensure_configured()
     try:
@@ -914,7 +1115,17 @@ def _orc_line_material_display(line):
         return str(row.get("produto_codigo", "") or "").strip() or "Stock"
     if kind == "servico_montagem":
         return "Servico"
-    return str(row.get("material", "") or "").strip() or "-"
+    material = str(row.get("material", "") or "").strip() or "-"
+    if _orc_material_is_client_supplied(row):
+        if "mp cl" not in norm_text(material):
+            material = f"{material} - MP CL"
+    return material
+
+
+def _orc_line_internal_ref_display(line):
+    _ensure_configured()
+    row = dict(line or {})
+    return str(row.get("ref_interna", "") or row.get("of", "") or "").strip() or "-"
 
 
 def _orc_line_unit_display(line):
@@ -929,7 +1140,7 @@ def _orc_line_unit_display(line):
 def _orc_line_operacao_display(line):
     _ensure_configured()
     row = dict(line or {})
-    operacao = str(row.get("operacao", "") or "").strip() or "-"
+    operacao = _orc_format_operations(row.get("operacao", ""), unique=True) or "-"
     conjunto = str(row.get("conjunto_codigo", "") or row.get("conjunto_nome", "") or "").strip()
     if conjunto:
         return f"{operacao} | {conjunto}"
@@ -940,69 +1151,21 @@ def _orc_line_description_display(line):
     _ensure_configured()
     row = dict(line or {})
     desc = str(row.get("descricao", "") or "").strip() or "-"
+    obs = str(row.get("observacoes", "") or row.get("Observacoes", "") or "").strip()
+    if obs and norm_text(obs) != norm_text(desc):
+        desc = f"{desc} | Obs: {obs}"
     kind = _orc_line_type_value(row)
     if kind == "peca_fabricada":
         return desc
     return f"{_orc_line_type_title(row)}: {desc}"
 
+
 def _build_orc_notes_lines(self, orc):
     _ensure_configured()
-    ops_text = " ".join(norm_text(x) for x in self._extract_orc_operacoes(orc))
-    rows = list((orc or {}).get("linhas", []) or [])
-    notes = []
-    seen = set()
-
-    def push(line):
-        line = (line or "").strip()
-        if not line:
-            return
-        key = norm_text(line)
-        if key in seen:
-            return
-        seen.add(key)
-        notes.append(line)
-
-    push("PROPOSTA RETIFICADA PARA ESPESSURAS DEFINIDAS PELO CLIENTE.")
-    transp = (orc.get("nota_transporte", "") or "").strip()
-    transp_price = float(orc.get("preco_transporte", 0) or 0)
-    if transp:
-        t = transp.rstrip(".")
-        if "transporte" in norm_text(t):
-            push(f"- {t}.")
-        else:
-            push(f"- Transporte: {t}.")
-    if transp_price > 0:
-        push(f"- Preco de transporte considerado: {transp_price:.2f} EUR.")
-
-    map_ops = [
-        ("laser", "Corte Laser"),
-        ("quin", "Quinagem"),
-        ("rosc", "Roscagem"),
-        ("furo", "Furo Manual"),
-        ("sold", "Soldadura"),
-        ("mont", "Montagem"),
-    ]
-    for key, title in map_ops:
-        if key in ops_text:
-            push(f"- Foi considerado: {title}.")
-    if any(_orc_line_type_value(row) == "produto_stock" for row in rows):
-        push("- Inclui componentes de stock com baixa prevista no momento de montagem.")
-    if any(_orc_line_type_value(row) == "servico_montagem" for row in rows):
-        push("- Inclui servico de montagem final e fecho do conjunto.")
-    conjuntos = sorted(
-        {
-            str((row or {}).get("conjunto_nome", "") or (row or {}).get("conjunto_codigo", "") or "").strip()
-            for row in rows
-            if str((row or {}).get("conjunto_nome", "") or (row or {}).get("conjunto_codigo", "") or "").strip()
-        }
-    )
-    for conjunto in conjuntos[:3]:
-        push(f"- Conjunto parametrizado considerado: {conjunto}.")
     extra = (orc.get("notas_pdf", "") or "").strip()
-    if extra:
-        for ln in extra.splitlines():
-            push(ln)
-    return notes
+    if not extra:
+        return []
+    return [str(ln or "").strip() for ln in extra.splitlines() if str(ln or "").strip()]
 
 def orc_fill_notes_by_ops(self):
     _ensure_configured()
@@ -1366,7 +1529,9 @@ def open_orc_linha(self, edit_index=None):
         desenho = vars_["desenho"].get().strip()
         total = qtd * preco
         of_val = orc["linhas"][edit_index].get("of", "") if edit_index is not None else next_of_numero(self.data)
+        base_line = dict(orc["linhas"][edit_index]) if edit_index is not None and edit_index < len(orc.get("linhas", [])) else {}
         line = {
+            **base_line,
             "ref_interna": ref_int,
             "ref_externa": ref_ext,
             "descricao": desc,
@@ -2024,23 +2189,28 @@ def _render_orc_pdf_modern(self, path, orc):
     next_table_top = 132
     footer_start = 458
     doc_num = str(orc.get("numero", "") or "ORC").strip() or "ORC"
-    c.setTitle(f"Orcamento {doc_num}")
+    c.setTitle(f"Orçamento {doc_num}")
     try:
         c.setPageCompression(0)
     except Exception:
         pass
 
-    subtotal = parse_float(orc.get("subtotal", 0), 0)
-    iva_perc = parse_float(orc.get("iva_perc", 0), 0)
-    iva = subtotal * (iva_perc / 100.0)
-    total = parse_float(orc.get("total", subtotal + iva), subtotal + iva)
+    totals = _orc_compute_totals(orc)
+    subtotal_bruto = parse_float(totals.get("subtotal_bruto", orc.get("subtotal_bruto", 0)), 0)
+    desconto_valor = parse_float(totals.get("desconto_valor", orc.get("desconto_valor", 0)), 0)
+    desconto_perc = parse_float(orc.get("desconto_perc", 0), 0)
+    subtotal = parse_float(totals.get("subtotal", orc.get("subtotal", 0)), 0)
+    iva_perc = parse_float(totals.get("iva_perc", orc.get("iva_perc", 0)), 0)
+    iva = parse_float(totals.get("iva", 0), 0)
+    total = parse_float(totals.get("total", orc.get("total", subtotal + iva)), subtotal + iva)
     estado = str(orc.get("estado", "") or "Em edicao").strip() or "Em edicao"
     executado = str(orc.get("executado_por", "") or "").strip()
     nota_transporte = str(orc.get("nota_transporte", "") or "").strip()
     nota_cliente = str(orc.get("nota_cliente", "") or "").strip()
     numero_encomenda = str(orc.get("numero_encomenda", "") or "").strip()
     lines = list(orc.get("linhas", []) or [])
-    notes_lines = list(self._build_orc_notes_lines(orc) or [])
+    notes_lines = list(_build_orc_notes_lines(self, orc) or [])
+    operations_summary = list(_extract_orc_operacoes_resumo(self, orc) or [])
     footer_company = list(get_empresa_rodape_lines() or [])
 
     cli = orc.get("cliente", {}) if isinstance(orc.get("cliente", {}), dict) else {}
@@ -2054,14 +2224,14 @@ def _render_orc_pdf_modern(self, path, orc):
 
     cols = [
         ("Linha", 34, "center"),
-        ("Ref. Ext.", 126, "w"),
-        ("Descricao", 188, "w"),
-        ("Material", 88, "w"),
+        ("Ref. Ext.", 170, "w"),
+        ("Ref. Interna", 146, "w"),
+        ("Material", 102, "w"),
         ("Esp.", 34, "center"),
-        ("Operacoes", 118, "w"),
+        ("Operações", 90, "w"),
+        ("Desc.", 46, "e"),
         ("Qtd.", 38, "e"),
-        ("P.Unit.", 62, "e"),
-        ("IVA%", 30, "e"),
+        ("P.Unit.", 58, "e"),
         ("Total", 68, "e"),
     ]
     table_w = sum(width for _, width, _ in cols)
@@ -2140,11 +2310,25 @@ def _render_orc_pdf_modern(self, path, orc):
             c.roundRect(x + 1, yinv(top_y + box_h) + box_h - 5, box_w - 2, 4, 8, stroke=0, fill=1)
         c.restoreState()
         c.setFillColor(palette["muted"])
-        c.setFont(fonts["regular"], 7.0 if compact else 7.3)
-        c.drawString(x + 8, yinv(top_y + 10), ntxt(label))
+        label_layout = _orc_pdf_fit_text_block(label, fonts["regular"], 7.0 if compact else 7.3, 5.2, box_w - 16, 10, max_lines=1)
+        c.setFont(fonts["regular"], label_layout["font_size"])
+        c.drawString(x + 8, yinv(top_y + 10), ntxt(label_layout["lines"][0] if label_layout["lines"] else ""))
         c.setFillColor(palette["primary_dark"])
-        c.setFont(fonts["bold"], 10.2 if compact else 10.6)
-        c.drawString(x + 8, yinv(top_y + 23), ntxt(_orc_pdf_clip_text(value, box_w - 16, fonts["bold"], 10.2 if compact else 10.6)))
+        value_layout = _orc_pdf_fit_text_block(
+            value,
+            fonts["bold"],
+            10.2 if compact else 10.6,
+            5.6,
+            box_w - 16,
+            max(10, box_h - 18),
+            max_lines=2,
+            leading_ratio=1.08,
+        )
+        yy = top_y + 21
+        for item in value_layout["lines"][:2]:
+            c.setFont(fonts["bold"], value_layout["font_size"])
+            c.drawString(x + 8, yinv(yy), ntxt(item))
+            yy += value_layout["leading"]
 
     def detail_card(x, top_y, box_w, box_h, title, lines_, *, accent=False, font_size=8.4):
         title_fill = palette["primary_soft"] if accent else palette["surface_alt"]
@@ -2159,22 +2343,37 @@ def _render_orc_pdf_modern(self, path, orc):
         c.setFont(fonts["bold"], 8.8)
         c.setFillColor(palette["primary_dark"])
         c.drawString(x + 10, yinv(top_y + 15), ntxt(title))
+        content_h = max(12, box_h - 44)
+        content_text = "\n".join(str(item or "").strip() for item in list(lines_ or []) if str(item or "").strip())
+        content_layout = _orc_pdf_fit_text_block(
+            content_text,
+            fonts["regular"],
+            font_size,
+            5.1,
+            box_w - 20,
+            content_h,
+            leading_ratio=1.1,
+        )
         yy = top_y + 37
-        for idx_line, line in enumerate(lines_):
-            line_font = fonts["bold"] if accent and idx_line == 0 else fonts["regular"]
-            line_size = font_size + 0.4 if accent and idx_line == 0 else font_size
-            wrapped = _orc_pdf_wrap_text(line, line_font, line_size, box_w - 20, max_lines=2)
-            for item in wrapped:
-                c.setFont(line_font, line_size)
-                c.setFillColor(palette["ink"])
-                c.drawString(x + 10, yinv(yy), ntxt(item))
-                yy += 10.5
-                if yy > top_y + box_h - 8:
-                    return
+        for item in content_layout["lines"]:
+            c.setFont(fonts["regular"], content_layout["font_size"])
+            c.setFillColor(palette["ink"])
+            c.drawString(x + 10, yinv(yy), ntxt(item))
+            yy += content_layout["leading"]
+            if yy > top_y + box_h - 6:
+                break
 
     def summary_panel(x, top_y, box_w, box_h):
         from reportlab.pdfbase import pdfmetrics
 
+        left_pad = 12
+        right_pad = 12
+        title_y = top_y + 15
+        first_row_y = top_y + 31
+        row_gap = 9.2
+        total_gap = 12.0
+        label_w = max(42, box_w - left_pad - right_pad - 64)
+        value_x = x + box_w - right_pad
         c.saveState()
         c.setFillColor(colors.white)
         c.setStrokeColor(palette["line_strong"])
@@ -2183,34 +2382,46 @@ def _render_orc_pdf_modern(self, path, orc):
         c.roundRect(x + 1, yinv(top_y + box_h) + box_h - 7, box_w - 2, 6, 11, stroke=0, fill=1)
         c.restoreState()
         c.setFillColor(palette["primary_dark"])
-        c.setFont(fonts["bold"], 9.6)
-        c.drawString(x + 12, yinv(top_y + 15), ntxt(_orc_pdf_clip_text("Resumo financeiro", box_w - 24, fonts["bold"], 9.6)))
-        c.setFont(fonts["regular"], 7.4)
-        c.drawString(x + 12, yinv(top_y + 28), ntxt(_orc_pdf_clip_text(f"Estado: {estado}", box_w - 24, fonts["regular"], 7.4)))
-        c.drawString(x + 12, yinv(top_y + 39), ntxt(f"Linhas: {len(lines)}"))
-        c.setStrokeColor(colors.Color(1, 1, 1, alpha=0.22))
-        c.line(x + 12, yinv(top_y + 45), x + box_w - 12, yinv(top_y + 45))
+        c.setFont(fonts["bold"], 8.9)
+        c.drawString(x + left_pad, yinv(title_y), ntxt(_orc_pdf_clip_text("Resumo financeiro", box_w - left_pad - right_pad, fonts["bold"], 8.9)))
+
         rows = [
+            ("Estado", estado),
+            ("Linhas", str(len(lines))),
+            ("Subtotal bruto", fmt_money(subtotal_bruto)),
             ("Subtotal", fmt_money(subtotal)),
             (f"IVA ({fmt_num(iva_perc)}%)", fmt_money(iva)),
         ]
-        yy = top_y + 58
+
+        label_size = 6.7
+        value_size = 6.7
+        yy = first_row_y
         for label, value in rows:
-            c.setFont(fonts["regular"], 8.5)
-            c.drawString(x + 12, yinv(yy), ntxt(label))
-            c.drawRightString(x + box_w - 12, yinv(yy), ntxt(value))
-            yy += 12
+            label_text = _orc_pdf_clip_text(label, label_w, fonts["regular"], label_size)
+            value_text = str(value)
+            fit_size = value_size
+            while fit_size > 5.9 and pdfmetrics.stringWidth(value_text, fonts["bold"], fit_size) > 62:
+                fit_size -= 0.2
+            c.setFont(fonts["regular"], label_size)
+            c.drawString(x + left_pad, yinv(yy), ntxt(label_text))
+            c.setFont(fonts["bold"], fit_size)
+            c.drawRightString(value_x, yinv(yy), ntxt(value_text))
+            yy += row_gap
+
+        sep_y = yy + 0.5
         c.setStrokeColor(colors.Color(1, 1, 1, alpha=0.22))
-        c.line(x + 12, yinv(top_y + 74), x + box_w - 12, yinv(top_y + 74))
-        total_label = _orc_pdf_clip_text("TOTAL C/IVA", box_w - 24, fonts["bold"], 7.6)
-        c.setFont(fonts["bold"], 7.6)
-        c.drawString(x + 12, yinv(top_y + 82), ntxt(total_label))
+        c.line(x + left_pad, yinv(sep_y), x + box_w - right_pad, yinv(sep_y))
+        total_label_y = sep_y + 7.8
+        total_label = _orc_pdf_clip_text("TOTAL C/IVA", label_w, fonts["bold"], 7.6)
+        c.setFont(fonts["bold"], 8.2)
+        c.drawString(x + left_pad, yinv(total_label_y), ntxt(total_label))
         total_value = fmt_money(total)
-        total_value_size = 11.2
-        while total_value_size > 9.4 and pdfmetrics.stringWidth(total_value, fonts["bold"], total_value_size) > (box_w - 24):
+        total_value_size = 8.7
+        while total_value_size > 7.4 and pdfmetrics.stringWidth(total_value, fonts["bold"], total_value_size) > 64:
             total_value_size -= 0.2
+        total_value_y = min(top_y + box_h - 12, total_label_y - 0.8)
         c.setFont(fonts["bold"], total_value_size)
-        c.drawRightString(x + box_w - 12, yinv(top_y + 90), ntxt(total_value))
+        c.drawRightString(value_x, yinv(total_value_y), ntxt(total_value))
 
     def draw_table_header(top_y):
         c.saveState()
@@ -2232,54 +2443,82 @@ def _render_orc_pdf_modern(self, path, orc):
             xx += width_col
         return top_y + header_row_h + 6
 
-    def draw_row(top_y, idx_line, line, absolute_idx):
+    def build_row_layout(line, absolute_idx):
+        padding_x = 8
+        padding_y = 4
+        discount_snapshot = _orc_apply_discount_snapshot(orc, line)
+        values = [
+            f"{absolute_idx + 1:03d}",
+            _orc_line_ref_display(line),
+            _orc_line_internal_ref_display(line),
+            _orc_line_material_display(line),
+            fmt_num(_orc_line_unit_display(line), decimals=2),
+            _orc_line_operacao_display(line),
+            fmt_num(discount_snapshot.get("desconto_perc", 0), decimals=2),
+            fmt_num(line.get("qtd", 0), decimals=2),
+            fmt_num(discount_snapshot.get("preco_unit_desconto", line.get("preco_unit", 0))),
+            fmt_num(discount_snapshot.get("total_desconto", line.get("total", 0))),
+        ]
+        cells = []
+        row_height = row_h
+        for idx_col, ((_, width_col, align), value) in enumerate(zip(cols, values)):
+            font_name = fonts["bold"] if idx_col == 1 else fonts["regular"]
+            preferred = 8.0
+            min_size = 5.0 if idx_col in (2, 3, 5) else 5.6
+            layout = _orc_pdf_fit_text_block(
+                value,
+                font_name,
+                preferred,
+                min_size,
+                width_col - (padding_x * 2),
+                54,
+                leading_ratio=1.08,
+            )
+            content_h = max(layout["leading"], len(layout["lines"]) * layout["leading"])
+            cell_height = max(row_h, int(round(content_h + (padding_y * 2))))
+            row_height = max(row_height, cell_height)
+            cells.append({"align": align, "layout": layout, "font": font_name, "width": width_col})
+        return {"cells": cells, "height": row_height, "line": line}
+
+    def draw_row(top_y, idx_line, row_layout):
         fill = palette["surface_warm"] if idx_line % 2 == 0 else colors.white
+        row_height = row_layout["height"]
         c.saveState()
         c.setFillColor(fill)
         c.setStrokeColor(palette["line"])
         c.setLineWidth(0.45)
-        c.roundRect(margin, yinv(top_y + row_h), table_w, row_h, 6, stroke=1, fill=1)
+        c.roundRect(margin, yinv(top_y + row_height), table_w, row_height, 6, stroke=1, fill=1)
         c.restoreState()
-        values = [
-            f"{absolute_idx + 1:03d}",
-            _orc_line_ref_display(line),
-            _orc_line_description_display(line),
-            _orc_line_material_display(line),
-            fmt_num(_orc_line_unit_display(line), decimals=2),
-            _orc_line_operacao_display(line),
-            fmt_num(line.get("qtd", 0), decimals=2),
-            fmt_num(line.get("preco_unit", 0)),
-            fmt_num(line.get("iva", iva_perc), decimals=2),
-            fmt_num(line.get("total", 0)),
-        ]
         xx = margin
-        c.setFont(fonts["regular"], 8.0)
         c.setFillColor(palette["ink"])
         c.setStrokeColor(palette["line"])
-        for idx_col, ((_, width_col, align), value) in enumerate(zip(cols, values)):
+        for idx_col, cell in enumerate(row_layout["cells"]):
+            width_col = cell["width"]
+            align = cell["align"]
+            layout = cell["layout"]
             if idx_col > 0:
-                c.line(xx, yinv(top_y), xx, yinv(top_y + row_h))
-            txt = _orc_pdf_clip_text(value, width_col - 16, fonts["regular"], 8.0)
-            if idx_col == 1:
-                c.setFont(fonts["bold"], 8.0)
-            else:
-                c.setFont(fonts["regular"], 8.0)
-            if align == "e":
-                c.drawRightString(xx + width_col - 8, yinv(top_y + 12.1), ntxt(txt))
-            elif align == "center":
-                c.drawCentredString(xx + (width_col / 2.0), yinv(top_y + 12.1), ntxt(txt))
-            else:
-                c.drawString(xx + 8, yinv(top_y + 12.1), ntxt(txt))
+                c.line(xx, yinv(top_y), xx, yinv(top_y + row_height))
+            c.setFont(cell["font"], layout["font_size"])
+            text_block_h = max(layout["leading"], len(layout["lines"]) * layout["leading"])
+            yy = top_y + max(4, (row_height - text_block_h) / 2.0) + (layout["font_size"] * 0.82)
+            for line_text in layout["lines"]:
+                if align == "e":
+                    c.drawRightString(xx + width_col - 8, yinv(yy), ntxt(line_text))
+                elif align == "center":
+                    c.drawCentredString(xx + (width_col / 2.0), yinv(yy), ntxt(line_text))
+                else:
+                    c.drawString(xx + 8, yinv(yy), ntxt(line_text))
+                yy += layout["leading"]
             xx += width_col
 
     def draw_header(page_no, total_pages, first_page):
         if first_page:
             draw_shell()
-            logo_plate_w = 136
+            logo_plate_w = 146
             logo_plate_gap = 12
             hero_x = margin + 10 + logo_plate_w + logo_plate_gap
             hero_w = (content_w - 20) - logo_plate_w - logo_plate_gap
-            draw_pdf_logo_plate(c, height, margin + 10, 32, box_w=logo_plate_w, box_h=58, padding=4)
+            draw_pdf_logo_plate(c, height, margin + 10, 30, box_w=logo_plate_w, box_h=62, padding=8)
             header_panel = globals().get("draw_pdf_header_panel")
             if callable(header_panel):
                 header_panel(c, height, hero_x, 26, hero_w, 88, radius=16, stroke_color="#D5DDE7", accent_color="#EAF0F6", accent_height=5)
@@ -2296,7 +2535,7 @@ def _render_orc_pdf_modern(self, path, orc):
             hero_center_x = hero_x + (hero_w / 2.0)
             c.setFont(fonts["bold"], 15.5)
             c.setFillColor(palette["primary_dark"])
-            c.drawCentredString(hero_center_x, yinv(58), ntxt("Orcamento"))
+            c.drawCentredString(hero_center_x, yinv(58), ntxt("Orçamento"))
             c.saveState()
             c.setFillColor(palette["surface_alt"])
             c.setStrokeColor(palette["line_strong"])
@@ -2341,7 +2580,7 @@ def _render_orc_pdf_modern(self, path, orc):
                     f"Nota cliente: {nota_cliente or '-'}",
                     f"Transporte: {nota_transporte or '-'}",
                     f"Encomenda associada: {numero_encomenda or '-'}",
-                    f"Operacoes no orcamento: {', '.join(list(self._extract_orc_operacoes(orc) or [])[:4]) or '-'}",
+                    f"Operações no orçamento: {' / '.join(operations_summary) or '-'}",
                 ],
                 font_size=8.2,
             )
@@ -2354,7 +2593,7 @@ def _render_orc_pdf_modern(self, path, orc):
         c.restoreState()
         c.setFillColor(palette["primary_dark"])
         c.setFont(fonts["bold"], 16)
-        c.drawString(margin + 18, yinv(48), ntxt(f"Orcamento {doc_num}"))
+        c.drawString(margin + 18, yinv(48), ntxt(f"Orçamento {doc_num}"))
         c.setFont(fonts["regular"], 8.8)
         c.setFillColor(palette["muted"])
         c.drawString(margin + 18, yinv(63), ntxt(f"Cliente: {str(cli.get('nome', '') or cli.get('codigo', '') or '-').strip()}"))
@@ -2367,10 +2606,10 @@ def _render_orc_pdf_modern(self, path, orc):
     def draw_footer(page_no, total_pages):
         footer_y = footer_start + 4
         footer_gap = 8
-        notes_w = 312
-        cond_w = 190
-        legend_w = 96
-        summary_w = max(146, int(table_w - notes_w - cond_w - legend_w - (footer_gap * 3)))
+        notes_w = 300
+        cond_w = 174
+        legend_w = 118
+        summary_w = max(176, int(table_w - notes_w - cond_w - legend_w - (footer_gap * 3)))
         notes_x = margin
         cond_x = notes_x + notes_w + footer_gap
         legend_x = cond_x + cond_w + footer_gap
@@ -2381,7 +2620,7 @@ def _render_orc_pdf_modern(self, path, orc):
             notes_w,
             92,
             "Notas comerciais",
-            notes_lines[:6] or ["Sem notas adicionais para este orcamento."],
+            notes_lines or ["Sem notas adicionais para este orçamento."],
             font_size=7.7,
         )
         detail_card(
@@ -2399,8 +2638,8 @@ def _render_orc_pdf_modern(self, path, orc):
             legend_w,
             92,
             "Legenda",
-            list(ORC_LEGENDA_OPERACOES[:4]) or ["-"],
-            font_size=6.9,
+            list(ORC_LEGENDA_OPERACOES[:6]) or ["-"],
+            font_size=6.0,
         )
         summary_panel(summary_x, footer_y, summary_w, 92)
         c.saveState()
@@ -2416,14 +2655,31 @@ def _render_orc_pdf_modern(self, path, orc):
         footer_left = f"Executado por {executado} | " if executado else ""
         c.drawRightString(width - margin - 10, yinv(574), ntxt(f"{footer_left}Pagina {page_no}/{total_pages}"))
 
+    first_rows_height = max(32, footer_start - (first_table_top + header_row_h + 6))
+    next_rows_height = max(32, footer_start - (next_table_top + header_row_h + 6))
+
     def paginate_items(items):
         if not items:
             return [[]]
-        pages = [items[:first_capacity]]
-        rem = items[first_capacity:]
-        while rem:
-            pages.append(rem[:next_capacity])
-            rem = rem[next_capacity:]
+        layouts = [build_row_layout(line, idx) for idx, line in enumerate(items)]
+        pages = []
+        cursor = 0
+        while cursor < len(layouts):
+            available = first_rows_height if not pages else next_rows_height
+            page_rows = []
+            used = 0
+            while cursor < len(layouts):
+                row_layout = layouts[cursor]
+                proposed = used + row_layout["height"]
+                if page_rows and proposed > available:
+                    break
+                page_rows.append(row_layout)
+                used = proposed
+                cursor += 1
+            if not page_rows:
+                page_rows.append(layouts[cursor])
+                cursor += 1
+            pages.append(page_rows)
         return pages
 
     pages = paginate_items(lines)
@@ -2436,10 +2692,9 @@ def _render_orc_pdf_modern(self, path, orc):
             c.drawString(margin + 8, yinv(table_y + 16), ntxt("Sem linhas no orcamento."))
         else:
             y_row = table_y
-            absolute_start = sum(len(pages[idx]) for idx in range(page_no - 1))
-            for idx_line, line in enumerate(page_rows):
-                draw_row(y_row, idx_line, line, absolute_start + idx_line)
-                y_row += row_h
+            for idx_line, row_layout in enumerate(page_rows):
+                draw_row(y_row, idx_line, row_layout)
+                y_row += row_layout["height"]
         if page_no == total_pages:
             draw_footer(page_no, total_pages)
         if page_no < total_pages:

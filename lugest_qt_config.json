@@ -98,8 +98,8 @@
       ]
     },
     "nesting": {
-      "default_part_spacing_mm": 5.0,
-      "default_edge_margin_mm": 5.0,
+      "default_part_spacing_mm": 2.0,
+      "default_edge_margin_mm": 2.0,
       "allow_rotate": true,
       "auto_select_sheet": false,
       "use_stock_first": false,
@@ -1615,7 +1615,7 @@
         "materials": {
           "Aco carbono": {
             "density_kg_m3": 7874.0,
-            "default_gas": "Oxigenio",
+            "default_gas": "Nitrogenio",
             "gases": {
               "Oxigenio": {
                 "rows": [
@@ -2567,7 +2567,7 @@
         "currency": "EUR",
         "cost_mode": "hybrid_max",
         "minimum_line_eur": 0.0,
-        "margin_pct": 1.0,
+        "margin_pct": 0.5,
         "setup_time_min": 0.3,
         "handling_eur": 0.0,
         "include_profile_event_rates": false,
@@ -2583,30 +2583,30 @@
               "key": "tier_1",
               "label": "Peca unica",
               "qty_min": 1,
-              "qty_max": 10,
-              "margin_delta_pct": 6.0,
-              "setup_multiplier": 1.6
+              "qty_max": 1,
+              "margin_delta_pct": 2.0,
+              "setup_multiplier": 1.15
             },
             {
               "key": "tier_2",
               "label": "Pequena serie",
-              "qty_min": 10,
-              "qty_max": 30,
+              "qty_min": 1,
+              "qty_max": 3,
               "margin_delta_pct": 2.0,
               "setup_multiplier": 1.15
             },
             {
               "key": "tier_3",
               "label": "Media serie",
-              "qty_min": 30,
-              "qty_max": 150,
+              "qty_min": 3,
+              "qty_max": 15,
               "margin_delta_pct": 0.0,
               "setup_multiplier": 1.0
             },
             {
               "key": "tier_4",
               "label": "Grande serie",
-              "qty_min": 150,
+              "qty_min": 15,
               "qty_max": 999999,
               "margin_delta_pct": -3.0,
               "setup_multiplier": 0.8
@@ -2663,24 +2663,29 @@
               "density_kg_m3": 7850.0
             },
             "DX51D+Z": {
-              "price_per_kg": 0.95,
-              "scrap_credit_per_kg": 0.9
+              "price_per_kg": 1.0,
+              "scrap_credit_per_kg": 0.9,
+              "density_kg_m3": 7850.0
             },
             "DX53D+Z": {
               "price_per_kg": 0.95,
-              "scrap_credit_per_kg": 0.9
+              "scrap_credit_per_kg": 0.9,
+              "density_kg_m3": 7850.0
             },
             "DD11": {
               "price_per_kg": 0.95,
-              "scrap_credit_per_kg": 0.9
+              "scrap_credit_per_kg": 0.9,
+              "density_kg_m3": 7850.0
             },
             "DC01": {
               "price_per_kg": 0.95,
-              "scrap_credit_per_kg": 0.9
+              "scrap_credit_per_kg": 0.9,
+              "density_kg_m3": 7850.0
             },
             "CORTEN": {
               "price_per_kg": 0.95,
-              "scrap_credit_per_kg": 0.9
+              "scrap_credit_per_kg": 0.9,
+              "density_kg_m3": 7850.0
             },
             "S355JOW": {
               "price_per_kg": 0.95,
@@ -2698,12 +2703,14 @@
               "scrap_credit_per_kg": 0.9
             },
             "DX51D": {
-              "price_per_kg": 0.95,
-              "scrap_credit_per_kg": 0.9
+              "price_per_kg": 1.0,
+              "scrap_credit_per_kg": 0.9,
+              "density_kg_m3": 7850.0
             },
             "HARDOX": {
               "price_per_kg": 0.95,
-              "scrap_credit_per_kg": 0.9
+              "scrap_credit_per_kg": 0.9,
+              "density_kg_m3": 7850.0
             },
             "S235JR 2MM": {
               "price_per_kg": 1.0,
@@ -2794,11 +2801,11 @@
           }
         },
         "rates": {
-          "cut_per_m_eur": 0.45,
+          "cut_per_m_eur": 0.15,
           "defilm_per_m_eur": 0.5,
-          "marking_per_m_eur": 0.61,
+          "marking_per_m_eur": 0.35,
           "pierce_eur": 0.1,
-          "machine_hour_eur": 80.0
+          "machine_hour_eur": 70.0
         },
         "profile_operations": {
           "outer_cut_eur": 1.25,

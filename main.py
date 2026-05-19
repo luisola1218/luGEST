@@ -454,7 +454,8 @@ ORC_LEGENDA_OPERACOES = [
     "Q - QUINAGEM",
     "R - ROSCAGEM",
     "F - FURO MANUAL",
-    "S - SOLDADURA",
+    "S - SERRALHARIA",
+    "EMB - EMBALAMENTO",
     "P - PINTURA",
 ]
 ORC_RECLAMACOES = (
@@ -3423,6 +3424,14 @@ def _mysql_sync_relational_schema(cur, data):
                                         "price_base_label",
                                         "material_family",
                                         "material_subtype",
+                                        "material_supplied_by_client",
+                                        "material_fornecido_cliente",
+                                        "exclude_material_cost",
+                                        "discount_group_key",
+                                        "preco_unit_desconto",
+                                        "total_desconto",
+                                        "desconto_aplicado",
+                                        "desconto_perc_aplicado",
                                     )
                                     if item.get(key) not in (None, "", [], {})
                                 },
@@ -7175,6 +7184,14 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
                                     "price_base_label",
                                     "material_family",
                                     "material_subtype",
+                                    "material_supplied_by_client",
+                                    "material_fornecido_cliente",
+                                    "exclude_material_cost",
+                                    "discount_group_key",
+                                    "preco_unit_desconto",
+                                    "total_desconto",
+                                    "desconto_aplicado",
+                                    "desconto_perc_aplicado",
                                     "desenho_pdf",
                                     "desenhos_pdf",
                                     "ficheiros",
@@ -9060,7 +9077,8 @@ def draw_pdf_logo_box(c, page_h, x, y_top, box_size=34, padding=3, draw_border=T
         iw = 0
         ih = 0
 
-        # Remove transparent/white margins to keep the logo visually larger in the fixed box.
+        # Keep a light trim only when the image really has external empty margins.
+        # This preserves the symbol proportions closer to the login screen.
         try:
             from PIL import Image, ImageChops
             img = Image.open(logo).convert("RGBA")
@@ -9072,7 +9090,14 @@ def draw_pdf_logo_box(c, page_h, x, y_top, box_size=34, padding=3, draw_border=T
                 diff = ImageChops.difference(rgb, bg)
                 bbox = diff.getbbox()
             if bbox:
-                img = img.crop(bbox)
+                left, top, right, bottom = bbox
+                trim_x = max(0, int((right - left) * 0.03))
+                trim_y = max(0, int((bottom - top) * 0.03))
+                left = max(0, left - trim_x)
+                top = max(0, top - trim_y)
+                right = min(img.size[0], right + trim_x)
+                bottom = min(img.size[1], bottom + trim_y)
+                img = img.crop((left, top, right, bottom))
             iw, ih = img.size
             img_reader = ImageReader(img)
         except Exception:
@@ -9086,7 +9111,7 @@ def draw_pdf_logo_box(c, page_h, x, y_top, box_size=34, padding=3, draw_border=T
         if not img_reader or iw <= 0 or ih <= 0:
             return
 
-        pad = max(0.0, float(padding)) / 3.2
+        pad = max(2.0, float(padding))
         max_w = max(1.0, box_w - (2.0 * pad))
         max_h = max(1.0, box_h - (2.0 * pad))
         scale = min(max_w / float(iw), max_h / float(ih))

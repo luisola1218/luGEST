@@ -60,11 +60,11 @@ from .pages.stock_dashboard_page import StockDashboardPage
 
 
 class _BrandMark(QWidget):
-    """Small vector mark inspired by the LuGEST icon, independent from image files."""
+    """Header mark drawn from the approved symbol shape."""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, logo_path=None, parent=None) -> None:
         super().__init__(parent)
-        self.setFixedSize(40, 34)
+        self.setFixedSize(118, 62)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
@@ -72,27 +72,29 @@ class _BrandMark(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setPen(Qt.NoPen)
+        w = float(self.width())
+        h = float(self.height())
+        scale = min(w / 156.0, h / 156.0)
+        draw_w = 156.0 * scale
+        draw_h = 156.0 * scale
+        offset_x = (w - draw_w) / 2.0
+        offset_y = (h - draw_h) / 2.0
 
-        sx = self.width() / 40.0
-        sy = self.height() / 34.0
-
-        def rect(x: float, y: float, w: float, h: float) -> QRectF:
-            return QRectF(x * sx, y * sy, w * sx, h * sy)
-
-        def rounded(x: float, y: float, w: float, h: float, color: str, radius: float = 4.0) -> None:
+        def rr(x: float, y: float, rw: float, rh: float, radius: float, color: str) -> None:
             painter.setBrush(QColor(color))
-            painter.drawRoundedRect(rect(x, y, w, h), radius * sx, radius * sy)
+            painter.drawRoundedRect(
+                QRectF(offset_x + (x * scale), offset_y + (y * scale), rw * scale, rh * scale),
+                radius * scale,
+                radius * scale,
+            )
 
-        dark = "#24313c"
-        orange = "#f47a18"
-        # The mark is drawn as two stepped blocks with deliberate white channels,
-        # so it stays crisp at header size and still echoes the real LuGEST icon.
-        rounded(3.0, 2.0, 12.0, 29.0, dark)
-        rounded(3.0, 22.0, 27.0, 10.0, dark)
-        rounded(19.0, 3.0, 17.0, 12.0, orange)
-        rounded(27.0, 3.0, 9.0, 28.0, orange)
-        rounded(15.0, 13.0, 12.5, 9.0, "#ffffff", radius=2.2)
-        rounded(15.0, 15.0, 5.0, 7.5, "#ffffff", radius=1.6)
+        dark = "#2D3846"
+        orange = "#FF7A14"
+
+        rr(4, 4, 78, 144, 7, dark)
+        rr(4, 95, 104, 53, 7, dark)
+        rr(82, 4, 70, 70, 7, orange)
+        rr(121, 4, 31, 102, 7, orange)
 
 
 class MainWindow(QMainWindow):
@@ -155,18 +157,18 @@ class MainWindow(QMainWindow):
 
         brand_frame = QFrame()
         brand_frame.setObjectName("AppBrandPlate")
-        brand_frame.setMinimumWidth(154)
-        brand_frame.setFixedHeight(48)
+        brand_frame.setMinimumWidth(210)
+        brand_frame.setFixedHeight(62)
         brand_layout = QHBoxLayout(brand_frame)
-        brand_layout.setContentsMargins(0, 1, 0, 0)
-        brand_layout.setSpacing(9)
+        brand_layout.setContentsMargins(0, 0, 0, 0)
+        brand_layout.setSpacing(4)
 
-        brand_mark = _BrandMark()
+        brand_mark = _BrandMark(getattr(self.backend, "logo_path", None))
         brand_layout.addWidget(brand_mark, 0, Qt.AlignTop)
 
         brand_text_col = QVBoxLayout()
         brand_text_col.setContentsMargins(0, 0, 0, 0)
-        brand_text_col.setSpacing(1)
+        brand_text_col.setSpacing(0)
         brand_label = QLabel("LUGEST")
         brand_label.setStyleSheet("font-size: 23px; font-weight: 950; letter-spacing: 0.7px; color: #24313c;")
         brand_sub = QLabel("ERP industrial")

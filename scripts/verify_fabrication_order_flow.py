@@ -35,6 +35,7 @@ def main() -> int:
     data = backend.ensure_data()
     token = uuid.uuid4().hex[:8].upper()
     model_code = f"CJ-MES-{token}"
+    product_code = f"COMP-{token}"
     order_num = ""
     created_client = ""
     pdf_path = Path(tempfile.gettempdir()) / f"lugest_verify_of_{token}.pdf"
@@ -73,6 +74,15 @@ def main() -> int:
                 ],
             }
         )
+        data.setdefault("produtos", []).append(
+            {
+                "codigo": product_code,
+                "descricao": f"Componente {token}",
+                "unid": "UN",
+                "qty": 25,
+                "preco": 2.5,
+            }
+        )
 
         detail = backend.order_create_or_update(
             {
@@ -96,6 +106,23 @@ def main() -> int:
         detail = backend.order_import_model(order_num, model_code, 1)
         _assert(int(detail.get("imported_pieces", 0) or 0) == 1, f"Pecas importadas inesperadas: {detail}")
         _assert(int(detail.get("imported_items", 0) or 0) == 1, f"Itens de montagem inesperados: {detail}")
+        enc = backend.get_encomenda_by_numero(order_num)
+        _assert(enc is not None, "Encomenda nao encontrada apos importar modelo.")
+        enc.setdefault("montagem_itens", []).append(
+            {
+                "linha_ordem": 99,
+                "tipo_item": backend.desktop_main.ORC_LINE_TYPE_PRODUCT,
+                "descricao": f"Componente de teste {token}",
+                "produto_codigo": product_code,
+                "produto_unid": "UN",
+                "espessura": "5",
+                "qtd_planeada": 3,
+                "qtd_consumida": 0,
+                "preco_unit": 2.5,
+                "estado": "Pendente",
+            }
+        )
+        backend._save(force=True)
 
         backend.order_piece_create_or_update(
             order_num,
@@ -132,6 +159,11 @@ def main() -> int:
 
         of_scan = backend.operator_scan_code(of_code, current_posto="Corte Laser")
         _assert(str(of_scan.get("tipo", "")) == "OF", f"Scan OF invalido: {of_scan}")
+        comp_scan = backend.operator_scan_code(f"COMP|{of_code}", current_posto="Corte Laser")
+        _assert(str(comp_scan.get("tipo", "")) == "COMP", f"Scan COMP invalido: {comp_scan}")
+        cpi_scan = backend.operator_scan_code(f"CPI|{of_code}|0", current_posto="Corte Laser")
+        _assert(str(cpi_scan.get("tipo", "")) == "CPI", f"Scan CPI invalido: {cpi_scan}")
+        _assert(str(cpi_scan.get("codigo", "")) == product_code, f"CPI nao abriu o componente esperado: {cpi_scan}")
         opp_scan = backend.operator_scan_code(opps[0], current_posto="Corte Laser")
         _assert(str(opp_scan.get("tipo", "")) == "OPP", f"Scan OPP invalido: {opp_scan}")
         _assert(str(opp_scan.get("operacao", "") or ""), f"Scan OPP nao escolheu operacao: {opp_scan}")
@@ -157,6 +189,9 @@ def main() -> int:
             backend.assembly_model_remove(model_code)
         except Exception as exc:
             cleanup_errors.append(str(exc))
+        data["produtos"] = [
+            row for row in list(data.get("produtos", []) or []) if str((row or {}).get("codigo", "") or "") != product_code
+        ]
         if created_client:
             data["clientes"] = [row for row in list(data.get("clientes", []) or []) if str((row or {}).get("codigo", "") or "") != created_client]
         data["seq"] = seq_snapshot

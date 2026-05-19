@@ -12548,10 +12548,6 @@ class LegacyBackend(
                     docs_rows.append({"piece": piece, "docs": docs})
             if docs_rows:
                 technical_groups.append({"material": material_group, "espessura": esp_group, "pieces": group_rows, "docs_rows": docs_rows})
-        cover_target = target
-        if technical_groups:
-            cover_target = Path(tempfile.gettempdir()) / f"lugest_of_cover_{of_code}_{int(time.time() * 1000)}.pdf"
-        canvas_obj = pdf_canvas.Canvas(str(cover_target), pagesize=A4)
         reservation_lines: list[str] = []
         for reserva in list(enc.get("reservas", []) or []):
             if not isinstance(reserva, dict):
@@ -12565,6 +12561,40 @@ class LegacyBackend(
             reservation_lines.append(f"{mat_txt} | {esp_txt} mm | {qty_txt} chapa(s) | {state_txt}")
         visual_units = len(pieces) + (len(grouped_pieces) * max(1, math.ceil(group_h / row_h)))
         total_pages = max(1, math.ceil(max(1, visual_units) / rows_per_page))
+        montagem_stock_items = [
+            row
+            for row in list(detail.get("montagem_items", []) or [])
+            if self.desktop_main.normalize_orc_line_type(row.get("tipo_item")) == self.desktop_main.ORC_LINE_TYPE_PRODUCT
+            or bool(str(row.get("stock_material_id", "") or "").strip())
+        ]
+        montagem_stock_code = f"COMP|{of_code}" if montagem_stock_items else ""
+        montagem_component_groups: list[tuple[str, list[dict[str, Any]]]] = []
+        if montagem_stock_items:
+            grouped_components: dict[str, list[dict[str, Any]]] = {}
+            for item_index, item in enumerate(montagem_stock_items):
+                esp_txt = str(item.get("espessura", "") or "").strip() or "Sem espessura"
+                code_txt = str(item.get("produto_codigo", "") or item.get("stock_material_id", "") or self._montagem_item_key(item) or "-").strip() or "-"
+                qty_txt = self._fmt(item.get("qtd_planeada", 0))
+                unidade_txt = str(item.get("produto_unid", "") or "UN").strip() or "UN"
+                grouped_components.setdefault(esp_txt, []).append(
+                    {
+                        "barcode": f"CPI|{of_code}|{item_index}",
+                        "codigo": code_txt,
+                        "descricao": str(item.get("descricao", "") or item.get("material", "") or "-").strip() or "-",
+                        "quantidade": f"{qty_txt} {unidade_txt}".strip(),
+                    }
+                )
+            montagem_component_groups = sorted(
+                grouped_components.items(),
+                key=lambda item: (
+                    self._parse_float(item[0].replace("Sem espessura", "0"), 0),
+                    item[0].lower(),
+                ),
+            )
+        cover_target = target
+        if technical_groups or montagem_component_groups:
+            cover_target = Path(tempfile.gettempdir()) / f"lugest_of_cover_{of_code}_{int(time.time() * 1000)}.pdf"
+        canvas_obj = pdf_canvas.Canvas(str(cover_target), pagesize=A4)
 
         def draw_header(page_number: int) -> float:
             top_y = page_h - margin
@@ -12708,7 +12738,111 @@ class LegacyBackend(
                 row_counter += 1
         draw_footer(page_number)
         canvas_obj.save()
-        if technical_groups:
+        extra_notice_pages: list[Path] = []
+        if montagem_component_groups:
+            component_pages: list[Path] = []
+
+            def _start_component_page(page_idx: int, *, include_group_barcode: bool = False) -> tuple[Any, float, Path]:
+                page_path = Path(tempfile.gettempdir()) / f"lugest_of_components_{of_code}_{page_idx}_{int(time.time() * 1000)}.pdf"
+                page_canvas = pdf_canvas.Canvas(str(page_path), pagesize=A4)
+                top_y = page_h - margin
+                page_canvas.setFillColor(colors.white)
+                page_canvas.setStrokeColor(colors.HexColor("#CBD5E1"))
+                page_canvas.roundRect(margin, top_y - 34 * mm, inner_w, 34 * mm, 6, stroke=1, fill=1)
+                self._draw_operator_logo_plate(page_canvas, palette, logo_path, margin + 8, top_y - 20 * mm, 34 * mm, 15 * mm, radius=4, padding_x=3, padding_y=2)
+                page_canvas.setFillColor(colors.HexColor("#020617"))
+                page_canvas.setFont("Helvetica-Bold", 14)
+                page_canvas.drawString(margin + 48 * mm, top_y - 11 * mm, self._operator_pdf_text("Componentes Montagem/Stock"))
+                page_canvas.setFont("Helvetica", 8)
+                page_canvas.drawString(margin + 48 * mm, top_y - 18 * mm, self._operator_pdf_text(f"OF: {of_code}"))
+                page_canvas.drawString(margin + 48 * mm, top_y - 24 * mm, self._operator_pdf_text("Leitura individual por componente"))
+                page_canvas.setStrokeColor(colors.HexColor("#E2E8F0"))
+                page_canvas.line(margin, top_y - 39 * mm, page_w - margin, top_y - 39 * mm)
+                section_y = top_y - 46 * mm
+                if include_group_barcode and montagem_stock_code:
+                    comp_h = 15 * mm
+                    page_canvas.setFillColor(colors.HexColor("#F8FAFC"))
+                    page_canvas.setStrokeColor(colors.HexColor("#CBD5E1"))
+                    page_canvas.roundRect(margin, section_y - comp_h, inner_w, comp_h, 4, stroke=1, fill=1)
+                    page_canvas.setFillColor(colors.HexColor("#0F172A"))
+                    page_canvas.setFont("Helvetica-Bold", 7.2)
+                    page_canvas.drawString(margin + 3 * mm, section_y - 5 * mm, self._operator_pdf_text("Codigo do conjunto de componentes"))
+                    page_canvas.setFont("Helvetica", 6.2)
+                    page_canvas.drawString(margin + 3 * mm, section_y - 9.4 * mm, self._operator_pdf_text(f"{len(montagem_stock_items)} item(ns) de stock associados"))
+                    self._draw_code128_fit(page_canvas, montagem_stock_code, page_w - margin - 74 * mm, section_y - 10.8 * mm, 70 * mm, 7.0 * mm, min_bar_width=0.28, max_bar_width=0.62)
+                    page_canvas.setFont("Helvetica-Bold", 5.4)
+                    page_canvas.drawCentredString(page_w - margin - 39 * mm, section_y - 12.5 * mm, self._operator_pdf_text(montagem_stock_code))
+                    section_y -= comp_h + 4 * mm
+                return page_canvas, section_y, page_path
+
+            def _finish_component_page(page_canvas: Any, page_path: Path, page_idx: int) -> None:
+                page_canvas.setStrokeColor(colors.HexColor("#E2E8F0"))
+                page_canvas.line(margin, margin + 4.5 * mm, page_w - margin, margin + 4.5 * mm)
+                page_canvas.setFillColor(colors.HexColor("#64748B"))
+                page_canvas.setFont("Helvetica", 5.8)
+                page_canvas.drawString(margin, margin + 1.4 * mm, self._operator_pdf_text(f"Impresso em: {printed_at}"))
+                page_canvas.drawRightString(page_w - margin, margin + 1.4 * mm, self._operator_pdf_text(f"LUGEST | OF {of_code} | Componentes {page_idx}"))
+                page_canvas.save()
+                component_pages.append(page_path)
+
+            page_index = 1
+            component_page_has_rows = False
+            first_component_page = True
+            notice_canvas = None
+            section_y = 0.0
+            notice_path = None
+            for esp_txt, rows in montagem_component_groups:
+                needed_h = (10 + max(1, len(rows)) * 16) * mm
+                if notice_canvas is None:
+                    notice_canvas, section_y, notice_path = _start_component_page(
+                        page_index,
+                        include_group_barcode=first_component_page,
+                    )
+                if section_y - needed_h < margin + 16 * mm and component_page_has_rows:
+                    _finish_component_page(notice_canvas, notice_path, page_index)
+                    page_index += 1
+                    first_component_page = False
+                    notice_canvas, section_y, notice_path = _start_component_page(page_index)
+                    component_page_has_rows = False
+                notice_canvas.setFillColor(colors.HexColor("#EEF6FF"))
+                notice_canvas.setStrokeColor(colors.HexColor("#B9D7F2"))
+                notice_canvas.roundRect(margin, section_y - 8 * mm, inner_w, 8 * mm, 3, stroke=1, fill=1)
+                notice_canvas.setFillColor(colors.HexColor("#0F172A"))
+                notice_canvas.setFont("Helvetica-Bold", 8.3)
+                notice_canvas.drawString(margin + 3 * mm, section_y - 5.4 * mm, self._operator_pdf_text(f"Espessura {esp_txt} mm"))
+                section_y -= 11 * mm
+                component_page_has_rows = True
+                first_component_page = False
+                for row in rows:
+                    row_h_notice = 14 * mm
+                    if section_y - row_h_notice < margin + 16 * mm:
+                        _finish_component_page(notice_canvas, notice_path, page_index)
+                        page_index += 1
+                        notice_canvas, section_y, notice_path = _start_component_page(page_index)
+                        component_page_has_rows = False
+                    notice_canvas.setFillColor(colors.white)
+                    notice_canvas.setStrokeColor(colors.HexColor("#D7DEE8"))
+                    notice_canvas.roundRect(margin, section_y - row_h_notice, inner_w, row_h_notice, 3, stroke=1, fill=1)
+                    notice_canvas.setFillColor(colors.HexColor("#0F172A"))
+                    notice_canvas.setFont("Helvetica-Bold", 7.0)
+                    notice_canvas.drawString(margin + 3 * mm, section_y - 4.6 * mm, self._operator_pdf_text(_pdf_clip_text(str(row.get("codigo", "-") or "-"), 52 * mm, "Helvetica-Bold", 7.0)))
+                    notice_canvas.setFont("Helvetica", 6.0)
+                    notice_canvas.drawString(margin + 3 * mm, section_y - 9.4 * mm, self._operator_pdf_text(_pdf_clip_text(str(row.get("descricao", "-") or "-"), 78 * mm, "Helvetica", 6.0)))
+                    notice_canvas.setFont("Helvetica", 5.4)
+                    notice_canvas.drawString(margin + 3 * mm, section_y - 12.8 * mm, self._operator_pdf_text(_pdf_clip_text(f"Qtd: {row.get('quantidade', '-')}", 42 * mm, "Helvetica", 5.4)))
+                    barcode_x = page_w - margin - 72 * mm
+                    notice_canvas.setFont("Helvetica-Bold", 5.2)
+                    notice_canvas.drawString(barcode_x, section_y - 4.6 * mm, self._operator_pdf_text("Codigo individual"))
+                    self._draw_code128_fit(notice_canvas, str(row.get("barcode", "") or "-"), barcode_x, section_y - 11.6 * mm, 68 * mm, 6.6 * mm, min_bar_width=0.24, max_bar_width=0.52)
+                    notice_canvas.setFont("Helvetica-Bold", 4.8)
+                    notice_canvas.drawCentredString(barcode_x + 34 * mm, section_y - 13.2 * mm, self._operator_pdf_text(_pdf_clip_text(str(row.get("barcode", "") or "-"), 68 * mm, "Helvetica-Bold", 4.8)))
+                    section_y -= row_h_notice + 2 * mm
+                    component_page_has_rows = True
+                section_y -= 1 * mm
+            if notice_canvas is not None and notice_path is not None:
+                _finish_component_page(notice_canvas, notice_path, page_index)
+            extra_notice_pages.extend(component_pages)
+        if technical_groups or extra_notice_pages:
             try:
                 from pypdf import PdfReader, PdfWriter
 
@@ -13006,6 +13140,8 @@ class LegacyBackend(
                                         ],
                                     )
                                 )
+                for page_path in extra_notice_pages:
+                    append_pdf(page_path)
                 with target.open("wb") as handle:
                     writer.write(handle)
             except Exception:
@@ -13030,6 +13166,181 @@ class LegacyBackend(
         except Exception:
             pass
         return path
+
+    def operator_montagem_stock_group(self, numero: str) -> dict[str, Any]:
+        detail = self.order_detail(numero)
+        enc_num = str(detail.get("numero", "") or numero or "").strip()
+        if not enc_num:
+            return {}
+        raw_items = list(detail.get("montagem_items", []) or [])
+        rows: list[dict[str, Any]] = []
+        for index, item in enumerate(raw_items):
+            item_type = self.desktop_main.normalize_orc_line_type(item.get("tipo_item"))
+            is_stock = item_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT or bool(item.get("stock_material_id"))
+            if not is_stock:
+                continue
+            plan = round(self._parse_float(item.get("qtd_planeada", 0), 0), 2)
+            done = round(self._parse_float(item.get("qtd_consumida", 0), 0), 2)
+            pending = round(max(0.0, plan - done), 2)
+            shortage = 0.0
+            if item_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT:
+                code = str(item.get("produto_codigo", "") or "").strip()
+                product = next(
+                    (
+                        prod
+                        for prod in list(self.ensure_data().get("produtos", []) or [])
+                        if str(prod.get("codigo", "") or "").strip() == code
+                    ),
+                    None,
+                )
+                available = self._parse_float((product or {}).get("qty", 0), 0)
+                shortage = round(max(0.0, pending - available), 2)
+            elif bool(item.get("stock_material_id")):
+                stock = self.material_by_id(str(item.get("stock_material_id", "") or "").strip())
+                available = self._parse_float((stock or {}).get("quantidade", 0), 0) - self._parse_float((stock or {}).get("reservado", 0), 0)
+                shortage = round(max(0.0, pending - available), 2)
+            rows.append(
+                {
+                    "id": f"COMP::{enc_num}::{index}",
+                    "espessura": str(item.get("espessura", "") or "").strip(),
+                    "codigo": str(item.get("produto_codigo", "") or item.get("stock_material_id", "") or item.get("item_key", "") or "-").strip() or "-",
+                    "descricao": str(item.get("descricao", "") or item.get("material", "") or "-").strip() or "-",
+                    "tipo_item": item_type,
+                    "tipo_label": str(item.get("tipo_label", "") or "Produto/stock").strip(),
+                    "unidade": str(item.get("produto_unid", "") or "UN").strip() or "UN",
+                    "qtd_planeada": plan,
+                    "qtd_consumida": done,
+                    "qtd_pendente": pending,
+                    "falta": shortage,
+                    "estado": "Consumido" if pending <= 1e-9 else ("Sem stock" if shortage > 0 else "Pendente"),
+                }
+            )
+        if not rows:
+            return {}
+        plan_total = round(sum(float(row.get("qtd_planeada", 0) or 0) for row in rows), 2)
+        done_total = round(sum(float(row.get("qtd_consumida", 0) or 0) for row in rows), 2)
+        pending_total = round(max(0.0, plan_total - done_total), 2)
+        progress = 0.0 if plan_total <= 0 else round(min(100.0, (done_total / plan_total) * 100.0), 1)
+        state = "Consumido" if pending_total <= 1e-9 else ("Sem stock" if any(float(row.get("falta", 0) or 0) > 0 for row in rows) else "Pendente")
+        return {
+            "is_montagem_stock_group": True,
+            "encomenda": enc_num,
+            "cliente": f"{detail.get('cliente', '-') or '-'} - {detail.get('cliente_nome', '') or ''}".strip(" -"),
+            "cliente_codigo": str(detail.get("cliente", "") or "").strip(),
+            "cliente_nome": str(detail.get("cliente_nome", "") or "").strip(),
+            "estado": state,
+            "estado_espessura": state,
+            "material": "Componentes Montagem/Stock",
+            "espessura": "Stock",
+            "tempo_plan_min": float(detail.get("montagem_tempo_min", 0) or 0),
+            "tempo_real_min": 0.0,
+            "desvio_min": 0.0,
+            "progress_pct": progress,
+            "pieces": [],
+            "montagem_items": rows,
+            "can_consume_montagem": pending_total > 1e-9,
+        }
+
+    def operator_consume_montagem_stock(self, numero: str, operador: str = "") -> dict[str, Any]:
+        enc = self.get_encomenda_by_numero(numero)
+        if enc is None:
+            raise ValueError("Encomenda não encontrada.")
+        items = list(enc.get("montagem_itens", []) or [])
+        if not items:
+            raise ValueError("Esta encomenda nao tem componentes de montagem.")
+        actor = str(operador or (self.user or {}).get("username", "") or "Sistema").strip() or "Sistema"
+        product_map = {
+            str(prod.get("codigo", "") or "").strip(): prod
+            for prod in list(self.ensure_data().get("produtos", []) or [])
+            if str(prod.get("codigo", "") or "").strip()
+        }
+        consumable = []
+        shortages: list[str] = []
+        for item in items:
+            item_type = self.desktop_main.normalize_orc_line_type(item.get("tipo_item"))
+            is_raw = self._montagem_item_is_raw_material(item)
+            if item_type != self.desktop_main.ORC_LINE_TYPE_PRODUCT and not is_raw:
+                continue
+            plan = self._parse_float(item.get("qtd_planeada", item.get("qtd", 0)), 0)
+            done = self._parse_float(item.get("qtd_consumida", 0), 0)
+            pending = max(0.0, plan - done)
+            if pending <= 1e-9:
+                continue
+            consumable.append(item)
+            if item_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT:
+                code = str(item.get("produto_codigo", "") or "").strip()
+                product = product_map.get(code)
+                if product is None:
+                    shortages.append(f"{code or '-'}: produto nao encontrado")
+                    continue
+                available = self._parse_float(product.get("qty", 0), 0)
+                if pending > available + 1e-9:
+                    shortages.append(f"{code}: faltam {pending - available:.2f} ({available:.2f} disponivel)")
+            elif is_raw:
+                stock_id = str(item.get("stock_material_id", "") or "").strip()
+                if stock_id:
+                    material = self.material_by_id(stock_id)
+                    if material is None:
+                        shortages.append(f"{stock_id}: matéria-prima nao encontrada")
+                        continue
+                    available = self._parse_float(material.get("quantidade", 0), 0) - self._parse_float(material.get("reservado", 0), 0)
+                else:
+                    candidates = self.material_candidates(str(item.get("material", "") or ""), str(item.get("espessura", "") or ""))
+                    available = sum(self._parse_float(row.get("disponivel", 0), 0) for row in candidates)
+                if pending > available + 1e-9:
+                    shortages.append(f"{stock_id or item.get('descricao', '-')}: faltam {pending - available:.2f} ({available:.2f} disponivel)")
+        if not consumable:
+            raise ValueError("Nao existem produtos/componentes de stock pendentes para consumir.")
+        if shortages:
+            raise ValueError("Stock insuficiente para consumir componentes:\n" + "\n".join(shortages))
+        now_txt = self.desktop_main.now_iso()
+        for item in consumable:
+            item_type = self.desktop_main.normalize_orc_line_type(item.get("tipo_item"))
+            plan = self._parse_float(item.get("qtd_planeada", item.get("qtd", 0)), 0)
+            done = self._parse_float(item.get("qtd_consumida", 0), 0)
+            pending = max(0.0, plan - done)
+            if item_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT:
+                code = str(item.get("produto_codigo", "") or "").strip()
+                product = product_map.get(code)
+                if product is None:
+                    continue
+                before = self._parse_float(product.get("qty", 0), 0)
+                product["qty"] = max(0.0, before - pending)
+                product["atualizado_em"] = now_txt
+                self.desktop_main.add_produto_mov(
+                    self.ensure_data(),
+                    tipo="BAIXA_MONTAGEM",
+                    operador=actor,
+                    codigo=code,
+                    descricao=str(item.get("descricao", "") or product.get("descricao", "") or "").strip(),
+                    qtd=pending,
+                    antes=before,
+                    depois=product["qty"],
+                    obs=f"Montagem da encomenda {numero}",
+                    origem="OPERADOR_MONTAGEM",
+                    ref_doc=numero,
+                )
+            elif self._montagem_item_is_raw_material(item):
+                stock_id = str(item.get("stock_material_id", "") or "").strip()
+                allocations = [{"material_id": stock_id, "quantidade": pending}] if stock_id else []
+                if not allocations:
+                    remaining = pending
+                    for candidate in self.material_candidates(str(item.get("material", "") or ""), str(item.get("espessura", "") or "")):
+                        if remaining <= 1e-9:
+                            break
+                        qty = min(self._parse_float(candidate.get("disponivel", 0), 0), remaining)
+                        if qty > 1e-9:
+                            allocations.append({"material_id": str(candidate.get("material_id", "") or "").strip(), "quantidade": qty})
+                            remaining = round(remaining - qty, 6)
+                if allocations:
+                    self.consume_material_allocations(allocations, reason=f"operador_montagem_{numero}")
+            item["qtd_consumida"] = round(plan, 2)
+            item["estado"] = "Consumido"
+            item["consumed_at"] = now_txt
+            item["consumed_by"] = actor
+        self.desktop_main.update_estado_encomenda_por_espessuras(enc)
+        self._save(force=True)
+        return self.order_detail(numero)
 
     def operator_scan_code(self, code: str, current_posto: str = "Geral") -> dict[str, Any]:
         code_txt = str(code or "").strip()
@@ -13088,6 +13399,48 @@ class LegacyBackend(
                     "material": material,
                     "espessura": espessura,
                 }
+        if code_txt.upper().startswith("COMP|"):
+            parts = code_txt.split("|", 1)
+            of_code = parts[1].strip() if len(parts) > 1 else ""
+            enc = next((row for row in list(self.ensure_data().get("encomendas", []) or []) if self._order_of_code(row, create=False) == of_code), None)
+            if enc is None:
+                raise ValueError("Grupo de componentes não encontrado.")
+            group = self.operator_montagem_stock_group(str(enc.get("numero", "") or ""))
+            if not group:
+                raise ValueError("Esta OF nao tem componentes de stock associados.")
+            return {
+                "tipo": "COMP",
+                "encomenda_numero": str(enc.get("numero", "") or "").strip(),
+                "of": of_code,
+                "material": str(group.get("material", "") or "").strip(),
+                "espessura": str(group.get("espessura", "") or "").strip(),
+            }
+        if code_txt.upper().startswith("CPI|"):
+            parts = code_txt.split("|")
+            if len(parts) < 3:
+                raise ValueError("Código individual de componente inválido.")
+            of_code = parts[1].strip()
+            item_index = int(self._parse_float(parts[2], -1))
+            enc = next((row for row in list(self.ensure_data().get("encomendas", []) or []) if self._order_of_code(row, create=False) == of_code), None)
+            if enc is None:
+                raise ValueError("Componente não encontrado.")
+            group = self.operator_montagem_stock_group(str(enc.get("numero", "") or ""))
+            if not group:
+                raise ValueError("Esta OF nao tem componentes de stock associados.")
+            rows = list(group.get("montagem_items", []) or [])
+            if item_index < 0 or item_index >= len(rows):
+                raise ValueError("Item de componente não encontrado.")
+            item = dict(rows[item_index] or {})
+            return {
+                "tipo": "CPI",
+                "encomenda_numero": str(enc.get("numero", "") or "").strip(),
+                "of": of_code,
+                "item_id": str(item.get("id", "") or "").strip(),
+                "codigo": str(item.get("codigo", "") or "").strip(),
+                "descricao": str(item.get("descricao", "") or "").strip(),
+                "material": str(group.get("material", "") or "").strip(),
+                "espessura": str(item.get("espessura", group.get("espessura", "")) or "").strip(),
+            }
         if code_txt.upper().startswith("OF-"):
             enc = next((row for row in list(self.ensure_data().get("encomendas", []) or []) if self._order_of_code(row, create=False) == code_txt), None)
             if enc is None:
