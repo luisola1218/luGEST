@@ -107,7 +107,7 @@ class ShippingBridgeMixin:
         numero = str(numero or "").strip()
         ex = next((row for row in self.ensure_data().get("expedicoes", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if ex is None:
-            raise ValueError("Guia n?o encontrada.")
+            raise ValueError("Guia não encontrada.")
         lines = []
         for line in list(ex.get("linhas", []) or []):
             lines.append(
@@ -143,7 +143,7 @@ class ShippingBridgeMixin:
         numero = str(numero or "").strip()
         ex = next((row for row in self.ensure_data().get("expedicoes", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if ex is None:
-            raise ValueError("Guia n?o encontrada.")
+            raise ValueError("Guia não encontrada.")
         path = Path(tempfile.gettempdir()) / f"lugest_guia_{numero}.pdf"
         self.ne_expedicao_actions.render_expedicao_pdf(self, str(path), ex)
         os.startfile(str(path))
@@ -153,7 +153,7 @@ class ShippingBridgeMixin:
         numero = str(numero or "").strip()
         ex = next((row for row in self.ensure_data().get("expedicoes", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if ex is None:
-            raise ValueError("Guia n?o encontrada.")
+            raise ValueError("Guia não encontrada.")
         out_path = Path(path)
         self.ne_expedicao_actions.render_expedicao_pdf(self, str(out_path), ex, include_all_vias=include_all_vias)
         return out_path
@@ -179,7 +179,7 @@ class ShippingBridgeMixin:
     def expedicao_defaults_for_order(self, enc_num: str) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(enc_num)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         cli_code = str(enc.get("cliente", "") or "").strip()
         cli = {}
         find_cliente_fn = getattr(self.desktop_main, "find_cliente", None)
@@ -256,7 +256,7 @@ class ShippingBridgeMixin:
     def expedicao_emit_off(self, enc_num: str, draft_lines: list[dict[str, Any]], guide_data: dict[str, Any]) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(enc_num)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         lines = [dict(line) for line in list(draft_lines or []) if isinstance(line, dict)]
         if not lines:
             raise ValueError("Sem linhas na guia.")
@@ -269,7 +269,7 @@ class ShippingBridgeMixin:
                 raise ValueError("Linha de guia invalida.")
             piece = pieces.get(piece_id)
             if piece is None:
-                raise ValueError(f"Pe?a n?o encontrada para expedi??o: {piece_id}")
+                raise ValueError(f"Peça não encontrada para expedição: {piece_id}")
             requested_by_piece[piece_id] = requested_by_piece.get(piece_id, 0.0) + qty
         for piece_id, qty in requested_by_piece.items():
             available = self._parse_float(self.desktop_main.peca_qtd_disponivel_expedicao(pieces[piece_id]), 0)
@@ -434,7 +434,7 @@ class ShippingBridgeMixin:
         numero = str(numero or "").strip()
         ex = next((row for row in self.ensure_data().get("expedicoes", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if ex is None:
-            raise ValueError("Guia n?o encontrada.")
+            raise ValueError("Guia não encontrada.")
         if bool(ex.get("anulada")):
             raise ValueError("Nao e possivel editar uma guia anulada.")
         ex["codigo_at"] = str(guide_data.get("codigo_at", "") or "").strip()
@@ -465,7 +465,7 @@ class ShippingBridgeMixin:
             raise ValueError("E obrigatorio indicar justificacao.")
         ex = next((row for row in self.ensure_data().get("expedicoes", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if ex is None:
-            raise ValueError("Guia n?o encontrada.")
+            raise ValueError("Guia não encontrada.")
         if bool(ex.get("anulada")):
             return self.expedicao_detail(numero)
         for line in list(ex.get("linhas", []) or []):

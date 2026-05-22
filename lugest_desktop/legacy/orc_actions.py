@@ -1,6 +1,7 @@
 ﻿from lugest_infra.legacy.module_context import configure_module, ensure_module
 
 _CONFIGURED = False
+ORC_STANDARD_IVA_PERC = 23.0
 
 def configure(main_globals):
     configure_module(globals(), main_globals)
@@ -280,7 +281,9 @@ def _orc_compute_totals(orc):
     preco_transporte = round(parse_float((orc or {}).get("preco_transporte", 0), 0), 2)
     subtotal_bruto = round(subtotal_bruto_linhas + preco_transporte, 2)
     subtotal = round(subtotal_liquido_linhas + preco_transporte, 2)
-    iva_perc = round(parse_float((orc or {}).get("iva_perc", 0), 0), 2)
+    iva_perc = ORC_STANDARD_IVA_PERC
+    if isinstance(orc, dict):
+        orc["iva_perc"] = iva_perc
     iva = round(subtotal * (iva_perc / 100.0), 2)
     total = round(subtotal + iva, 2)
     orc["subtotal_bruto"] = subtotal_bruto
@@ -1163,9 +1166,51 @@ def _orc_line_description_display(line):
 def _build_orc_notes_lines(self, orc):
     _ensure_configured()
     extra = (orc.get("notas_pdf", "") or "").strip()
-    if not extra:
-        return []
-    return [str(ln or "").strip() for ln in extra.splitlines() if str(ln or "").strip()]
+    notes = [str(ln or "").strip() for ln in extra.splitlines() if str(ln or "").strip()]
+    lines = [dict(row or {}) for row in list((orc or {}).get("linhas", []) or []) if isinstance(row, dict)]
+    if not lines:
+        return notes
+
+    has_stock = False
+    has_assembly = False
+    has_fabrication = False
+    operations: list[str] = []
+    for row in lines:
+        kind = _orc_line_type_value(row)
+        kind_norm = norm_text(kind)
+        desc_norm = norm_text(row.get("descricao", ""))
+        operation = _orc_format_operations(row.get("operacao", ""), unique=True)
+        if operation:
+            operations.append(operation)
+        if kind_norm in {"produto_stock", "produto"}:
+            has_stock = True
+        if kind_norm in {"servico_montagem", "servico"} or str(row.get("conjunto_codigo", "") or row.get("conjunto_nome", "") or "").strip():
+            has_assembly = True
+        if "montagem" in desc_norm:
+            has_assembly = True
+        if kind_norm == "peca_fabricada":
+            has_fabrication = True
+
+    generated: list[str] = []
+    if has_assembly:
+        generated.append("- Inclui fornecimento de conjunto/montagem conforme linhas do orçamento.")
+    if has_stock:
+        generated.append("- Inclui produtos de stock identificados nas linhas do orçamento.")
+    if has_fabrication:
+        generated.append("- Inclui fabrico das peças indicadas, conforme desenho e especificação técnica.")
+    unique_operations = []
+    seen_ops = set()
+    for operation in operations:
+        key = norm_text(operation)
+        if key and key not in seen_ops:
+            seen_ops.add(key)
+            unique_operations.append(operation)
+    if unique_operations:
+        generated.append(f"- Operações consideradas: {', '.join(unique_operations)}.")
+
+    existing_norm = {norm_text(line) for line in notes}
+    notes.extend([line for line in generated if norm_text(line) not in existing_norm])
+    return notes
 
 def orc_fill_notes_by_ops(self):
     _ensure_configured()
@@ -2412,7 +2457,7 @@ def _render_orc_pdf_modern(self, path, orc):
         c.setStrokeColor(colors.Color(1, 1, 1, alpha=0.22))
         c.line(x + left_pad, yinv(sep_y), x + box_w - right_pad, yinv(sep_y))
         total_label_y = sep_y + 7.8
-        total_label = _orc_pdf_clip_text("TOTAL C/IVA", label_w, fonts["bold"], 7.6)
+        total_label = _orc_pdf_clip_text(f"TOTAL C/IVA {fmt_num(iva_perc)}%", label_w, fonts["bold"], 7.6)
         c.setFont(fonts["bold"], 8.2)
         c.drawString(x + left_pad, yinv(total_label_y), ntxt(total_label))
         total_value = fmt_money(total)
@@ -2555,7 +2600,7 @@ def _render_orc_pdf_modern(self, path, orc):
             metric_card(metric_grid["cols"][2], metric_grid["rows"][0], metric_grid["chip_w"], "Executado por", executado or "-", box_h=metric_grid["chip_h"], compact=True)
             metric_card(metric_grid["cols"][0], metric_grid["rows"][1], metric_grid["chip_w"], "Subtotal", fmt_money(subtotal), box_h=metric_grid["chip_h"], compact=True)
             metric_card(metric_grid["cols"][1], metric_grid["rows"][1], metric_grid["chip_w"], "IVA", f"{fmt_num(iva_perc)}%", box_h=metric_grid["chip_h"], compact=True)
-            metric_card(metric_grid["cols"][2], metric_grid["rows"][1], metric_grid["chip_w"], "TOTAL C/IVA", fmt_money(total), box_h=metric_grid["chip_h"], accent=True, compact=True)
+            metric_card(metric_grid["cols"][2], metric_grid["rows"][1], metric_grid["chip_w"], f"TOTAL C/IVA {fmt_num(iva_perc)}%", fmt_money(total), box_h=metric_grid["chip_h"], accent=True, compact=True)
             detail_card(
                 margin,
                 126,

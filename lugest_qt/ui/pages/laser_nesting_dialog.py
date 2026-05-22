@@ -625,10 +625,10 @@ class LaserNestingDialog(QDialog):
         top_layout.addWidget(sheet_btn, 4, 2)
         top_layout.addWidget(config_btn, 4, 3)
         top_layout.addWidget(self.common_line_check, 5, 0)
-        top_layout.addWidget(QLabel("TolerÃ¢ncia common-line (mm)"), 5, 1)
+        top_layout.addWidget(QLabel("Tolerância common-line (mm)"), 5, 1)
         top_layout.addWidget(self.common_line_tol_spin, 5, 2)
         top_layout.addWidget(self.lead_opt_check, 6, 0)
-        top_layout.addWidget(QLabel("ReduÃ§Ã£o lead-ins %"), 6, 1)
+        top_layout.addWidget(QLabel("Redução lead-ins %"), 6, 1)
         top_layout.addWidget(self.lead_opt_pct_spin, 6, 2)
         top_layout.setColumnStretch(0, 3)
         top_layout.setColumnStretch(1, 3)
@@ -3224,18 +3224,18 @@ class LaserNestingDialog(QDialog):
                 )
             else:
                 decision_lines.append(
-                    f"Common-line sem ganho direto neste plano. TolerÃ¢ncia usada: {_fmt_num(common_line.get('tolerance_mm', 0), 2)} mm."
+                    f"Common-line sem ganho direto neste plano. Tolerância usada: {_fmt_num(common_line.get('tolerance_mm', 0), 2)} mm."
                 )
             if int(common_line.get("blocked_candidates", 0) or 0) > 0:
                 decision_lines.append(
-                    f"Foram encontradas {int(common_line.get('blocked_candidates', 0) or 0)} aproximaÃ§Ã£o(Ãµes) com potencial, mas a folga entre peÃ§as impediu partilha de corte."
+                    f"Foram encontradas {int(common_line.get('blocked_candidates', 0) or 0)} aproximação(ões) com potencial, mas a folga entre peças impediu partilha de corte."
                 )
         if bool(self.lead_opt_check.isChecked()):
             decision_lines.append(
-                f"OtimizaÃ§Ã£o de lead-ins aplicada com reduÃ§Ã£o de {_fmt_num(self.lead_opt_pct_spin.value(), 1)}% sobre o percurso remanescente de entrada/saÃ­da."
+                f"Otimização de lead-ins aplicada com redução de {_fmt_num(self.lead_opt_pct_spin.value(), 1)}% sobre o percurso remanescente de entrada/saída."
             )
         decision_lines.append(
-            f"Processo ajustado do plano: corte {_fmt_num(nominal_cut_length_m, 3)} -> {_fmt_num(adjusted_cut_length_m, 3)} m, pierces {nominal_pierce_count} -> {adjusted_pierce_count}, tempo mÃ¡quina {_fmt_num(totals.get('machine_total_min', 0), 2)} -> {_fmt_num(adjusted_machine_total_min, 2)} min."
+            f"Processo ajustado do plano: corte {_fmt_num(nominal_cut_length_m, 3)} -> {_fmt_num(adjusted_cut_length_m, 3)} m, pierces {nominal_pierce_count} -> {adjusted_pierce_count}, tempo máquina {_fmt_num(totals.get('machine_total_min', 0), 2)} -> {_fmt_num(adjusted_machine_total_min, 2)} min."
         )
         if next_candidate:
             purchase_delta_m2 = ((float(next_candidate.get("purchase_sheet_area_mm2", 0) or 0) - float(selected_candidate.get("purchase_sheet_area_mm2", 0) or 0)) / 1_000_000.0)

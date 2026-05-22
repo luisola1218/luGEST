@@ -97,10 +97,12 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication([args[0], *qt_args])
     try:
         backend = LegacyBackend()
-        try:
-            backend.ensure_branding_logo(str(backend.base_dir / "Logos" / "image (1).jpg"))
-        except Exception:
-            pass
+        logo_path = backend.logo_path
+        if logo_path is not None:
+            try:
+                backend.ensure_branding_logo(str(logo_path))
+            except Exception:
+                pass
         runtime_service = RuntimeService()
         app.setApplicationName("luGEST Qt")
         app.setOrganizationName("luGEST")

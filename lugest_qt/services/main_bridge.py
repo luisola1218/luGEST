@@ -2755,7 +2755,7 @@ class LegacyBackend(
         data = self.ensure_data()
         record = self.material_by_id(material_id)
         if record is None:
-            raise ValueError("Material n?o encontrado.")
+            raise ValueError("Material não encontrado.")
         values = self._normalise_material_payload(payload)
         record.update(
             {
@@ -2798,7 +2798,7 @@ class LegacyBackend(
         data = self.ensure_data()
         record = self.material_by_id(material_id)
         if record is None:
-            raise ValueError("Material n?o encontrado.")
+            raise ValueError("Material não encontrado.")
         data["materiais"] = [m for m in data.get("materiais", []) if str(m.get("id", "")).strip() != str(material_id).strip()]
         self.desktop_main.log_stock(
             data,
@@ -2812,12 +2812,12 @@ class LegacyBackend(
         data = self.ensure_data()
         record = self.material_by_id(material_id)
         if record is None:
-            raise ValueError("Material n?o encontrado.")
+            raise ValueError("Material não encontrado.")
         qtd = self._parse_float(quantidade, -1)
         res = self._parse_float(reservado, -1)
         met = self._parse_float(metros, 0)
         if qtd < 0 or res < 0 or res > qtd:
-            raise ValueError("Valores inv?lidos.")
+            raise ValueError("Valores inválidos.")
         record["quantidade"] = qtd
         record["reservado"] = res
         record["metros"] = met
@@ -2837,7 +2837,7 @@ class LegacyBackend(
         data = self.ensure_data()
         record = self.material_by_id(material_id)
         if record is None:
-            raise ValueError("Material n?o encontrado.")
+            raise ValueError("Material não encontrado.")
         if self._material_quality_is_blocked(record):
             raise ValueError(
                 f"Material {material_id} bloqueado pela qualidade: "
@@ -3106,7 +3106,7 @@ class LegacyBackend(
                 continue
             stock = self.material_by_id(material_id)
             if stock is None:
-                raise ValueError(f"Material n?o encontrado: {material_id}")
+                raise ValueError(f"Material não encontrado: {material_id}")
             if self._material_quality_is_blocked(stock):
                 raise ValueError(f"Material {material_id} bloqueado pela qualidade.")
             if qty > self._parse_float(stock.get("quantidade", 0), 0):
@@ -3126,7 +3126,7 @@ class LegacyBackend(
                 raise ValueError("Seleciona o lote de origem do retalho.")
         source_stock = self.material_by_id(chosen_source_id) if chosen_source_id else None
         if chosen_source_id and source_stock is None:
-            raise ValueError("Lote de origem do retalho n?o encontrado.")
+            raise ValueError("Lote de origem do retalho não encontrado.")
         if source_stock is not None and not any(str(stock.get("id", "") or "").strip() == chosen_source_id for stock, _qty in cleaned):
             raise ValueError("O lote escolhido para o retalho tem de fazer parte da baixa.")
 
@@ -4532,7 +4532,7 @@ class LegacyBackend(
         code = str(codigo or "").strip()
         prod = next((row for row in list(self.ensure_data().get("produtos", []) or []) if str(row.get("codigo", "") or "").strip() == code), None)
         if prod is None:
-            raise ValueError("Produto n?o encontrado.")
+            raise ValueError("Produto não encontrado.")
         detail = dict(prod)
         detail["preco_unid"] = round(self._parse_float(self.desktop_main.produto_preco_unitario(detail), 0), 4)
         detail["valor_stock"] = round(self._parse_float(detail.get("qty", 0), 0) * detail["preco_unid"], 2)
@@ -4595,7 +4595,7 @@ class LegacyBackend(
         before = len(rows)
         self.ensure_data()["produtos"] = [row for row in rows if str(row.get("codigo", "") or "").strip() != code]
         if len(self.ensure_data()["produtos"]) == before:
-            raise ValueError("Produto n?o encontrado.")
+            raise ValueError("Produto não encontrado.")
         self._save(force=True)
 
     def product_consume(
@@ -4612,7 +4612,7 @@ class LegacyBackend(
             raise ValueError("Quantidade invalida.")
         prod = next((row for row in list(self.ensure_data().get("produtos", []) or []) if str(row.get("codigo", "") or "").strip() == code), None)
         if prod is None:
-            raise ValueError("Produto n?o encontrado.")
+            raise ValueError("Produto não encontrado.")
         before = self._parse_float(prod.get("qty", 0), 0)
         if qty > before + 1e-9:
             raise ValueError("Quantidade superior ao stock disponivel.")
@@ -5056,11 +5056,11 @@ class LegacyBackend(
     def _find_piece(self, enc_num: str, piece_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
         enc = self.get_encomenda_by_numero(enc_num)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         for piece in self.desktop_main.encomenda_pecas(enc):
             if str(piece.get("id", "")).strip() == str(piece_id or "").strip():
                 return enc, piece
-        raise ValueError("Pe?a n?o encontrada.")
+        raise ValueError("Peça não encontrada.")
 
     def _operator_esp_obj(self, enc: dict[str, Any], material: str, espessura: str) -> dict[str, Any] | None:
         mat_txt = str(material or "").strip()
@@ -6125,10 +6125,10 @@ class LegacyBackend(
     def operator_laser_stock_state(self, enc_num: str, material: str, espessura: str) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(enc_num)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         esp_obj = self._operator_esp_obj(enc, material, espessura)
         if not esp_obj:
-            raise ValueError("Grupo material/espessura n?o encontrado.")
+            raise ValueError("Grupo material/espessura não encontrado.")
         total_qty = self._operator_group_total_output(esp_obj)
         reserved_qty = 0.0
         reserved_sources: list[dict[str, Any]] = []
@@ -6371,10 +6371,10 @@ class LegacyBackend(
     ) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(enc_num)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         esp_obj = self._operator_esp_obj(enc, material, espessura)
         if not esp_obj:
-            raise ValueError("Grupo material/espessura n?o encontrado.")
+            raise ValueError("Grupo material/espessura não encontrado.")
         if not self._operator_esp_laser_concluido(esp_obj):
             return {"resolved": False, "reason": "laser_not_complete"}
         if self._operator_esp_laser_resolved(esp_obj):
@@ -6434,15 +6434,15 @@ class LegacyBackend(
         has_retalho = any(str(retalho_payload.get(key, "")).strip() for key in ("comprimento", "largura", "quantidade", "metros"))
         chosen_source_id = str(source_material_id or "").strip()
         if reserved_consumed > 0 and stock_id and extra_qty > 0:
-            raise ValueError("Com material cativado n?o ? permitida baixa manual adicional. Apenas podes registar retalho.")
+            raise ValueError("Com material cativado não é permitida baixa manual adicional. Apenas podes registar retalho.")
         if stock_id and extra_qty > 0:
             stock = self.material_by_id(stock_id)
             if stock is None:
-                raise ValueError("Material n?o encontrado para baixa.")
+                raise ValueError("Material não encontrado para baixa.")
             if self._material_quality_is_blocked(stock):
                 raise ValueError(f"Material {stock_id} bloqueado pela qualidade.")
             if self._norm_material_token(stock.get("material")) != self._norm_material_token(material) or self._norm_esp_token(stock.get("espessura")) != self._norm_esp_token(espessura):
-                raise ValueError("O stock selecionado n?o corresponde ao material/espessura.")
+                raise ValueError("O stock selecionado não corresponde ao material/espessura.")
             if extra_qty > self._parse_float(stock.get("quantidade", 0), 0):
                 raise ValueError("Quantidade superior ao stock disponivel.")
             stock["quantidade"] = max(0.0, self._parse_float(stock.get("quantidade", 0), 0) - extra_qty)
@@ -6480,7 +6480,7 @@ class LegacyBackend(
                     raise ValueError("Seleciona o lote de origem do retalho.")
             source_stock = self.material_by_id(chosen_source_id) if chosen_source_id else None
             if source_stock is None:
-                raise ValueError("Lote de origem do retalho n?o encontrado.")
+                raise ValueError("Lote de origem do retalho não encontrado.")
             comp = self._parse_float(retalho_payload.get("comprimento", 0), 0)
             larg = self._parse_float(retalho_payload.get("largura", 0), 0)
             q_retalho = self._parse_float(retalho_payload.get("quantidade", 0), 0)
@@ -6620,17 +6620,17 @@ class LegacyBackend(
             raise ValueError("Seleciona o operador.")
         ctx = self.operator_piece_context(enc_num, piece_id)
         if ctx["has_open_avaria"]:
-            raise ValueError("Existe uma avaria aberta. Fecha a avaria antes de iniciar a peca.")
+            raise ValueError("Existe uma avaria aberta. Fecha a avaria antes de iniciar a peça.")
         pending = list(ctx["pending_ops"])
         if not pending:
-            raise ValueError("Esta pe?a n?o tem opera??es pendentes.")
+            raise ValueError("Esta peça não tem operações pendentes.")
         selected_op = self.desktop_main.normalize_operacao_nome(operation or pending[0])
         if selected_op not in pending:
-            raise ValueError("A opera??o selecionada n?o est? pendente.")
+            raise ValueError("A operação selecionada não está pendente.")
         available_qty = self._piece_operation_limit(piece, selected_op, str(enc.get("numero", "") or ""))
         current_qty = self._piece_operation_recorded_total(str(enc.get("numero", "") or ""), piece, selected_op, available_qty)
         if available_qty <= current_qty:
-            raise ValueError("Esta opera??o n?o tem quantidade dispon?vel do posto anterior.")
+            raise ValueError("Esta operação não tem quantidade disponível do posto anterior.")
         result = self.operador_actions._mysql_ops_acquire(
             str(enc.get("numero", "") or ""),
             str(piece.get("id", "") or ""),
@@ -6644,7 +6644,7 @@ class LegacyBackend(
             if blocked:
                 owner = str((blocked[0] or {}).get("operador", "") or "").strip() or "outro operador"
                 raise ValueError(f"Operacao ocupada por {owner}.")
-            raise ValueError("Nao foi possivel iniciar a operacao.")
+            raise ValueError("Não foi possível iniciar a operação.")
         if not piece.get("inicio_producao"):
             piece["inicio_producao"] = self.desktop_main.now_iso()
         piece["interrupcao_peca_motivo"] = ""
@@ -6689,27 +6689,27 @@ class LegacyBackend(
             raise ValueError("Seleciona o operador.")
         ctx = self.operator_piece_context(enc_num, piece_id)
         if ctx["has_open_avaria"]:
-            raise ValueError("Existe uma avaria aberta. Fecha a avaria antes de concluir a peca.")
+            raise ValueError("Existe uma avaria aberta. Fecha a avaria antes de concluir a peça.")
         ok_val = self._parse_float(ok, 0)
         nok_val = self._parse_float(nok, 0)
         qual_val = self._parse_float(qual, 0)
         if min(ok_val, nok_val, qual_val) < 0:
-            raise ValueError("Valores inv?lidos.")
+            raise ValueError("Valores inválidos.")
         pending = list(ctx["pending_ops"])
         if not pending:
-            raise ValueError("Nao existem operacoes pendentes nesta peca.")
+            raise ValueError("Não existem operações pendentes nesta peça.")
         selected_op = self.desktop_main.normalize_operacao_nome(operation or pending[0])
         if selected_op not in pending:
-            raise ValueError("A opera??o selecionada n?o est? pendente.")
+            raise ValueError("A operação selecionada não está pendente.")
         active_pending_ops = list(ctx.get("active_pending_ops", []) or [])
         if selected_op not in active_pending_ops:
-            raise ValueError("Inicia primeiro a operacao antes de a concluir.")
+            raise ValueError("Inicia primeiro a operação antes de a concluir.")
         op_row = self._piece_operation_row(piece, selected_op)
         self._repair_operation_quantities_from_events(str(enc.get("numero", "") or ""), piece, selected_op)
         op_row = self._piece_operation_row(piece, selected_op)
         operation_limit = self._piece_operation_limit(piece, selected_op, str(enc.get("numero", "") or ""))
         if operation_limit <= 0:
-            raise ValueError("Nao existe quantidade produzida no posto anterior para esta operacao.")
+            raise ValueError("Não existe quantidade produzida no posto anterior para esta operação.")
         ctx_done = self._parse_float(dict(ctx.get("operation_done", {}) or {}).get(selected_op, 0), 0)
         current_done = max(
             self._piece_operation_recorded_total(str(enc.get("numero", "") or ""), piece, selected_op, operation_limit),
@@ -6720,7 +6720,7 @@ class LegacyBackend(
         if delta_val <= 0:
             raise ValueError("Indica pelo menos uma quantidade para concluir.")
         if delta_val > remaining_limit + 1e-9:
-            raise ValueError(f"Quantidade acima do disponivel nesta operacao. Maximo restante: {remaining_limit:.1f}")
+            raise ValueError(f"Quantidade acima do disponível nesta operação. Máximo restante: {remaining_limit:.1f}")
         existing_ok = self._parse_float((op_row or {}).get("qtd_ok", 0), 0)
         existing_nok = self._parse_float((op_row or {}).get("qtd_nok", 0), 0)
         existing_qual = self._parse_float((op_row or {}).get("qtd_qual", 0), 0)
@@ -6960,7 +6960,7 @@ class LegacyBackend(
     ) -> dict[str, Any]:
         enc, piece = self._find_piece(enc_num, piece_id)
         operator_name = str(operator_name or "").strip()
-        motivo = str(motivo or "").strip() or "Avaria n?o especificada"
+        motivo = str(motivo or "").strip() or "Avaria não especificada"
         if not operator_name:
             raise ValueError("Seleciona o operador.")
         ctx = self.operator_piece_context(enc_num, piece_id)
@@ -7033,7 +7033,7 @@ class LegacyBackend(
         group_key = self.operador_actions._op_avaria_group_key(live_row or {})
         if not group_key:
             group_key = str(piece.get("avaria_grupo_id", "") or "").strip() or self.operador_actions._op_piece_lookup_key(piece)
-        motivo = str(piece.get("avaria_motivo", "") or piece.get("interrupcao_peca_motivo", "") or (live_row or {}).get("causa", "") or "").strip() or "Avaria n?o especificada"
+        motivo = str(piece.get("avaria_motivo", "") or piece.get("interrupcao_peca_motivo", "") or (live_row or {}).get("causa", "") or "").strip() or "Avaria não especificada"
         piece["avaria_ativa"] = False
         piece["avaria_fim_ts"] = ts_now
         piece["interrupcao_peca_motivo"] = ""
@@ -8252,7 +8252,7 @@ class LegacyBackend(
     def order_detail(self, numero: str) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         data = self.ensure_data()
         if self._ensure_order_fabrication_order(enc):
             self._save(force=True)
@@ -10378,7 +10378,7 @@ class LegacyBackend(
                     return enc, piece
         if changed:
             self._save(force=True)
-        raise ValueError("OPP n?o encontrada.")
+        raise ValueError("OPP não encontrada.")
 
     def _opp_rows_base(self) -> list[dict[str, Any]]:
         data = self.ensure_data()
@@ -10761,7 +10761,7 @@ class LegacyBackend(
         data = self.ensure_data()
         code = str(codigo or "").strip()
         if not code:
-            raise ValueError("Cliente inv?lido.")
+            raise ValueError("Cliente inválido.")
         if any(str(enc.get("cliente", "") or "").strip() == code for enc in list(data.get("encomendas", []) or [])):
             raise ValueError("Nao e possivel remover um cliente usado em encomendas.")
         if any(str(self._normalize_orc_client(orc.get("cliente", {})).get("codigo", "") or "").strip() == code for orc in list(data.get("orcamentos", []) or [])):
@@ -10769,7 +10769,7 @@ class LegacyBackend(
         before = len(list(data.get("clientes", []) or []))
         data["clientes"] = [row for row in list(data.get("clientes", []) or []) if str(row.get("codigo", "") or "").strip() != code]
         if len(data["clientes"]) == before:
-            raise ValueError("Cliente n?o encontrado.")
+            raise ValueError("Cliente não encontrado.")
         self._save(force=True)
 
     def order_presets(self) -> dict[str, Any]:
@@ -11875,7 +11875,7 @@ class LegacyBackend(
         try:
             tempo_estimado = self._parse_float(payload.get("tempo_estimado", 0), 0)
         except Exception as exc:
-            raise ValueError("Tempo estimado inv?lido.") from exc
+            raise ValueError("Tempo estimado inválido.") from exc
         if enc is None:
             numero = self.desktop_main.next_encomenda_numero(data)
             enc = {
@@ -11958,7 +11958,7 @@ class LegacyBackend(
         numero = str(numero or "").strip()
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         if list(enc.get("reservas", []) or []):
             self.desktop_main.aplicar_reserva_em_stock(self.ensure_data(), list(enc.get("reservas", []) or []), -1)
         self.ensure_data()["encomendas"] = [row for row in list(self.ensure_data().get("encomendas", []) or []) if str(row.get("numero", "") or "").strip() != numero]
@@ -11989,7 +11989,7 @@ class LegacyBackend(
     def order_material_add(self, numero: str, material: str) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         if self._order_is_orc_based(enc):
             raise ValueError("Encomenda originada de orcamento: material bloqueado.")
         material_txt = str(material or "").strip()
@@ -12005,7 +12005,7 @@ class LegacyBackend(
     def order_material_remove(self, numero: str, material: str) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         if self._order_is_orc_based(enc):
             raise ValueError("Encomenda originada de orcamento: material bloqueado.")
         material_txt = str(material or "").strip().lower()
@@ -12017,12 +12017,12 @@ class LegacyBackend(
     def order_espessura_add(self, numero: str, material: str, espessura: str) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         if self._order_is_orc_based(enc):
             raise ValueError("Encomenda originada de orcamento: espessuras bloqueadas.")
         mat = self._order_find_material(enc, material)
         if mat is None:
-            raise ValueError("Material n?o encontrado.")
+            raise ValueError("Material não encontrado.")
         esp_txt = str(espessura or "").strip()
         if not esp_txt:
             raise ValueError("Espessura obrigatoria.")
@@ -12036,12 +12036,12 @@ class LegacyBackend(
     def order_espessura_remove(self, numero: str, material: str, espessura: str) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         if self._order_is_orc_based(enc):
             raise ValueError("Encomenda originada de orcamento: espessuras bloqueadas.")
         mat = self._order_find_material(enc, material)
         if mat is None:
-            raise ValueError("Material n?o encontrado.")
+            raise ValueError("Material não encontrado.")
         esp_txt = str(espessura or "").strip()
         mat["espessuras"] = [row for row in list(mat.get("espessuras", []) or []) if str(row.get("espessura", "") or "").strip() != esp_txt]
         self.desktop_main.update_estado_encomenda_por_espessuras(enc)
@@ -12051,7 +12051,7 @@ class LegacyBackend(
     def order_espessura_set_time(self, numero: str, material: str, espessura: str, tempo_min: Any) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         esp = self._order_find_espessura(enc, material, espessura)
         if esp is None:
             raise ValueError("Espessura nao encontrada.")
@@ -12060,7 +12060,7 @@ class LegacyBackend(
             try:
                 int(raw)
             except Exception as exc:
-                raise ValueError("Tempo inv?lido (minutos inteiros).") from exc
+                raise ValueError("Tempo inválido (minutos inteiros).") from exc
         esp["tempo_min"] = raw
         esp.setdefault("tempos_operacao", {})
         if raw:
@@ -12135,7 +12135,7 @@ class LegacyBackend(
     def order_piece_create_or_update(self, numero: str, payload: dict[str, Any], current_ref_interna: str = "") -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         if self._order_is_orc_based(enc):
             raise ValueError("Encomenda originada de orcamento: pecas bloqueadas.")
 
@@ -13476,7 +13476,7 @@ class LegacyBackend(
     def order_piece_remove(self, numero: str, ref_interna: str) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         if self._order_is_orc_based(enc):
             raise ValueError("Encomenda originada de orcamento: pecas bloqueadas.")
         ref_int = str(ref_interna or "").strip()
@@ -13488,7 +13488,7 @@ class LegacyBackend(
                 if len(list(esp.get("pecas", []) or [])) != before:
                     found = True
         if not found:
-            raise ValueError("Pe?a n?o encontrada.")
+            raise ValueError("Peça não encontrada.")
         self.desktop_main.update_estado_encomenda_por_espessuras(enc)
         self._save(force=True)
         return self.order_detail(numero)
@@ -13496,7 +13496,7 @@ class LegacyBackend(
     def order_stock_candidates(self, numero: str, material: str, espessura: str) -> list[dict[str, Any]]:
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         material_norm = self.encomendas_actions._norm_material(material)
         esp_norm = self.encomendas_actions._norm_espessura(espessura)
         rows = []
@@ -13525,7 +13525,7 @@ class LegacyBackend(
     def order_reserve_stock(self, numero: str, material: str, espessura: str, allocations: list[dict[str, Any]]) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         if not str(material or "").strip() or not str(espessura or "").strip():
             raise ValueError("Selecione material e espessura antes de cativar.")
         any_saved = False
@@ -13536,7 +13536,7 @@ class LegacyBackend(
                 continue
             stock = next((m for m in list(self.ensure_data().get("materiais", []) or []) if str(m.get("id", "") or "").strip() == material_id), None)
             if stock is None:
-                raise ValueError(f"Material n?o encontrado: {material_id}")
+                raise ValueError(f"Material não encontrado: {material_id}")
             if self._material_quality_is_blocked(stock):
                 raise ValueError(f"Material {material_id} bloqueado pela qualidade.")
             disponivel = self._parse_float(stock.get("quantidade", 0), 0) - self._parse_float(stock.get("reservado", 0), 0)
@@ -13568,7 +13568,7 @@ class LegacyBackend(
     def order_release_stock(self, numero: str, material: str, espessura: str) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         target = []
         keep = []
         for row in list(enc.get("reservas", []) or []):
@@ -13594,7 +13594,7 @@ class LegacyBackend(
     def order_consume_montagem(self, numero: str, operador: str = "") -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
-            raise ValueError("Encomenda n?o encontrada.")
+            raise ValueError("Encomenda não encontrada.")
         items = list(enc.get("montagem_itens", []) or [])
         if not items:
             raise ValueError("Esta encomenda nao tem itens de montagem.")
@@ -17297,13 +17297,13 @@ class LegacyBackend(
     def remove_user(self, username: str) -> None:
         username_txt = str(username or "").strip()
         if not username_txt:
-            raise ValueError("Utilizador inv?lido.")
+            raise ValueError("Utilizador inválido.")
         if self.user and str(self.user.get("username", "") or "").strip().lower() == username_txt.lower():
             raise ValueError("Nao e permitido remover o utilizador atualmente autenticado.")
         before = len(list(self.ensure_data().get("users", []) or []))
         self.ensure_data()["users"] = [row for row in list(self.ensure_data().get("users", []) or []) if str(row.get("username", "") or "").strip().lower() != username_txt.lower()]
         if len(list(self.ensure_data().get("users", []) or [])) == before:
-            raise ValueError("Utilizador n?o encontrado.")
+            raise ValueError("Utilizador não encontrado.")
         profiles = self._user_profiles()
         profiles.pop(username_txt.lower(), None)
         self._save_user_profiles(profiles)

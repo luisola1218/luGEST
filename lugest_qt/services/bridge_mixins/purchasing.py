@@ -133,13 +133,13 @@ class PurchasingBridgeMixin:
         data = self.ensure_data()
         value = str(supplier_id or "").strip()
         if not value:
-            raise ValueError("Fornecedor inv?lido.")
+            raise ValueError("Fornecedor inválido.")
         if any(str(note.get("fornecedor_id", "") or "").strip() == value for note in list(data.get("notas_encomenda", []) or [])):
-            raise ValueError("Nao e possivel remover um fornecedor usado em notas de encomenda.")
+            raise ValueError("Não é possível remover um fornecedor usado em notas de encomenda.")
         before = len(list(data.get("fornecedores", []) or []))
         data["fornecedores"] = [row for row in list(data.get("fornecedores", []) or []) if str(row.get("id", "") or "").strip() != value]
         if len(data["fornecedores"]) == before:
-            raise ValueError("Fornecedor n?o encontrado.")
+            raise ValueError("Fornecedor não encontrado.")
         self._save(force=True)
 
     def ne_next_number(self) -> str:
@@ -363,7 +363,7 @@ class PurchasingBridgeMixin:
         numero = str(numero or "").strip()
         note = next((row for row in self.ensure_data().get("notas_encomenda", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if note is None:
-            raise ValueError("Nota de Encomenda n?o encontrada.")
+            raise ValueError("Nota de Encomenda não encontrada.")
         documents = self._ne_document_rows(note)
         lines = []
         for line in list(note.get("linhas", []) or []):
@@ -1122,16 +1122,16 @@ class PurchasingBridgeMixin:
         before = len(list(data.get("notas_encomenda", []) or []))
         data["notas_encomenda"] = [row for row in list(data.get("notas_encomenda", []) or []) if str(row.get("numero", "") or "").strip() != numero]
         if len(data["notas_encomenda"]) == before:
-            raise ValueError("Nota de Encomenda n?o encontrada.")
+            raise ValueError("Nota de Encomenda não encontrada.")
         self._save(force=True)
 
     def ne_approve(self, numero: str) -> dict[str, Any]:
         numero = str(numero or "").strip()
         note = next((row for row in self.ensure_data().get("notas_encomenda", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if note is None:
-            raise ValueError("Nota de Encomenda n?o encontrada.")
+            raise ValueError("Nota de Encomenda não encontrada.")
         if not list(note.get("linhas", []) or []):
-            raise ValueError("A nota n?o tem linhas.")
+            raise ValueError("A nota não tem linhas.")
         note_kind = self._note_kind(note)
         note["estado"] = "Aprovada" if note_kind == "purchase_note" else "Cotacao aprovada"
         note["data_aprovacao"] = self.desktop_main.now_iso()
@@ -1143,7 +1143,7 @@ class PurchasingBridgeMixin:
         numero = str(numero or "").strip()
         note = next((row for row in self.ensure_data().get("notas_encomenda", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if note is None:
-            raise ValueError("Nota de Encomenda n?o encontrada.")
+            raise ValueError("Nota de Encomenda não encontrada.")
         note["estado"] = "Enviada"
         note["data_envio"] = self.desktop_main.now_iso()
         note["_draft"] = False
@@ -1155,10 +1155,10 @@ class PurchasingBridgeMixin:
         number = str(numero or "").strip()
         note = next((row for row in list(data.get("notas_encomenda", []) or []) if str(row.get("numero", "") or "").strip() == number), None)
         if note is None:
-            raise ValueError("Nota de Encomenda n?o encontrada.")
+            raise ValueError("Nota de Encomenda não encontrada.")
         lines = list(note.get("linhas", []) or [])
         if not lines:
-            raise ValueError("A nota n?o tem linhas.")
+            raise ValueError("A nota não tem linhas.")
         groups: dict[str, dict[str, Any]] = {}
         missing: list[str] = []
         for line in lines:
@@ -1228,7 +1228,7 @@ class PurchasingBridgeMixin:
         numero = str(numero or "").strip()
         note = next((row for row in self.ensure_data().get("notas_encomenda", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if note is None:
-            raise ValueError("Nota de Encomenda n?o encontrada.")
+            raise ValueError("Nota de Encomenda não encontrada.")
         suffix = "_cotacao" if quote else ""
         path = Path(output_path) if str(output_path or "").strip() else Path(tempfile.gettempdir()) / f"lugest_ne_{numero}{suffix}.pdf"
         if quote:
@@ -1246,14 +1246,14 @@ class PurchasingBridgeMixin:
         numero = str(numero or "").strip()
         note = next((row for row in self.ensure_data().get("notas_encomenda", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if note is None:
-            raise ValueError("Nota de Encomenda n?o encontrada.")
+            raise ValueError("Nota de Encomenda não encontrada.")
         return self._ne_document_rows(note)
 
     def ne_add_document(self, numero: str, payload: dict[str, Any]) -> dict[str, Any]:
         numero = str(numero or "").strip()
         note = next((row for row in self.ensure_data().get("notas_encomenda", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if note is None:
-            raise ValueError("Nota de Encomenda n?o encontrada.")
+            raise ValueError("Nota de Encomenda não encontrada.")
         raw = dict(payload or {})
         if not any(str(raw.get(key, "") or "").strip() for key in ("titulo", "guia", "fatura", "caminho", "obs")):
             raise ValueError("Indica pelo menos titulo, guia, fatura, caminho ou observacao.")
@@ -1326,7 +1326,7 @@ class PurchasingBridgeMixin:
     def ne_register_delivery(self, numero: str, payload: dict[str, Any]) -> dict[str, Any]:
         note = next((row for row in self.ensure_data().get("notas_encomenda", []) if str(row.get("numero", "") or "").strip() == str(numero or "").strip()), None)
         if note is None:
-            raise ValueError("Nota de Encomenda n?o encontrada.")
+            raise ValueError("Nota de Encomenda não encontrada.")
         note_lines = list(note.get("linhas", []) or [])
         line_updates_by_index: dict[int, dict[str, Any]] = {}
         unresolved_legacy_items: list[dict[str, Any]] = []

@@ -67,6 +67,23 @@ from .laser_quote_dialogs import (
 )
 from lugest_core.cad.profile_analysis import analyze_profile_cut_features, render_step_preview_image
 from ..widgets import CardFrame, StatCard
+from .runtime_common import (
+    apply_state_chip as _apply_state_chip,
+    cap_width as _cap_width,
+    coerce_editor_qdate as _coerce_editor_qdate,
+    configure_table as _configure_table,
+    elide_middle as _elide_middle,
+    fill_table as _fill_table,
+    paint_table_row as _paint_table_row,
+    repolish as _repolish,
+    selected_row_index as _selected_row_index,
+    set_panel_tone as _set_panel_tone,
+    set_table_columns as _set_table_columns,
+    state_palette as _state_palette,
+    state_tone as _state_tone,
+    state_visual as _state_visual,
+    table_visible_height as _table_visible_height,
+)
 
 LIST_TABLE_FONT_PX = 15
 LIST_TABLE_ROW_PX = 42
@@ -75,166 +92,6 @@ LIST_TABLE_ROW_PX = 42
 def _is_dark(hex_color: str) -> bool:
     color = QColor(str(hex_color or "#ffffff"))
     return (color.red() * 0.299 + color.green() * 0.587 + color.blue() * 0.114) < 160
-
-
-def _fill_table(table: QTableWidget, rows: list[list[str]], align_center_from: int = 0) -> None:
-    sorting_was_enabled = table.isSortingEnabled()
-    table.setSortingEnabled(False)
-    table.setRowCount(len(rows))
-    for row_index, row in enumerate(rows):
-        for col_index, value in enumerate(row):
-            item = QTableWidgetItem(str(value))
-            if col_index >= align_center_from:
-                item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
-            table.setItem(row_index, col_index, item)
-    table.setSortingEnabled(sorting_was_enabled)
-
-
-def _state_visual(state: str) -> dict[str, str]:
-    norm = str(state or "").strip().lower()
-    if "rejeit" in norm:
-        return {"bg": "#fff1f2", "fg": "#b42318", "border": "#f0c1bc", "tone": "danger"}
-    if "avaria" in norm:
-        return {"bg": "#fff1f2", "fg": "#b42318", "border": "#f0c1bc", "tone": "danger"}
-    if "incomplet" in norm:
-        return {"bg": "#fff9db", "fg": "#a16207", "border": "#f2d98b", "tone": "warning"}
-    if "prepar" in norm or "edicao" in norm or "edição" in norm or "pendente" in norm:
-        return {"bg": "#eef4ff", "fg": "#1d4ed8", "border": "#bfd2ea", "tone": "info"}
-    if "produc" in norm or "curso" in norm:
-        return {"bg": "#fff4e5", "fg": "#c2410c", "border": "#efcf98", "tone": "warning"}
-    if "paus" in norm or "interromp" in norm:
-        return {"bg": "#fff9db", "fg": "#a16207", "border": "#f2d98b", "tone": "warning"}
-    if "concl" in norm:
-        return {"bg": "#ecfdf3", "fg": "#166534", "border": "#b7dcc5", "tone": "success"}
-    if "aprov" in norm or "convert" in norm or "entreg" in norm:
-        return {"bg": "#f0fdf4", "fg": "#166534", "border": "#b7dcc5", "tone": "success"}
-    if "enviado" in norm:
-        return {"bg": "#f5f9ff", "fg": "#1d4ed8", "border": "#bfd2ea", "tone": "info"}
-    return {"bg": "#f8fafc", "fg": "#334155", "border": "#c6d2e0", "tone": "default"}
-
-
-def _state_palette(state: str) -> tuple[str, str]:
-    visual = _state_visual(state)
-    return visual["bg"], visual["fg"]
-
-
-def _state_tone(state: str) -> str:
-    return _state_visual(state)["tone"]
-
-
-def _repolish(widget: QWidget) -> None:
-    style = widget.style()
-    if style is not None:
-        style.unpolish(widget)
-        style.polish(widget)
-    widget.update()
-
-
-def _set_panel_tone(frame: QWidget, tone: str = "default") -> None:
-    frame.setProperty("tone", str(tone or "default"))
-    _repolish(frame)
-
-
-def _apply_state_chip(label: QLabel, state: str, text: str | None = None) -> None:
-    visual = _state_visual(state)
-    label.setProperty("role", "state_chip")
-    label.setText(str(text if text is not None else state or "-") or "-")
-    label.setStyleSheet(
-        "padding: 6px 12px; border-radius: 999px; font-weight: 800;"
-        f" background: {visual['bg']}; color: {visual['fg']}; border: 1px solid {visual['border']};"
-    )
-
-
-def _paint_table_row(table: QTableWidget, row_index: int, state: str) -> None:
-    bg_hex, fg_hex = _state_palette(state)
-    bg = QBrush(QColor(bg_hex))
-    fg = QBrush(QColor(fg_hex))
-    for col_index in range(table.columnCount()):
-        item = table.item(row_index, col_index)
-        if item is None:
-            continue
-        item.setBackground(bg)
-        item.setForeground(fg)
-
-
-def _configure_table(table: QTableWidget, *, stretch: tuple[int, ...] = (), contents: tuple[int, ...] = (), center_from: int | None = None) -> None:
-    table.setAlternatingRowColors(True)
-    table.setWordWrap(False)
-    table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
-    table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-    table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-    table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-    header = table.horizontalHeader()
-    header.setStretchLastSection(False)
-    for col in range(table.columnCount()):
-        if col in stretch:
-            header.setSectionResizeMode(col, QHeaderView.Stretch)
-        elif col in contents:
-            header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
-        else:
-            header.setSectionResizeMode(col, QHeaderView.Interactive)
-            header.resizeSection(col, 130)
-    if center_from is not None:
-        for row in range(table.rowCount()):
-            for col in range(center_from, table.columnCount()):
-                item = table.item(row, col)
-                if item is not None:
-                    item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
-
-
-def _set_table_columns(table: QTableWidget, specs: list[tuple[int, str, int]]) -> None:
-    header = table.horizontalHeader()
-    for column, mode, width in list(specs or []):
-        mode_txt = str(mode or "").strip().lower()
-        if mode_txt == "stretch":
-            header.setSectionResizeMode(column, QHeaderView.Stretch)
-            continue
-        if mode_txt == "contents":
-            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
-            continue
-        if mode_txt == "fixed":
-            header.setSectionResizeMode(column, QHeaderView.Fixed)
-            table.setColumnWidth(column, int(width))
-            continue
-        header.setSectionResizeMode(column, QHeaderView.Interactive)
-        table.setColumnWidth(column, int(width))
-
-
-def _cap_width(widget: QWidget, width: int) -> None:
-    widget.setMaximumWidth(width)
-
-
-def _coerce_editor_qdate(raw: str | None = None, *, fallback_today: bool = True) -> QDate:
-    text = str(raw or "").strip()[:10]
-    parsed = QDate.fromString(text, "yyyy-MM-dd") if text else QDate()
-    if parsed.isValid() and parsed.year() > 2000:
-        return parsed
-    return QDate.currentDate() if fallback_today else QDate(2000, 1, 1)
-
-
-def _table_visible_height(table: QTableWidget, rows: int, extra: int = 10) -> int:
-    row_height = table.verticalHeader().defaultSectionSize() or 24
-    header_height = table.horizontalHeader().height() or 26
-    frame = table.frameWidth() * 2
-    return header_height + frame + (max(0, int(rows)) * row_height) + extra
-
-
-def _elide_middle(text: str, max_chars: int = 48) -> str:
-    raw = str(text or "").strip()
-    if len(raw) <= max_chars:
-        return raw
-    keep = max(8, (max_chars - 3) // 2)
-    return f"{raw[:keep]}...{raw[-keep:]}"
-
-
-def _selected_row_index(table: QTableWidget) -> int:
-    selection_model = table.selectionModel()
-    if selection_model is not None:
-        selected_rows = selection_model.selectedRows()
-        if selected_rows:
-            return selected_rows[0].row()
-    current_row = table.currentRow()
-    return current_row if current_row >= 0 else -1
 
 
 def _reference_catalog_dialog(
@@ -12650,6 +12507,8 @@ class QuotesPage(QWidget):
         self.iva_spin.setRange(0.0, 100.0)
         self.iva_spin.setDecimals(2)
         self.iva_spin.setValue(23.0)
+        self.iva_spin.setEnabled(False)
+        self.iva_spin.setToolTip("IVA standard obrigatório para estes orçamentos em Portugal: 23%.")
         self.iva_spin.valueChanged.connect(lambda _value: self._render_quote_lines())
         self.notes_edit = QTextEdit()
         self.notes_edit.setMinimumHeight(62)
@@ -13253,10 +13112,10 @@ class QuotesPage(QWidget):
         total_panel_layout = QVBoxLayout(total_panel)
         total_panel_layout.setContentsMargins(10, 8, 10, 10)
         total_panel_layout.setSpacing(6)
-        total_caption = QLabel("Total C/IVA")
-        total_caption.setStyleSheet("font-size: 10px; font-weight: 900; color: #8b5e1a;")
-        total_caption.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        total_panel_layout.addWidget(total_caption)
+        self.total_caption_label = QLabel("Total C/IVA 23%")
+        self.total_caption_label.setStyleSheet("font-size: 10px; font-weight: 900; color: #8b5e1a;")
+        self.total_caption_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        total_panel_layout.addWidget(self.total_caption_label)
         total_panel_layout.addWidget(self.total_label)
         summary_layout.addWidget(total_panel)
 
@@ -13283,6 +13142,7 @@ class QuotesPage(QWidget):
         summary_rows_layout.setContentsMargins(0, 2, 0, 2)
         summary_rows_layout.setHorizontalSpacing(12)
         summary_rows_layout.setVerticalSpacing(7)
+        self.iva_summary_row_label = None
         for row_index, (label_text, widget) in enumerate(
             (
                 ("Linhas", self.lines_subtotal_label),
@@ -13293,6 +13153,8 @@ class QuotesPage(QWidget):
             )
         ):
             label = QLabel(label_text)
+            if widget is self.iva_total_label:
+                self.iva_summary_row_label = label
             label.setProperty("role", "field_label")
             label.setWordWrap(False)
             label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -14224,8 +14086,17 @@ class QuotesPage(QWidget):
         discount_value = round(sum(float(row.get("desconto_aplicado", 0) or 0) for row in self.line_rows), 2)
         subtotal_discounted = round(sum(float(row.get("total_desconto", row.get("total", 0)) or 0) for row in self.line_rows), 2)
         subtotal_without_iva = max(0.0, subtotal_discounted + transport)
-        iva_amount = subtotal_without_iva * (float(self.iva_spin.value()) / 100.0)
-        total = subtotal_without_iva + iva_amount
+        iva_rate = 23.0
+        if abs(float(self.iva_spin.value() or 0) - iva_rate) > 0.0001:
+            self.iva_spin.blockSignals(True)
+            self.iva_spin.setValue(iva_rate)
+            self.iva_spin.blockSignals(False)
+        iva_amount = round(subtotal_without_iva * (iva_rate / 100.0), 2)
+        total = round(subtotal_without_iva + iva_amount, 2)
+        if hasattr(self, "total_caption_label"):
+            self.total_caption_label.setText("Total C/IVA 23%")
+        if getattr(self, "iva_summary_row_label", None) is not None:
+            self.iva_summary_row_label.setText("IVA 23%")
         self.lines_subtotal_label.setText(_fmt_eur(subtotal))
         self.transport_total_label.setText(_fmt_eur(transport))
         self.discount_value_label.setText(_fmt_eur(discount_value))
@@ -14294,7 +14165,7 @@ class QuotesPage(QWidget):
             if str(key or "").strip()
         ]
         self.notes_edit.setPlainText(str(detail.get("notas_pdf", "") or "").strip())
-        self.iva_spin.setValue(float(detail.get("iva_perc", 23) or 23))
+        self.iva_spin.setValue(23.0)
         self.nesting_bridge_data = dict(detail.get("nesting_bridge", {}) or {})
         self._refresh_nesting_bridge()
         self.line_rows = [dict(row) for row in list(detail.get("linhas", []) or [])]
@@ -17557,7 +17428,7 @@ class QuotesPage(QWidget):
             "desconto_grupos": list(getattr(self, "discount_group_keys", []) or []),
             "notas_pdf": self.notes_edit.toPlainText().strip(),
             "nota_cliente": self.note_cliente_edit.text().strip(),
-            "iva_perc": self.iva_spin.value(),
+            "iva_perc": 23.0,
             "linhas": self.line_rows,
         }
 
@@ -20903,7 +20774,7 @@ class QuotesPage(QWidget):
             QMessageBox.information(
                 self,
                 "Preparar producao",
-                "A linha ficou preparada para fluxo de operador. Na conversao para encomenda vai seguir para producao.",
+                "A linha ficou preparada para fluxo de operador. Na conversão para encomenda vai seguir para produção.",
             )
         else:
             QMessageBox.information(

@@ -5,7 +5,7 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import QPoint, QRect, QRectF, QSize, QProcess, Qt, QTimer
+from PySide6.QtCore import QObject, QPoint, QRect, QRectF, QSize, QProcess, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -57,6 +57,26 @@ from .pages.runtime_pages import (
     TransportsPage,
 )
 from .pages.stock_dashboard_page import StockDashboardPage
+
+
+class _UpdateCheckWorker(QObject):
+    finished = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, backend) -> None:
+        super().__init__()
+        self.backend = backend
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            settings = dict(self.backend.update_settings() or {})
+            if not bool(settings.get("auto_check", False)):
+                self.finished.emit({})
+                return
+            self.finished.emit(dict(self.backend.update_check() or {}))
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 class _BrandMark(QWidget):
@@ -114,6 +134,8 @@ class MainWindow(QMainWindow):
         self._alerts_cache_ttl_sec = 30.0
         self._alerts_last_render_key = ""
         self._pending_page_refresh_key = ""
+        self._update_check_thread: QThread | None = None
+        self._update_check_worker: _UpdateCheckWorker | None = None
         self._page_refresh_timer = QTimer(self)
         self._page_refresh_timer.setSingleShot(True)
         self._page_refresh_timer.timeout.connect(self._run_pending_page_refresh)
@@ -341,22 +363,50 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._fit_to_available_screen)
 
     def _auto_check_updates(self) -> None:
-        try:
-            settings = dict(self.backend.update_settings() or {})
-            if not bool(settings.get("auto_check", False)):
-                return
-            result = dict(self.backend.update_check() or {})
-        except Exception:
+        if self._update_check_thread is not None:
             return
+        thread = QThread(self)
+        worker = _UpdateCheckWorker(self.backend)
+        worker.moveToThread(thread)
+        self._update_check_thread = thread
+        self._update_check_worker = worker
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._handle_auto_update_result)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(lambda _message: self._clear_auto_update_worker())
+        worker.failed.connect(thread.quit)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    @Slot(dict)
+    def _handle_auto_update_result(self, result: dict) -> None:
+        self._clear_auto_update_worker()
         if not bool(result.get("update_available", False)):
             return
-        self.status_label.setText(f"Atualizacao disponivel: {result.get('latest_version', '-')}")
+        self.status_label.setText(f"Atualização disponível: {result.get('latest_version', '-')}")
         if QMessageBox.question(
             self,
-            "Atualizacoes",
-            f"Existe uma nova versao disponivel: {result.get('latest_version', '-')}\n\nQueres abrir o painel de atualizacoes?",
+            "Atualizações",
+            f"Existe uma nova versão disponível: {result.get('latest_version', '-')}\n\nQueres abrir o painel de atualizações?",
         ) == QMessageBox.Yes:
             self._open_updates_dialog()
+
+    def _clear_auto_update_worker(self) -> None:
+        self._update_check_thread = None
+        self._update_check_worker = None
+
+    def _wait_for_auto_update_worker(self, timeout_ms: int = 15000) -> bool:
+        thread = self._update_check_thread
+        if thread is None:
+            return True
+        if thread.isRunning():
+            thread.quit()
+            if not thread.wait(max(0, int(timeout_ms))):
+                return False
+        self._clear_auto_update_worker()
+        return True
 
     def _ensure_page(self, key: str) -> QWidget:
         if key in self.pages:
@@ -621,6 +671,13 @@ class MainWindow(QMainWindow):
         try:
             self.auto_refresh.stop()
             self.save_monitor.stop()
+            if not self._wait_for_auto_update_worker(timeout_ms=15000):
+                self.auto_refresh.start()
+                self.save_monitor.start()
+                self._closing = False
+                QMessageBox.warning(self, "Atualizações", "A verificação de atualizações ainda está a terminar. Tenta fechar novamente dentro de alguns segundos.")
+                event.ignore()
+                return
             if not self._finalize_save_pipeline(context="antes de fechar a aplicacao", timeout_sec=20.0, interactive=True):
                 self.auto_refresh.start()
                 self.save_monitor.start()
@@ -647,6 +704,12 @@ class MainWindow(QMainWindow):
         try:
             self.auto_refresh.stop()
             self.save_monitor.stop()
+            if not self._wait_for_auto_update_worker(timeout_ms=15000):
+                self.auto_refresh.start()
+                self.save_monitor.start()
+                self._logout_in_progress = False
+                QMessageBox.warning(self, "Atualizações", "A verificação de atualizações ainda está a terminar. Tenta novamente dentro de alguns segundos.")
+                return
             if not self._finalize_save_pipeline(context="antes de terminar a sessao", timeout_sec=15.0, interactive=True):
                 self.auto_refresh.start()
                 self.save_monitor.start()
@@ -694,16 +757,16 @@ class MainWindow(QMainWindow):
         try:
             settings = dict(self.backend.update_settings() or {})
         except Exception as exc:
-            QMessageBox.critical(self, "Atualizacoes", str(exc))
+            QMessageBox.critical(self, "Atualizações", str(exc))
             return
         dialog = QDialog(self)
-        dialog.setWindowTitle("Atualizacoes LuisGEST")
+        dialog.setWindowTitle("Atualizações LuisGEST")
         dialog.resize(720, 460)
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
-        title = QLabel("Atualizacoes do software")
+        title = QLabel("Atualizações do software")
         title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
         layout.addWidget(title)
         hint = QLabel("Usa um manifest latest.json em pasta partilhada, GitHub privado ou servidor proprio. O instalador faz backup antes de trocar os ficheiros.")
@@ -755,7 +818,7 @@ class MainWindow(QMainWindow):
                 f"Versao instalada: {result.get('current_version', '-')}",
                 f"Versao disponivel: {result.get('latest_version', '-')}",
                 f"Canal: {result.get('channel', '-')}",
-                f"Atualizacao disponivel: {'Sim' if result.get('update_available') else 'Nao'}",
+                f"Atualização disponível: {'Sim' if result.get('update_available') else 'Não'}",
                 "",
                 f"Pacote: {result.get('package_url', '-')}",
                 f"SHA256: {result.get('sha256', '-') or '-'}",
@@ -770,20 +833,20 @@ class MainWindow(QMainWindow):
             if not result:
                 return
             if not bool(result.get("update_available", False)):
-                QMessageBox.information(dialog, "Atualizacoes", "Nao existem atualizacoes novas.")
+                QMessageBox.information(dialog, "Atualizações", "Não existem atualizações novas.")
                 return
             if QMessageBox.question(
                 dialog,
-                "Atualizacoes",
+                "Atualizações",
                 "O atualizador vai abrir numa janela externa. Fecha o LuisGEST quando ele pedir para poder substituir os ficheiros.\n\nContinuar?",
             ) != QMessageBox.Yes:
                 return
             try:
                 self.backend.update_start_installer()
             except Exception as exc:
-                QMessageBox.critical(dialog, "Atualizacoes", str(exc))
+                QMessageBox.critical(dialog, "Atualizações", str(exc))
                 return
-            QMessageBox.information(dialog, "Atualizacoes", "Atualizador iniciado. Segue as instrucoes da janela externa.")
+            QMessageBox.information(dialog, "Atualizações", "Atualizador iniciado. Segue as instruções da janela externa.")
 
         buttons = QHBoxLayout()
         save_btn = QPushButton("Guardar")
@@ -852,7 +915,7 @@ class MainWindow(QMainWindow):
         operations_btn = QPushButton("Operacoes")
         operations_btn.setProperty("variant", "secondary")
         tools_row.addWidget(operations_btn)
-        updates_btn = QPushButton("Atualizacoes")
+        updates_btn = QPushButton("Atualizações")
         updates_btn.setProperty("variant", "secondary")
         tools_row.addWidget(updates_btn)
         info_btn = QPushButton("Inf. LuGEST")

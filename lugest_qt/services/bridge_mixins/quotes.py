@@ -12,8 +12,14 @@ from lugest_infra.pdf.text import clip_text as _pdf_clip_text
 from lugest_infra.pdf.text import wrap_text as _pdf_wrap_text
 
 
+ORC_STANDARD_IVA_PERC = 23.0
+
+
 class QuotesBridgeMixin:
     """Quote, assembly model, and quote-to-order operations for the Qt bridge."""
+
+    def _quote_standard_iva_perc(self) -> float:
+        return ORC_STANDARD_IVA_PERC
 
     def _normalize_quote_discount_mode(self, value: Any) -> str:
         mode = str(value or "").strip().lower()
@@ -30,11 +36,14 @@ class QuotesBridgeMixin:
     def _peek_next_orc_number(self) -> str:
         data = self.ensure_data()
         try:
-            seq = int(data.get("orc_seq", 1) or 1)
+            return str(self.desktop_main.peek_next_orc_numero(data))
         except Exception:
-            seq = 1
-        year = int(getattr(self.desktop_main.datetime.now(), "year", 0) or 0)
-        return f"ORC-{year}-{seq:04d}"
+            try:
+                seq = int(data.get("orc_seq", 1) or 1)
+            except Exception:
+                seq = 1
+            year = int(getattr(self.desktop_main.datetime.now(), "year", 0) or 0)
+            return f"ORC-{year}-{seq:04d}"
 
     def _orc_number_sort_key(self, numero: str) -> tuple[int, int, str]:
         raw = str(numero or "").strip()
@@ -320,7 +329,7 @@ class QuotesBridgeMixin:
         numero = str(numero or "").strip()
         orc = next((row for row in self.ensure_data().get("orcamentos", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if orc is None:
-            raise ValueError("Or?amento n?o encontrado.")
+            raise ValueError("Orçamento não encontrado.")
         client = self._normalize_orc_client(orc.get("cliente", {}))
         lines: list[dict[str, Any]] = []
         for row in list(orc.get("linhas", []) or []):
@@ -463,7 +472,7 @@ class QuotesBridgeMixin:
             "estado": str(orc.get("estado", "") or "").strip() or "Em edicao",
             "cliente": client,
             "posto_trabalho": self._normalize_workcenter_value(orc.get("posto_trabalho", "")),
-            "iva_perc": round(self._parse_float(orc.get("iva_perc", 23), 23), 2),
+            "iva_perc": self._quote_standard_iva_perc(),
             "desconto_perc": round(self._parse_float(orc.get("desconto_perc", 0), 0), 2),
             "desconto_modo": self._normalize_quote_discount_mode(orc.get("desconto_modo", "total")),
             "desconto_grupos": self._normalize_quote_discount_groups(orc.get("desconto_grupos", [])),
@@ -1166,7 +1175,13 @@ class QuotesBridgeMixin:
 
     def orc_save(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = self.ensure_data()
-        numero = str(payload.get("numero", "") or "").strip() or self._peek_next_orc_number()
+        numero = str(payload.get("numero", "") or "").strip()
+        existing = next((row for row in data.get("orcamentos", []) if str(row.get("numero", "") or "").strip() == numero), None)
+        if existing is None:
+            year = int(getattr(self.desktop_main.datetime.now(), "year", 0) or 0)
+            automatic_number = not numero or numero.upper().startswith(f"ORC-{year}-")
+            if automatic_number:
+                numero = str(self.desktop_main.next_orc_numero(data))
         existing = next((row for row in data.get("orcamentos", []) if str(row.get("numero", "") or "").strip() == numero), None)
         posto_trabalho = self._normalize_workcenter_value(payload.get("posto_trabalho", "") or (existing or {}).get("posto_trabalho", ""))
         client_payload = dict(payload.get("cliente", {}) or {})
@@ -1202,7 +1217,7 @@ class QuotesBridgeMixin:
                     line["ref_interna"] = ref_interna
                 seen_refs.add(ref_interna)
                 seen_pairs.add((ref_externa, ref_interna))
-        iva_perc = round(self._parse_float(payload.get("iva_perc", 23), 23), 2)
+        iva_perc = self._quote_standard_iva_perc()
         desconto_perc = round(max(0.0, min(100.0, self._parse_float(payload.get("desconto_perc", (existing or {}).get("desconto_perc", 0)), 0))), 2)
         desconto_modo = self._normalize_quote_discount_mode(payload.get("desconto_modo", (existing or {}).get("desconto_modo", "total")))
         desconto_grupos = self._normalize_quote_discount_groups(payload.get("desconto_grupos", (existing or {}).get("desconto_grupos", [])))
@@ -1297,7 +1312,7 @@ class QuotesBridgeMixin:
         before = len(list(data.get("orcamentos", []) or []))
         data["orcamentos"] = [row for row in list(data.get("orcamentos", []) or []) if str(row.get("numero", "") or "").strip() != numero]
         if len(data["orcamentos"]) == before:
-            raise ValueError("Or?amento n?o encontrado.")
+            raise ValueError("Orçamento não encontrado.")
         self._save(force=True)
         try:
             self._mysql_delete_orc_nesting_studies(numero)
@@ -1308,7 +1323,7 @@ class QuotesBridgeMixin:
         numero = str(numero or "").strip()
         orc = next((row for row in self.ensure_data().get("orcamentos", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if orc is None:
-            raise ValueError("Or?amento n?o encontrado.")
+            raise ValueError("Orçamento não encontrado.")
         orc["estado"] = str(estado or "").strip() or "Em edição"
         self._sync_quote_piece_registry(orc)
         self._save(force=True)
@@ -1324,7 +1339,7 @@ class QuotesBridgeMixin:
         numero = str(numero or "").strip()
         orc = next((row for row in self.ensure_data().get("orcamentos", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if orc is None:
-            raise ValueError("Or?amento n?o encontrado.")
+            raise ValueError("Orçamento não encontrado.")
         target = Path(path)
         helper = self._orc_render_helper()
         self.orc_actions.render_orc_pdf(helper, str(target), orc)
@@ -1844,7 +1859,7 @@ class QuotesBridgeMixin:
         note = str(nota_cliente or "").strip()
         orc = next((row for row in data.get("orcamentos", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if orc is None:
-            raise ValueError("Or?amento n?o encontrado.")
+            raise ValueError("Orçamento não encontrado.")
         if str(orc.get("numero_encomenda", "") or "").strip():
             raise ValueError("Orcamento ja convertido.")
         estado_norm = str(orc.get("estado", "") or "").strip().lower()

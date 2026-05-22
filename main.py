@@ -8467,6 +8467,40 @@ def _mysql_next_counter(counter_key, initial_next=1):
             pass
 
 
+def _mysql_peek_counter(counter_key, initial_next=1):
+    if not USE_MYSQL_STORAGE or not MYSQL_AVAILABLE:
+        return None
+    key = str(counter_key or "").strip()
+    if not key:
+        return None
+    start = max(1, int(parse_float(initial_next, 1) or 1))
+    conn = None
+    try:
+        conn = _mysql_connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_counters (
+                    ckey VARCHAR(80) PRIMARY KEY,
+                    next_value BIGINT NOT NULL,
+                    updated_at DATETIME NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+            conn.commit()
+            cur.execute("SELECT next_value FROM app_counters WHERE ckey=%s LIMIT 1", (key,))
+            row = cur.fetchone() or {}
+            return max(start, int(parse_float(row.get("next_value", start), start) or start))
+    except Exception:
+        return None
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+
+
 def _encomenda_prefix_from_branding():
     try:
         emit = dict(get_guia_emitente_info() or {})
@@ -8503,6 +8537,20 @@ def next_encomenda_numero(data):
     return f"{prefix}{n:04d}"
 
 
+def peek_next_encomenda_numero(data):
+    seq = data.setdefault("seq", {})
+    prefix = _encomenda_prefix_from_branding()
+    max_n = 0
+    for e in data.get("encomendas", []):
+        num = str(e.get("numero", "") or "").strip().upper()
+        if num.startswith(prefix) and num[len(prefix):].isdigit():
+            max_n = max(max_n, int(num[len(prefix):]))
+    seq_key = f"encomenda:{prefix}"
+    local_next = max(max_n + 1, int(seq.get(seq_key, seq.get("encomenda", 1)) or 1))
+    n = _mysql_peek_counter(seq_key, local_next) or local_next
+    return f"{prefix}{n:04d}"
+
+
 def next_orc_numero(data):
     year = datetime.now().year
     max_n = _next_seq_from_pattern(
@@ -8513,6 +8561,18 @@ def next_orc_numero(data):
     local_next = max(max_n, int(data.get("orc_seq", 1) or 1))
     n = _mysql_next_counter(f"orc:{year}", local_next) or local_next
     data["orc_seq"] = n + 1
+    return f"ORC-{year}-{n:04d}"
+
+
+def peek_next_orc_numero(data):
+    year = datetime.now().year
+    max_n = _next_seq_from_pattern(
+        [o.get("numero") for o in data.get("orcamentos", []) if isinstance(o, dict)],
+        rf"^ORC-{year}-(\d{{4,}})$",
+        1,
+    )
+    local_next = max(max_n, int(data.get("orc_seq", 1) or 1))
+    n = _mysql_peek_counter(f"orc:{year}", local_next) or local_next
     return f"ORC-{year}-{n:04d}"
 
 
@@ -8581,6 +8641,7 @@ def next_ne_numero(data):
 
 
 def peek_next_ne_numero(data):
+    seq = data.setdefault("seq", {})
     year = datetime.now().year
     max_n = 0
     for ne in data.get("notas_encomenda", []):
@@ -8590,7 +8651,8 @@ def peek_next_ne_numero(data):
             tail = num[len(prefix):]
             if tail.isdigit():
                 max_n = max(max_n, int(tail))
-    n = max_n + 1
+    local_next = max(max_n + 1, int(seq.get("ne", 1) or 1))
+    n = _mysql_peek_counter(f"ne:{year}", local_next) or local_next
     return f"NE-{year}-{n:04d}"
 
 

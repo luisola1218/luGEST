@@ -790,9 +790,9 @@ class PlanningBridgeMixin:
             None,
         )
         if pending is None:
-            raise ValueError("Item do backlog n?o encontrado ou j? planeado.")
+            raise ValueError("Item do backlog não encontrado ou já planeado.")
         if self._planning_is_duplicate(numero, material, espessura, operation=op_txt):
-            raise ValueError("Este item j? est? planeado.")
+            raise ValueError("Este item já está planeado.")
         try:
             start_min = self.desktop_main.time_to_minutes(start_txt)
         except Exception as exc:
@@ -801,14 +801,14 @@ class PlanningBridgeMixin:
         duration = self._planning_round_duration(pending.get("tempo_min", 0))
         resource_txt = self._normalize_workcenter_value(pending.get("recurso", pending.get("posto_trabalho", "")))
         if duration <= 0:
-            raise ValueError("Tempo inv?lido para o bloco.")
+            raise ValueError("Tempo inválido para o bloco.")
         if start_min < start_day or start_min + duration > end_day:
             raise ValueError("Hor?rio fora da grelha di?ria.")
         if start_min % slot != 0:
             raise ValueError("O inicio deve respeitar blocos de 30 minutos.")
         self._planning_assert_not_past(day_txt, start_min)
         if not self._planning_is_free(day_txt, start_min, start_min + duration, operation=op_txt, resource=resource_txt):
-            raise ValueError("Posi??o ocupada ou bloqueada no planeamento.")
+            raise ValueError("Posição ocupada ou bloqueada no planeamento.")
         block = self._planning_make_block(
             numero,
             material,
@@ -851,7 +851,7 @@ class PlanningBridgeMixin:
                 continue
             duration = self._planning_round_duration(row.get("tempo_min", 0))
             if duration <= 0:
-                raise ValueError(f"Tempo inv?lido em {numero} / {material} / {espessura}.")
+                raise ValueError(f"Tempo inválido em {numero} / {material} / {espessura}.")
             remaining = duration
             item_color = self._planning_item_color(numero, material, espessura)
             while remaining > 0:
@@ -864,7 +864,7 @@ class PlanningBridgeMixin:
                 )
                 if not day_txt or segment_start is None or segment_end is None:
                     if not placed:
-                        raise ValueError("Sem espa?o livre na semana para auto planeamento.")
+                        raise ValueError("Sem espaço livre na semana para auto planeamento.")
                     exhausted = True
                     break
                 free_minutes = max(0, int(segment_end - segment_start))
@@ -1607,7 +1607,7 @@ class PlanningBridgeMixin:
     def planning_shift_block(self, block_id: str, *, day_offset: int = 0, minutes_offset: int = 0) -> dict[str, Any]:
         target = next((row for row in list(self.ensure_data().get("plano", []) or []) if str(row.get("id", "") or "").strip() == str(block_id or "").strip()), None)
         if target is None:
-            raise ValueError("Bloco de planeamento n?o encontrado.")
+            raise ValueError("Bloco de planeamento não encontrado.")
         current_date = datetime.fromisoformat(str(target.get("data", "") or "").strip()).date()
         current_start = self.desktop_main.time_to_minutes(str(target.get("inicio", "") or "").strip())
         duration = int(float(target.get("duracao_min", 0) or 0))
@@ -1615,9 +1615,9 @@ class PlanningBridgeMixin:
         new_start = current_start + int(minutes_offset or 0)
         start_min, end_min, slot = self._planning_grid_metrics()
         if new_start < start_min or new_start + duration > end_min:
-            raise ValueError("Novo hor?rio fora da grelha di?ria.")
+            raise ValueError("Novo horário fora da grelha diária.")
         if new_start % slot != 0:
-            raise ValueError("Novo hor?rio deve respeitar blocos de 30 minutos.")
+            raise ValueError("Novo horário deve respeitar blocos de 30 minutos.")
         day_txt = new_date.isoformat()
         self._planning_assert_not_past(day_txt, new_start)
         if not self._planning_is_free(
@@ -1628,7 +1628,7 @@ class PlanningBridgeMixin:
             resource=self._planning_row_resource(target),
             ignore_id=str(target.get("id", "") or ""),
         ):
-            raise ValueError("Posi??o ocupada ou bloqueada no planeamento.")
+            raise ValueError("Posição ocupada ou bloqueada no planeamento.")
         target["data"] = day_txt
         target["inicio"] = self.desktop_main.minutes_to_time(new_start)
         target["chapa"] = self._order_reserved_sheet(str(target.get("encomenda", "") or "").strip(), str(target.get("material", "") or "").strip(), str(target.get("espessura", "") or "").strip())
