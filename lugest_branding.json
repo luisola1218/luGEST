@@ -1,37 +1,25 @@
 {
   "logo_candidates": [
-    "C:\\Users\\engenharia\\VSCodeProjects\\teste\\Logos\\lg.png",
-    "C:/Users/engenharia/VSCodeProjects/teste/Logos/lg.png",
-    "C:/Users/engenharia/VSCodeProjects/teste/Logos/59edcbf6-c604-4eaa-9a3d-a33c2d99c9e1.png",
-    "C:/Users/engenharia/VSCodeProjects/teste/Logos/image (1).jpg",
-    "C:/Users/engenharia/VSCodeProjects/teste/Logos/logo(1).jpg",
-    "C:/Users/engenharia/VSCodeProjects/teste/Logos/fe2ffaad-5ce0-43c6-a430-aceb11dc7085.jpg",
-    "C:/Users/engenharia/VSCodeProjects/teste/dist/Logos/image.jpg",
-    "C:\\Users\\engenharia\\VSCodeProjects\\teste\\Logos/image (1).jpg",
-    "C:\\Users\\engenharia\\VSCodeProjects\\teste\\Logos/image.jpg",
-    "C:\\Users\\engenharia\\VSCodeProjects\\teste\\Logos/logo.png",
     "C:\\Users\\engenharia\\VSCodeProjects\\teste\\logo.jpg",
-    "C:\\Users\\engenharia\\VSCodeProjects\\teste\\Logos/logo(1).jpg",
     "logo.png",
+    "C:\\Users\\engenharia\\VSCodeProjects\\teste\\Logos/logo.png",
+    "C:\\Users\\engenharia\\VSCodeProjects\\teste\\Logos/lg.png",
+    "C:\\Users\\engenharia\\VSCodeProjects\\teste\\Logos/logo(1).jpg",
+    "C:\\Users\\engenharia\\VSCodeProjects\\teste\\Logos/963daa34-9f1a-4393-b1cd-a4c29c9a4962.png",
     "C:\\Users\\engenharia\\VSCodeProjects\\teste\\logo.png",
     "C:\\Users\\engenharia\\VSCodeProjects\\teste\\Logos\\logo.png",
     "C:\\Users\\engenharia\\VSCodeProjects\\teste\\Logos\\image (1).jpg",
     "C:\\Users\\engenharia\\VSCodeProjects\\teste\\Logos\\image.jpg",
     "C:\\Users\\engenharia\\VSCodeProjects\\teste\\Logos\\logo(1).jpg"
   ],
-  "empresa_info_rodape": [
-    "Barcelbal - Balanças e Básculas, S.A.",
-    "Rua dos Canteiros, nº 53 - Adaufe",
-    "Tel: 253 606 590  |  Email: geral@barcelbal.pt",
-    "NIF: 502403843  |  Capital Social: 100.000 €"
-  ],
+  "empresa_info_rodape": [],
   "guia_emitente": {
-    "nome": "Barcelbal - Balanças e Básculas, S.A.",
-    "nif": "502403843",
-    "morada": "Rua dos Canteiros, nº 53 - Adaufe",
-    "local_carga": "Rua dos Canteiros, nº 53 - Adaufe"
+    "nome": "",
+    "nif": "",
+    "morada": "",
+    "local_carga": ""
   },
   "guia_info_extra": [],
   "primary_color": "#000040",
-  "logo_scale_pct": 230
+  "logo_scale_pct": 90
 }

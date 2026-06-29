@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDateEdit,
-    QDoubleSpinBox,
     QFrame,
     QFileDialog,
     QFormLayout,
@@ -65,8 +64,9 @@ from .laser_quote_dialogs import (
     _settings_material_names as _laser_settings_material_names,
     _settings_material_subtypes as _laser_settings_material_subtypes,
 )
+from .materials_page import _MaterialEditorDialog
 from lugest_core.cad.profile_analysis import analyze_profile_cut_features, render_step_preview_image
-from ..widgets import CardFrame, StatCard
+from ..widgets import CardFrame, FlexibleDecimalSpinBox as QDoubleSpinBox, StatCard
 from .runtime_common import (
     apply_state_chip as _apply_state_chip,
     cap_width as _cap_width,
@@ -1734,9 +1734,15 @@ class OperatorPage(QWidget):
                     break
         return True
 
-    def _handle_scan_code(self, source_edit: QLineEdit | None = None) -> None:
+    def _handle_scan_code(self, source_edit: QLineEdit | None = None, expected_type: str = "") -> None:
         active_edit = source_edit or self.scan_edit
-        code = active_edit.text().strip()
+        code = (
+            active_edit.text()
+            .replace("\r", "")
+            .replace("\n", "")
+            .replace("\t", "")
+            .strip()
+        )
         if not code:
             return
         active_edit.clear()
@@ -1744,15 +1750,25 @@ class OperatorPage(QWidget):
         if not callable(scanner):
             self._set_feedback("Leitura por scanner indisponivel.", error=True)
             return
+        expected = str(expected_type or "").strip().upper()
+        if not expected:
+            expected = "OPP" if self._is_group_detail_active() else ("GRP" if self._is_order_detail_active() else "OF")
         try:
             result = dict(scanner(code, current_posto=self._current_posto()) or {})
         except Exception as exc:
+            if expected in {"GRP", "ESP", "ESPESSURA"} and self._open_group_from_thickness_scan(code):
+                return
             self._set_feedback(str(exc), error=True)
+            self._focus_active_scan_field()
             return
         scan_type = str(result.get("tipo", "") or "").upper()
         detail_mode = self._is_order_detail_active()
         current_order = str(self.selected_order_number or self._current_order_row().get("encomenda", "") or "").strip()
         if scan_type == "OF":
+            if expected and expected != "OF":
+                self._set_feedback("Nesta fase pica a espessura ou a OPP, nao a OF.", error=True)
+                self._focus_active_scan_field()
+                return
             enc = dict(result.get("encomenda", {}) or {})
             enc_num = str(enc.get("numero", "") or "").strip()
             if detail_mode:
@@ -1771,6 +1787,10 @@ class OperatorPage(QWidget):
                     self._set_feedback(f"OF {code} encontrada, mas nao esta visivel neste posto/filtro.", error=True)
             return
         if scan_type == "GRP":
+            if expected and expected not in {"GRP", "ESP", "ESPESSURA"}:
+                self._set_feedback("Nesta fase pica a OPP da peca.", error=True)
+                self._focus_active_scan_field()
+                return
             enc_num = str(result.get("encomenda_numero", "") or "").strip()
             material = str(result.get("material", "") or "").strip()
             espessura = str(result.get("espessura", "") or "").strip()
@@ -1781,10 +1801,14 @@ class OperatorPage(QWidget):
                 )
                 return
             target_group = None
+            material_norm = str(material or "").strip().casefold()
+            espessura_norm = self._normalize_thickness_scan(espessura)
             for item in list(getattr(self, "all_items", []) or []):
                 if str(item.get("encomenda", "") or "").strip() != enc_num:
                     continue
-                if str(item.get("material", "") or "").strip() == material and str(item.get("espessura", "") or "").strip() == espessura:
+                item_material_norm = str(item.get("material", "") or "").strip().casefold()
+                item_espessura_norm = self._normalize_thickness_scan(str(item.get("espessura", "") or "").strip())
+                if item_material_norm == material_norm and item_espessura_norm == espessura_norm:
                     target_group = self._group_key(item)
                     break
             if target_group and hasattr(self, "_apply_order_filter"):
@@ -1795,7 +1819,16 @@ class OperatorPage(QWidget):
             else:
                 self._set_feedback(f"Espessura {material} {espessura} nao esta visivel neste posto/filtro.", error=True)
             return
+        if expected in {"GRP", "ESP", "ESPESSURA"}:
+            if self._open_group_from_thickness_scan(code):
+                return
+            self._focus_active_scan_field()
+            return
         if scan_type == "CPI":
+            if expected and expected not in {"OPP", "CPI"}:
+                self._set_feedback("Nesta fase pica a espessura.", error=True)
+                self._focus_active_scan_field()
+                return
             enc_num = str(result.get("encomenda_numero", "") or "").strip()
             item_id = str(result.get("item_id", "") or "").strip()
             codigo = str(result.get("codigo", "") or "").strip()
@@ -1854,6 +1887,10 @@ class OperatorPage(QWidget):
                 self._set_feedback(f"Componentes da encomenda {enc_num} nao estao visiveis neste posto/filtro.", error=True)
             return
         is_operation_scan = scan_type == "OPR"
+        if expected and expected != "OPP":
+            self._set_feedback("Nesta fase pica a espessura, nao a OPP.", error=True)
+            self._focus_active_scan_field()
+            return
         enc_num = str(result.get("encomenda_numero", "") or "").strip()
         piece_id = str(result.get("piece_id", "") or "").strip()
         operation = str(result.get("operacao", "") or "").strip()
@@ -1863,7 +1900,22 @@ class OperatorPage(QWidget):
                 error=True,
             )
             return
-        if piece_id:
+        if expected == "OPP" and self._is_group_detail_active():
+            current_group = self._current_group()
+            group_key = self._group_key(current_group) if current_group else None
+            piece_group_key = None
+            if piece_id:
+                for item in list(getattr(self, "all_items", []) or []):
+                    if str(item.get("encomenda", "") or "").strip() != enc_num:
+                        continue
+                    if any(str(piece.get("id", "") or "").strip() == piece_id for piece in list(item.get("pieces", []) or [])):
+                        piece_group_key = self._group_key(item)
+                        break
+            if group_key and piece_group_key and piece_group_key != group_key:
+                self._set_feedback("OPP não pertence à espessura selecionada.", error=True)
+                self._focus_active_scan_field()
+                return
+        if piece_id and is_operation_scan:
             self.checked_piece_ids.clear()
             self.checked_piece_ids.add(piece_id)
         if not self._select_operator_target(enc_num, piece_id):
@@ -1872,15 +1924,27 @@ class OperatorPage(QWidget):
                 self._set_feedback(f"OPP {code} encontrada, mas nao esta visivel neste posto/filtro.", error=True)
                 return
         if piece_id:
+            visible_scan_ids = [piece_id]
+            if not is_operation_scan:
+                visible_scan_ids = self._visible_piece_ids_for_scan(result, piece_id)
+            already_checked = bool(visible_scan_ids) and all(value in self.checked_piece_ids for value in visible_scan_ids)
+            if not is_operation_scan:
+                self.checked_piece_ids.update(visible_scan_ids)
+                self.selected_piece_id = visible_scan_ids[0] if visible_scan_ids else piece_id
+            target_row_to_select = -1
             for row_index in range(self.pieces_table.rowCount()):
                 item = self.pieces_table.item(row_index, 0)
                 if item is None:
                     continue
-                if str(item.data(Qt.UserRole) or "").strip() == piece_id:
+                if str(item.data(Qt.UserRole) or "").strip() in set(visible_scan_ids):
                     item.setCheckState(Qt.Checked)
-                    self.pieces_table.selectRow(row_index)
+                    if target_row_to_select < 0:
+                        target_row_to_select = row_index
+            if target_row_to_select >= 0:
+                self.pieces_table.selectRow(target_row_to_select)
+                item = self.pieces_table.item(target_row_to_select, 0)
+                if item is not None:
                     self.pieces_table.scrollToItem(item)
-                    break
             self._sync_piece_multi_state()
         if operation:
             self.operation_combo.setCurrentText(operation)
@@ -1893,31 +1957,164 @@ class OperatorPage(QWidget):
                 self._set_feedback("Código de operação incompleto.", error=True)
                 return
             try:
+                ctx = dict(self.backend.operator_piece_context(enc_num, piece_id) or {})
+                active_ops = {
+                    str(op or "").strip()
+                    for op in list(ctx.get("active_pending_ops", []) or [])
+                    if str(op or "").strip()
+                }
+                operation_norm = str(self.backend.desktop_main.normalize_operacao_nome(operation) or operation).strip()
+                if operation_norm in active_ops:
+                    op_limits = dict(ctx.get("operation_limits", {}) or {})
+                    op_done = dict(ctx.get("operation_done", {}) or {})
+                    limit = float(op_limits.get(operation_norm, ctx.get("current_operation_limit", 0)) or 0)
+                    done = float(op_done.get(operation_norm, ctx.get("current_operation_done", 0)) or 0)
+                    ok_qty = round(max(0.0, limit - done), 4)
+                    if ok_qty <= 0:
+                        ok_qty = float(ctx.get("default_ok", 1) or 1)
+                    self.backend.operator_finish_piece(
+                        enc_num,
+                        piece_id,
+                        operator_name,
+                        ok_qty,
+                        0,
+                        0,
+                        operation=operation_norm,
+                        posto=self._current_posto(),
+                    )
+                    self.refresh()
+                    self._set_feedback(f"Operação {operation_norm} concluída por código de barras.")
+                    return
+                pending_ops = {
+                    str(op or "").strip()
+                    for op in list(ctx.get("pending_ops", []) or [])
+                    if str(op or "").strip()
+                }
+                if operation_norm not in pending_ops:
+                    self._set_feedback(f"Operação {operation_norm} já está concluída nesta OPP.", error=True)
+                    self._focus_active_scan_field()
+                    return
                 self.backend.operator_start_piece(
                     enc_num,
                     piece_id,
                     operator_name,
-                    operation=operation,
+                    operation=operation_norm,
                     posto=self._current_posto(),
                 )
             except Exception as exc:
                 self._set_feedback(str(exc), error=True)
                 return
             self.refresh()
-            self._set_feedback(f"Operação {operation} iniciada por código de barras.")
+            self._set_feedback(f"Operação {operation_norm} iniciada por código de barras.")
+            return
+        if piece_id:
+            visible_ids = [str(piece.get("id", "") or "").strip() for piece in self.current_pieces if str(piece.get("id", "") or "").strip()]
+            selected_count = sum(1 for value in visible_ids if value in self.checked_piece_ids)
+            state_txt = "já estava selecionada" if already_checked else "adicionada à seleção"
+            self._set_feedback(f"OPP {code} {state_txt}. {selected_count} selecionada(s).")
+            self._focus_active_scan_field()
             return
         self._set_feedback(f"OPP {code} aberta" + (f" | {operation}" if operation else ""))
+
+    def _visible_piece_ids_for_scan(self, scan_result: dict, base_piece_id: str) -> list[str]:
+        base_txt = str(base_piece_id or "").strip()
+        context_piece = dict(dict(scan_result.get("context", {}) or {}).get("piece", {}) or {})
+        ref_int = str(context_piece.get("ref_interna", "") or "").strip()
+        opp_txt = str(scan_result.get("opp", "") or context_piece.get("opp", "") or "").strip()
+        matches: list[str] = []
+        for piece in list(getattr(self, "current_pieces", []) or []):
+            visible_id = str(piece.get("id", "") or "").strip()
+            if not visible_id:
+                continue
+            piece_ref = str(piece.get("ref_interna", "") or "").strip()
+            piece_opp = str(piece.get("opp", "") or "").strip()
+            if visible_id == base_txt or (base_txt and visible_id.startswith(base_txt + "-")):
+                matches.append(visible_id)
+            elif ref_int and piece_ref == ref_int:
+                matches.append(visible_id)
+            elif opp_txt and piece_opp == opp_txt:
+                matches.append(visible_id)
+        if matches:
+            return matches
+        return [base_txt] if base_txt else []
 
     def _is_order_detail_active(self) -> bool:
         return bool(hasattr(self, "view_stack") and self.view_stack.currentWidget() is getattr(self, "detail_page", None))
 
+    def _is_group_detail_active(self) -> bool:
+        return bool(
+            self._is_order_detail_active()
+            and hasattr(self, "group_overview_stack")
+            and self.group_overview_stack.currentIndex() == 1
+        )
+
+    def _normalize_thickness_scan(self, code: str) -> str:
+        text = str(code or "").strip().upper()
+        text = text.replace(",", ".")
+        match = re.search(r"([0-9]+(?:\.[0-9]+)?)", text)
+        if match:
+            numeric = match.group(1).rstrip("0").rstrip(".")
+            return numeric or "0"
+        return re.sub(r"\s+", "", text)
+
+    def _open_group_from_thickness_scan(self, code: str) -> bool:
+        current_order = str(self.selected_order_number or self._current_order_row().get("encomenda", "") or "").strip()
+        if not current_order:
+            self._set_feedback("Abre primeiro a OF antes de picar a espessura.", error=True)
+            return False
+        scanned = self._normalize_thickness_scan(code)
+        if not scanned:
+            self._set_feedback("Espessura vazia.", error=True)
+            return False
+        scanned_norm = self._normalize_thickness_scan(scanned)
+        matches: list[dict] = []
+        for item in list(getattr(self, "items", []) or []):
+            if str(item.get("encomenda", "") or "").strip() != current_order:
+                continue
+            esp = str(item.get("espessura", "") or "").strip()
+            esp_norm = self._normalize_thickness_scan(esp)
+            candidates = {
+                esp.upper(),
+                esp_norm,
+                f"S{esp_norm}".upper(),
+            }
+            if scanned.upper() in candidates or scanned_norm in candidates:
+                matches.append(item)
+        if not matches:
+            self._set_feedback("Espessura não encontrada nesta encomenda.", error=True)
+            return False
+        group = matches[0]
+        self._apply_order_filter(current_order, previous_group=self._group_key(group))
+        self._show_order_detail()
+        self._show_group_detail()
+        self._set_feedback(f"Espessura {group.get('material', '-')} {group.get('espessura', '-')} aberta.")
+        return True
+
+    def _focus_active_scan_field(self) -> None:
+        target = None
+        if not self._is_order_detail_active() and hasattr(self, "list_scan_edit"):
+            target = self.list_scan_edit
+        elif self._is_group_detail_active() and hasattr(self, "opp_scan_edit"):
+            target = self.opp_scan_edit
+        elif hasattr(self, "thickness_scan_edit"):
+            target = self.thickness_scan_edit
+        elif hasattr(self, "scan_edit"):
+            target = self.scan_edit
+        if target is not None:
+            QTimer.singleShot(0, target.setFocus)
+
     def _sync_scan_placeholder(self) -> None:
         if not hasattr(self, "scan_edit"):
             return
-        placeholder = "Picar espessura/OPP" if self._is_order_detail_active() else "Picar OF/OPP"
+        placeholder = "Picar OPP" if self._is_group_detail_active() else ("Picar Espessura" if self._is_order_detail_active() else "Picar OF")
         self.scan_edit.setPlaceholderText(placeholder)
         if hasattr(self, "list_scan_edit"):
             self.list_scan_edit.setPlaceholderText("Picar OF")
+        if hasattr(self, "thickness_scan_edit"):
+            self.thickness_scan_edit.setPlaceholderText("Picar Espessura")
+        if hasattr(self, "opp_scan_edit"):
+            self.opp_scan_edit.setPlaceholderText("Picar OPP")
+        self._focus_active_scan_field()
 
     def _show_client_name(self) -> bool:
         return bool(self.ui_options.get("operator_show_client_name", True))
@@ -1999,6 +2196,43 @@ class OperatorPage(QWidget):
                         return enc_num
         return str(fallback or "").strip()
 
+    def _visible_piece_for_id(self, piece_id: str) -> dict:
+        piece_txt = str(piece_id or "").strip()
+        if not piece_txt:
+            return {}
+        for piece in list(getattr(self, "current_pieces", []) or []):
+            if str(piece.get("id", "") or "").strip() == piece_txt:
+                return dict(piece or {})
+        for item in list(getattr(self, "items", []) or []) + list(getattr(self, "all_items", []) or []):
+            for piece in list((item or {}).get("pieces", []) or []):
+                if str(piece.get("id", "") or "").strip() == piece_txt:
+                    return dict(piece or {})
+        return {}
+
+    def _backend_piece_id_for_selection(self, enc_num: str, selected_piece_id: str) -> str:
+        enc_txt = str(enc_num or "").strip()
+        selected_txt = str(selected_piece_id or "").strip()
+        if not enc_txt or not selected_txt:
+            return selected_txt
+        visible_piece = self._visible_piece_for_id(selected_txt)
+        ref_int = str(visible_piece.get("ref_interna", "") or "").strip()
+        detail_getter = getattr(self.backend, "order_detail", None)
+        if not callable(detail_getter):
+            return selected_txt
+        try:
+            detail = dict(detail_getter(enc_txt) or {})
+        except Exception:
+            return selected_txt
+        for piece in list(detail.get("pieces", []) or []):
+            raw_id = str((piece or {}).get("id", "") or "").strip()
+            if raw_id and raw_id == selected_txt:
+                return raw_id
+            if raw_id and selected_txt.startswith(raw_id + "-"):
+                return raw_id
+            if ref_int and str((piece or {}).get("ref_interna", "") or "").strip() == ref_int:
+                return raw_id or selected_txt
+        return selected_txt
+
     def _selected_piece_refs(self, *, allow_multiple: bool = True) -> list[tuple[str, str]] | None:
         group = self._current_group()
         enc_num = str(group.get("encomenda", "") or "").strip()
@@ -2012,7 +2246,7 @@ class OperatorPage(QWidget):
                 continue
             piece_enc_num = self._order_number_for_piece_id(piece_id, enc_num)
             if piece_enc_num:
-                refs.append((piece_enc_num, piece_id))
+                refs.append((piece_enc_num, self._backend_piece_id_for_selection(piece_enc_num, piece_id)))
         if not refs:
             QMessageBox.warning(self, "Operador", "Seleciona pelo menos uma peca.")
             return None
@@ -11387,7 +11621,8 @@ class LegacyOperatorPage(OperatorPage):
         list_scan_hint.setProperty("role", "muted")
         self.list_scan_edit = QLineEdit()
         self.list_scan_edit.setPlaceholderText("Picar OF")
-        self.list_scan_edit.returnPressed.connect(lambda: self._handle_scan_code(self.list_scan_edit))
+        self.list_scan_edit.returnPressed.connect(lambda: self._handle_scan_code(self.list_scan_edit, "OF"))
+        self.list_scan_edit.editingFinished.connect(lambda: self._handle_scan_code(self.list_scan_edit, "OF"))
         list_scan_layout.addWidget(list_scan_title)
         list_scan_layout.addWidget(list_scan_hint, 1)
         list_scan_layout.addWidget(self.list_scan_edit, 0)
@@ -11583,6 +11818,12 @@ class LegacyOperatorPage(OperatorPage):
         overview_hint.setWordWrap(True)
         overview_actions_layout.addWidget(overview_title)
         overview_actions_layout.addWidget(overview_hint, 1)
+        self.thickness_scan_edit = QLineEdit()
+        self.thickness_scan_edit.setPlaceholderText("Picar Espessura")
+        self.thickness_scan_edit.setMinimumWidth(180)
+        self.thickness_scan_edit.returnPressed.connect(lambda: self._handle_scan_code(self.thickness_scan_edit, "GRP"))
+        self.thickness_scan_edit.editingFinished.connect(lambda: self._handle_scan_code(self.thickness_scan_edit, "GRP"))
+        overview_actions_layout.addWidget(self.thickness_scan_edit)
         overview_actions_layout.addWidget(self.open_group_btn)
         overview_layout.addWidget(overview_actions)
         if groups_widget is not None:
@@ -11615,6 +11856,12 @@ class LegacyOperatorPage(OperatorPage):
         group_detail_text.addWidget(self.group_detail_meta)
         group_detail_header_layout.addWidget(self.back_to_groups_btn)
         group_detail_header_layout.addLayout(group_detail_text, 1)
+        self.opp_scan_edit = QLineEdit()
+        self.opp_scan_edit.setPlaceholderText("Picar OPP")
+        self.opp_scan_edit.setMinimumWidth(210)
+        self.opp_scan_edit.returnPressed.connect(lambda: self._handle_scan_code(self.opp_scan_edit, "OPP"))
+        self.opp_scan_edit.editingFinished.connect(lambda: self._handle_scan_code(self.opp_scan_edit, "OPP"))
+        group_detail_header_layout.addWidget(self.opp_scan_edit)
         detail_group_layout.addWidget(self.group_detail_header)
         detail_group_layout.addWidget(self.detail_filter_card)
 
@@ -11767,12 +12014,14 @@ class LegacyOperatorPage(OperatorPage):
         if hasattr(self, "group_overview_stack"):
             self.group_overview_stack.setCurrentIndex(0)
         self._sync_group_open_button()
+        self._sync_scan_placeholder()
 
     def _show_group_detail(self) -> None:
         if hasattr(self, "group_overview_stack"):
             self.group_overview_stack.setCurrentIndex(1)
         self._refresh_group_support_panel()
         self._sync_group_open_button()
+        self._sync_scan_placeholder()
 
     def can_auto_refresh(self) -> bool:
         return self.view_stack.currentWidget() is self.list_page
@@ -12514,6 +12763,21 @@ class QuotesPage(QWidget):
         self.notes_edit.setMinimumHeight(62)
         self.notes_edit.setMaximumHeight(82)
         self.notes_edit.setPlaceholderText("Notas tecnicas e comerciais para o PDF do orcamento.")
+        self.delivery_default_text = "A combinar com o departamento de planeamento."
+        self.delivery_date_min = QDate.currentDate()
+        self.delivery_date_edit = QDateEdit()
+        self.delivery_date_edit.setCalendarPopup(True)
+        self.delivery_date_edit.setDisplayFormat("dd/MM/yyyy")
+        self.delivery_date_edit.setMinimumDate(self.delivery_date_min)
+        self.delivery_date_edit.setSpecialValueText("A combinar")
+        self.delivery_date_edit.setDate(self.delivery_date_min)
+        self.delivery_date_edit.setToolTip("Seleciona uma data apenas quando assumires um prazo concreto com o cliente.")
+        self.delivery_default_btn = QPushButton("Prazo Encomenda")
+        self.delivery_default_btn.setProperty("variant", "secondary")
+        self.delivery_default_btn.setProperty("compact", "true")
+        self.delivery_default_btn.setMaximumHeight(25)
+        self.delivery_default_btn.setToolTip("Repõe o prazo predefinido: a combinar com o departamento de planeamento.")
+        self.delivery_default_btn.clicked.connect(self._apply_default_delivery_deadline)
         self.transport_km_spin = QDoubleSpinBox()
         self.transport_km_spin.setRange(0.0, 100000.0)
         self.transport_km_spin.setDecimals(1)
@@ -12991,23 +13255,35 @@ class QuotesPage(QWidget):
         notes_text_page = QWidget()
         notes_text_page_layout = QVBoxLayout(notes_text_page)
         notes_text_page_layout.setContentsMargins(0, 0, 0, 0)
-        notes_text_page_layout.setSpacing(8)
+        notes_text_page_layout.setSpacing(5)
         notes_text_intro = QLabel("Texto livre que segue diretamente para o PDF do orçamento.")
         notes_text_intro.setProperty("role", "muted")
         notes_text_intro.setWordWrap(True)
-        notes_text_intro.setStyleSheet("font-size: 9.5px;")
+        notes_text_intro.setStyleSheet("font-size: 8.5px;")
         notes_text_page_layout.addWidget(notes_text_intro)
         notes_text_card = CardFrame()
         notes_text_card.set_tone("default")
+        notes_text_card.setMaximumHeight(222)
         notes_text_layout = QVBoxLayout(notes_text_card)
-        notes_text_layout.setContentsMargins(12, 10, 12, 10)
-        notes_text_layout.setSpacing(6)
+        notes_text_layout.setContentsMargins(10, 8, 10, 8)
+        notes_text_layout.setSpacing(5)
         notes_text_title = QLabel("Texto técnico e comercial")
         notes_text_title.setStyleSheet("font-size: 10px; font-weight: 800; color: #0f172a;")
         notes_text_layout.addWidget(notes_text_title)
+        delivery_row = QHBoxLayout()
+        delivery_row.setContentsMargins(0, 0, 0, 0)
+        delivery_row.setSpacing(8)
+        delivery_label = QLabel("Prazo")
+        delivery_label.setProperty("role", "field_label")
+        delivery_label.setStyleSheet("font-size: 9px; font-weight: 800; color: #475467;")
+        delivery_row.addWidget(delivery_label)
+        delivery_row.addWidget(self.delivery_default_btn)
+        self.delivery_date_edit.setMaximumHeight(25)
+        delivery_row.addWidget(self.delivery_date_edit, 1)
+        notes_text_layout.addLayout(delivery_row)
         self.notes_edit.setProperty("compact", "false")
-        self.notes_edit.setMinimumHeight(160)
-        self.notes_edit.setMaximumHeight(220)
+        self.notes_edit.setMinimumHeight(116)
+        self.notes_edit.setMaximumHeight(128)
         notes_text_layout.addWidget(self.notes_edit, 1)
         notes_text_page_layout.addWidget(notes_text_card, 1)
 
@@ -13766,6 +14042,9 @@ class QuotesPage(QWidget):
         self.executed_combo.setCurrentText(username if username and role in {"orcamentista", "orçamentista"} else "")
         self.workcenter_combo.setCurrentText("")
         self.notes_edit.clear()
+        self.delivery_date_min = QDate.currentDate()
+        self.delivery_date_edit.setMinimumDate(self.delivery_date_min)
+        self.delivery_date_edit.setDate(self.delivery_date_min)
         self.iva_spin.setValue(23.0)
         self._recalc_transport_calc()
         self._refresh_nesting_bridge()
@@ -14165,6 +14444,11 @@ class QuotesPage(QWidget):
             if str(key or "").strip()
         ]
         self.notes_edit.setPlainText(str(detail.get("notas_pdf", "") or "").strip())
+        delivery_date = str(detail.get("prazo_entrega_data", "") or "").strip()[:10]
+        qdate = QDate.fromString(delivery_date, "yyyy-MM-dd") if delivery_date else QDate()
+        self.delivery_date_min = QDate.currentDate()
+        self.delivery_date_edit.setMinimumDate(self.delivery_date_min)
+        self.delivery_date_edit.setDate(qdate if qdate.isValid() and qdate >= self.delivery_date_min else self.delivery_date_min)
         self.iva_spin.setValue(23.0)
         self.nesting_bridge_data = dict(detail.get("nesting_bridge", {}) or {})
         self._refresh_nesting_bridge()
@@ -14306,7 +14590,7 @@ class QuotesPage(QWidget):
         project_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
 
         structure_name_edit = QLineEdit()
-        structure_name_edit.setPlaceholderText("Ex.: Pavilhao logistico Barcelbal")
+        structure_name_edit.setPlaceholderText("Ex.: Pavilhao logistico cliente")
         structure_type_combo = QComboBox()
         structure_type_combo.addItems(["Pavilhao industrial", "Cobertura metalica", "Mezanino", "Estrutura especial"])
         family_combo = QComboBox()
@@ -15004,6 +15288,64 @@ class QuotesPage(QWidget):
 
     def _material_assembly_item_dialog(self, initial: dict | None = None, parent: QWidget | None = None) -> dict | None:
         initial = dict(initial or {})
+        def _initial_float(value: Any, default: float = 0.0) -> float:
+            try:
+                return float(str(value).strip().replace(" ", "").replace(",", "."))
+            except Exception:
+                return float(default)
+
+        if isinstance(initial.get("line"), dict):
+            wrapper = dict(initial)
+            line_payload = dict(wrapper.get("line") or {})
+            merged = dict(line_payload)
+            for key, value in wrapper.items():
+                if key == "line":
+                    continue
+                if merged.get(key) in (None, "", [], {}):
+                    merged[key] = value
+            initial = merged
+
+        allowed_modes = {"Perfil", "Tubo", "Chapa", "Cantoneira", "Barra", "Ferro nervurado", "Manual"}
+        initial_desc_text = str(initial.get("descricao_base", initial.get("descricao", "")) or "").strip()
+        if not str(initial.get("descricao_base", "") or "").strip() and " | " in initial_desc_text:
+            initial["descricao_base"] = initial_desc_text.split(" | ", 1)[0].strip()
+        initial_mode = str(initial.get("calc_mode", "") or initial.get("material_subtype", "") or "").strip()
+        initial_probe = self.backend.desktop_main.norm_text(
+            " ".join(
+                str(initial.get(key, "") or "")
+                for key in ("descricao_base", "descricao", "material", "material_family", "material_subtype", "calc_mode")
+            )
+        )
+        if initial_mode not in allowed_modes:
+            initial_mode = ""
+        if not initial_mode or (initial_mode == "Perfil" and any(token in initial_probe for token in ("barra", "chata", "plat", "flat"))):
+            if any(token in initial_probe for token in ("barra", "chata", "plat", "flat")):
+                initial_mode = "Barra"
+            elif "cantoneira" in initial_probe or re.search(r"\bl\s*\d+\s*x\s*\d+", initial_probe):
+                initial_mode = "Cantoneira"
+            elif "tubo" in initial_probe:
+                initial_mode = "Tubo"
+            elif "chapa" in initial_probe:
+                initial_mode = "Chapa"
+            elif "ferro nervurado" in initial_probe or "varao nervurado" in initial_probe:
+                initial_mode = "Ferro nervurado"
+        initial["calc_mode"] = initial_mode or "Perfil"
+
+        desc_for_metrics = str(initial.get("descricao", initial_desc_text) or "")
+        if "quantity_units" not in initial and initial.get("qtd") not in (None, ""):
+            initial["quantity_units"] = initial.get("qtd")
+        if _initial_float(initial.get("meters_per_unit", 0), 0.0) <= 0:
+            match_meters = re.search(r"x\s*(\d+(?:[.,]\d+)?)\s*m\b", desc_for_metrics, flags=re.IGNORECASE)
+            if match_meters:
+                initial["meters_per_unit"] = float(match_meters.group(1).replace(",", "."))
+        if _initial_float(initial.get("kg_per_m", 0), 0.0) <= 0:
+            match_kg_m = re.search(r"(\d+(?:[.,]\d+)?)\s*kg\s*/\s*m", desc_for_metrics, flags=re.IGNORECASE)
+            if match_kg_m:
+                initial["kg_per_m"] = float(match_kg_m.group(1).replace(",", "."))
+        if _initial_float(initial.get("price_per_kg", 0), 0.0) <= 0:
+            match_price_kg = re.search(r"(\d+(?:[.,]\d+)?)\s*eur\s*/\s*kg", desc_for_metrics, flags=re.IGNORECASE)
+            if match_price_kg:
+                initial["price_per_kg"] = float(match_price_kg.group(1).replace(",", "."))
         dialog = QDialog(parent if isinstance(parent, QWidget) else self)
         dialog.setWindowTitle("Item material")
         dialog.resize(920, 680)
@@ -15114,6 +15456,14 @@ class QuotesPage(QWidget):
             "120x10",
             "120x12",
         ]
+        initial_bar_size = str(initial.get("bar_size", "") or "").strip()
+        if not initial_bar_size:
+            desc_for_bar = str(initial.get("descricao_base", initial.get("descricao", "")) or "")
+            match_bar = re.search(r"(\d+(?:[.,]\d+)?)\s*[xX]\s*(\d+(?:[.,]\d+)?)", desc_for_bar)
+            if match_bar:
+                initial_bar_size = f"{match_bar.group(1)}x{match_bar.group(2)}".replace(",", ".")
+        if initial_bar_size and initial_bar_size not in flat_bar_presets:
+            flat_bar_presets.append(initial_bar_size)
         tube_model_presets: dict[str, list[str]] = {
             "redondo": ["Ø33.7x2.6", "Ø42.4x3.2", "Ø48.3x3.2", "Ø60.3x3.2", "Ø76.1x3.2", "Ø88.9x4.0", "Ø114.3x4.0"],
             "quadrado": ["30x30x2.0", "40x40x2.0", "40x40x3.0", "50x50x2.5", "60x60x3.0", "80x80x4.0", "100x100x5.0"],
@@ -15163,6 +15513,22 @@ class QuotesPage(QWidget):
                 return (parts[0], parts[1], parts[2], text)
 
             return sorted({str(value or "").strip() for value in values if str(value or "").strip()}, key=_sort_key)
+
+        def _add_combo_item_if_missing(combo: QComboBox, value: object) -> None:
+            text = str(value or "").strip()
+            if not text:
+                return
+            for idx in range(combo.count()):
+                if str(combo.itemText(idx) or "").strip().lower() == text.lower():
+                    return
+            combo.addItem(text)
+
+        def _set_combo_text_preserving_custom(combo: QComboBox, value: object) -> None:
+            text = str(value or "").strip()
+            if not text:
+                return
+            _add_combo_item_if_missing(combo, text)
+            combo.setCurrentText(text)
 
         def _float_text(value: float, digits: int = 2) -> str:
             return f"{float(value or 0):.{digits}f}".replace(".", ",")
@@ -15587,7 +15953,7 @@ class QuotesPage(QWidget):
         bar_size_combo.setEditable(True)
         for value in flat_bar_presets:
             bar_size_combo.addItem(value)
-        bar_size_combo.setCurrentText(str(initial.get("bar_size", "70x20") or "70x20"))
+        bar_size_combo.setCurrentText(initial_bar_size or "70x20")
         bar_meters_spin = QDoubleSpinBox()
         bar_meters_spin.setRange(0.0, 1000.0)
         bar_meters_spin.setDecimals(3)
@@ -15667,7 +16033,7 @@ class QuotesPage(QWidget):
             profile_size_combo.clear()
             for value in options:
                 profile_size_combo.addItem(value)
-            profile_size_combo.setCurrentText(wanted)
+            _set_combo_text_preserving_custom(profile_size_combo, wanted)
             profile_size_combo.blockSignals(False)
 
         def _refresh_angle_thickness_options() -> None:
@@ -15695,7 +16061,7 @@ class QuotesPage(QWidget):
             tube_model_combo.clear()
             for value in options:
                 tube_model_combo.addItem(value)
-            tube_model_combo.setCurrentText(wanted)
+            _set_combo_text_preserving_custom(tube_model_combo, wanted)
             tube_model_combo.blockSignals(False)
 
         def _apply_tube_model_selection() -> None:
@@ -15733,7 +16099,7 @@ class QuotesPage(QWidget):
             sheet_model_combo.clear()
             for value in sheet_model_presets:
                 sheet_model_combo.addItem(value)
-            sheet_model_combo.setCurrentText(wanted)
+            _set_combo_text_preserving_custom(sheet_model_combo, wanted)
             sheet_model_combo.blockSignals(False)
 
         def _apply_sheet_model_selection() -> None:
@@ -16227,6 +16593,9 @@ class QuotesPage(QWidget):
                 "profile_section": str(payload.get("series", "") or profile_series_combo.currentData() or "").strip(),
                 "profile_size": str(payload.get("size", "") or profile_size_combo.currentText() or "").strip(),
                 "tube_section": str(tube_section_combo.currentData() or "").strip(),
+                "tube_model": tube_model_combo.currentText().strip(),
+                "sheet_model": sheet_model_combo.currentText().strip(),
+                "bar_size": bar_size_combo.currentText().strip(),
                 "quality": str(payload.get("quality", "") or "").strip(),
                 "stock_material_id": str(payload.get("stock_material_id", "") or "").strip(),
                 "hint": hint,
@@ -16255,6 +16624,9 @@ class QuotesPage(QWidget):
                 "profile_section": str(profile_series_combo.currentData() or "").strip(),
                 "profile_size": profile_size_combo.currentText().strip(),
                 "tube_section": str(tube_section_combo.currentData() or "").strip(),
+                "tube_model": tube_model_combo.currentText().strip(),
+                "sheet_model": sheet_model_combo.currentText().strip(),
+                "bar_size": bar_size_combo.currentText().strip(),
                 "quality": str(payload.get("quality", "") or "").strip(),
                 "stock_material_id": str(payload.get("stock_material_id", "") or "").strip(),
                 "hint": hint,
@@ -16293,7 +16665,7 @@ class QuotesPage(QWidget):
                         stock_sync_state["profile"] = ""
                     if profile_source_combo.currentText().strip() != "Stock MP":
                         profile_kg_per_m_spin.setValue(float(payload.get("kg_m", 0) or 0.0))
-                    if float(payload.get("price_kg", 0) or 0.0) > 0 and profile_source_combo.currentText().strip() != "Stock MP":
+                    if float(initial.get("price_per_kg", 0) or 0.0) <= 0 and float(payload.get("price_kg", 0) or 0.0) > 0 and profile_source_combo.currentText().strip() != "Stock MP":
                         profile_price_kg_spin.setValue(float(payload.get("price_kg", 0) or 0.0))
                     profile_hint.setText(str(payload.get("hint", "") or "").strip())
                 elif mode_combo.currentText().strip() == "Tubo":
@@ -16323,7 +16695,7 @@ class QuotesPage(QWidget):
                         stock_sync_state["tube"] = ""
                     if tube_source_combo.currentText().strip() != "Stock MP":
                         tube_kg_per_m_spin.setValue(float(payload.get("kg_m", 0) or 0.0))
-                        if float(payload.get("price_base_value", 0) or 0.0) > 0:
+                        if float(initial.get("price_base_value", initial.get("price_per_kg", 0)) or 0.0) <= 0 and float(payload.get("price_base_value", 0) or 0.0) > 0:
                             tube_price_kg_spin.setValue(float(payload.get("price_base_value", 0) or 0.0))
                     tube_hint.setText(str(payload.get("hint", "") or "").strip())
                 elif mode_combo.currentText().strip() == "Chapa":
@@ -16341,7 +16713,7 @@ class QuotesPage(QWidget):
                                 sheet_price_kg_spin.setValue(float(_stock_price_kg(record, preview) or 0.0))
                     else:
                         stock_sync_state["sheet"] = ""
-                    if float(payload.get("price_kg", 0) or 0.0) > 0 and sheet_source_combo.currentText().strip() != "Stock MP":
+                    if float(initial.get("price_per_kg", 0) or 0.0) <= 0 and float(payload.get("price_kg", 0) or 0.0) > 0 and sheet_source_combo.currentText().strip() != "Stock MP":
                         sheet_price_kg_spin.setValue(float(payload.get("price_kg", 0) or 0.0))
                     sheet_hint.setText(str(payload.get("hint", "") or "").strip())
                 elif mode_combo.currentText().strip() == "Cantoneira":
@@ -16365,7 +16737,7 @@ class QuotesPage(QWidget):
                         stock_sync_state["angle"] = ""
                     if angle_source_combo.currentText().strip() != "Stock MP":
                         angle_kg_per_m_spin.setValue(float(payload.get("kg_m", 0) or 0.0))
-                        if float(payload.get("price_kg", 0) or 0.0) > 0:
+                        if float(initial.get("price_per_kg", 0) or 0.0) <= 0 and float(payload.get("price_kg", 0) or 0.0) > 0:
                             angle_price_kg_spin.setValue(float(payload.get("price_kg", 0) or 0.0))
                     angle_hint.setText(str(payload.get("hint", "") or "").strip())
                 elif mode_combo.currentText().strip() == "Barra":
@@ -16386,7 +16758,7 @@ class QuotesPage(QWidget):
                         stock_sync_state["bar"] = ""
                     if bar_source_combo.currentText().strip() != "Stock MP":
                         bar_kg_per_m_spin.setValue(float(payload.get("kg_m", 0) or 0.0))
-                        if float(payload.get("price_kg", 0) or 0.0) > 0:
+                        if float(initial.get("price_per_kg", 0) or 0.0) <= 0 and float(payload.get("price_kg", 0) or 0.0) > 0:
                             bar_price_kg_spin.setValue(float(payload.get("price_kg", 0) or 0.0))
                     bar_hint.setText(str(payload.get("hint", "") or "").strip())
                 _apply_auto_texts(payload)
@@ -17390,6 +17762,20 @@ class QuotesPage(QWidget):
             current.append(note)
             self.notes_edit.setPlainText("\n".join(current))
 
+    def _delivery_date_text(self) -> str:
+        if self.delivery_date_edit.date() <= self.delivery_date_min:
+            return ""
+        return self.delivery_date_edit.date().toString("yyyy-MM-dd")
+
+    def _delivery_text(self) -> str:
+        return self.delivery_default_text
+
+    def _apply_default_delivery_deadline(self) -> None:
+        self.delivery_date_min = QDate.currentDate()
+        self.delivery_date_edit.setMinimumDate(self.delivery_date_min)
+        self.delivery_date_edit.setDate(self.delivery_date_min)
+        self._append_pdf_note(f"- Prazo de entrega: {self.delivery_default_text}")
+
     def _fill_pdf_notes_from_context(self) -> None:
         try:
             text = self.backend.orc_suggest_notes(self._quote_payload())
@@ -17420,6 +17806,8 @@ class QuotesPage(QWidget):
             },
             "executado_por": self.executed_combo.currentText().strip(),
             "nota_transporte": self.transport_combo.currentText().strip(),
+            "prazo_entrega_texto": self._delivery_text(),
+            "prazo_entrega_data": self._delivery_date_text(),
             "transportadora_nome": self.transport_carrier_combo.currentText().strip(),
             "zona_transporte": self.transport_zone_combo.currentText().strip(),
             "preco_transporte": self.transport_price_spin.value(),
@@ -17625,7 +18013,7 @@ class QuotesPage(QWidget):
             "</tr>"
             "<tr>"
             "<td style=\"padding:14px 16px; border-top:1px solid #e2e8f0; font-size:15px; color:#475569;\">Validade da proposta</td>"
-            "<td style=\"padding:14px 16px; border-top:1px solid #e2e8f0; font-size:15px; color:#0f172a;\">30 dias, salvo rutura de stock.</td>"
+            "<td style=\"padding:14px 16px; border-top:1px solid #e2e8f0; font-size:15px; color:#0f172a;\">5 dias úteis, salvo rutura de stock.</td>"
             "</tr>"
             "<tr>"
             "<td style=\"padding:14px 16px; border-top:1px solid #e2e8f0; font-size:15px; color:#475569;\">Condições de pagamento</td>"
@@ -17795,12 +18183,17 @@ class QuotesPage(QWidget):
         presets = self.presets or self.backend.order_presets()
         product_rows = {str(row.get("codigo", "") or "").strip(): row for row in self.backend.ne_product_options("")}
         stock_material_rows: list[tuple[dict[str, Any], dict[str, Any]]] = []
-        for item in list(self.backend.material_rows("") or []):
-            if not isinstance(item, dict) or not isinstance(item.get("record"), dict):
-                continue
-            record = dict(item.get("record") or {})
-            preview = dict(item.get("preview") or self.backend.material_price_preview(record) or {})
-            stock_material_rows.append((record, preview))
+
+        def reload_stock_material_rows() -> None:
+            stock_material_rows.clear()
+            for item in list(self.backend.material_rows("") or []):
+                if not isinstance(item, dict) or not isinstance(item.get("record"), dict):
+                    continue
+                record = dict(item.get("record") or {})
+                preview = dict(item.get("preview") or self.backend.material_price_preview(record) or {})
+                stock_material_rows.append((record, preview))
+
+        reload_stock_material_rows()
         initial_type = str(
             self.backend.desktop_main.normalize_orc_line_type(
                 initial.get("tipo_item", self.backend.desktop_main.ORC_LINE_TYPE_PIECE)
@@ -17823,8 +18216,8 @@ class QuotesPage(QWidget):
                 row,
             )
         type_combo = QComboBox()
-        type_combo.addItem("Peca fabricada", self.backend.desktop_main.ORC_LINE_TYPE_PIECE)
-        type_combo.addItem("Stock MP", "stock_mp")
+        type_combo.addItem("Componente fabricado", self.backend.desktop_main.ORC_LINE_TYPE_PIECE)
+        type_combo.addItem("Matéria Prima - Stock", "stock_mp")
         type_combo.addItem("Produto stock", self.backend.desktop_main.ORC_LINE_TYPE_PRODUCT)
         type_combo.addItem("Servico montagem", self.backend.desktop_main.ORC_LINE_TYPE_SERVICE)
         for index in range(type_combo.count()):
@@ -17838,8 +18231,31 @@ class QuotesPage(QWidget):
             product_combo.addItem(f"{code} - {row.get('descricao', '')}", code)
         stock_material_combo = QComboBox()
         stock_material_combo.setEditable(True)
-        stock_material_combo.addItem("", None)
-        for record, preview in stock_material_rows:
+        stock_kind_combo = QComboBox()
+        stock_kind_combo.addItem("Chapa", "Chapa")
+        stock_kind_combo.addItem("Viga / Perfil", "Perfil")
+        stock_kind_combo.addItem("Tubo", "Tubo")
+        stock_kind_combo.addItem("Cantoneira", "Cantoneira")
+        stock_kind_combo.addItem("Barra", "Barra")
+        stock_kind_combo.addItem("Ferro nervurado", "Ferro nervurado")
+        stock_kind_combo.addItem("Todos", "")
+
+        def _stock_kind(record: dict[str, Any], preview: dict[str, Any]) -> str:
+            formato = str(preview.get("formato", record.get("formato", "")) or "").strip().title()
+            secao = str(preview.get("secao_tipo", record.get("secao_tipo", "")) or "").strip().upper()
+            material_norm = self.backend.desktop_main.norm_text(str(record.get("material", "") or ""))
+            if formato == "Perfil" and secao == "L":
+                return "Cantoneira"
+            if formato == "Chapa" and any(token in material_norm for token in ("barra", "chata", "plat", "flat")):
+                return "Barra"
+            if formato in {"Chapa", "Tubo", "Perfil", "Cantoneira", "Barra", "Ferro Nervurado"}:
+                return "Ferro nervurado" if formato == "Ferro Nervurado" else formato
+            detected = str(self.backend.desktop_main.detect_materia_formato(record) or "").strip().title()
+            if detected == "Ferro Nervurado":
+                return "Ferro nervurado"
+            return detected
+
+        def _stock_label(record: dict[str, Any], preview: dict[str, Any]) -> str:
             material_txt = str(record.get("material", "") or "-").strip()
             dim_txt = str(preview.get("dimension_label", "") or "-").strip()
             esp_txt = str(preview.get("espessura", record.get("espessura", "")) or "").strip()
@@ -17852,7 +18268,29 @@ class QuotesPage(QWidget):
                 parts.append(f"Qtd {qty_txt}")
             if price_txt:
                 parts.append(f"Base {price_txt}")
-            stock_material_combo.addItem(" | ".join(part for part in parts if part and part != "-"), dict(record))
+            return " | ".join(part for part in parts if part and part != "-")
+
+        def refresh_stock_material_combo(preferred_id: str = "") -> None:
+            current_id = str(preferred_id or "").strip()
+            if not current_id:
+                payload = stock_material_combo.currentData()
+                if isinstance(payload, dict):
+                    current_id = str(payload.get("id", "") or "").strip()
+            wanted_kind = str(stock_kind_combo.currentData() or "").strip()
+            stock_material_combo.blockSignals(True)
+            stock_material_combo.clear()
+            stock_material_combo.addItem("", None)
+            for record, preview in stock_material_rows:
+                if wanted_kind and _stock_kind(record, preview) != wanted_kind:
+                    continue
+                stock_material_combo.addItem(_stock_label(record, preview), dict(record))
+            if current_id:
+                for index in range(stock_material_combo.count()):
+                    payload = stock_material_combo.itemData(index)
+                    if isinstance(payload, dict) and str(payload.get("id", "") or "").strip() == current_id:
+                        stock_material_combo.setCurrentIndex(index)
+                        break
+            stock_material_combo.blockSignals(False)
         initial_product_code = str(initial.get("produto_codigo", "") or "").strip()
         if initial_product_code:
             for index in range(product_combo.count()):
@@ -17886,8 +18324,18 @@ class QuotesPage(QWidget):
         mp_price_info = QLabel("")
         mp_price_info.setWordWrap(True)
         mp_price_info.setProperty("role", "muted")
-        mp_price_table_btn = QPushButton("Tabela precos MP")
+        mp_price_table_btn = QPushButton("Tabela preços matéria-prima")
         mp_price_table_btn.setProperty("variant", "secondary")
+        stock_create_btn = QPushButton("Criar material")
+        stock_create_btn.setProperty("variant", "secondary")
+        stock_tools_layout = QHBoxLayout()
+        stock_tools_layout.setContentsMargins(0, 0, 0, 0)
+        stock_tools_layout.setSpacing(8)
+        stock_tools_layout.addWidget(stock_create_btn)
+        stock_tools_layout.addWidget(mp_price_table_btn)
+        stock_tools_layout.addStretch(1)
+        stock_tools_host = QWidget()
+        stock_tools_host.setLayout(stock_tools_layout)
         stock_price_state = {
             "base_label": "EUR/kg",
             "metric_label": "Kg por unid.",
@@ -17896,6 +18344,7 @@ class QuotesPage(QWidget):
             "base_value": 0.0,
             "price_kg_equiv": 0.0,
             "busy": False,
+            "price_user_touched": False,
         }
         stock_line_meta = {
             "stock_material_id": str(initial.get("stock_material_id", "") or "").strip(),
@@ -17903,11 +18352,15 @@ class QuotesPage(QWidget):
             "material_subtype": str(initial.get("material_subtype", "") or "").strip(),
         }
         if stock_line_meta["stock_material_id"]:
-            for index in range(stock_material_combo.count()):
-                payload = stock_material_combo.itemData(index)
-                if isinstance(payload, dict) and str(payload.get("id", "") or "").strip() == stock_line_meta["stock_material_id"]:
-                    stock_material_combo.setCurrentIndex(index)
+            for record, preview in stock_material_rows:
+                if str(record.get("id", "") or "").strip() == stock_line_meta["stock_material_id"]:
+                    kind = _stock_kind(record, preview)
+                    for index in range(stock_kind_combo.count()):
+                        if str(stock_kind_combo.itemData(index) or "").strip() == kind:
+                            stock_kind_combo.setCurrentIndex(index)
+                            break
                     break
+        refresh_stock_material_combo(stock_line_meta["stock_material_id"])
         material_combo = QComboBox()
         material_combo.setEditable(True)
         for value in list(presets.get("materiais", []) or []):
@@ -18182,6 +18635,10 @@ class QuotesPage(QWidget):
                 mp_margin_spin.setValue(0.0)
                 mp_price_info.setText("")
                 return
+            previous_stock_id = str(stock_line_meta.get("stock_material_id", "") or "").strip()
+            current_stock_id = str(record.get("id", "") or "").strip()
+            if current_stock_id and current_stock_id != previous_stock_id:
+                stock_price_state["price_user_touched"] = False
             desc_txt = str(record.get("material", "") or "").strip()
             dim_txt = str(preview.get("dimension_label", "") or "").strip().replace(" mm", "")
             esp_txt = str(preview.get("espessura", record.get("espessura", "")) or "").strip()
@@ -18199,7 +18656,7 @@ class QuotesPage(QWidget):
                 desc_edit.setText(desc_txt)
             if not ref_ext_edit.text().strip() or current_type_token() == "stock_mp":
                 ref_ext_edit.setText(str(record.get("id", "") or "").strip() or desc_txt)
-            stock_line_meta["stock_material_id"] = str(record.get("id", "") or "").strip()
+            stock_line_meta["stock_material_id"] = current_stock_id
             stock_line_meta["material_family"] = str(record.get("material", "") or "").strip()
             stock_line_meta["material_subtype"] = str(preview.get("formato", record.get("formato", "")) or "Stock MP").strip()
             if float(qtd_spin.value() or 0) <= 0:
@@ -18215,14 +18672,15 @@ class QuotesPage(QWidget):
             mp_metric_spin.setSuffix(pricing["metric_suffix"])
             mp_metric_spin.setValue(float(pricing["metric_value"] or 0.0))
             mp_price_kg_spin.setSuffix("/m" if pricing["base_label"] == "EUR/m" else "/kg")
-            mp_price_kg_spin.setValue(float(pricing["base_value"] or 0.0))
+            if not bool(stock_price_state.get("price_user_touched", False)):
+                mp_price_kg_spin.setValue(float(pricing["base_value"] or 0.0))
             if float(initial.get("preco_unit", 0) or 0.0) > 0 and float(qtd_spin.value() or 0.0) > 0:
                 cost_unit = float(pricing["metric_value"] or 0.0) * float(pricing["base_value"] or 0.0)
                 if cost_unit > 0 and float(initial.get("price_markup_pct", 0) or 0.0) == 0.0:
                     mp_margin_spin.setValue(round(((float(initial.get("preco_unit", 0) or 0.0) / cost_unit) - 1.0) * 100.0, 2))
             sync_line_price_from_mp()
             mp_price_info.setText(
-                f"Stock MP ligado: {stock_line_meta['stock_material_id']} | "
+                f"Matéria-prima ligada: {stock_line_meta['stock_material_id']} | "
                 f"Base {pricing['base_value']:.4f} {pricing['base_label']} | "
                 f"Equiv. {float(pricing['price_kg_equiv'] or 0.0):.4f} EUR/kg"
             )
@@ -18230,6 +18688,7 @@ class QuotesPage(QWidget):
         def refresh_mp_price_panel() -> None:
             stock_id = str(stock_line_meta.get("stock_material_id", "") or "").strip()
             visible = bool(stock_id) and current_type_token() == "stock_mp"
+            tools_visible = current_type_token() == "stock_mp"
             if visible:
                 record = self.backend.material_by_id(stock_id)
                 preview = dict(self.backend.material_price_preview(record) or {}) if isinstance(record, dict) else {}
@@ -18244,12 +18703,14 @@ class QuotesPage(QWidget):
                 mp_metric_spin.setSuffix(pricing["metric_suffix"])
                 mp_price_kg_spin.setSuffix("/m" if pricing["base_label"] == "EUR/m" else "/kg")
                 mp_metric_spin.setValue(float(pricing["metric_value"] or 0.0))
-                if float(initial.get("price_base_value", 0) or 0.0) > 0:
+                if bool(stock_price_state.get("price_user_touched", False)):
+                    pass
+                elif float(initial.get("price_base_value", 0) or 0.0) > 0:
                     mp_price_kg_spin.setValue(float(initial.get("price_base_value", 0) or 0.0))
                 elif pricing["base_value"] > 0:
                     mp_price_kg_spin.setValue(float(pricing["base_value"] or 0.0))
                 mp_price_info.setText(
-                    f"Stock MP ligado: {stock_id} | {str(preview.get('formato', record.get('formato', '-')) if isinstance(record, dict) else '-')}"
+                    f"Matéria-prima ligada: {stock_id} | {str(preview.get('formato', record.get('formato', '-')) if isinstance(record, dict) else '-')}"
                     f" | Base {float(pricing['base_value'] or 0.0):.4f} {pricing['base_label']} | "
                     f"Equiv. {float(pricing['price_kg_equiv'] or 0.0):.4f} EUR/kg"
                 )
@@ -18259,8 +18720,9 @@ class QuotesPage(QWidget):
                 mp_price_kg_spin.setValue(0.0)
                 mp_margin_spin.setValue(0.0)
                 mp_price_info.setText("")
-            for widget in (mp_metric_spin, mp_price_kg_spin, mp_margin_spin, mp_price_table_btn, mp_price_info):
+            for widget in (mp_metric_spin, mp_price_kg_spin, mp_margin_spin, mp_price_info):
                 widget.setVisible(visible)
+            stock_tools_host.setVisible(tools_visible)
             for label_widget in (
                 form.labelForField(mp_metric_spin),
                 form.labelForField(mp_price_kg_spin),
@@ -18307,6 +18769,30 @@ class QuotesPage(QWidget):
             )
             if path:
                 drawing_edit.setText(path)
+
+        def create_stock_material() -> None:
+            dialog_editor = _MaterialEditorDialog(self.backend, dialog)
+            current_kind = str(stock_kind_combo.currentData() or "").strip()
+            if current_kind:
+                dialog_editor.formato_combo.setCurrentText("Perfil" if current_kind == "Perfil" else current_kind)
+            if dialog_editor.exec() != QDialog.Accepted:
+                return
+            try:
+                record = self.backend.add_material(dialog_editor.payload())
+            except Exception as exc:
+                QMessageBox.critical(dialog, "Matéria Prima - Stock", str(exc))
+                return
+            reload_stock_material_rows()
+            created_id = str(record.get("id", "") or "").strip()
+            if created_id:
+                preview = dict(self.backend.material_price_preview(record) or {})
+                kind = _stock_kind(dict(record), preview)
+                for index in range(stock_kind_combo.count()):
+                    if str(stock_kind_combo.itemData(index) or "").strip() == kind:
+                        stock_kind_combo.setCurrentIndex(index)
+                        break
+            refresh_stock_material_combo(created_id)
+            sync_stock_material_fields()
 
         docs_label = QLabel("")
         docs_label.setProperty("role", "muted")
@@ -18734,11 +19220,12 @@ class QuotesPage(QWidget):
         form.addRow("Descricao", desc_edit)
         form.addRow("Dimensao", dimension_edit)
         form.addRow("Codigo/unid", product_unid_edit)
-        form.addRow("Stock MP", stock_material_combo)
+        form.addRow("Tipo matéria-prima", stock_kind_combo)
+        form.addRow("Matéria Prima - Stock", stock_material_combo)
         form.addRow("Kg por unid.", mp_metric_spin)
-        form.addRow("Preco MP", mp_price_kg_spin)
+        form.addRow("Preço matéria-prima", mp_price_kg_spin)
         form.addRow("Margem", mp_margin_spin)
-        form.addRow("", mp_price_table_btn)
+        form.addRow("", stock_tools_host)
         form.addRow("", mp_price_info)
         form.addRow("Material", material_combo)
         form.addRow("Espessura", esp_combo)
@@ -18756,11 +19243,13 @@ class QuotesPage(QWidget):
         form_scroll.setFrameShape(QFrame.NoFrame)
         form_scroll.setWidget(form_host)
         layout.addWidget(form_scroll, 1)
+        mode_state = {"initialized": False, "last_token": initial_type}
 
         def sync_mode() -> None:
             token = current_type_token()
             line_type = current_line_type()
             is_stock_mp = token == "stock_mp"
+            entered_stock_mp = bool(mode_state["initialized"] and is_stock_mp and mode_state.get("last_token") != "stock_mp")
             is_piece = line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE
             is_product = line_type == self.backend.desktop_main.ORC_LINE_TYPE_PRODUCT
             ref_history.setEnabled(is_piece)
@@ -18777,8 +19266,10 @@ class QuotesPage(QWidget):
             btn_ops_detail.setEnabled(is_piece and not is_stock_mp)
             btn_ops_profiles.setEnabled(is_piece and not is_stock_mp)
             product_combo.setEnabled(is_product)
+            stock_kind_combo.setEnabled(is_stock_mp)
             stock_material_combo.setEnabled(is_stock_mp)
-            set_form_row_visible(stock_material_combo, is_stock_mp, "Stock MP")
+            set_form_row_visible(stock_kind_combo, is_stock_mp, "Tipo matéria-prima")
+            set_form_row_visible(stock_material_combo, is_stock_mp, "Matéria Prima - Stock")
             product_unid_edit.setEnabled(is_product or line_type == self.backend.desktop_main.ORC_LINE_TYPE_SERVICE)
             set_form_row_visible(ref_history, is_piece and not is_stock_mp, "Historico")
             set_form_row_visible(ref_int_edit, is_piece and not is_stock_mp and not template_mode, "Ref. interna")
@@ -18822,6 +19313,17 @@ class QuotesPage(QWidget):
                 base_state["laser_base_price"] = 0.0
                 ref_int_edit.clear()
                 drawing_edit.clear()
+                if entered_stock_mp:
+                    desc_edit.clear()
+                    ref_ext_edit.clear()
+                    dimension_edit.clear()
+                    material_combo.setCurrentText("")
+                    esp_combo.setCurrentText("")
+                    stock_line_meta["stock_material_id"] = ""
+                    stock_line_meta["material_family"] = ""
+                    stock_line_meta["material_subtype"] = ""
+                    stock_material_combo.setCurrentIndex(0)
+                    refresh_stock_material_combo("")
                 apply_operations("")
                 tempo_spin.setValue(0.0)
                 sync_stock_material_fields()
@@ -18852,22 +19354,29 @@ class QuotesPage(QWidget):
             sync_line_totals_from_meta()
             refresh_operation_cost_hint()
             refresh_mp_price_panel()
+            mode_state["initialized"] = True
+            mode_state["last_token"] = token
 
         type_combo.currentTextChanged.connect(lambda _value: sync_mode())
+        stock_kind_combo.currentTextChanged.connect(lambda _value: (refresh_stock_material_combo(), sync_stock_material_fields()))
         stock_material_combo.currentTextChanged.connect(lambda _value: sync_stock_material_fields())
         mp_price_kg_spin.valueChanged.connect(lambda _value: sync_line_price_from_mp())
         mp_margin_spin.valueChanged.connect(lambda _value: sync_line_price_from_mp())
         price_spin.valueChanged.connect(lambda _value: sync_margin_from_line_price())
+        mp_price_kg_spin.lineEdit().textEdited.connect(lambda _text: stock_price_state.__setitem__("price_user_touched", True))
         mp_price_table_btn.clicked.connect(
             lambda: (
                 self._material_price_manager_dialog(
-                    "",
+                    str(stock_kind_combo.currentData() or "").strip(),
                     str(stock_line_meta.get("stock_material_id", "") or "").strip(),
                     parent=dialog,
                 ),
+                reload_stock_material_rows(),
+                refresh_stock_material_combo(str(stock_line_meta.get("stock_material_id", "") or "").strip()),
                 refresh_mp_price_panel(),
             )
         )
+        stock_create_btn.clicked.connect(create_stock_material)
         sync_mode()
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -18876,7 +19385,7 @@ class QuotesPage(QWidget):
                 if current_type_token() == "stock_mp":
                     record, preview = stock_material_detail()
                     if not record and not material_combo.currentText().strip():
-                        QMessageBox.warning(dialog, "Stock MP", "Seleciona stock de matéria-prima ou indica o material manualmente.")
+                        QMessageBox.warning(dialog, "Matéria Prima - Stock", "Seleciona stock de matéria-prima ou indica o material manualmente.")
                         return
                     if not desc_edit.text().strip():
                         if record:
@@ -18963,7 +19472,11 @@ class QuotesPage(QWidget):
             "dimensoes": dimension_edit.text().strip(),
             "material": material_combo.currentText().strip() if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE else "",
             "material_family": str(stock_line_meta.get("material_family", "") or initial.get("material_family", "") or (material_combo.currentText().strip() if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE else "")).strip() if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE else "",
-            "material_subtype": str(stock_line_meta.get("material_subtype", "") or initial.get("material_subtype", "") or ("Stock MP" if token == "stock_mp" else "")).strip() if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE else "",
+            "material_subtype": str(
+                stock_line_meta.get("material_subtype", "")
+                or initial.get("material_subtype", "")
+                or (str(stock_kind_combo.currentData() or "").strip() if token == "stock_mp" else "")
+            ).strip() if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE else "",
             "material_supplied_by_client": bool(initial.get("material_supplied_by_client", False) or initial.get("material_fornecido_cliente", False)) if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE else False,
             "material_fornecido_cliente": bool(initial.get("material_fornecido_cliente", False) or initial.get("material_supplied_by_client", False)) if line_type == self.backend.desktop_main.ORC_LINE_TYPE_PIECE else False,
             "material_cost_included": (

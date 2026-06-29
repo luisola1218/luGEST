@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -29,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..widgets import CardFrame
+from ..widgets import CardFrame, FlexibleDecimalSpinBox as QDoubleSpinBox
 from lugest_core.laser.quote_engine import default_laser_quote_settings
 
 MATERIAL_FAMILY_ALIASES = {

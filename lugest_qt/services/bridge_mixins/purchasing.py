@@ -43,8 +43,11 @@ class PurchasingBridgeMixin:
         return str(self.desktop_main.peek_next_fornecedor_numero(self.ensure_data()))
 
     def _maybe_normalize_single_supplier_catalog(self) -> None:
+        if getattr(self, "_supplier_catalog_checked", False):
+            return
         if getattr(self, "_supplier_catalog_fixing", False):
             return
+        self._supplier_catalog_checked = True
         data = self.ensure_data()
         suppliers = list(data.get("fornecedores", []) or [])
         if len(suppliers) != 1:

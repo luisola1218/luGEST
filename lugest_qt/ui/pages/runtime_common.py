@@ -15,15 +15,21 @@ from PySide6.QtWidgets import (
 
 def fill_table(table: QTableWidget, rows: list[list[str]], align_center_from: int = 0) -> None:
     sorting_was_enabled = table.isSortingEnabled()
-    table.setSortingEnabled(False)
-    table.setRowCount(len(rows))
-    for row_index, row in enumerate(rows):
-        for col_index, value in enumerate(row):
-            item = QTableWidgetItem(str(value))
-            if col_index >= align_center_from:
-                item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
-            table.setItem(row_index, col_index, item)
-    table.setSortingEnabled(sorting_was_enabled)
+    table.setUpdatesEnabled(False)
+    try:
+        table.setSortingEnabled(False)
+        table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            for col_index, value in enumerate(row):
+                item = QTableWidgetItem(str(value))
+                if col_index >= align_center_from:
+                    item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
+                table.setItem(row_index, col_index, item)
+        table.setSortingEnabled(sorting_was_enabled)
+    finally:
+        if table.isSortingEnabled() != sorting_was_enabled:
+            table.setSortingEnabled(sorting_was_enabled)
+        table.setUpdatesEnabled(True)
 
 
 def state_visual(state: str) -> dict[str, str]:

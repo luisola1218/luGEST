@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -29,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..widgets import CardFrame
+from ..widgets import CardFrame, FlexibleDecimalSpinBox as QDoubleSpinBox
 
 
 _PROFILE_MASS_KG_M: dict[str, dict[str, float]] = {

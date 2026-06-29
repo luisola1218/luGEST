@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -29,7 +28,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 
-from ..widgets import CardFrame, StatCard
+from ..widgets import CardFrame, FlexibleDecimalSpinBox as QDoubleSpinBox, StatCard
 
 
 def _table_item(value: Any, *, center: bool = False) -> QTableWidgetItem:

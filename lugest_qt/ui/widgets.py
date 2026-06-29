@@ -1,6 +1,68 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
+import re
+
+from PySide6.QtGui import QValidator
+from PySide6.QtWidgets import QDoubleSpinBox, QFrame, QLabel, QVBoxLayout
+
+
+class FlexibleDecimalSpinBox(QDoubleSpinBox):
+    """QDoubleSpinBox that accepts both comma and dot as decimal separators."""
+
+    def _strip_affixes(self, text: str) -> str:
+        clean = str(text or "").replace("\u00a0", " ").strip()
+        prefix = str(self.prefix() or "")
+        suffix = str(self.suffix() or "")
+        if prefix and clean.lower().startswith(prefix.lower()):
+            clean = clean[len(prefix) :].strip()
+        if suffix and clean.lower().endswith(suffix.lower()):
+            clean = clean[: -len(suffix)].strip()
+        clean = re.sub(r"(?i)\b(eur|euro|euros)\b", "", clean)
+        clean = clean.replace("\u20ac", "").strip()
+        return clean
+
+    def _normalise_decimal_text(self, text: str) -> str:
+        clean = self._strip_affixes(text).replace(" ", "")
+        if not clean:
+            return ""
+        match = re.search(r"[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)(?:[.,]\d+)*", clean)
+        if not match:
+            return clean
+        clean = match.group(0)
+        if "," in clean and "." in clean:
+            # Treat the rightmost separator as decimal and the other as thousands.
+            if clean.rfind(",") > clean.rfind("."):
+                clean = clean.replace(".", "").replace(",", ".")
+            else:
+                clean = clean.replace(",", "")
+        elif clean.count(",") > 1:
+            head, tail = clean.rsplit(",", 1)
+            clean = head.replace(",", "") + "." + tail
+        elif clean.count(".") > 1:
+            head, tail = clean.rsplit(".", 1)
+            clean = head.replace(".", "") + "." + tail
+        else:
+            clean = clean.replace(",", ".")
+        return clean
+
+    def validate(self, text: str, pos: int) -> tuple[QValidator.State, str, int]:
+        normalized = self._normalise_decimal_text(text)
+        if normalized in {"", "-", "+", ".", "-.", "+."}:
+            return (QValidator.Intermediate, text, pos)
+        try:
+            value = float(normalized)
+        except ValueError:
+            return (QValidator.Invalid, text, pos)
+        if self.minimum() <= value <= self.maximum():
+            return (QValidator.Acceptable, text, pos)
+        return (QValidator.Intermediate, text, pos)
+
+    def valueFromText(self, text: str) -> float:
+        normalized = self._normalise_decimal_text(text)
+        try:
+            return float(normalized)
+        except ValueError:
+            return float(self.value())
 
 
 class CardFrame(QFrame):

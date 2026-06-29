@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QDateEdit,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -38,7 +37,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..widgets import CardFrame
+from ..widgets import CardFrame, FlexibleDecimalSpinBox as QDoubleSpinBox
 from .partners_pages import SuppliersPage
 from .runtime_common import (
     apply_state_chip as _apply_state_chip,

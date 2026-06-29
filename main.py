@@ -426,24 +426,19 @@ def apply_primary_theme_color(color_hex):
     THEME_SELECT_BG = _mix_hex_color(base, "#ffffff", 0.82)
     THEME_SELECT_FG = _shade_hex_color(base, 0.58)
 ORC_CONDICOES_DEFAULT = [
-    "Prazo de validade do orcamento: 30 dias",
+    "Prazo de validade do orcamento: 5 dias uteis",
     "Prazo de entrega: a confirmar com o cliente",
     "Condicoes de pagamento: conforme acordado",
     "Valores sem IVA",
 ]
-ORC_EMPRESA_INFO_RODAPE = [
-    "Barcelbal - Balancas e Basculas, S.A.",
-    "Rua dos Canteiros, n. 53 - Adaufe",
-    "Tel: 253 606 590  |  Email: geral@barcelbal.pt",
-    "NIF: 502403843  |  Capital Social: 100.000 EUR",
-]
+ORC_EMPRESA_INFO_RODAPE = []
 ORC_NOTAS_DEFAULT = [
     "PROPOSTA RETIFICADA PARA ESPESSURAS DEFINIDAS PELO CLIENTE.",
     "- Foi considerado servico de corte laser.",
     "- A materia-prima e transporte sao do encargo do cliente.",
 ]
 ORC_CONDICOES_GERAIS = [
-    "- Prazo de validade do orcamento: 30 dias, salvo rutura de stock.",
+    "- Prazo de validade do orcamento: 5 dias uteis, salvo rutura de stock.",
     "- Em caso de adjudicacao parcial da proposta os precos serao revistos.",
     "- Prazo de entrega: a combinar com o departamento de planeamento.",
     "- Os precos nao incluem IVA.",
@@ -2312,6 +2307,11 @@ def _mysql_sync_relational_schema(cur, data):
             """
         )
     tables = _mysql_existing_tables(cur, force=True)
+    if "clientes" in tables:
+        _mysql_ensure_column(cur, "clientes", "observacoes", "TEXT NULL")
+        _mysql_ensure_column(cur, "clientes", "prazo_entrega", "VARCHAR(120) NULL")
+        _mysql_ensure_column(cur, "clientes", "cond_pagamento", "VARCHAR(120) NULL")
+        _mysql_ensure_column(cur, "clientes", "obs_tecnicas", "TEXT NULL")
     if "fornecedores" in tables:
         _mysql_ensure_column(cur, "fornecedores", "nome", "VARCHAR(150) NULL")
         _mysql_ensure_column(cur, "fornecedores", "nif", "VARCHAR(20) NULL")
@@ -2661,6 +2661,8 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "orcamentos", "executado_por", "VARCHAR(120) NULL")
         _mysql_ensure_column(cur, "orcamentos", "nota_transporte", "TEXT NULL")
         _mysql_ensure_column(cur, "orcamentos", "notas_pdf", "TEXT NULL")
+        _mysql_ensure_column(cur, "orcamentos", "prazo_entrega_texto", "TEXT NULL")
+        _mysql_ensure_column(cur, "orcamentos", "prazo_entrega_data", "DATE NULL")
         _mysql_ensure_column(cur, "orcamentos", "desconto_perc", "DECIMAL(6,2) NULL")
         _mysql_ensure_column(cur, "orcamentos", "desconto_valor", "DECIMAL(12,2) NULL")
         _mysql_ensure_column(cur, "orcamentos", "subtotal_bruto", "DECIMAL(12,2) NULL")
@@ -3195,8 +3197,11 @@ def _mysql_sync_relational_schema(cur, data):
                 continue
             cur.execute(
                 """
-                INSERT INTO clientes (codigo, nome, nif, morada, contacto, email)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO clientes (
+                    codigo, nome, nif, morada, contacto, email,
+                    observacoes, prazo_entrega, cond_pagamento, obs_tecnicas
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     codigo,
@@ -3205,6 +3210,10 @@ def _mysql_sync_relational_schema(cur, data):
                     _clip(c.get("morada"), 255),
                     _clip(c.get("contacto"), 50),
                     _clip(c.get("email"), 150),
+                    c.get("observacoes"),
+                    _clip(c.get("prazo_entrega"), 120),
+                    _clip(c.get("cond_pagamento"), 120),
+                    c.get("obs_tecnicas"),
                 ),
             )
 
@@ -3545,10 +3554,10 @@ def _mysql_sync_relational_schema(cur, data):
                 """
                 INSERT INTO orcamentos (
                     numero, ano, data, estado, cliente_codigo, iva_perc, subtotal, total, numero_encomenda, nota_cliente,
-                    executado_por, nota_transporte, notas_pdf, desconto_perc, desconto_valor, subtotal_bruto,
+                    executado_por, nota_transporte, notas_pdf, prazo_entrega_texto, prazo_entrega_data, desconto_perc, desconto_valor, subtotal_bruto,
                     preco_transporte, custo_transporte, paletes,
                     peso_bruto_kg, volume_m3, transportadora_id, transportadora_nome, referencia_transporte, zona_transporte, posto_trabalho, meta_json
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     num,
@@ -3564,6 +3573,8 @@ def _mysql_sync_relational_schema(cur, data):
                     _clip(o.get("executado_por"), 120),
                     o.get("nota_transporte"),
                     o.get("notas_pdf"),
+                    o.get("prazo_entrega_texto"),
+                    _to_mysql_date(o.get("prazo_entrega_data")),
                     _to_num(o.get("desconto_perc")),
                     _to_num(o.get("desconto_valor")),
                     _to_num(o.get("subtotal_bruto")),
@@ -4798,12 +4809,14 @@ def _mysql_load_relational_data():
         with conn.cursor() as cur:
             tables = _mysql_existing_tables(cur)
 
-            def fetch_all(table, order_by=None):
+            def fetch_all(table, order_by=None, limit=None):
                 if table not in tables:
                     return []
                 sql = f"SELECT * FROM `{table}`"
                 if order_by:
                     sql += f" ORDER BY {order_by}"
+                if limit is not None:
+                    sql += f" LIMIT {int(limit)}"
                 cur.execute(sql)
                 return cur.fetchall() or []
 
@@ -4859,10 +4872,10 @@ def _mysql_load_relational_data():
                         "morada": str(r.get("morada", "") or ""),
                         "contacto": str(r.get("contacto", "") or ""),
                         "email": str(r.get("email", "") or ""),
-                        "observacoes": "",
-                        "prazo_entrega": "",
-                        "cond_pagamento": "",
-                        "obs_tecnicas": "",
+                        "observacoes": str(r.get("observacoes", "") or ""),
+                        "prazo_entrega": str(r.get("prazo_entrega", "") or ""),
+                        "cond_pagamento": str(r.get("cond_pagamento", "") or ""),
+                        "obs_tecnicas": str(r.get("obs_tecnicas", "") or ""),
                     }
                 )
 
@@ -5230,6 +5243,8 @@ def _mysql_load_relational_data():
                         "executado_por": str(o.get("executado_por", "") or ""),
                         "nota_transporte": str(o.get("nota_transporte", "") or ""),
                         "notas_pdf": str(o.get("notas_pdf", "") or ""),
+                        "prazo_entrega_texto": str(o.get("prazo_entrega_texto", "") or ""),
+                        "prazo_entrega_data": _db_to_iso(o.get("prazo_entrega_data"))[:10],
                         "nota_cliente": str(o.get("nota_cliente", "") or ""),
                         **dict(meta_payload or {}),
                     }
@@ -6160,7 +6175,8 @@ def _mysql_load_relational_data():
                     }
                 )
 
-            for row in fetch_all("quality_audit_log", "created_at, id"):
+            audit_rows = fetch_all("quality_audit_log", "created_at DESC, id DESC", limit=3000)
+            for row in reversed(audit_rows):
                 event = {
                     "id": str(row.get("id", "") or ""),
                     "created_at": _db_to_iso(row.get("created_at")),
@@ -6293,6 +6309,89 @@ def _mysql_save_relational_data(data, conn=None):
         raise last_error
 
 
+def mysql_upsert_cliente(row):
+    if not USE_MYSQL_STORAGE or not MYSQL_AVAILABLE:
+        return None
+    clean = {
+        "codigo": _clip((row or {}).get("codigo"), 20),
+        "nome": _clip((row or {}).get("nome"), 150),
+        "nif": _clip((row or {}).get("nif"), 20),
+        "morada": _clip((row or {}).get("morada"), 255),
+        "contacto": _clip((row or {}).get("contacto"), 50),
+        "email": _clip((row or {}).get("email"), 150),
+        "observacoes": str((row or {}).get("observacoes", "") or ""),
+        "prazo_entrega": _clip((row or {}).get("prazo_entrega"), 120),
+        "cond_pagamento": _clip((row or {}).get("cond_pagamento"), 120),
+        "obs_tecnicas": str((row or {}).get("obs_tecnicas", "") or ""),
+    }
+    if not clean["codigo"]:
+        raise ValueError("Codigo de cliente invalido.")
+    conn = _mysql_connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS clientes (
+                    codigo VARCHAR(20) PRIMARY KEY,
+                    nome VARCHAR(150) NULL,
+                    nif VARCHAR(20) NULL,
+                    morada VARCHAR(255) NULL,
+                    contacto VARCHAR(50) NULL,
+                    email VARCHAR(150) NULL,
+                    observacoes TEXT NULL,
+                    prazo_entrega VARCHAR(120) NULL,
+                    cond_pagamento VARCHAR(120) NULL,
+                    obs_tecnicas TEXT NULL
+                )
+                """
+            )
+            _mysql_ensure_column(cur, "clientes", "observacoes", "TEXT NULL")
+            _mysql_ensure_column(cur, "clientes", "prazo_entrega", "VARCHAR(120) NULL")
+            _mysql_ensure_column(cur, "clientes", "cond_pagamento", "VARCHAR(120) NULL")
+            _mysql_ensure_column(cur, "clientes", "obs_tecnicas", "TEXT NULL")
+            cur.execute(
+                """
+                INSERT INTO clientes (
+                    codigo, nome, nif, morada, contacto, email,
+                    observacoes, prazo_entrega, cond_pagamento, obs_tecnicas
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    nome=VALUES(nome),
+                    nif=VALUES(nif),
+                    morada=VALUES(morada),
+                    contacto=VALUES(contacto),
+                    email=VALUES(email),
+                    observacoes=VALUES(observacoes),
+                    prazo_entrega=VALUES(prazo_entrega),
+                    cond_pagamento=VALUES(cond_pagamento),
+                    obs_tecnicas=VALUES(obs_tecnicas)
+                """,
+                (
+                    clean["codigo"],
+                    clean["nome"],
+                    clean["nif"],
+                    clean["morada"],
+                    clean["contacto"],
+                    clean["email"],
+                    clean["observacoes"],
+                    clean["prazo_entrega"],
+                    clean["cond_pagamento"],
+                    clean["obs_tecnicas"],
+                ),
+            )
+        conn.commit()
+        return dict(clean)
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
 def mysql_refresh_runtime_impulse_data(data, cleanup_orphans=True):
     if not USE_MYSQL_STORAGE or not MYSQL_AVAILABLE or not isinstance(data, dict):
         return
@@ -6300,7 +6399,7 @@ def mysql_refresh_runtime_impulse_data(data, cleanup_orphans=True):
     try:
         conn = _mysql_connect()
         with conn.cursor() as cur:
-            tables = _mysql_existing_tables(cur, force=True)
+            tables = _mysql_existing_tables(cur, force=bool(cleanup_orphans))
             if cleanup_orphans:
                 if "op_eventos" in tables and "encomendas" in tables and "pecas" in tables:
                     cur.execute(
@@ -6973,6 +7072,8 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
                         executado_por VARCHAR(120),
                         nota_transporte TEXT,
                         notas_pdf TEXT,
+                        prazo_entrega_texto TEXT NULL,
+                        prazo_entrega_data DATE NULL,
                         preco_transporte DECIMAL(12,2) NULL,
                         transportadora_id VARCHAR(30) NULL,
                         transportadora_nome VARCHAR(150) NULL,
@@ -6987,6 +7088,8 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
                 _mysql_ensure_column(cur, "orcamentos", "executado_por", "VARCHAR(120) NULL")
                 _mysql_ensure_column(cur, "orcamentos", "nota_transporte", "TEXT NULL")
                 _mysql_ensure_column(cur, "orcamentos", "notas_pdf", "TEXT NULL")
+                _mysql_ensure_column(cur, "orcamentos", "prazo_entrega_texto", "TEXT NULL")
+                _mysql_ensure_column(cur, "orcamentos", "prazo_entrega_data", "DATE NULL")
                 _mysql_ensure_column(cur, "orcamentos", "desconto_perc", "DECIMAL(6,2) NULL")
                 _mysql_ensure_column(cur, "orcamentos", "desconto_valor", "DECIMAL(12,2) NULL")
                 _mysql_ensure_column(cur, "orcamentos", "subtotal_bruto", "DECIMAL(12,2) NULL")
@@ -7052,10 +7155,10 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
                 """
                 INSERT INTO orcamentos (
                     numero, ano, data, estado, cliente_codigo, iva_perc, subtotal, total, numero_encomenda, nota_cliente,
-                    executado_por, nota_transporte, notas_pdf, desconto_perc, desconto_valor, subtotal_bruto,
+                    executado_por, nota_transporte, notas_pdf, prazo_entrega_texto, prazo_entrega_data, desconto_perc, desconto_valor, subtotal_bruto,
                     preco_transporte, transportadora_id, transportadora_nome,
                     referencia_transporte, zona_transporte, posto_trabalho, meta_json
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     ano=VALUES(ano),
                     data=VALUES(data),
@@ -7069,6 +7172,8 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
                     executado_por=VALUES(executado_por),
                     nota_transporte=VALUES(nota_transporte),
                     notas_pdf=VALUES(notas_pdf),
+                    prazo_entrega_texto=VALUES(prazo_entrega_texto),
+                    prazo_entrega_data=VALUES(prazo_entrega_data),
                     desconto_perc=VALUES(desconto_perc),
                     desconto_valor=VALUES(desconto_valor),
                     subtotal_bruto=VALUES(subtotal_bruto),
@@ -7094,6 +7199,8 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
                     _clip(orc.get("executado_por"), 120),
                     orc.get("nota_transporte"),
                     orc.get("notas_pdf"),
+                    orc.get("prazo_entrega_texto"),
+                    _to_mysql_date(orc.get("prazo_entrega_data")),
                     _to_num(orc.get("desconto_perc")),
                     _to_num(orc.get("desconto_valor")),
                     _to_num(orc.get("subtotal_bruto")),

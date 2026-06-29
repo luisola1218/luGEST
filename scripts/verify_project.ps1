@@ -49,6 +49,9 @@ print(f"Compiled {len(files)} Python files")
 if (-not $SkipCoreFlows) {
     Write-Host "A correr fluxos principais..." -ForegroundColor Cyan
     & $python (Join-Path $repoRoot 'scripts\verify_core_flows.py')
+
+    Write-Host "A correr performance Qt..." -ForegroundColor Cyan
+    & $python (Join-Path $repoRoot 'scripts\verify_qt_performance.py')
 }
 
 Write-Host "Verificacao concluida." -ForegroundColor Green

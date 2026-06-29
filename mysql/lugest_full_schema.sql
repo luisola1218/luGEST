@@ -52,6 +52,10 @@ CREATE TABLE IF NOT EXISTS `clientes` (
   `morada` varchar(255) DEFAULT NULL,
   `contacto` varchar(50) DEFAULT NULL,
   `email` varchar(150) DEFAULT NULL,
+  `observacoes` text,
+  `prazo_entrega` varchar(120) DEFAULT NULL,
+  `cond_pagamento` varchar(120) DEFAULT NULL,
+  `obs_tecnicas` text,
   PRIMARY KEY (`codigo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 

@@ -84,10 +84,10 @@ def _make_context() -> SimpleNamespace:
     return ctx
 
 
-def _refresh_ctx_runtime(ctx: SimpleNamespace) -> None:
+def _refresh_ctx_runtime(ctx: SimpleNamespace, *, cleanup_orphans: bool = False) -> None:
     try:
         if hasattr(ctx, "refresh_runtime_impulse_data"):
-            ctx.refresh_runtime_impulse_data(cleanup_orphans=True)
+            ctx.refresh_runtime_impulse_data(cleanup_orphans=cleanup_orphans)
     except Exception:
         pass
 

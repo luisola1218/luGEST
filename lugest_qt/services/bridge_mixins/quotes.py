@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import copy
 import json
 import os
 import tempfile
@@ -13,6 +14,7 @@ from lugest_infra.pdf.text import wrap_text as _pdf_wrap_text
 
 
 ORC_STANDARD_IVA_PERC = 23.0
+ORC_DEFAULT_DELIVERY_TEXT = "A combinar com o departamento de planeamento."
 
 
 class QuotesBridgeMixin:
@@ -20,6 +22,9 @@ class QuotesBridgeMixin:
 
     def _quote_standard_iva_perc(self) -> float:
         return ORC_STANDARD_IVA_PERC
+
+    def _quote_default_delivery_text(self) -> str:
+        return ORC_DEFAULT_DELIVERY_TEXT
 
     def _normalize_quote_discount_mode(self, value: Any) -> str:
         mode = str(value or "").strip().lower()
@@ -493,6 +498,8 @@ class QuotesBridgeMixin:
             "executado_por": str(orc.get("executado_por", "") or "").strip(),
             "nota_transporte": str(orc.get("nota_transporte", "") or "").strip(),
             "notas_pdf": str(orc.get("notas_pdf", "") or "").strip(),
+            "prazo_entrega_texto": str(orc.get("prazo_entrega_texto", "") or self._quote_default_delivery_text()).strip(),
+            "prazo_entrega_data": str(orc.get("prazo_entrega_data", "") or "").strip()[:10],
             "nota_cliente": str(orc.get("nota_cliente", "") or "").strip(),
             "nesting_bridge": dict(orc.get("latest_nesting_bridge", {}) or {}),
             "nesting_group_key": str(orc.get("latest_nesting_group_key", "") or "").strip(),
@@ -1232,6 +1239,14 @@ class QuotesBridgeMixin:
         )
         referencia_transporte = str(payload.get("referencia_transporte", (existing or {}).get("referencia_transporte", "")) or "").strip()
         zona_transporte = str(payload.get("zona_transporte", (existing or {}).get("zona_transporte", "")) or "").strip()
+        prazo_entrega_texto = str(
+            payload.get(
+                "prazo_entrega_texto",
+                (existing or {}).get("prazo_entrega_texto", self._quote_default_delivery_text()),
+            )
+            or self._quote_default_delivery_text()
+        ).strip()
+        prazo_entrega_data = str(payload.get("prazo_entrega_data", (existing or {}).get("prazo_entrega_data", "")) or "").strip()[:10]
         subtotal_linhas = 0.0
         subtotal_com_desconto = 0.0
         desconto_valor = 0.0
@@ -1290,6 +1305,8 @@ class QuotesBridgeMixin:
             "executado_por": str(payload.get("executado_por", "") or (existing or {}).get("executado_por", "") or "").strip(),
             "nota_transporte": str(payload.get("nota_transporte", "") or (existing or {}).get("nota_transporte", "") or "").strip(),
             "notas_pdf": str(payload.get("notas_pdf", "") or (existing or {}).get("notas_pdf", "") or "").strip(),
+            "prazo_entrega_texto": prazo_entrega_texto,
+            "prazo_entrega_data": prazo_entrega_data,
             "nota_cliente": str(payload.get("nota_cliente", "") or (existing or {}).get("nota_cliente", "") or "").strip(),
         }
         if existing is None:
@@ -1303,7 +1320,18 @@ class QuotesBridgeMixin:
             existing.update(note)
             note = existing
         self._sync_quote_piece_registry(note)
-        self._save(force=True)
+        upsert = getattr(self.desktop_main, "mysql_upsert_orcamento_com_linhas", None)
+        if callable(upsert):
+            upsert(data, note)
+            if isinstance(self._base_data_snapshot, dict):
+                base_rows = self._base_data_snapshot.setdefault("orcamentos", [])
+                base_existing = next((row for row in base_rows if str(row.get("numero", "") or "").strip() == numero), None)
+                if base_existing is None:
+                    base_rows.append(copy.deepcopy(note))
+                else:
+                    base_existing.update(copy.deepcopy(note))
+        else:
+            self._save(force=True)
         return self.orc_detail(numero)
 
     def orc_remove(self, numero: str) -> None:
@@ -1920,7 +1948,7 @@ class QuotesBridgeMixin:
             "transporte_numero": "",
             "estado_transporte": "",
             "data_criacao": self.desktop_main.now_iso(),
-            "data_entrega": "",
+            "data_entrega": str(orc.get("prazo_entrega_data", "") or "").strip()[:10],
             "tempo": 0.0,
             "tempo_estimado": 0.0,
             "cativar": False,

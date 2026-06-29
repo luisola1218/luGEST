@@ -1167,6 +1167,18 @@ def _build_orc_notes_lines(self, orc):
     _ensure_configured()
     extra = (orc.get("notas_pdf", "") or "").strip()
     notes = [str(ln or "").strip() for ln in extra.splitlines() if str(ln or "").strip()]
+    prazo_texto = str((orc or {}).get("prazo_entrega_texto", "") or "").strip()
+    prazo_data = str((orc or {}).get("prazo_entrega_data", "") or "").strip()[:10]
+    if prazo_data:
+        try:
+            prazo_display = datetime.fromisoformat(prazo_data).strftime("%d/%m/%Y")
+        except Exception:
+            prazo_display = prazo_data
+        delivery_line = f"- Prazo de entrega previsto: {prazo_display}."
+    else:
+        delivery_line = f"- Prazo de entrega: {prazo_texto or 'A combinar com o departamento de planeamento.'}"
+    if norm_text(delivery_line) not in {norm_text(line) for line in notes}:
+        notes.append(delivery_line)
     lines = [dict(row or {}) for row in list((orc or {}).get("linhas", []) or []) if isinstance(row, dict)]
     if not lines:
         return notes
@@ -1716,7 +1728,7 @@ def convert_orc_to_encomenda(self):
         "cliente": cliente_code,
         "nota_cliente": nota_cliente,
         "data_criacao": now_iso(),
-        "data_entrega": "",
+        "data_entrega": str(orc.get("prazo_entrega_data", "") or "").strip()[:10],
         "tempo": 0.0,
         "tempo_estimado": 0.0,
         "cativar": False,
@@ -2253,6 +2265,15 @@ def _render_orc_pdf_modern(self, path, orc):
     nota_transporte = str(orc.get("nota_transporte", "") or "").strip()
     nota_cliente = str(orc.get("nota_cliente", "") or "").strip()
     numero_encomenda = str(orc.get("numero_encomenda", "") or "").strip()
+    prazo_entrega_texto = str(orc.get("prazo_entrega_texto", "") or "A combinar com o departamento de planeamento.").strip()
+    prazo_entrega_data = str(orc.get("prazo_entrega_data", "") or "").strip()[:10]
+    if prazo_entrega_data:
+        try:
+            prazo_entrega_display = datetime.fromisoformat(prazo_entrega_data).strftime("%d/%m/%Y")
+        except Exception:
+            prazo_entrega_display = prazo_entrega_data
+    else:
+        prazo_entrega_display = prazo_entrega_texto
     lines = list(orc.get("linhas", []) or [])
     notes_lines = list(_build_orc_notes_lines(self, orc) or [])
     operations_summary = list(_extract_orc_operacoes_resumo(self, orc) or [])
@@ -2624,8 +2645,8 @@ def _render_orc_pdf_modern(self, path, orc):
                 [
                     f"Nota cliente: {nota_cliente or '-'}",
                     f"Transporte: {nota_transporte or '-'}",
+                    f"Prazo entrega: {prazo_entrega_display or '-'}",
                     f"Encomenda associada: {numero_encomenda or '-'}",
-                    f"Operações no orçamento: {' / '.join(operations_summary) or '-'}",
                 ],
                 font_size=8.2,
             )

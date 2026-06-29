@@ -289,12 +289,25 @@ class LegacyBackend(
         self.data: dict[str, Any] | None = None
         self._base_data_snapshot: dict[str, Any] | None = None
         self._data_loaded_at = 0.0
-        self._reload_cache_ttl_sec = 4.0
+        self._reload_cache_ttl_sec = self._env_float("LUGEST_RELOAD_CACHE_TTL_SEC", 30.0, minimum=0.0, maximum=300.0)
+        self._op_mysql_ops_status_cache: dict[tuple[str, str], tuple[float, list[dict[str, Any]]]] = {}
+        self._op_mysql_ops_status_ttl_sec = self._env_float("LUGEST_OPERATOR_OPS_STATUS_TTL_SEC", 2.0, minimum=0.0, maximum=30.0)
         self._trial_status_cache: dict[str, Any] | None = None
         self._trial_status_loaded_at = 0.0
         self._trial_status_cache_ttl_sec = 5.0
         self.user: dict[str, Any] | None = None
         self._qt_config_cache: dict[str, Any] | None = None
+
+    def _env_float(self, name: str, default: float, *, minimum: float | None = None, maximum: float | None = None) -> float:
+        try:
+            value = float(os.environ.get(name, "") or default)
+        except Exception:
+            value = float(default)
+        if minimum is not None:
+            value = max(float(minimum), value)
+        if maximum is not None:
+            value = min(float(maximum), value)
+        return value
 
     @property
     def branding(self) -> dict[str, Any]:
@@ -578,12 +591,26 @@ class LegacyBackend(
         current_map: dict[str, Any] = {}
         base_map: dict[str, Any] = {}
         latest_map: dict[str, Any] = {}
-        for collection, target in ((current_value, current_map), (base_value, base_map), (latest_value, latest_map)):
+        unkeyed_current = []
+        unkeyed_base_signatures: set[str] = set()
+        unkeyed_latest_signatures: set[str] = set()
+        for collection, target, unkeyed in (
+            (current_value, current_map, unkeyed_current),
+            (base_value, base_map, None),
+            (latest_value, latest_map, None),
+        ):
             for item in collection:
                 key = item_key(item)
-                if not key:
-                    return None
-                target[key] = item
+                if key:
+                    target[key] = item
+                    continue
+                signature = self._bucket_signature(item)
+                if unkeyed is not None:
+                    unkeyed.append((signature, item))
+                elif collection is base_value:
+                    unkeyed_base_signatures.add(signature)
+                else:
+                    unkeyed_latest_signatures.add(signature)
 
         merged = [copy.deepcopy(item) for item in latest_value]
         merged_index = {item_key(item): idx for idx, item in enumerate(merged)}
@@ -602,7 +629,20 @@ class LegacyBackend(
                 else:
                     merged.append(cloned)
 
-        return [item for item in merged if item is not None]
+        keyed = [item for item in merged if item is not None]
+        current_unkeyed_signatures = {signature for signature, _item in unkeyed_current}
+        for item in latest_value:
+            if item_key(item):
+                continue
+            signature = self._bucket_signature(item)
+            if signature in unkeyed_base_signatures and signature not in current_unkeyed_signatures:
+                continue
+            if signature not in current_unkeyed_signatures:
+                keyed.append(copy.deepcopy(item))
+        for signature, item in unkeyed_current:
+            if signature not in unkeyed_latest_signatures or signature not in unkeyed_base_signatures:
+                keyed.append(copy.deepcopy(item))
+        return keyed
 
     def _merge_latest_for_save(self) -> tuple[dict[str, Any], list[str]]:
         current = self.ensure_data()
@@ -2484,6 +2524,11 @@ class LegacyBackend(
                     "record": material,
                 }
             )
+        if assigned_internal_lots:
+            try:
+                self._save(force=True)
+            except Exception:
+                pass
         return rows
 
     def material_by_id(self, material_id: str) -> dict[str, Any] | None:
@@ -3254,11 +3299,6 @@ class LegacyBackend(
                     "detalhes": str(entry.get("detalhes", "")),
                 }
             )
-        if assigned_internal_lots:
-            try:
-                self._save(force=True)
-            except Exception:
-                pass
         return rows
 
     def _material_history_entry_row(self, entry: dict[str, Any], record: dict[str, Any] | None = None) -> dict[str, str]:
@@ -6035,13 +6075,9 @@ class LegacyBackend(
 
     def _piece_operation_mysql_quantities(self, enc_num: str, piece_id: str, operation: str) -> dict[str, float]:
         op_norm = self.desktop_main.normalize_operacao_nome(operation or "") or str(operation or "").strip()
-        status_fn = getattr(self.operador_actions, "_mysql_ops_status_for_piece", None)
-        if not callable(status_fn) or not op_norm:
+        if not op_norm:
             return {"ok": 0.0, "nok": 0.0, "qual": 0.0, "total": 0.0}
-        try:
-            rows = list(status_fn(str(enc_num or "").strip(), str(piece_id or "").strip()) or [])
-        except Exception:
-            return {"ok": 0.0, "nok": 0.0, "qual": 0.0, "total": 0.0}
+        rows = self._operator_mysql_ops_status_rows(enc_num, piece_id)
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -6053,6 +6089,47 @@ class LegacyBackend(
             qual = self._parse_float(row.get("qual_qty", row.get("qtd_qual", 0)), 0)
             return {"ok": round(ok, 4), "nok": round(nok, 4), "qual": round(qual, 4), "total": round(ok + nok + qual, 4)}
         return {"ok": 0.0, "nok": 0.0, "qual": 0.0, "total": 0.0}
+
+    def _operator_mysql_ops_status_rows(self, enc_num: str, piece_id: str) -> list[dict[str, Any]]:
+        enc_txt = str(enc_num or "").strip()
+        piece_txt = str(piece_id or "").strip()
+        if not enc_txt or not piece_txt:
+            return []
+        key = (enc_txt, piece_txt)
+        ttl = float(getattr(self, "_op_mysql_ops_status_ttl_sec", 2.0) or 0.0)
+        cache = getattr(self, "_op_mysql_ops_status_cache", None)
+        if isinstance(cache, dict) and ttl > 0:
+            cached = cache.get(key)
+            if cached is not None:
+                loaded_at, rows = cached
+                if (time.time() - float(loaded_at or 0.0)) <= ttl:
+                    return [dict(row or {}) for row in list(rows or [])]
+        status_fn = getattr(self.operador_actions, "_mysql_ops_status_for_piece", None)
+        if not callable(status_fn):
+            return []
+        try:
+            rows = [dict(row or {}) for row in list(status_fn(enc_txt, piece_txt) or []) if isinstance(row, dict)]
+        except Exception:
+            rows = []
+        if isinstance(cache, dict) and ttl > 0:
+            cache[key] = (time.time(), [dict(row or {}) for row in rows])
+        return rows
+
+    def _operator_invalidate_ops_status_cache(self, enc_num: str = "", piece_id: str = "") -> None:
+        cache = getattr(self, "_op_mysql_ops_status_cache", None)
+        if not isinstance(cache, dict) or not cache:
+            return
+        enc_txt = str(enc_num or "").strip()
+        piece_txt = str(piece_id or "").strip()
+        if enc_txt and piece_txt:
+            cache.pop((enc_txt, piece_txt), None)
+            return
+        if enc_txt:
+            for key in list(cache.keys()):
+                if key and key[0] == enc_txt:
+                    cache.pop(key, None)
+            return
+        cache.clear()
 
     def _piece_operation_recorded_total(self, enc_num: str, piece: dict[str, Any], operation: str, limit: float = 0.0) -> float:
         op_row = self._piece_operation_row(piece, operation)
@@ -6570,15 +6647,10 @@ class LegacyBackend(
             else:
                 pending_ops.append(op_name)
         live_status_map: dict[str, dict[str, Any]] = {}
-        status_fn = getattr(self.operador_actions, "_mysql_ops_status_for_piece", None)
-        if callable(status_fn):
-            try:
-                for row in list(status_fn(str(enc.get("numero", "") or ""), str(piece.get("id", "") or "")) or []):
-                    op_name = self.desktop_main.normalize_operacao_nome((row or {}).get("operacao", "")) or str((row or {}).get("operacao", "") or "").strip()
-                    if op_name:
-                        live_status_map[op_name] = dict(row or {})
-            except Exception:
-                live_status_map = {}
+        for row in self._operator_mysql_ops_status_rows(str(enc.get("numero", "") or ""), str(piece.get("id", "") or "")):
+            op_name = self.desktop_main.normalize_operacao_nome((row or {}).get("operacao", "")) or str((row or {}).get("operacao", "") or "").strip()
+            if op_name:
+                live_status_map[op_name] = dict(row or {})
         active_pending_ops = []
         for op_name in pending_ops:
             live_state = self.desktop_main.norm_text((live_status_map.get(op_name, {}) or {}).get("estado", ""))
@@ -6638,6 +6710,7 @@ class LegacyBackend(
             operator_name,
             valid_operators=self.operator_names(),
         )
+        self._operator_invalidate_ops_status_cache(str(enc.get("numero", "") or ""), str(piece.get("id", "") or ""))
         acquired = list(result.get("acquired", []) or [])
         blocked = list(result.get("blocked", []) or [])
         if not acquired:
@@ -6749,7 +6822,8 @@ class LegacyBackend(
             qual_val,
             valid_operators=self.operator_names(),
             complete=operation_complete,
-        )
+            )
+        self._operator_invalidate_ops_status_cache(str(enc.get("numero", "") or ""), str(piece.get("id", "") or ""))
         blocked = list(result.get("blocked", []) or [])
         if blocked:
             blocked_state = str((blocked[0] or {}).get("estado", "") or "").strip()
@@ -6780,7 +6854,8 @@ class LegacyBackend(
                             valid_operators=self.operator_names(),
                             complete=operation_complete,
                         )
-                        blocked = list(result.get("blocked", []) or [])
+                    self._operator_invalidate_ops_status_cache(str(enc.get("numero", "") or ""), str(piece.get("id", "") or ""))
+                    blocked = list(result.get("blocked", []) or [])
         if blocked:
             owner = str((blocked[0] or {}).get("operador", "") or "").strip() or "outro operador"
             state = str((blocked[0] or {}).get("estado", "") or "").strip()
@@ -6889,6 +6964,7 @@ class LegacyBackend(
         if ctx["has_open_avaria"]:
             raise ValueError("Existe uma avaria aberta. Fecha a avaria antes de retomar a peca.")
         self.operador_actions._mysql_ops_release_piece(str(enc.get("numero", "") or ""), str(piece.get("id", "") or ""))
+        self._operator_invalidate_ops_status_cache(str(enc.get("numero", "") or ""), str(piece.get("id", "") or ""))
         motivo = str(piece.get("interrupcao_peca_motivo", "") or "").strip()
         piece.setdefault("hist", []).append({"ts": self.desktop_main.now_iso(), "user": operator_name, "acao": "Retomar Peca", "motivo": motivo})
         piece["interrupcao_peca_motivo"] = ""
@@ -6933,6 +7009,7 @@ class LegacyBackend(
         piece["operacoes_fluxo"] = fluxo
         piece.setdefault("hist", []).append({"ts": ts_pause, "user": operator_name, "acao": "Interromper Peca", "motivo": motivo})
         self.operador_actions._mysql_ops_release_piece(str(enc.get("numero", "") or ""), str(piece.get("id", "") or ""))
+        self._operator_invalidate_ops_status_cache(str(enc.get("numero", "") or ""), str(piece.get("id", "") or ""))
         log_fn = getattr(self.desktop_main, "mysql_log_production_event", None)
         if callable(log_fn):
             log_fn(
@@ -6993,6 +7070,7 @@ class LegacyBackend(
         piece["operacoes_fluxo"] = fluxo
         piece.setdefault("hist", []).append({"ts": ts_now, "user": operator_name, "acao": "Registar Avaria", "motivo": motivo})
         self.operador_actions._mysql_ops_release_piece(str(enc.get("numero", "") or ""), str(piece.get("id", "") or ""))
+        self._operator_invalidate_ops_status_cache(str(enc.get("numero", "") or ""), str(piece.get("id", "") or ""))
         log_fn = getattr(self.desktop_main, "mysql_log_production_event", None)
         if callable(log_fn):
             log_fn(
@@ -7064,6 +7142,7 @@ class LegacyBackend(
                 causa_paragem=motivo,
                 info=self._operator_info(operator_name, posto, f"Avaria fechada no Qt Operador. Motivo: {motivo}"),
             )
+        self._operator_invalidate_ops_status_cache(str(enc.get("numero", "") or ""), str(piece.get("id", "") or ""))
         self._save_operator_state(enc)
         return {
             "piece": piece,
@@ -8636,10 +8715,17 @@ class LegacyBackend(
                     need["preferred_dimensao"] = ""
                     need["preferred_disponivel"] = 0.0
                 else:
-                    need["preferred_lot"] = str(need.get("preferred_lot", "") or "").strip()
-                    need["preferred_material_id"] = str(need.get("preferred_material_id", "") or "").strip()
-                    need["preferred_dimensao"] = str(need.get("preferred_dimensao", "") or "").strip()
-                    need["preferred_disponivel"] = round(self._parse_float(need.get("preferred_disponivel", 0), 0), 2)
+                    assigned_candidate = standard_pool[index - 1] if index <= len(standard_pool) else {}
+                    if assigned_candidate:
+                        need["preferred_lot"] = str(assigned_candidate.get("lote", "") or "").strip()
+                        need["preferred_material_id"] = str(assigned_candidate.get("material_id", "") or "").strip()
+                        need["preferred_dimensao"] = str(assigned_candidate.get("dimensao", "") or "").strip()
+                        need["preferred_disponivel"] = round(self._parse_float(assigned_candidate.get("disponivel", 0), 0), 2)
+                    else:
+                        need["preferred_lot"] = str(need.get("preferred_lot", "") or "").strip()
+                        need["preferred_material_id"] = str(need.get("preferred_material_id", "") or "").strip()
+                        need["preferred_dimensao"] = str(need.get("preferred_dimensao", "") or "").strip()
+                        need["preferred_disponivel"] = round(self._parse_float(need.get("preferred_disponivel", 0), 0), 2)
                 need["lot_change_required"] = False
                 need["lot_change_from_lot"] = ""
                 need["lot_change_to_lot"] = str(need.get("preferred_lot", "") or "").strip()
@@ -9031,7 +9117,10 @@ class LegacyBackend(
                 )
                 continue
 
-            if reservations and next_action_hours is not None and next_action_hours <= 24:
+            if material_cativado and next_action_hours is not None and next_action_hours <= 24:
+                keep_ready_qty = self._parse_float(need.get("reserved_qty", 0), 0)
+                if keep_ready_qty <= 0:
+                    keep_ready_qty = self._parse_float(need.get("quantidade_preparar", need.get("piece_qty", 0)), 0)
                 _append_suggestion(
                     "keep_ready",
                     "Evitar arrumação desnecessária",
@@ -9040,7 +9129,7 @@ class LegacyBackend(
                         f" em {need.get('next_action_label', '-')}. Mantém disponível."
                     ),
                     [
-                        f"Quantidade cativada: {self._fmt(need.get('reserved_qty', 0))}",
+                        f"Quantidade cativada: {self._fmt(keep_ready_qty)}",
                         f"Chapa/Lote atual: {current_lot or need.get('chapa', '-')}",
                         "Ação sugerida: não arrumar este material no stock intermédio.",
                     ],
@@ -10754,7 +10843,18 @@ class LegacyBackend(
         else:
             existing.update(row)
             target = existing
-        self._save(force=True)
+        upsert = getattr(self.desktop_main, "mysql_upsert_cliente", None)
+        if callable(upsert):
+            upsert(target)
+            if isinstance(self._base_data_snapshot, dict):
+                base_rows = self._base_data_snapshot.setdefault("clientes", [])
+                base_existing = next((item for item in base_rows if str(item.get("codigo", "") or "").strip() == codigo), None)
+                if base_existing is None:
+                    base_rows.append(copy.deepcopy(target))
+                else:
+                    base_existing.update(copy.deepcopy(target))
+        else:
+            self._save(force=True)
         return dict(target)
 
     def client_remove(self, codigo: str) -> None:
@@ -12689,9 +12789,11 @@ class LegacyBackend(
             canvas_obj.drawString(margin + 3, group_y + 6.2 * mm, self._operator_pdf_text(f"{material_group} | {esp_group} mm"))
             canvas_obj.setFont("Helvetica", 6.4)
             canvas_obj.drawString(margin + 3, group_y + 2.4 * mm, self._operator_pdf_text(f"{len(group_rows)} peça(s) nesta espessura"))
-            self._draw_code128_fit(canvas_obj, group_code, page_w - margin - 86 * mm, group_y + 3.0 * mm, 82 * mm, 5.2 * mm, min_bar_width=0.26, max_bar_width=0.58)
+            group_barcode_w = 104 * mm
+            group_barcode_x = page_w - margin - group_barcode_w
+            self._draw_code128_fit(canvas_obj, group_code, group_barcode_x, group_y + 2.2 * mm, group_barcode_w, 6.8 * mm, min_bar_width=0.34, max_bar_width=0.78)
             canvas_obj.setFont("Helvetica-Bold", 5.2)
-            canvas_obj.drawCentredString(page_w - margin - 45 * mm, group_y + 1.1 * mm, self._operator_pdf_text(_pdf_clip_text(group_code, 82 * mm, "Helvetica-Bold", 5.2)))
+            canvas_obj.drawCentredString(group_barcode_x + (group_barcode_w / 2), group_y + 0.7 * mm, self._operator_pdf_text(_pdf_clip_text(group_code, group_barcode_w, "Helvetica-Bold", 5.2)))
             y = group_y
             row_counter += 1
             for piece in group_rows:
@@ -12717,14 +12819,14 @@ class LegacyBackend(
                     canvas_obj.setFont(font_name, font_size)
                     if col_index == 5:
                         opp_txt = str(piece.get("opp", "") or "").strip()
-                        barcode_w = min(width * 0.58, 52 * mm)
-                        text_w = max(18 * mm, width - barcode_w - 7 * mm)
+                        barcode_w = min(width * 0.72, 64 * mm)
+                        text_w = max(12 * mm, width - barcode_w - 5 * mm)
                         clipped = _pdf_clip_text(value, text_w, font_name, 5.7)
                         canvas_obj.setFont("Helvetica", 5.7)
                         canvas_obj.drawString(x + 2.2, row_y + 12.4 * mm, self._operator_pdf_text(clipped))
                         if opp_txt:
                             barcode_x = x + width - barcode_w - 2.2
-                            self._draw_code128_fit(canvas_obj, opp_txt, barcode_x, row_y + 3.4 * mm, barcode_w, 6.4 * mm, min_bar_width=0.24, max_bar_width=0.54)
+                            self._draw_code128_fit(canvas_obj, opp_txt, barcode_x, row_y + 3.4 * mm, barcode_w, 6.4 * mm, min_bar_width=0.30, max_bar_width=0.72)
                             canvas_obj.setFont("Helvetica-Bold", 5.5)
                             canvas_obj.drawCentredString(barcode_x + (barcode_w / 2), row_y + 1.5 * mm, self._operator_pdf_text(_pdf_clip_text(opp_txt, barcode_w, "Helvetica-Bold", 5.5)))
                     elif col_index in {3, 4}:
@@ -13050,10 +13152,10 @@ class LegacyBackend(
                             piece_canvas.drawString(row_x + 2.6 * mm, cell_top - 3.0 * mm, self._operator_pdf_text(_pdf_clip_text(op_abbrev, 17 * mm, "Helvetica-Bold", 6.4)))
                             piece_canvas.setFont("Helvetica", 5.6)
                             piece_canvas.setFillColor(grey)
-                            piece_canvas.drawString(row_x + 21 * mm, cell_top - 3.0 * mm, self._operator_pdf_text(_pdf_clip_text(op_name, 43 * mm, "Helvetica", 5.6)))
-                            barcode_x = row_x + 68 * mm
-                            barcode_w = row_w - 72 * mm
-                            self._draw_code128_fit(piece_canvas, op_code, barcode_x, cell_y + 2.0 * mm, barcode_w, row_h - 3.6 * mm, min_bar_width=0.22, max_bar_width=0.48)
+                            piece_canvas.drawString(row_x + 21 * mm, cell_top - 3.0 * mm, self._operator_pdf_text(_pdf_clip_text(op_name, 34 * mm, "Helvetica", 5.6)))
+                            barcode_x = row_x + 58 * mm
+                            barcode_w = row_w - 62 * mm
+                            self._draw_code128_fit(piece_canvas, op_code, barcode_x, cell_y + 1.7 * mm, barcode_w, row_h - 3.1 * mm, min_bar_width=0.28, max_bar_width=0.62)
                             piece_canvas.setFont("Helvetica", 3.5)
                             piece_canvas.setFillColor(grey)
                             piece_canvas.drawCentredString(barcode_x + (barcode_w / 2), cell_y + 0.6 * mm, self._operator_pdf_text(_pdf_clip_text(op_code, barcode_w, "Helvetica", 3.5)))
@@ -13343,9 +13445,112 @@ class LegacyBackend(
         return self.order_detail(numero)
 
     def operator_scan_code(self, code: str, current_posto: str = "Geral") -> dict[str, Any]:
-        code_txt = str(code or "").strip()
+        def _norm_of_scan(value: str) -> str:
+            text = str(value or "").strip()
+            match = re.fullmatch(r"\s*OF\s*[-_'/\\\s]+\s*(\d{4})\s*[-_'/\\\s]+\s*(\d{1,8})\s*", text, flags=re.IGNORECASE)
+            if match:
+                return f"OF-{match.group(1)}-{match.group(2).zfill(4)[-4:]}"
+            return text
+
+        def _norm_opp_scan(value: str) -> str:
+            text = str(value or "").strip()
+            match = re.fullmatch(r"\s*OPP\s*[-_'/\\\s]+\s*(\d{4})\s*[-_'/\\\s]+\s*(\d{1,8})\s*[-_'/\\\s]+\s*(\d{1,4})\s*", text, flags=re.IGNORECASE)
+            if match:
+                return f"OPP-{match.group(1)}-{match.group(2).zfill(4)[-4:]}-{match.group(3).zfill(2)[-2:]}"
+            return text
+
+        def _parse_grp_scan(value: str) -> tuple[str, str, str] | None:
+            text = str(value or "").strip()
+            if not text.upper().startswith("GRP"):
+                return None
+            compact = re.sub(r"\s+", "", text)
+            match = re.search(
+                r"GRP.*?O?F[^0-9]*(\d{4})[^0-9]+(\d{1,8})(.*)$",
+                compact,
+                flags=re.IGNORECASE,
+            )
+            if not match:
+                return None
+            of_code = f"OF-{match.group(1)}-{match.group(2).zfill(4)[-4:]}"
+            tail = str(match.group(3) or "").strip()
+            tail = tail.replace("Ô", "|").replace("ô", "|").replace("^", "|").replace("¦", "|").replace(";", "|")
+            tail = re.sub(r"^[^A-Za-z0-9]+", "", tail)
+            tokens = [token.strip() for token in re.split(r"[^A-Za-z0-9.,_-]+", tail) if token.strip()]
+            if len(tokens) < 2:
+                return None
+            return of_code, tokens[0], tokens[1]
+
+        def _parse_opr_scan(value: str) -> tuple[str, str] | None:
+            text = str(value or "").strip()
+            if not text.upper().startswith("OPR"):
+                return None
+            compact = re.sub(r"\s+", "", text)
+            match = re.search(
+                r"OPR.*?O?PP[^0-9]*(\d{4})[^0-9]+(\d{1,8})[^0-9]+(\d{1,4})(.*)$",
+                compact,
+                flags=re.IGNORECASE,
+            )
+            if not match:
+                return None
+            opp_code = f"OPP-{match.group(1)}-{match.group(2).zfill(4)[-4:]}-{match.group(3).zfill(2)[-2:]}"
+            tail = str(match.group(4) or "").strip()
+            tail = re.sub(r"^[Êê]+", "E", tail)
+            tail = tail.replace("Ô", "|").replace("ô", "|").replace("^", "|").replace("¦", "|").replace(";", "|")
+            tail = re.sub(r"^[^A-Za-z0-9]+", "", tail)
+            tokens = [token.strip() for token in re.split(r"[^A-Za-z0-9.,_-]+", tail) if token.strip()]
+            if not tokens:
+                return None
+            return opp_code, tokens[0]
+
+        code_txt = (
+            str(code or "")
+            .replace("\r", "")
+            .replace("\n", "")
+            .replace("\t", "")
+            .strip()
+        )
         if not code_txt:
             raise ValueError("Código vazio.")
+        grp_scan = _parse_grp_scan(code_txt)
+        opr_scan = _parse_opr_scan(code_txt)
+        if grp_scan is not None:
+            code_txt = f"GRP|{grp_scan[0]}|{grp_scan[1]}|{grp_scan[2]}"
+        elif opr_scan is not None:
+            code_txt = f"OPR|{opr_scan[0]}|{opr_scan[1]}"
+        else:
+            prefix = code_txt[:3].upper()
+            if prefix == "GRP":
+                raise ValueError("Código de espessura inválido.")
+            if prefix == "OPR":
+                raise ValueError("Código de operação inválido.")
+        code_txt = code_txt.replace("Ô", "|").replace("ô", "|").replace("^", "|")
+        code_txt = re.sub(r"\s*\|\s*", "|", code_txt)
+        code_txt = code_txt.replace("¦", "|").replace(";", "|")
+        if code_txt.upper().startswith("GRP") and not code_txt.upper().startswith("GRP|"):
+            of_pos_match = re.search(r"OF\s*[-_'/\\\s]+\s*\d{4}\s*[-_'/\\\s]+\s*\d{1,8}", code_txt, flags=re.IGNORECASE)
+            if of_pos_match:
+                code_txt = "GRP|" + code_txt[of_pos_match.start():]
+            else:
+                f_pos_match = re.search(r"F\s*[-_'/\\\s]+\s*\d{4}\s*[-_'/\\\s]+\s*\d{1,8}", code_txt, flags=re.IGNORECASE)
+                if f_pos_match:
+                    code_txt = "GRP|O" + code_txt[f_pos_match.start():]
+        if code_txt.upper().startswith("GRP|"):
+            parts = code_txt.split("|")
+            if len(parts) >= 4:
+                parts[1] = _norm_of_scan(parts[1])
+                code_txt = "|".join(parts)
+        elif code_txt.upper().startswith("COMP|") or code_txt.upper().startswith("CPI|"):
+            parts = code_txt.split("|")
+            if len(parts) >= 2:
+                parts[1] = _norm_of_scan(parts[1])
+                code_txt = "|".join(parts)
+        elif code_txt.upper().startswith("OPR|"):
+            parts = code_txt.split("|")
+            if len(parts) >= 2:
+                parts[1] = _norm_opp_scan(parts[1])
+                code_txt = "|".join(parts)
+        else:
+            code_txt = _norm_opp_scan(_norm_of_scan(code_txt))
         posto_txt = str(current_posto or "").strip() or "Geral"
         if code_txt.upper().startswith("OPR|"):
             parts = code_txt.split("|")
@@ -13361,13 +13566,31 @@ class LegacyBackend(
                 for op in list(self.desktop_main.ensure_peca_operacoes(piece) or [])
                 if str(op.get("nome", "") or "").strip()
             ]
-            candidates = pending_ops or all_ops
+            candidates = all_ops or pending_ops
             selected_op = ""
             token_norm = self.desktop_main.norm_text(op_token).casefold()
+            token_norm = {
+                "cl": "cl",
+                "q": "q",
+                "mb": "emb",
+                "mb.": "emb",
+                "emb": "emb",
+                "emb.": "emb",
+            }.get(token_norm, token_norm)
+            explicit_tokens = {
+                "cl": {"corte laser", "laser"},
+                "q": {"quinagem"},
+                "emb": {"embalamento"},
+            }
             for op_name in candidates:
                 abbrev_norm = self.desktop_main.norm_text(self._operation_pdf_abbrev(op_name)).casefold()
+                abbrev_norm = abbrev_norm.rstrip(".")
                 op_norm = self.desktop_main.norm_text(op_name).casefold()
-                if token_norm and token_norm in {abbrev_norm, op_norm}:
+                token_key = token_norm.rstrip(".")
+                if token_key in explicit_tokens and op_norm in explicit_tokens[token_key]:
+                    selected_op = op_name
+                    break
+                if token_key and token_key in {abbrev_norm, op_norm}:
                     selected_op = op_name
                     break
             if not selected_op:
@@ -13399,6 +13622,7 @@ class LegacyBackend(
                     "material": material,
                     "espessura": espessura,
                 }
+            raise ValueError("Código de espessura inválido.")
         if code_txt.upper().startswith("COMP|"):
             parts = code_txt.split("|", 1)
             of_code = parts[1].strip() if len(parts) > 1 else ""
