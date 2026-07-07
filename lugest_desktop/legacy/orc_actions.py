@@ -238,7 +238,9 @@ def _orc_line_discount_key(row):
 def _orc_apply_discount_snapshot(orc, row):
     row = dict(row or {})
     qtd = round(parse_float(row.get("qtd", 0), 0), 4)
-    preco_unit = round(parse_float(row.get("preco_unit", 0), 0), 4)
+    incremento_perc = round(max(-100.0, parse_float((orc or {}).get("incremento_preco_perc", 0), 0)), 2)
+    preco_unit_base = round(parse_float(row.get("preco_unit", 0), 0), 4)
+    preco_unit = round(max(0.0, preco_unit_base * (1.0 + (incremento_perc / 100.0))), 4)
     bruto_total = round(qtd * preco_unit, 2)
     desconto_perc = round(max(0.0, min(100.0, parse_float((orc or {}).get("desconto_perc", 0), 0))), 2)
     desconto_modo = str((orc or {}).get("desconto_modo", "total") or "total").strip().lower() or "total"
@@ -248,12 +250,17 @@ def _orc_apply_discount_snapshot(orc, row):
         if str(item or "").strip()
     }
     discount_key = _orc_line_discount_key(row)
-    apply_discount = desconto_perc > 0 and (desconto_modo == "total" or discount_key in desconto_grupos)
+    apply_discount = desconto_perc > 0 and (
+        desconto_modo == "total"
+        or not desconto_grupos
+        or discount_key in desconto_grupos
+    )
     preco_unit_desc = round(preco_unit * (1.0 - (desconto_perc / 100.0)), 4) if apply_discount else preco_unit
     total_desc = round(qtd * preco_unit_desc, 2)
     desconto_valor = round(max(0.0, bruto_total - total_desc), 2)
     return {
         "qtd": qtd,
+        "preco_unit_base": preco_unit_base,
         "preco_unit_bruto": preco_unit,
         "total_bruto": bruto_total,
         "preco_unit_desconto": preco_unit_desc,
@@ -287,11 +294,15 @@ def _orc_compute_totals(orc):
     iva = round(subtotal * (iva_perc / 100.0), 2)
     total = round(subtotal + iva, 2)
     orc["subtotal_bruto"] = subtotal_bruto
+    orc["subtotal_linhas"] = subtotal_liquido_linhas
+    orc["preco_transporte"] = preco_transporte
     orc["desconto_valor"] = desconto_valor_linhas
     orc["subtotal"] = subtotal
     orc["total"] = total
     return {
         "subtotal_bruto": subtotal_bruto,
+        "subtotal_linhas": subtotal_liquido_linhas,
+        "preco_transporte": preco_transporte,
         "desconto_valor": desconto_valor_linhas,
         "subtotal": subtotal,
         "iva": iva,
@@ -1140,13 +1151,36 @@ def _orc_line_unit_display(line):
     return fmt_num(row.get("espessura", ""))
 
 
+def _orc_line_has_laser_dxf(line):
+    row = dict(line or {})
+    paths = []
+    scalar_paths = [
+        row.get("desenho", ""),
+        row.get("desenho_path", ""),
+        row.get("desenho_dxf", ""),
+    ]
+    paths.extend(scalar_paths)
+    for key in ("desenhos", "desenhos_pdf"):
+        value = row.get(key, [])
+        if isinstance(value, (list, tuple, set)):
+            paths.extend(value)
+        elif value:
+            paths.append(value)
+    for path in paths:
+        text = str(path or "").strip().lower().split("?", 1)[0]
+        if text.endswith(".dxf"):
+            return True
+    return False
+
+
 def _orc_line_operacao_display(line):
     _ensure_configured()
     row = dict(line or {})
-    operacao = _orc_format_operations(row.get("operacao", ""), unique=True) or "-"
-    conjunto = str(row.get("conjunto_codigo", "") or row.get("conjunto_nome", "") or "").strip()
-    if conjunto:
-        return f"{operacao} | {conjunto}"
+    kind = _orc_line_type_value(row)
+    raw_operacao = str(row.get("operacao", "") or "").strip()
+    if kind == "peca_fabricada" and not _orc_line_has_laser_dxf(row):
+        return "Serra"
+    operacao = _orc_format_operations(raw_operacao, unique=True) or "-"
     return operacao
 
 
@@ -1191,8 +1225,8 @@ def _build_orc_notes_lines(self, orc):
         kind = _orc_line_type_value(row)
         kind_norm = norm_text(kind)
         desc_norm = norm_text(row.get("descricao", ""))
-        operation = _orc_format_operations(row.get("operacao", ""), unique=True)
-        if operation:
+        operation = _orc_line_operacao_display(row)
+        if operation and operation != "-":
             operations.append(operation)
         if kind_norm in {"produto_stock", "produto"}:
             has_stock = True
@@ -1834,7 +1868,7 @@ def prompt_orc_nota_cliente(self):
 
 def render_orc_pdf(self, path, orc):
     _ensure_configured()
-    return _render_orc_pdf_modern(self, path, orc)
+    return _render_orc_pdf_portrait(self, path, orc)
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.pdfgen import canvas as pdf_canvas
     from reportlab.pdfbase import pdfmetrics
@@ -2155,15 +2189,14 @@ def render_orc_pdf(self, path, orc):
         sum_x = width - margin - sum_w
         set_font(True, 9)
         c.rect(sum_x, yinv(y_boxes + boxes_h), sum_w, boxes_h, stroke=1, fill=0)
-        c.drawString(sum_x + 8, yinv(y_boxes + 16), "Resumo")
-        set_font(False, 9)
-        c.drawString(sum_x + 8, yinv(y_boxes + 32), "Subtotal:")
-        c.drawRightString(sum_x + sum_w - 8, yinv(y_boxes + 32), f"{subtotal:.2f} EUR")
-        c.drawString(sum_x + 8, yinv(y_boxes + 48), f"IVA ({orc.get('iva_perc',0)}%):")
-        c.drawRightString(sum_x + sum_w - 8, yinv(y_boxes + 48), f"{iva:.2f} EUR")
-        set_font(True, 10)
-        c.drawString(sum_x + 8, yinv(y_boxes + 64), "Total:")
-        c.drawRightString(sum_x + sum_w - 8, yinv(y_boxes + 64), f"{total:.2f} EUR")
+        c.drawString(sum_x + 8, yinv(y_boxes + 16), "Resumo financeiro")
+        set_font(False, 7.2)
+        c.drawString(sum_x + 8, yinv(y_boxes + 30), "Valor sem IVA")
+        set_font(True, 15)
+        c.drawRightString(sum_x + sum_w - 8, yinv(y_boxes + 44), f"{subtotal:.2f} EUR")
+        set_font(False, 7.2)
+        c.drawString(sum_x + 8, yinv(y_boxes + 58), "Ao valor sem IVA acresce o IVA")
+        c.drawString(sum_x + 8, yinv(y_boxes + 67), "a taxa legal em vigor.")
 
         # Rodap? empresa
         yb = margin + 6
@@ -2228,6 +2261,504 @@ def render_orc_pdf(self, path, orc):
     c.save()
 
 
+def _render_orc_pdf_portrait(self, path, orc):
+    _ensure_configured()
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas as pdf_canvas
+
+    fonts = _orc_pdf_register_fonts()
+    palette = _orc_pdf_brand_palette()
+    width, height = A4
+    c = pdf_canvas.Canvas(path, pagesize=A4)
+    margin = 28
+    content_w = width - (2 * margin)
+    doc_num = str(orc.get("numero", "") or "ORC").strip() or "ORC"
+    c.setTitle(f"Orçamento {doc_num}")
+    try:
+        c.setPageCompression(0)
+    except Exception:
+        pass
+
+    totals = _orc_compute_totals(orc)
+    subtotal_linhas = parse_float(totals.get("subtotal_linhas", orc.get("subtotal_linhas", 0)), 0)
+    preco_transporte = parse_float(totals.get("preco_transporte", orc.get("preco_transporte", 0)), 0)
+    subtotal = parse_float(totals.get("subtotal", orc.get("subtotal", 0)), 0)
+    iva_perc = parse_float(totals.get("iva_perc", orc.get("iva_perc", 0)), 0)
+    estado = str(orc.get("estado", "") or "Em edicao").strip() or "Em edicao"
+    executado = str(orc.get("executado_por", "") or "").strip()
+    nota_transporte = str(orc.get("nota_transporte", "") or "").strip()
+    nota_cliente = str(orc.get("nota_cliente", "") or "").strip()
+    numero_encomenda = str(orc.get("numero_encomenda", "") or "").strip()
+    prazo_entrega_texto = str(orc.get("prazo_entrega_texto", "") or "A combinar com o departamento de planeamento.").strip()
+    prazo_entrega_data = str(orc.get("prazo_entrega_data", "") or "").strip()[:10]
+    if prazo_entrega_data:
+        try:
+            prazo_entrega_display = datetime.fromisoformat(prazo_entrega_data).strftime("%d/%m/%Y")
+        except Exception:
+            prazo_entrega_display = prazo_entrega_data
+    else:
+        prazo_entrega_display = prazo_entrega_texto
+    lines = list(orc.get("linhas", []) or [])
+    notes_lines = list(_build_orc_notes_lines(self, orc) or [])
+    footer_company = list(get_empresa_rodape_lines() or [])
+
+    cli = orc.get("cliente", {}) if isinstance(orc.get("cliente", {}), dict) else {}
+    if cli.get("codigo"):
+        code = str(cli.get("codigo", "") or "").strip()
+        if " - " in code:
+            code = code.split(" - ", 1)[0].strip()
+        cobj = find_cliente(self.data, code)
+        if cobj:
+            non_empty_cli = {key: value for key, value in dict(cli).items() if str(value or "").strip()}
+            cli = {**cobj, **non_empty_cli}
+
+    def yinv(top_y):
+        return height - top_y
+
+    def ntxt(value):
+        try:
+            return pdf_normalize_text(value)
+        except Exception:
+            return str(value or "")
+
+    def fmt_display_date(value):
+        raw = str(value or "").strip().replace("T", " ")
+        if not raw:
+            return "-"
+        try:
+            return datetime.fromisoformat(raw).strftime("%d/%m/%Y")
+        except Exception:
+            if len(raw) >= 10 and raw[4] == "-" and raw[7] == "-":
+                return f"{raw[8:10]}/{raw[5:7]}/{raw[:4]}"
+            return raw[:10]
+
+    def fmt_money(value):
+        return f"{parse_float(value, 0):.2f} EUR"
+
+    def fmt_num(value, decimals=2):
+        try:
+            number = float(value)
+        except Exception:
+            return str(value) if value is not None else ""
+        text = f"{number:.{decimals}f}"
+        if "." in text:
+            text = text.rstrip("0").rstrip(".")
+        return text
+
+    def draw_shell():
+        c.saveState()
+        c.setFillColor(palette["surface_alt"])
+        c.roundRect(margin - 8, yinv(height - margin + 8), content_w + 16, height - (2 * margin) + 16, 18, stroke=0, fill=1)
+        c.setFillColor(colors.white)
+        c.roundRect(margin - 3, yinv(height - margin + 3), content_w + 6, height - (2 * margin) + 6, 16, stroke=0, fill=1)
+        c.setStrokeColor(palette["line"])
+        c.setLineWidth(0.45)
+        c.roundRect(margin - 3, yinv(height - margin + 3), content_w + 6, height - (2 * margin) + 6, 16, stroke=1, fill=0)
+        c.setFillColor(palette["primary"])
+        c.roundRect(margin, yinv(58), content_w, 5, 2, stroke=0, fill=1)
+        c.restoreState()
+
+    def fit_text(value, font_name, size, min_size, max_w, max_h, *, max_lines=None, leading_ratio=1.12):
+        return _orc_pdf_fit_text_block(value, font_name, size, min_size, max_w, max_h, max_lines=max_lines, leading_ratio=leading_ratio)
+
+    def draw_badge(x, top_y, text, *, align="left", fill=None, ink=None):
+        label = str(text or "").strip() or "-"
+        box_w = max(64, min(144, 18 + (len(label) * 5.6)))
+        left = x if align == "left" else x - box_w
+        c.saveState()
+        c.setFillColor(fill or palette["primary_soft"])
+        c.roundRect(left, yinv(top_y + 18), box_w, 18, 9, stroke=0, fill=1)
+        c.restoreState()
+        c.setFillColor(ink or palette["primary_dark"])
+        c.setFont(fonts["bold"], 7.6)
+        c.drawString(left + 8, yinv(top_y + 12), ntxt(_orc_pdf_clip_text(label, box_w - 16, fonts["bold"], 7.6)))
+
+    def draw_info_card(x, top_y, box_w, box_h, title, body_lines, *, accent=False, font_size=7.7):
+        header_h = 18 if box_h <= 38 else 21
+        c.saveState()
+        c.setFillColor(colors.white)
+        c.setStrokeColor(palette["line"])
+        c.setLineWidth(0.45)
+        c.roundRect(x, yinv(top_y + box_h), box_w, box_h, 9, stroke=1, fill=1)
+        c.setFillColor(palette["primary_soft_2"] if accent else palette["surface_alt"])
+        c.roundRect(x + 1, yinv(top_y + header_h + 1), box_w - 2, header_h, 8, stroke=0, fill=1)
+        c.restoreState()
+        c.setFillColor(palette["primary_dark"])
+        c.setFont(fonts["bold"], 8.0)
+        c.drawString(x + 9, yinv(top_y + min(14, header_h - 6 + 8)), ntxt(_orc_pdf_clip_text(title, box_w - 18, fonts["bold"], 8.0)))
+        text = "\n".join(str(row or "").strip() for row in list(body_lines or []) if str(row or "").strip())
+        body_top = top_y + header_h + 10
+        body_h = max(8, box_h - header_h - 14)
+        layout = fit_text(text, fonts["regular"], font_size, 4.8, box_w - 18, body_h, leading_ratio=1.04)
+        yy = body_top
+        for item in layout["lines"]:
+            if yy > top_y + box_h - 4:
+                break
+            c.setFillColor(palette["ink"])
+            c.setFont(fonts["regular"], layout["font_size"])
+            c.drawString(x + 9, yinv(yy), ntxt(item))
+            yy += layout["leading"]
+
+    def client_detail_lines():
+        code = str(cli.get("codigo", "") or "").strip()
+        name = str(cli.get("nome", "") or "").strip()
+        company = str(cli.get("empresa", "") or "").strip()
+        nif = str(cli.get("nif", "") or "").strip()
+        address = str(cli.get("morada", "") or "").strip()
+        contact = str(cli.get("contacto", "") or "").strip()
+        email = str(cli.get("email", "") or "").strip()
+        lines_out = []
+        name_line = name or company or "-"
+        if company and company != name:
+            name_line = f"{name_line} | {company}" if name else company
+        lines_out.append(f"{code} - {name_line}".strip(" -") or "-")
+        lines_out.append(f"NIF: {nif or '-'}")
+        lines_out.append(f"Morada: {address or '-'}")
+        if contact or email:
+            lines_out.append(f"Contacto: {contact or '-'} | Email: {email or '-'}")
+        return lines_out or ["-"]
+
+    line_cols = [
+        ("Linha", 22, "center"),
+        ("Artigo", 126, "w"),
+        ("Descricao", 152, "w"),
+        ("Materia Prima", 56, "w"),
+        ("Esp.", 28, "center"),
+        ("Op.", 38, "w"),
+        ("Qtd.", 28, "e"),
+        ("Preco", 43, "e"),
+        ("Total", 46, "e"),
+    ]
+    line_table_w = sum(col[1] for col in line_cols)
+
+    def draw_lines_header(top_y):
+        cols = line_cols
+        table_w = sum(col[1] for col in cols)
+        c.saveState()
+        c.setFillColor(palette["primary_soft"])
+        c.setStrokeColor(palette["line_strong"])
+        c.setLineWidth(0.55)
+        c.roundRect(margin, yinv(top_y + 18), table_w, 18, 6, stroke=1, fill=1)
+        c.restoreState()
+        c.setFillColor(palette["primary_dark"])
+        c.setFont(fonts["bold"], 7.0)
+        xx = margin
+        for title, col_w, align in cols:
+            if align == "e":
+                c.drawRightString(xx + col_w - 5, yinv(top_y + 12), ntxt(title))
+            elif align == "center":
+                c.drawCentredString(xx + (col_w / 2.0), yinv(top_y + 12), ntxt(title))
+            else:
+                c.drawString(xx + 5, yinv(top_y + 12), ntxt(title))
+            xx += col_w
+        return top_y + 22
+
+    def draw_header(page_no, total_pages, first_page):
+        draw_shell()
+        if first_page:
+            logo_w = 98
+            draw_pdf_logo_plate(c, height, margin + 4, 28, box_w=logo_w, box_h=48, padding=6)
+            hero_x = margin + logo_w + 12
+            hero_w = content_w - logo_w - 16
+            header_panel = globals().get("draw_pdf_header_panel")
+            if callable(header_panel):
+                header_panel(c, height, hero_x, 26, hero_w, 66, radius=13, stroke_color="#D5DDE7", accent_color="#EAF0F6", accent_height=5)
+            else:
+                c.saveState()
+                c.setFillColor(colors.white)
+                c.setStrokeColor(palette["line_strong"])
+                c.roundRect(hero_x, yinv(92), hero_w, 66, 13, stroke=1, fill=1)
+                c.restoreState()
+            c.setFillColor(palette["muted"])
+            c.setFont(fonts["regular"], 8.2)
+            c.drawString(hero_x + 14, yinv(44), ntxt("Proposta comercial"))
+            c.setFillColor(palette["primary_dark"])
+            c.setFont(fonts["bold"], 15.2)
+            c.drawString(hero_x + 14, yinv(62), ntxt("Orçamento"))
+            c.setFont(fonts["bold"], 9.4)
+            c.drawString(hero_x + 14, yinv(79), ntxt(_orc_pdf_clip_text(doc_num, hero_w - 126, fonts["bold"], 9.4)))
+            draw_badge(hero_x + hero_w - 10, 38, f"Pagina {page_no}/{total_pages}", align="right")
+            draw_badge(hero_x + hero_w - 10, 61, estado, align="right", fill=palette["surface_alt"])
+
+            meta_w = (content_w - 12) / 3.0
+            draw_info_card(margin, 100, meta_w, 34, "Documento", [doc_num], accent=True, font_size=7.5)
+            draw_info_card(margin + meta_w + 6, 100, meta_w, 34, "Data", [fmt_display_date(orc.get("data", ""))], font_size=7.5)
+            draw_info_card(margin + ((meta_w + 6) * 2), 100, meta_w, 34, "Executado por", [executado or "-"], font_size=7.5)
+
+            half_w = (content_w - 8) / 2.0
+            draw_info_card(
+                margin,
+                142,
+                half_w,
+                64,
+                "Cliente",
+                client_detail_lines(),
+                accent=True,
+                font_size=6.5,
+            )
+            draw_info_card(
+                margin + half_w + 8,
+                142,
+                half_w,
+                64,
+                "Contexto comercial",
+                [
+                    f"Ref. cliente: {nota_cliente or '-'}",
+                    f"Transporte: {nota_transporte or '-'} ({fmt_money(preco_transporte)})",
+                    f"Prazo entrega: {prazo_entrega_display or '-'}",
+                    f"Encomenda associada: {numero_encomenda or '-'}",
+                ],
+                font_size=6.4,
+            )
+            return draw_lines_header(218)
+
+        c.setFillColor(palette["primary_dark"])
+        c.setFont(fonts["bold"], 13.0)
+        c.drawString(margin + 10, yinv(43), ntxt(f"Orçamento {doc_num}"))
+        c.setFont(fonts["regular"], 7.8)
+        c.setFillColor(palette["muted"])
+        c.drawString(margin + 10, yinv(58), ntxt(f"Cliente: {str(cli.get('nome', '') or cli.get('codigo', '') or '-').strip()}"))
+        draw_badge(width - margin - 10, 34, f"Pagina {page_no}/{total_pages}", align="right")
+        draw_badge(width - margin - 10, 57, estado, align="right", fill=palette["surface_alt"])
+        return draw_lines_header(78)
+
+    def build_line_card(line, absolute_idx):
+        discount_snapshot = _orc_apply_discount_snapshot(orc, line)
+        ref_ext = _orc_line_ref_display(line)
+        ref_int = _orc_line_internal_ref_display(line)
+        desc = _orc_line_description_display(line)
+        material = _orc_line_material_display(line)
+        esp = fmt_num(_orc_line_unit_display(line), decimals=2)
+        operacao = _orc_line_operacao_display(line)
+        qtd = fmt_num(line.get("qtd", 0), decimals=2)
+        preco = fmt_num(discount_snapshot.get("preco_unit_desconto", line.get("preco_unit", 0)))
+        total_line = fmt_num(discount_snapshot.get("total_desconto", line.get("total", 0)))
+
+        ref_layout = fit_text(ref_ext, fonts["bold"], 6.5, 5.0, line_cols[1][1] - 8, 12, max_lines=1, leading_ratio=1.0)
+        ref_int_layout = fit_text(f"Int.: {ref_int or '-'}", fonts["regular"], 5.2, 4.4, line_cols[1][1] - 8, 8, max_lines=1, leading_ratio=1.0)
+        desc_w = line_cols[2][1] - 8
+        desc_layout = fit_text(desc, fonts["regular"], 6.45, 5.0, desc_w, 19, max_lines=2, leading_ratio=1.02)
+        main_text_h = max(desc_layout["leading"], len(desc_layout["lines"]) * desc_layout["leading"])
+        ref_text_h = max(ref_layout["leading"] + ref_int_layout["leading"] + 2, 14)
+        row_h = max(24, min(34, int(round(8 + max(main_text_h, ref_text_h)))))
+        return {
+            "height": row_h,
+            "absolute_idx": absolute_idx,
+            "ref_layout": ref_layout,
+            "ref_int_layout": ref_int_layout,
+            "desc_layout": desc_layout,
+            "material": material,
+            "esp": esp,
+            "operacao": operacao,
+            "qtd": qtd,
+            "preco": preco,
+            "total": total_line,
+        }
+
+    def draw_line_card(top_y, row_layout):
+        row_h = row_layout["height"]
+        c.saveState()
+        c.setFillColor(palette["surface_warm"] if row_layout["absolute_idx"] % 2 == 0 else colors.white)
+        c.rect(margin, yinv(top_y + row_h), line_table_w, row_h, stroke=0, fill=1)
+        c.setStrokeColor(palette["line"])
+        c.setLineWidth(0.28)
+        c.line(margin, yinv(top_y + row_h), margin + line_table_w, yinv(top_y + row_h))
+        c.restoreState()
+
+        xs = [margin]
+        for _title, col_w, _align in line_cols[:-1]:
+            xs.append(xs[-1] + col_w)
+        c.setStrokeColor(colors.Color(0.87, 0.90, 0.94, alpha=0.55))
+        c.setLineWidth(0.18)
+        for x_line in xs[1:]:
+            c.line(x_line, yinv(top_y), x_line, yinv(top_y + row_h))
+
+        values = [
+            f"{row_layout['absolute_idx'] + 1:03d}",
+            "",
+            "",
+            row_layout["material"],
+            row_layout["esp"],
+            row_layout["operacao"],
+            row_layout["qtd"],
+            row_layout["preco"],
+            row_layout["total"],
+        ]
+        c.setFillColor(palette["primary_dark"])
+        y_main = top_y + 11
+        xx = margin
+        for idx_col, ((_title, col_w, align), value) in enumerate(zip(line_cols, values)):
+            if idx_col in (1, 2):
+                xx += col_w
+                continue
+            font_name = fonts["bold"] if idx_col == 8 else fonts["regular"]
+            font_size = 6.1 if idx_col not in (7, 8) else 6.0
+            clipped = _orc_pdf_clip_text(value, col_w - 8, font_name, font_size)
+            c.setFont(font_name, font_size)
+            if align == "e":
+                c.drawRightString(xx + col_w - 4, yinv(y_main), ntxt(clipped))
+            elif align == "center":
+                c.drawCentredString(xx + (col_w / 2), yinv(y_main), ntxt(clipped))
+            else:
+                c.drawString(xx + 4, yinv(y_main), ntxt(clipped))
+            xx += col_w
+
+        ref_x = margin + line_cols[0][1]
+        c.saveState()
+        ref_clip = c.beginPath()
+        ref_clip.rect(ref_x + 2, yinv(top_y + row_h) + 1, line_cols[1][1] - 4, row_h - 2)
+        c.clipPath(ref_clip, stroke=0, fill=0)
+        yy = top_y + 9
+        for item in row_layout["ref_layout"]["lines"][:1]:
+            c.setFillColor(palette["primary_dark"])
+            c.setFont(fonts["bold"], row_layout["ref_layout"]["font_size"])
+            c.drawString(ref_x + 4, yinv(yy), ntxt(item))
+        yy += row_layout["ref_layout"]["leading"] + 2
+        for item in row_layout["ref_int_layout"]["lines"][:1]:
+            c.setFillColor(palette["muted"])
+            c.setFont(fonts["regular"], row_layout["ref_int_layout"]["font_size"])
+            c.drawString(ref_x + 4, yinv(yy), ntxt(item))
+        c.restoreState()
+
+        desc_x = margin + line_cols[0][1] + line_cols[1][1]
+        c.saveState()
+        desc_clip = c.beginPath()
+        desc_clip.rect(desc_x + 2, yinv(top_y + row_h) + 1, line_cols[2][1] - 4, row_h - 2)
+        c.clipPath(desc_clip, stroke=0, fill=0)
+        yy = top_y + 9
+        for item in row_layout["desc_layout"]["lines"]:
+            c.setFillColor(palette["ink"])
+            c.setFont(fonts["regular"], row_layout["desc_layout"]["font_size"])
+            c.drawString(desc_x + 4, yinv(yy), ntxt(item))
+            yy += row_layout["desc_layout"]["leading"]
+        c.restoreState()
+
+    def draw_section_box(x, top_y, box_w, box_h, title, lines_, *, font_size=7.0):
+        draw_info_card(x, top_y, box_w, box_h, title, lines_, font_size=font_size)
+
+    def draw_summary_box(x, top_y, box_w, box_h):
+        c.saveState()
+        c.setFillColor(colors.white)
+        c.setStrokeColor(palette["line"])
+        c.setLineWidth(0.45)
+        c.roundRect(x, yinv(top_y + box_h), box_w, box_h, 9, stroke=1, fill=1)
+        c.setFillColor(palette["primary_soft_2"])
+        c.roundRect(x + 1, yinv(top_y + 22), box_w - 2, 21, 9, stroke=0, fill=1)
+        c.setFillColor(palette["surface_alt"])
+        c.roundRect(x + 10, yinv(top_y + 58), box_w - 20, 30, 8, stroke=0, fill=1)
+        c.restoreState()
+        c.setFillColor(palette["primary_dark"])
+        c.setFont(fonts["bold"], 8.0)
+        c.drawString(x + 10, yinv(top_y + 14), ntxt("Resumo financeiro"))
+        summary_rows = [
+            ("Linhas", fmt_money(subtotal_linhas)),
+            ("Transporte", fmt_money(preco_transporte)),
+        ]
+        yy_rows = top_y + 34
+        for label, amount in summary_rows:
+            c.setFillColor(palette["muted"])
+            c.setFont(fonts["regular"], 6.2)
+            c.drawString(x + 14, yinv(yy_rows), ntxt(label))
+            c.setFillColor(palette["ink"])
+            c.setFont(fonts["bold"], 6.4)
+            c.drawRightString(x + box_w - 14, yinv(yy_rows), ntxt(amount))
+            yy_rows += 9.5
+        value = fmt_money(subtotal)
+        value_size = 12.2
+        from reportlab.pdfbase import pdfmetrics
+        while value_size > 9.0 and pdfmetrics.stringWidth(value, fonts["bold"], value_size) > box_w - 36:
+            value_size -= 0.25
+        c.setFillColor(palette["muted"])
+        c.setFont(fonts["regular"], 6.0)
+        c.drawString(x + 18, yinv(top_y + 48), ntxt("Valor sem IVA"))
+        c.setFillColor(palette["primary_dark"])
+        c.setFont(fonts["bold"], value_size)
+        c.drawRightString(x + box_w - 18, yinv(top_y + 55), ntxt(value))
+        note = f"Ao valor sem IVA acresce o IVA a taxa legal em vigor ({fmt_num(iva_perc)}%)."
+        layout = fit_text(note, fonts["regular"], 5.9, 4.8, box_w - 20, 18, max_lines=2, leading_ratio=1.02)
+        yy = top_y + 69
+        for item in layout["lines"]:
+            c.setFillColor(palette["muted"])
+            c.setFont(fonts["regular"], layout["font_size"])
+            c.drawString(x + 10, yinv(yy), ntxt(item))
+            yy += layout["leading"]
+
+    def draw_footer(page_no, total_pages):
+        footer_top = 636
+        gap = 8
+        box_w = (content_w - gap) / 2.0
+        draw_section_box(margin, footer_top, box_w, 94, "Notas comerciais", notes_lines or ["Sem notas adicionais para este orçamento."], font_size=6.8)
+        draw_section_box(margin + box_w + gap, footer_top, box_w, 94, "Condicoes", list(ORC_CONDICOES_GERAIS[:3]) or ["Sem condicoes registadas."], font_size=6.5)
+        legend_w = box_w
+        draw_section_box(margin, footer_top + 102, legend_w, 78, "Legenda", list(ORC_LEGENDA_OPERACOES[:6]) or ["-"], font_size=6.2)
+        draw_summary_box(margin + legend_w + gap, footer_top + 102, box_w, 78)
+        c.setFont(fonts["regular"], 6.6)
+        c.setFillColor(palette["ink"])
+        left_text = footer_company[0] if footer_company else ""
+        right_text = footer_company[2] if len(footer_company) > 2 else (footer_company[1] if len(footer_company) > 1 else "")
+        c.drawString(margin + 8, yinv(827), ntxt(_orc_pdf_clip_text(left_text, 250, fonts["regular"], 6.6)))
+        footer_left = f"Executado por {executado} | " if executado else ""
+        c.drawRightString(width - margin - 8, yinv(827), ntxt(_orc_pdf_clip_text(f"{right_text} | {footer_left}Pagina {page_no}/{total_pages}", 272, fonts["regular"], 6.6)))
+
+    layouts = [build_line_card(line, idx) for idx, line in enumerate(lines)]
+    if not layouts:
+        layouts = []
+
+    def paginate_items(items):
+        if not items:
+            return [[]]
+        pages = []
+        cursor = 0
+        while cursor < len(items):
+            top = 240 if not pages else 100
+            available_bottom = 806
+            page_rows = []
+            y_row = top
+            while cursor < len(items):
+                row_layout = items[cursor]
+                next_y = y_row + row_layout["height"]
+                if page_rows and next_y > available_bottom:
+                    break
+                page_rows.append(row_layout)
+                y_row = next_y
+                cursor += 1
+            if not page_rows:
+                page_rows.append(items[cursor])
+                cursor += 1
+            pages.append(page_rows)
+
+        while pages:
+            last_top = 240 if len(pages) == 1 else 100
+            last_used = last_top + sum(row["height"] for row in pages[-1])
+            if last_used <= 626:
+                break
+            moved = pages[-1].pop()
+            if not pages[-1]:
+                pages[-1].append(moved)
+                break
+            pages.append([moved])
+        return pages
+
+    pages = paginate_items(layouts)
+    total_pages = len(pages)
+    for page_no, page_rows in enumerate(pages, start=1):
+        y_row = draw_header(page_no, total_pages, page_no == 1)
+        if not page_rows:
+            c.setFont(fonts["regular"], 9.0)
+            c.setFillColor(palette["muted"])
+            c.drawString(margin + 8, yinv(y_row + 18), ntxt("Sem linhas no orcamento."))
+        else:
+            for row_layout in page_rows:
+                draw_line_card(y_row, row_layout)
+                y_row += row_layout["height"]
+        if page_no == total_pages:
+            draw_footer(page_no, total_pages)
+        if page_no < total_pages:
+            c.showPage()
+    c.save()
+
+
 def _render_orc_pdf_modern(self, path, orc):
     _ensure_configured()
     from reportlab.lib import colors
@@ -2242,7 +2773,7 @@ def _render_orc_pdf_modern(self, path, orc):
     content_w = width - (2 * margin)
     header_row_h = 22
     row_h = 18
-    first_table_top = 226
+    first_table_top = 244
     next_table_top = 132
     footer_start = 458
     doc_num = str(orc.get("numero", "") or "ORC").strip() or "ORC"
@@ -2289,15 +2820,15 @@ def _render_orc_pdf_modern(self, path, orc):
             cli = {**cobj}
 
     cols = [
-        ("Linha", 34, "center"),
-        ("Ref. Ext.", 170, "w"),
-        ("Ref. Interna", 146, "w"),
-        ("Material", 102, "w"),
-        ("Esp.", 34, "center"),
-        ("Operações", 90, "w"),
-        ("Desc.", 46, "e"),
-        ("Qtd.", 38, "e"),
-        ("P.Unit.", 58, "e"),
+        ("Linha", 30, "center"),
+        ("Ref. Ext.", 110, "w"),
+        ("Ref. Interna", 90, "w"),
+        ("Descricao", 230, "w"),
+        ("Material", 78, "w"),
+        ("Esp.", 28, "center"),
+        ("Operacoes", 66, "w"),
+        ("Qtd.", 32, "e"),
+        ("P.Unit.", 54, "e"),
         ("Total", 68, "e"),
     ]
     table_w = sum(width for _, width, _ in cols)
@@ -2435,10 +2966,9 @@ def _render_orc_pdf_modern(self, path, orc):
         left_pad = 12
         right_pad = 12
         title_y = top_y + 15
-        first_row_y = top_y + 31
-        row_gap = 9.2
-        total_gap = 12.0
-        label_w = max(42, box_w - left_pad - right_pad - 64)
+        value_label_y = top_y + 34
+        value_y = top_y + 54
+        note_first_y = top_y + 73
         value_x = x + box_w - right_pad
         c.saveState()
         c.setFillColor(colors.white)
@@ -2446,48 +2976,43 @@ def _render_orc_pdf_modern(self, path, orc):
         c.roundRect(x, yinv(top_y + box_h), box_w, box_h, 14, stroke=1, fill=1)
         c.setFillColor(palette["primary_soft"])
         c.roundRect(x + 1, yinv(top_y + box_h) + box_h - 7, box_w - 2, 6, 11, stroke=0, fill=1)
+        c.setFillColor(palette["surface_alt"])
+        c.roundRect(x + left_pad, yinv(top_y + 62), box_w - left_pad - right_pad, 36, 9, stroke=0, fill=1)
         c.restoreState()
         c.setFillColor(palette["primary_dark"])
         c.setFont(fonts["bold"], 8.9)
         c.drawString(x + left_pad, yinv(title_y), ntxt(_orc_pdf_clip_text("Resumo financeiro", box_w - left_pad - right_pad, fonts["bold"], 8.9)))
 
-        rows = [
-            ("Estado", estado),
-            ("Linhas", str(len(lines))),
-            ("Subtotal bruto", fmt_money(subtotal_bruto)),
-            ("Subtotal", fmt_money(subtotal)),
-            (f"IVA ({fmt_num(iva_perc)}%)", fmt_money(iva)),
-        ]
+        c.setFillColor(palette["muted"])
+        c.setFont(fonts["regular"], 7.0)
+        c.drawString(x + left_pad + 8, yinv(value_label_y), ntxt("Valor sem IVA"))
+        total_sem_iva = fmt_money(subtotal)
+        total_sem_iva_size = 14.2
+        while total_sem_iva_size > 9.0 and pdfmetrics.stringWidth(total_sem_iva, fonts["bold"], total_sem_iva_size) > box_w - left_pad - right_pad - 16:
+            total_sem_iva_size -= 0.25
+        c.setFillColor(palette["primary_dark"])
+        c.setFont(fonts["bold"], total_sem_iva_size)
+        c.drawRightString(value_x - 8, yinv(value_y), ntxt(total_sem_iva))
 
-        label_size = 6.7
-        value_size = 6.7
-        yy = first_row_y
-        for label, value in rows:
-            label_text = _orc_pdf_clip_text(label, label_w, fonts["regular"], label_size)
-            value_text = str(value)
-            fit_size = value_size
-            while fit_size > 5.9 and pdfmetrics.stringWidth(value_text, fonts["bold"], fit_size) > 62:
-                fit_size -= 0.2
-            c.setFont(fonts["regular"], label_size)
-            c.drawString(x + left_pad, yinv(yy), ntxt(label_text))
-            c.setFont(fonts["bold"], fit_size)
-            c.drawRightString(value_x, yinv(yy), ntxt(value_text))
-            yy += row_gap
-
-        sep_y = yy + 0.5
-        c.setStrokeColor(colors.Color(1, 1, 1, alpha=0.22))
-        c.line(x + left_pad, yinv(sep_y), x + box_w - right_pad, yinv(sep_y))
-        total_label_y = sep_y + 7.8
-        total_label = _orc_pdf_clip_text(f"TOTAL C/IVA {fmt_num(iva_perc)}%", label_w, fonts["bold"], 7.6)
-        c.setFont(fonts["bold"], 8.2)
-        c.drawString(x + left_pad, yinv(total_label_y), ntxt(total_label))
-        total_value = fmt_money(total)
-        total_value_size = 8.7
-        while total_value_size > 7.4 and pdfmetrics.stringWidth(total_value, fonts["bold"], total_value_size) > 64:
-            total_value_size -= 0.2
-        total_value_y = min(top_y + box_h - 12, total_label_y - 0.8)
-        c.setFont(fonts["bold"], total_value_size)
-        c.drawRightString(value_x, yinv(total_value_y), ntxt(total_value))
+        note_text = "Ao valor sem IVA acresce o IVA a taxa legal em vigor."
+        note_layout = _orc_pdf_fit_text_block(
+            note_text,
+            fonts["regular"],
+            6.6,
+            5.1,
+            box_w - left_pad - right_pad,
+            24,
+            max_lines=2,
+            leading_ratio=1.06,
+        )
+        note_y = note_first_y
+        for item in note_layout["lines"][:2]:
+            if note_y > top_y + box_h - 4:
+                break
+            c.setFont(fonts["regular"], note_layout["font_size"])
+            c.setFillColor(palette["muted"])
+            c.drawString(x + left_pad, yinv(note_y), ntxt(item))
+            note_y += note_layout["leading"]
 
     def draw_table_header(top_y):
         c.saveState()
@@ -2510,17 +3035,17 @@ def _render_orc_pdf_modern(self, path, orc):
         return top_y + header_row_h + 6
 
     def build_row_layout(line, absolute_idx):
-        padding_x = 8
+        padding_x = 6
         padding_y = 4
         discount_snapshot = _orc_apply_discount_snapshot(orc, line)
         values = [
             f"{absolute_idx + 1:03d}",
             _orc_line_ref_display(line),
             _orc_line_internal_ref_display(line),
+            _orc_line_description_display(line),
             _orc_line_material_display(line),
             fmt_num(_orc_line_unit_display(line), decimals=2),
             _orc_line_operacao_display(line),
-            fmt_num(discount_snapshot.get("desconto_perc", 0), decimals=2),
             fmt_num(line.get("qtd", 0), decimals=2),
             fmt_num(discount_snapshot.get("preco_unit_desconto", line.get("preco_unit", 0))),
             fmt_num(discount_snapshot.get("total_desconto", line.get("total", 0))),
@@ -2529,15 +3054,19 @@ def _render_orc_pdf_modern(self, path, orc):
         row_height = row_h
         for idx_col, ((_, width_col, align), value) in enumerate(zip(cols, values)):
             font_name = fonts["bold"] if idx_col == 1 else fonts["regular"]
-            preferred = 8.0
-            min_size = 5.0 if idx_col in (2, 3, 5) else 5.6
+            if idx_col in (1, 2, 3, 4, 6):
+                preferred = 7.25
+                min_size = 4.4
+            else:
+                preferred = 7.55
+                min_size = 5.0
             layout = _orc_pdf_fit_text_block(
                 value,
                 font_name,
                 preferred,
                 min_size,
                 width_col - (padding_x * 2),
-                54,
+                58,
                 leading_ratio=1.08,
             )
             content_h = max(layout["leading"], len(layout["lines"]) * layout["leading"])
@@ -2567,14 +3096,19 @@ def _render_orc_pdf_modern(self, path, orc):
             c.setFont(cell["font"], layout["font_size"])
             text_block_h = max(layout["leading"], len(layout["lines"]) * layout["leading"])
             yy = top_y + max(4, (row_height - text_block_h) / 2.0) + (layout["font_size"] * 0.82)
+            c.saveState()
+            clip_path = c.beginPath()
+            clip_path.rect(xx + 2, yinv(top_y + row_height) + 2, max(1, width_col - 4), max(1, row_height - 4))
+            c.clipPath(clip_path, stroke=0, fill=0)
             for line_text in layout["lines"]:
                 if align == "e":
-                    c.drawRightString(xx + width_col - 8, yinv(yy), ntxt(line_text))
+                    c.drawRightString(xx + width_col - 6, yinv(yy), ntxt(line_text))
                 elif align == "center":
                     c.drawCentredString(xx + (width_col / 2.0), yinv(yy), ntxt(line_text))
                 else:
-                    c.drawString(xx + 8, yinv(yy), ntxt(line_text))
+                    c.drawString(xx + 6, yinv(yy), ntxt(line_text))
                 yy += layout["leading"]
+            c.restoreState()
             xx += width_col
 
     def draw_header(page_no, total_pages, first_page):
@@ -2615,18 +3149,19 @@ def _render_orc_pdf_modern(self, path, orc):
             c.drawCentredString(hero_center_x, yinv(104), ntxt("Documento preparado para envio ao cliente"))
             draw_badge(margin + content_w - 20, 34, f"Pagina {page_no}/{total_pages}", fill_color=palette["primary_soft"], text_color=palette["primary_dark"], align="right")
             draw_badge(margin + content_w - 20, 58, estado, fill_color=palette["surface_alt"], text_color=palette["primary_dark"], align="right")
-            metric_grid = _orc_pdf_metric_grid_layout(width - margin - 8, 126, 64, cols=3, rows=2, group_w=360, gap=8)
+            metrics_top = 116
+            metrics_h = 30
+            detail_top = 154
+            detail_h = 76
+            metric_grid = _orc_pdf_metric_grid_layout(width - margin - 8, metrics_top, metrics_h, cols=3, rows=1, group_w=360, gap=8)
             metric_card(metric_grid["cols"][0], metric_grid["rows"][0], metric_grid["chip_w"], "Documento", doc_num, box_h=metric_grid["chip_h"], compact=True)
             metric_card(metric_grid["cols"][1], metric_grid["rows"][0], metric_grid["chip_w"], "Data", fmt_display_date(orc.get("data", "")), box_h=metric_grid["chip_h"], compact=True)
             metric_card(metric_grid["cols"][2], metric_grid["rows"][0], metric_grid["chip_w"], "Executado por", executado or "-", box_h=metric_grid["chip_h"], compact=True)
-            metric_card(metric_grid["cols"][0], metric_grid["rows"][1], metric_grid["chip_w"], "Subtotal", fmt_money(subtotal), box_h=metric_grid["chip_h"], compact=True)
-            metric_card(metric_grid["cols"][1], metric_grid["rows"][1], metric_grid["chip_w"], "IVA", f"{fmt_num(iva_perc)}%", box_h=metric_grid["chip_h"], compact=True)
-            metric_card(metric_grid["cols"][2], metric_grid["rows"][1], metric_grid["chip_w"], f"TOTAL C/IVA {fmt_num(iva_perc)}%", fmt_money(total), box_h=metric_grid["chip_h"], accent=True, compact=True)
             detail_card(
                 margin,
-                126,
+                detail_top,
                 332,
-                86,
+                detail_h,
                 "Cliente",
                 [
                     str(cli.get("nome", "") or cli.get("empresa", "") or cli.get("codigo", "") or "-").strip(),
@@ -2638,9 +3173,9 @@ def _render_orc_pdf_modern(self, path, orc):
             )
             detail_card(
                 margin + 344,
-                126,
+                detail_top,
                 content_w - 344,
-                86,
+                detail_h,
                 "Contexto comercial",
                 [
                     f"Nota cliente: {nota_cliente or '-'}",
@@ -2672,9 +3207,9 @@ def _render_orc_pdf_modern(self, path, orc):
     def draw_footer(page_no, total_pages):
         footer_y = footer_start + 4
         footer_gap = 8
-        notes_w = 300
-        cond_w = 174
-        legend_w = 118
+        notes_w = 278
+        cond_w = 158
+        legend_w = 104
         summary_w = max(176, int(table_w - notes_w - cond_w - legend_w - (footer_gap * 3)))
         notes_x = margin
         cond_x = notes_x + notes_w + footer_gap

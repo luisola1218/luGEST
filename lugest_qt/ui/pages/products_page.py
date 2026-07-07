@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from pathlib import Path
+import re
+import unicodedata
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
     QFormLayout,
     QGridLayout,
     QHeaderView,
@@ -26,6 +26,53 @@ from PySide6.QtWidgets import (
 )
 
 from ..widgets import CardFrame
+
+
+def _product_grid_search_normalize(value: object) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.casefold()
+    text = re.sub(r"(?<=\d),(?=\d)", ".", text)
+    text = re.sub(r"[^a-z0-9./-]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _product_grid_numeric_key(value: object) -> str:
+    text = _product_grid_search_normalize(value).strip().strip("./-")
+    if not re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return ""
+    try:
+        number = float(text)
+    except Exception:
+        return ""
+    return f"{number:.4f}".rstrip("0").rstrip(".")
+
+
+def _product_grid_search_matches(values: list[object], query: object) -> bool:
+    terms = [term for term in _product_grid_search_normalize(query).split() if term]
+    if not terms:
+        return True
+    normalized = _product_grid_search_normalize(" ".join(str(value or "") for value in values))
+    tokens = set(normalized.split())
+    numeric_tokens = {_product_grid_numeric_key(token) for token in tokens}
+    numeric_tokens.discard("")
+    for token in list(tokens):
+        if _product_grid_numeric_key(token):
+            continue
+        for part in re.findall(r"\d+(?:\.\d+)?", token):
+            part_numeric = _product_grid_numeric_key(part)
+            if part_numeric:
+                numeric_tokens.add(part_numeric)
+                tokens.add(part)
+    for term in terms:
+        numeric = _product_grid_numeric_key(term)
+        if numeric:
+            if numeric not in numeric_tokens and term not in tokens:
+                return False
+            continue
+        if term not in normalized:
+            return False
+    return True
 
 
 class _ConsumeDialog(QDialog):
@@ -105,7 +152,7 @@ class ProductsPage(QWidget):
 
         root = QVBoxLayout(self)
         root.setContentsMargins(4, 4, 4, 4)
-        root.setSpacing(10)
+        root.setSpacing(6)
 
         top_card = CardFrame()
         top_card.set_tone("info")
@@ -124,11 +171,29 @@ class ProductsPage(QWidget):
         title_wrap.addWidget(title)
         title_wrap.addWidget(subtitle)
         top_bar.addLayout(title_wrap, 1)
+        self._product_filter_timer = QTimer(self)
+        self._product_filter_timer.setSingleShot(True)
+        self._product_filter_timer.timeout.connect(self.refresh)
+        search_box = QWidget()
+        search_box.setObjectName("ProductSearchBox")
+        search_box.setMaximumWidth(360)
+        search_box.setStyleSheet(
+            "QWidget#ProductSearchBox { background: #ffffff; border: 1px solid #b8c9df; border-radius: 8px; }"
+            "QLineEdit { border: none; background: transparent; padding: 6px 8px 6px 0; }"
+        )
+        search_layout = QHBoxLayout(search_box)
+        search_layout.setContentsMargins(8, 0, 8, 0)
+        search_layout.setSpacing(6)
+        search_icon = QLabel("🔍")
+        search_icon.setFixedWidth(20)
+        search_icon.setAlignment(Qt.AlignCenter)
+        search_icon.setStyleSheet("font-size: 15px; color: #33516f;")
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Pesquisar codigo, descricao, categoria, subcategoria ou tipo...")
-        self.filter_edit.textChanged.connect(self.refresh)
-        self.filter_edit.setMaximumWidth(420)
-        top_bar.addWidget(self.filter_edit)
+        self.filter_edit.textChanged.connect(lambda _text: self._product_filter_timer.start(180))
+        search_layout.addWidget(search_icon)
+        search_layout.addWidget(self.filter_edit, 1)
+        top_bar.addWidget(search_box)
         self.only_stock_check = QCheckBox("Mostrar apenas com stock")
         self.only_stock_check.setChecked(False)
         self.only_stock_check.toggled.connect(self.refresh)
@@ -136,22 +201,33 @@ class ProductsPage(QWidget):
         top_layout.addLayout(top_bar)
 
         filter_row = QHBoxLayout()
-        filter_row.setSpacing(8)
+        filter_row.setSpacing(6)
         filter_row.addWidget(QLabel("Categoria"))
         self.filter_category_combo = QComboBox()
         self.filter_category_combo.setEditable(False)
-        self.filter_category_combo.setMinimumWidth(170)
+        self.filter_category_combo.setMinimumWidth(150)
         filter_row.addWidget(self.filter_category_combo)
         filter_row.addWidget(QLabel("Subcat."))
         self.filter_subcat_combo = QComboBox()
         self.filter_subcat_combo.setEditable(False)
-        self.filter_subcat_combo.setMinimumWidth(170)
+        self.filter_subcat_combo.setMinimumWidth(150)
         filter_row.addWidget(self.filter_subcat_combo)
         filter_row.addWidget(QLabel("Tipo"))
         self.filter_type_combo = QComboBox()
         self.filter_type_combo.setEditable(False)
-        self.filter_type_combo.setMinimumWidth(170)
+        self.filter_type_combo.setMinimumWidth(150)
         filter_row.addWidget(self.filter_type_combo)
+        filter_row.addWidget(QLabel("Estado"))
+        self.filter_state_combo = QComboBox()
+        self.filter_state_combo.setEditable(False)
+        self.filter_state_combo.addItems(["Todos", "Disponivel", "Stock baixo", "Sem stock", "Qualidade"])
+        self.filter_state_combo.setMinimumWidth(132)
+        filter_row.addWidget(self.filter_state_combo)
+        clear_filters_btn = QPushButton("Limpar")
+        clear_filters_btn.setProperty("compact", "true")
+        clear_filters_btn.setProperty("variant", "secondary")
+        clear_filters_btn.clicked.connect(self._clear_product_filters)
+        filter_row.addWidget(clear_filters_btn)
         filter_row.addStretch(1)
         top_layout.addLayout(filter_row)
 
@@ -182,27 +258,31 @@ class ProductsPage(QWidget):
         self.consume_btn = QPushButton("Baixa")
         self.consume_btn.setProperty("variant", "secondary")
         self.consume_btn.clicked.connect(self._consume_product)
-        self.pdf_btn = QPushButton("Pre-visualizar PDF")
+        self.pdf_btn = QPushButton("PDF")
         self.pdf_btn.setProperty("variant", "secondary")
         self.pdf_btn.clicked.connect(self._open_pdf)
         self.label_btn = QPushButton("Etiqueta")
         self.label_btn.setProperty("variant", "secondary")
         self.label_btn.clicked.connect(self._open_label_pdf)
-        self.form_mode_btn = QPushButton("Ficha produto")
+        self.form_mode_btn = QPushButton("Ficha")
         self.form_mode_btn.setProperty("variant", "secondary")
         self.form_mode_btn.clicked.connect(self._show_form_page)
-        self.moves_mode_btn = QPushButton("Movimentos")
+        self.moves_mode_btn = QPushButton("Movs.")
         self.moves_mode_btn.setProperty("variant", "secondary")
         self.moves_mode_btn.clicked.connect(self._show_moves_page)
+        self.full_grid_btn = QPushButton("Grelha")
+        self.full_grid_btn.setProperty("variant", "secondary")
+        self.full_grid_btn.clicked.connect(self.open_full_grid)
         for button, width in (
-            (self.new_btn, 90),
-            (self.save_btn, 96),
-            (self.remove_btn, 96),
-            (self.consume_btn, 88),
-            (self.pdf_btn, 146),
-            (self.label_btn, 92),
-            (self.form_mode_btn, 118),
-            (self.moves_mode_btn, 108),
+            (self.new_btn, 74),
+            (self.save_btn, 86),
+            (self.remove_btn, 88),
+            (self.consume_btn, 78),
+            (self.pdf_btn, 66),
+            (self.label_btn, 82),
+            (self.form_mode_btn, 72),
+            (self.moves_mode_btn, 72),
+            (self.full_grid_btn, 74),
         ):
             button.setStyleSheet("font-weight: 500;")
             button.setMaximumWidth(width)
@@ -224,10 +304,37 @@ class ProductsPage(QWidget):
         table_header.addWidget(table_title)
         table_header.addStretch(1)
         table_header.addWidget(self.table_count_label)
-        self.table = QTableWidget(0, 10)
+        open_grid_btn = QPushButton("Janela inteira")
+        open_grid_btn.setProperty("compact", "true")
+        open_grid_btn.setProperty("variant", "secondary")
+        open_grid_btn.clicked.connect(self.open_full_grid)
+        table_header.addWidget(open_grid_btn)
+        self.table = QTableWidget(0, 11)
         self.table.setObjectName("StockTable")
+        self.table.setStyleSheet(
+            "QTableWidget {"
+            " selection-background-color: #fff3bf;"
+            " selection-color: #0f172a;"
+            "}"
+            "QTableWidget::item:selected {"
+            " background: #fff3bf;"
+            " color: #0f172a;"
+            "}"
+        )
         self.table.setHorizontalHeaderLabels(
-            ["Código", "Descrição", "Categoria", "Tipo", "Qtd", "Alerta", "Preço/Unid.", "Valor Stock", "Atualizado", "Estado"]
+            [
+                "Codigo",
+                "Descricao",
+                "Categoria",
+                "Tipo",
+                "Qtd",
+                "Disponivel",
+                "Alerta",
+                "Preco/Unid.",
+                "Valor Stock",
+                "Atualizado",
+                "Estado",
+            ]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(28)
@@ -238,7 +345,7 @@ class ProductsPage(QWidget):
         header.setSectionResizeMode(0, QHeaderView.Interactive)
         header.resizeSection(0, 156)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
-        for col, width in ((2, 112), (3, 104), (4, 76), (5, 76), (6, 112), (7, 112), (8, 148), (9, 126)):
+        for col, width in ((2, 112), (3, 104), (4, 76), (5, 86), (6, 76), (7, 112), (8, 112), (9, 142), (10, 118)):
             header.setSectionResizeMode(col, QHeaderView.Interactive)
             header.resizeSection(col, width)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
@@ -256,7 +363,7 @@ class ProductsPage(QWidget):
         detail_host_layout.addWidget(self.detail_mode_label)
         self.detail_stack = QStackedWidget()
         detail_host_layout.addWidget(self.detail_stack)
-        detail_host.setMaximumHeight(308)
+        detail_host.setMaximumHeight(282)
         root.addWidget(detail_host, 2)
 
         self.form_page = QWidget()
@@ -310,9 +417,6 @@ class ProductsPage(QWidget):
             form_grid.addWidget(label, row, col)
             form_grid.addWidget(widget, row, col + 1)
         form_page_layout.addLayout(form_grid)
-        form_note = QLabel("A tabela principal fica com mais area e os movimentos passam para o sub-menu proprio.")
-        form_note.setProperty("role", "muted")
-        form_page_layout.addWidget(form_note)
         form_page_layout.addStretch(1)
 
         self.moves_page = QWidget()
@@ -359,6 +463,7 @@ class ProductsPage(QWidget):
         self.filter_category_combo.currentTextChanged.connect(self._sync_filter_catalog)
         self.filter_subcat_combo.currentTextChanged.connect(self._sync_filter_catalog)
         self.filter_type_combo.currentTextChanged.connect(lambda _text: self.refresh())
+        self.filter_state_combo.currentTextChanged.connect(lambda _text: self.refresh())
 
         self._load_presets()
         self._new_product()
@@ -384,6 +489,26 @@ class ProductsPage(QWidget):
         combo.addItems([value for value in values if str(value or "").strip()])
         combo.setCurrentText(current if current in [combo.itemText(index) for index in range(combo.count())] else "Todas")
         combo.blockSignals(False)
+
+    def _clear_product_filters(self) -> None:
+        self.filter_edit.clear()
+        for combo, value in (
+            (self.filter_category_combo, "Todas"),
+            (self.filter_subcat_combo, "Todas"),
+            (self.filter_type_combo, "Todas"),
+            (self.filter_state_combo, "Todos"),
+        ):
+            combo.blockSignals(True)
+            combo.setCurrentText(value)
+            combo.blockSignals(False)
+        self.only_stock_check.blockSignals(True)
+        self.only_stock_check.setChecked(False)
+        self.only_stock_check.blockSignals(False)
+        self.refresh()
+
+    def _filter_combo_text(self, combo: QComboBox) -> str:
+        text = str(combo.currentText() or "").strip()
+        return "" if text.casefold() in {"", "todos", "todas", "all"} else text
 
     def _set_mode_buttons(self, moves: bool) -> None:
         self.form_mode_btn.setEnabled(moves)
@@ -534,8 +659,8 @@ class ProductsPage(QWidget):
                 continue
             item.setBackground(QBrush(background))
             item.setForeground(QBrush(foreground))
-        qty_item = self.table.item(row_index, 4)
-        status_item = self.table.item(row_index, 9)
+        qty_item = self.table.item(row_index, 5)
+        status_item = self.table.item(row_index, 10)
         if severity == "warning":
             for item in (qty_item, status_item):
                 if item is not None:
@@ -611,18 +736,206 @@ class ProductsPage(QWidget):
         else:
             self.moves_summary_label.setText("Sem entregas a operador no período selecionado.")
 
-    def refresh(self) -> None:
-        self._load_presets()
-        rows = self.backend.product_rows(self.filter_edit.text().strip(), in_stock_only=self.only_stock_check.isChecked())
-        category_filter = "" if self.filter_category_combo.currentText() == "Todas" else self.filter_category_combo.currentText().strip()
-        subcat_filter = "" if self.filter_subcat_combo.currentText() == "Todas" else self.filter_subcat_combo.currentText().strip()
-        type_filter = "" if self.filter_type_combo.currentText() == "Todas" else self.filter_type_combo.currentText().strip()
+    def _filtered_product_rows(self, query: str = "") -> list[dict]:
+        rows = self.backend.product_rows("", in_stock_only=self.only_stock_check.isChecked())
+        category_filter = self._filter_combo_text(self.filter_category_combo)
+        subcat_filter = self._filter_combo_text(self.filter_subcat_combo)
+        type_filter = self._filter_combo_text(self.filter_type_combo)
+        state_filter = self._filter_combo_text(self.filter_state_combo).casefold()
         if category_filter:
             rows = [row for row in rows if str(row.get("categoria", "") or "").strip().casefold() == category_filter.casefold()]
         if subcat_filter:
             rows = [row for row in rows if str(row.get("subcat", "") or "").strip().casefold() == subcat_filter.casefold()]
         if type_filter:
             rows = [row for row in rows if str(row.get("tipo", "") or "").strip().casefold() == type_filter.casefold()]
+        if state_filter:
+            filtered: list[dict] = []
+            for row in rows:
+                state_label = _product_grid_search_normalize(self._product_state_label(row))
+                if state_filter == "disponivel" and not state_label.startswith("dispon"):
+                    continue
+                if state_filter == "stock baixo" and "baixo" not in state_label:
+                    continue
+                if state_filter == "sem stock" and "sem stock" not in state_label:
+                    continue
+                if state_filter == "qualidade" and not any(token in state_label for token in ("qual", "inspec", "pend", "bloque", "rejeit")):
+                    continue
+                filtered.append(row)
+            rows = filtered
+        query = str(query or "").strip()
+        if query:
+            rows = [row for row in rows if _product_grid_search_matches(list(row.values()), query)]
+        return rows
+
+    def open_full_grid(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Grelha de produtos")
+        dialog.resize(1500, 820)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        header = QHBoxLayout()
+        title = QLabel("Stock de produtos")
+        title.setStyleSheet("font-size: 16px; font-weight: 900; color: #10253d;")
+        info = QLabel(self.table_count_label.text())
+        info.setProperty("role", "muted")
+        header.addWidget(title)
+        header.addStretch(1)
+        header.addWidget(info)
+        layout.addLayout(header)
+
+        search_box = QWidget()
+        search_box.setObjectName("FullProductSearchBox")
+        search_box.setStyleSheet(
+            "QWidget#FullProductSearchBox { background: #ffffff; border: 1px solid #b8c9df; border-radius: 8px; }"
+            "QLineEdit { border: none; background: transparent; padding: 7px 8px 7px 0; }"
+        )
+        search_layout = QHBoxLayout(search_box)
+        search_layout.setContentsMargins(9, 0, 9, 0)
+        search_layout.setSpacing(6)
+        search_icon = QLabel("🔍")
+        search_icon.setFixedWidth(20)
+        search_icon.setAlignment(Qt.AlignCenter)
+        search_icon.setStyleSheet("font-size: 15px; color: #33516f;")
+        search_edit = QLineEdit()
+        search_edit.setPlaceholderText("Pesquisar por codigo, descricao, categoria, tipo, dimensao, fabricante, modelo, stock...")
+        search_layout.addWidget(search_icon)
+        search_layout.addWidget(search_edit, 1)
+        layout.addWidget(search_box)
+
+        table = QTableWidget(0, 22)
+        table.setHorizontalHeaderLabels(
+            [
+                "Codigo",
+                "Descricao",
+                "Categoria",
+                "Subcat.",
+                "Tipo",
+                "Dimensoes",
+                "Unid.",
+                "Qtd fisica",
+                "Disponivel",
+                "Pendente Q.",
+                "Alerta",
+                "Compra",
+                "Preco/Unid.",
+                "PVP1",
+                "PVP2",
+                "Valor stock",
+                "Metros/Un.",
+                "Peso/Un.",
+                "Fabricante",
+                "Modelo",
+                "Atualizado",
+                "Estado",
+            ]
+        )
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(28)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setSelectionMode(QTableWidget.SingleSelection)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setWordWrap(False)
+        table.setStyleSheet(self.table.styleSheet())
+        header_view = table.horizontalHeader()
+        header_view.setMinimumSectionSize(48)
+        widths = [128, 300, 140, 140, 150, 150, 64, 84, 86, 96, 78, 94, 104, 94, 94, 112, 92, 92, 140, 140, 150, 118]
+        for column, width in enumerate(widths):
+            header_view.setSectionResizeMode(column, QHeaderView.Interactive)
+            table.setColumnWidth(column, width)
+        table.setSortingEnabled(True)
+
+        render_timer = QTimer(dialog)
+        render_timer.setSingleShot(True)
+
+        def row_columns(row: dict) -> list[object]:
+            state_label = self._product_state_label(row)
+            return [
+                row.get("codigo", "-"),
+                row.get("descricao", "-"),
+                row.get("category_display", row.get("categoria", "-")),
+                row.get("subcat", "-"),
+                row.get("tipo", "-"),
+                row.get("dimensoes", "-"),
+                row.get("unid", "UN"),
+                f"{float(row.get('qty', 0) or 0):.2f}",
+                f"{float(row.get('available_qty', 0) or 0):.2f}",
+                f"{float(row.get('quality_pending_qty', 0) or 0):.2f}",
+                f"{float(row.get('alerta', 0) or 0):.2f}",
+                self._fmt_eur(row.get("p_compra", 0)),
+                self._fmt_eur(row.get("preco_unid", 0)),
+                self._fmt_eur(row.get("pvp1", 0)),
+                self._fmt_eur(row.get("pvp2", 0)),
+                self._fmt_eur(row.get("valor_stock", 0)),
+                f"{float(row.get('metros_unidade', 0) or 0):.2f}",
+                f"{float(row.get('peso_unid', 0) or 0):.2f}",
+                row.get("fabricante", ""),
+                row.get("modelo", ""),
+                str(row.get("updated_at", "") or "").replace("T", " ")[:19],
+                state_label,
+            ]
+
+        def render_full_grid() -> None:
+            selected_code = ""
+            selection = table.selectionModel()
+            if selection is not None and selection.selectedRows():
+                selected_item = table.item(selection.selectedRows()[0].row(), 0)
+                selected_code = selected_item.text().strip() if selected_item is not None else ""
+            selected_code = selected_code or self.current_code
+            sort_col = header_view.sortIndicatorSection()
+            sort_order = header_view.sortIndicatorOrder()
+            table.setSortingEnabled(False)
+            rows = self._filtered_product_rows(search_edit.text().strip())
+            info.setText(f"{len(rows)} registos")
+            table.setRowCount(len(rows))
+            for row_index, row in enumerate(rows):
+                for col_index, value in enumerate(row_columns(row)):
+                    item = QTableWidgetItem(str(value))
+                    item.setToolTip(str(value))
+                    if col_index not in (1, 2, 3, 4, 5, 18, 19, 20):
+                        item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
+                    table.setItem(row_index, col_index, item)
+            table.setSortingEnabled(True)
+            table.sortItems(sort_col, sort_order)
+            if selected_code:
+                for row_index in range(table.rowCount()):
+                    item = table.item(row_index, 0)
+                    if item is not None and item.text().strip() == selected_code:
+                        table.selectRow(row_index)
+                        break
+            elif table.rowCount() > 0:
+                table.selectRow(0)
+
+        render_timer.timeout.connect(render_full_grid)
+        search_edit.textChanged.connect(lambda _text: render_timer.start(180))
+        render_full_grid()
+        search_edit.setFocus()
+        table.itemDoubleClicked.connect(lambda *_args: dialog.accept())
+        layout.addWidget(table, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Selecionar")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        selection = table.selectionModel()
+        if selection is None or not selection.selectedRows():
+            return
+        item = table.item(selection.selectedRows()[0].row(), 0)
+        if item is None:
+            return
+        self.current_code = item.text().strip()
+        try:
+            self._fill_form(self.backend.product_detail(self.current_code))
+        except Exception:
+            self.refresh()
+
+    def refresh(self) -> None:
+        self._load_presets()
+        rows = self._filtered_product_rows(self.filter_edit.text().strip())
         self.table_count_label.setText(f"{len(rows)} registos")
         self.table.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
@@ -633,6 +946,7 @@ class ProductsPage(QWidget):
                 row.get("category_display", row.get("categoria", "-")),
                 row.get("type_display", row.get("tipo", "-")),
                 f"{float(row.get('qty', 0) or 0):.2f}",
+                f"{float(row.get('available_qty', row.get('qty', 0)) or 0):.2f}",
                 f"{float(row.get('alerta', 0) or 0):.2f}",
                 self._fmt_eur(row.get("preco_unid", 0)),
                 self._fmt_eur(row.get("valor_stock", 0)),

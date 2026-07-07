@@ -21,6 +21,13 @@ CREATE TABLE IF NOT EXISTS `app_config` (
   PRIMARY KEY (`ckey`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
+CREATE TABLE IF NOT EXISTS `app_counters` (
+  `ckey` varchar(80) NOT NULL,
+  `next_value` bigint(20) NOT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`ckey`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS `app_state` (
   `id` tinyint(4) NOT NULL,
   `data_json` longtext COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -45,6 +52,15 @@ CREATE TABLE IF NOT EXISTS `at_series` (
   KEY `idx_at_series_doc_serie` (`doc_type`,`serie_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
+CREATE TABLE IF NOT EXISTS `categories` (
+  `id` varchar(80) NOT NULL,
+  `nome` varchar(120) NOT NULL,
+  `icon` varchar(30) DEFAULT NULL,
+  `badge` varchar(60) DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
 CREATE TABLE IF NOT EXISTS `clientes` (
   `codigo` varchar(20) NOT NULL,
   `nome` varchar(150) DEFAULT NULL,
@@ -52,6 +68,25 @@ CREATE TABLE IF NOT EXISTS `clientes` (
   `morada` varchar(255) DEFAULT NULL,
   `contacto` varchar(50) DEFAULT NULL,
   `email` varchar(150) DEFAULT NULL,
+  `observacoes` text,
+  `prazo_entrega` varchar(120) DEFAULT NULL,
+  `cond_pagamento` varchar(120) DEFAULT NULL,
+  `obs_tecnicas` text,
+  PRIMARY KEY (`codigo`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+CREATE TABLE IF NOT EXISTS `conjuntos` (
+  `codigo` varchar(40) NOT NULL,
+  `descricao` varchar(150) NOT NULL,
+  `notas` text,
+  `ativo` tinyint(1) DEFAULT NULL,
+  `template` tinyint(1) DEFAULT NULL,
+  `origem` varchar(80) DEFAULT NULL,
+  `margem_perc` decimal(10,2) DEFAULT NULL,
+  `total_custo` decimal(12,2) DEFAULT NULL,
+  `total_final` decimal(12,2) DEFAULT NULL,
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
   PRIMARY KEY (`codigo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
@@ -62,6 +97,8 @@ CREATE TABLE IF NOT EXISTS `conjuntos_modelo` (
   `ativo` tinyint(1) DEFAULT NULL,
   `created_at` datetime DEFAULT NULL,
   `updated_at` datetime DEFAULT NULL,
+  `template` tinyint(1) DEFAULT NULL,
+  `origem` varchar(80) DEFAULT NULL,
   PRIMARY KEY (`codigo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
@@ -148,7 +185,6 @@ CREATE TABLE IF NOT EXISTS `fornecedores` (
 
 CREATE TABLE IF NOT EXISTS `materiais` (
   `id` varchar(20) NOT NULL,
-  `lote_interno` varchar(100) DEFAULT NULL,
   `lote_fornecedor` varchar(100) DEFAULT NULL,
   `formato` varchar(50) DEFAULT NULL,
   `material` varchar(100) DEFAULT NULL,
@@ -167,13 +203,13 @@ CREATE TABLE IF NOT EXISTS `materiais` (
   `preco_unid` decimal(12,4) DEFAULT NULL,
   `origem_lote` varchar(100) DEFAULT NULL,
   `origem_encomenda` varchar(30) DEFAULT NULL,
-  `logistic_status` varchar(30) DEFAULT NULL,
+  `material_familia` varchar(40) DEFAULT NULL,
+  `altura` decimal(10,2) DEFAULT NULL,
+  `diametro` decimal(10,2) DEFAULT NULL,
+  `kg_m` decimal(10,4) DEFAULT NULL,
+  `secao_tipo` varchar(40) DEFAULT NULL,
   `quality_status` varchar(40) DEFAULT NULL,
   `quality_blocked` tinyint(1) DEFAULT NULL,
-  `quality_pending_qty` decimal(10,2) DEFAULT NULL,
-  `quality_received_qty` decimal(10,2) DEFAULT NULL,
-  `quality_approved_qty` decimal(10,2) DEFAULT NULL,
-  `quality_return_document_id` varchar(30) DEFAULT NULL,
   `inspection_status` varchar(40) DEFAULT NULL,
   `inspection_defect` varchar(255) DEFAULT NULL,
   `inspection_decision` varchar(255) DEFAULT NULL,
@@ -186,6 +222,12 @@ CREATE TABLE IF NOT EXISTS `materiais` (
   `inspection_fatura` varchar(60) DEFAULT NULL,
   `quality_nc_id` varchar(30) DEFAULT NULL,
   `supplier_claim_id` varchar(30) DEFAULT NULL,
+  `logistic_status` varchar(30) DEFAULT NULL,
+  `quality_pending_qty` decimal(10,2) DEFAULT NULL,
+  `quality_received_qty` decimal(10,2) DEFAULT NULL,
+  `quality_approved_qty` decimal(10,2) DEFAULT NULL,
+  `quality_return_document_id` varchar(30) DEFAULT NULL,
+  `lote_interno` varchar(100) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
@@ -369,6 +411,28 @@ CREATE TABLE IF NOT EXISTS `plano_hist` (
   KEY `idx_plano_hist_ano` (`ano`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
+CREATE TABLE IF NOT EXISTS `product_documents` (
+  `id` varchar(80) NOT NULL,
+  `produto_codigo` varchar(20) NOT NULL,
+  `tipo` varchar(40) DEFAULT NULL,
+  `titulo` varchar(180) DEFAULT NULL,
+  `caminho` varchar(512) DEFAULT NULL,
+  `versao` varchar(30) DEFAULT NULL,
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_product_documents_codigo` (`produto_codigo`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+CREATE TABLE IF NOT EXISTS `product_types` (
+  `id` varchar(80) NOT NULL,
+  `subcategory_id` varchar(80) NOT NULL,
+  `nome` varchar(120) NOT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_product_types_subcategory` (`subcategory_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
 CREATE TABLE IF NOT EXISTS `produtos` (
   `codigo` varchar(20) NOT NULL,
   `descricao` varchar(255) DEFAULT NULL,
@@ -380,17 +444,20 @@ CREATE TABLE IF NOT EXISTS `produtos` (
   `alerta` decimal(10,2) DEFAULT NULL,
   `p_compra` decimal(10,2) DEFAULT NULL,
   `atualizado_em` datetime DEFAULT NULL,
-  `logistic_status` varchar(30) DEFAULT NULL,
   `quality_status` varchar(40) DEFAULT NULL,
   `quality_blocked` tinyint(1) DEFAULT NULL,
-  `quality_pending_qty` decimal(10,2) DEFAULT NULL,
-  `quality_received_qty` decimal(10,2) DEFAULT NULL,
-  `quality_approved_qty` decimal(10,2) DEFAULT NULL,
-  `quality_return_document_id` varchar(30) DEFAULT NULL,
   `inspection_defect` varchar(255) DEFAULT NULL,
   `inspection_decision` varchar(255) DEFAULT NULL,
   `inspection_note_number` varchar(30) DEFAULT NULL,
   `quality_nc_id` varchar(30) DEFAULT NULL,
+  `logistic_status` varchar(30) DEFAULT NULL,
+  `quality_pending_qty` decimal(10,2) DEFAULT NULL,
+  `quality_received_qty` decimal(10,2) DEFAULT NULL,
+  `quality_approved_qty` decimal(10,2) DEFAULT NULL,
+  `quality_return_document_id` varchar(30) DEFAULT NULL,
+  `category_id` varchar(80) DEFAULT NULL,
+  `subcategory_id` varchar(80) DEFAULT NULL,
+  `type_id` varchar(80) DEFAULT NULL,
   PRIMARY KEY (`codigo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
@@ -413,12 +480,112 @@ CREATE TABLE IF NOT EXISTS `produtos_mov` (
   KEY `idx_prod_mov_codigo` (`codigo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
+CREATE TABLE IF NOT EXISTS `quality_audit_log` (
+  `id` varchar(80) NOT NULL,
+  `created_at` datetime DEFAULT NULL,
+  `user_name` varchar(120) DEFAULT NULL,
+  `action` varchar(120) DEFAULT NULL,
+  `entity_type` varchar(80) DEFAULT NULL,
+  `entity_id` varchar(120) DEFAULT NULL,
+  `summary` text,
+  `before_json` longtext,
+  `after_json` longtext,
+  PRIMARY KEY (`id`),
+  KEY `idx_quality_audit_created` (`created_at`),
+  KEY `idx_quality_audit_entity` (`entity_type`,`entity_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+CREATE TABLE IF NOT EXISTS `quality_documents` (
+  `id` varchar(30) NOT NULL,
+  `titulo` varchar(180) NOT NULL,
+  `tipo` varchar(80) DEFAULT NULL,
+  `entidade` varchar(80) DEFAULT NULL,
+  `referencia` varchar(120) DEFAULT NULL,
+  `entidade_tipo` varchar(60) DEFAULT NULL,
+  `entidade_id` varchar(120) DEFAULT NULL,
+  `versao` varchar(30) DEFAULT NULL,
+  `estado` varchar(40) DEFAULT NULL,
+  `responsavel` varchar(120) DEFAULT NULL,
+  `caminho` varchar(512) DEFAULT NULL,
+  `obs` text,
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  `created_by` varchar(120) DEFAULT NULL,
+  `updated_by` varchar(120) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_quality_doc_entidade` (`entidade_tipo`,`entidade_id`),
+  KEY `idx_quality_doc_tipo` (`tipo`),
+  KEY `idx_quality_doc_estado` (`estado`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+CREATE TABLE IF NOT EXISTS `quality_nonconformities` (
+  `id` varchar(30) NOT NULL,
+  `origem` varchar(120) DEFAULT NULL,
+  `referencia` varchar(120) DEFAULT NULL,
+  `entidade_tipo` varchar(60) DEFAULT NULL,
+  `entidade_id` varchar(120) DEFAULT NULL,
+  `entidade_label` varchar(255) DEFAULT NULL,
+  `tipo` varchar(60) DEFAULT NULL,
+  `gravidade` varchar(40) DEFAULT NULL,
+  `estado` varchar(40) DEFAULT NULL,
+  `responsavel` varchar(120) DEFAULT NULL,
+  `prazo` date DEFAULT NULL,
+  `descricao` text,
+  `causa` text,
+  `acao` text,
+  `eficacia` text,
+  `fornecedor_id` varchar(30) DEFAULT NULL,
+  `fornecedor_nome` varchar(150) DEFAULT NULL,
+  `material_id` varchar(30) DEFAULT NULL,
+  `lote_fornecedor` varchar(100) DEFAULT NULL,
+  `ne_numero` varchar(30) DEFAULT NULL,
+  `guia` varchar(60) DEFAULT NULL,
+  `fatura` varchar(60) DEFAULT NULL,
+  `decisao` varchar(255) DEFAULT NULL,
+  `movement_id` varchar(255) DEFAULT NULL,
+  `qtd_recebida` decimal(10,2) DEFAULT NULL,
+  `qtd_aprovada` decimal(10,2) DEFAULT NULL,
+  `qtd_rejeitada` decimal(10,2) DEFAULT NULL,
+  `qtd_pendente` decimal(10,2) DEFAULT NULL,
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  `created_by` varchar(120) DEFAULT NULL,
+  `updated_by` varchar(120) DEFAULT NULL,
+  `closed_at` datetime DEFAULT NULL,
+  `closed_by` varchar(120) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_quality_nc_estado` (`estado`),
+  KEY `idx_quality_nc_entidade` (`entidade_tipo`,`entidade_id`),
+  KEY `idx_quality_nc_referencia` (`referencia`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+CREATE TABLE IF NOT EXISTS `schema_migrations` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT,
+  `migration_key` varchar(191) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `checksum_sha256` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `applied_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `applied_by` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  `notes` text COLLATE utf8mb4_unicode_ci,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_schema_migrations_key` (`migration_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `stock_log` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `data` datetime DEFAULT NULL,
   `acao` varchar(50) DEFAULT NULL,
   `detalhes` text,
+  `operador` varchar(120) DEFAULT NULL,
   PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+CREATE TABLE IF NOT EXISTS `subcategories` (
+  `id` varchar(80) NOT NULL,
+  `category_id` varchar(80) NOT NULL,
+  `nome` varchar(120) NOT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_subcategories_category` (`category_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 CREATE TABLE IF NOT EXISTS `transportes` (
@@ -511,6 +678,8 @@ CREATE TABLE IF NOT EXISTS `encomendas` (
   `transportadora_nome` varchar(150) DEFAULT NULL,
   `referencia_transporte` varchar(80) DEFAULT NULL,
   `zona_transporte` varchar(120) DEFAULT NULL,
+  `tipo_encomenda` varchar(30) DEFAULT NULL,
+  `of_codigo` varchar(30) DEFAULT NULL,
   PRIMARY KEY (`numero`),
   KEY `cliente_codigo` (`cliente_codigo`),
   KEY `idx_encomendas_estado` (`estado`),
@@ -524,9 +693,6 @@ CREATE TABLE IF NOT EXISTS `orcamentos` (
   `estado` varchar(50) DEFAULT NULL,
   `cliente_codigo` varchar(20) DEFAULT NULL,
   `iva_perc` decimal(5,2) DEFAULT NULL,
-  `desconto_perc` decimal(6,2) DEFAULT NULL,
-  `desconto_valor` decimal(12,2) DEFAULT NULL,
-  `subtotal_bruto` decimal(12,2) DEFAULT NULL,
   `subtotal` decimal(12,2) DEFAULT NULL,
   `total` decimal(12,2) DEFAULT NULL,
   `numero_encomenda` varchar(30) DEFAULT NULL,
@@ -545,11 +711,39 @@ CREATE TABLE IF NOT EXISTS `orcamentos` (
   `transportadora_nome` varchar(150) DEFAULT NULL,
   `referencia_transporte` varchar(80) DEFAULT NULL,
   `zona_transporte` varchar(120) DEFAULT NULL,
+  `desconto_perc` decimal(6,2) DEFAULT NULL,
+  `desconto_valor` decimal(12,2) DEFAULT NULL,
+  `subtotal_bruto` decimal(12,2) DEFAULT NULL,
+  `meta_json` longtext,
+  `prazo_entrega_texto` text,
+  `prazo_entrega_data` date DEFAULT NULL,
   PRIMARY KEY (`numero`),
   KEY `cliente_codigo` (`cliente_codigo`),
   KEY `idx_orcamentos_estado` (`estado`),
   KEY `idx_orcamentos_ano` (`ano`),
   CONSTRAINT `orcamentos_ibfk_1` FOREIGN KEY (`cliente_codigo`) REFERENCES `clientes` (`codigo`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+CREATE TABLE IF NOT EXISTS `conjuntos_itens` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `conjunto_codigo` varchar(40) NOT NULL,
+  `linha_ordem` int(11) DEFAULT NULL,
+  `tipo_item` varchar(30) DEFAULT NULL,
+  `ref_externa` varchar(100) DEFAULT NULL,
+  `descricao` text,
+  `material` varchar(100) DEFAULT NULL,
+  `espessura` varchar(20) DEFAULT NULL,
+  `operacao` varchar(150) DEFAULT NULL,
+  `produto_codigo` varchar(20) DEFAULT NULL,
+  `produto_unid` varchar(20) DEFAULT NULL,
+  `qtd` decimal(10,2) DEFAULT NULL,
+  `tempo_peca_min` decimal(10,2) DEFAULT NULL,
+  `preco_unit` decimal(10,4) DEFAULT NULL,
+  `desenho_path` varchar(512) DEFAULT NULL,
+  `meta_json` longtext,
+  PRIMARY KEY (`id`),
+  KEY `idx_conjuntos_codigo_ord` (`conjunto_codigo`,`linha_ordem`),
+  CONSTRAINT `conjuntos_itens_ibfk_1` FOREIGN KEY (`conjunto_codigo`) REFERENCES `conjuntos` (`codigo`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 CREATE TABLE IF NOT EXISTS `conjuntos_modelo_itens` (
@@ -568,6 +762,7 @@ CREATE TABLE IF NOT EXISTS `conjuntos_modelo_itens` (
   `tempo_peca_min` decimal(10,2) DEFAULT NULL,
   `preco_unit` decimal(10,4) DEFAULT NULL,
   `desenho_path` varchar(512) DEFAULT NULL,
+  `meta_json` longtext,
   PRIMARY KEY (`id`),
   KEY `idx_conjuntos_itens_codigo_ord` (`conjunto_codigo`,`linha_ordem`),
   CONSTRAINT `conjuntos_modelo_itens_ibfk_1` FOREIGN KEY (`conjunto_codigo`) REFERENCES `conjuntos_modelo` (`codigo`) ON DELETE CASCADE
@@ -589,8 +784,8 @@ CREATE TABLE IF NOT EXISTS `expedicao_linhas` (
   KEY `idx_expedicao_linhas_expedicao_numero` (`expedicao_numero`),
   KEY `idx_expedicao_linhas_encomenda_numero` (`encomenda_numero`),
   KEY `idx_expedicao_linhas_peca_id` (`peca_id`),
-  CONSTRAINT `fk_expedicao_linhas_expedicoes` FOREIGN KEY (`expedicao_numero`) REFERENCES `expedicoes` (`numero`) ON DELETE CASCADE,
-  CONSTRAINT `expedicao_linhas_ibfk_1` FOREIGN KEY (`expedicao_numero`) REFERENCES `expedicoes` (`numero`) ON DELETE CASCADE
+  CONSTRAINT `expedicao_linhas_ibfk_1` FOREIGN KEY (`expedicao_numero`) REFERENCES `expedicoes` (`numero`) ON DELETE CASCADE,
+  CONSTRAINT `fk_expedicao_linhas_expedicoes` FOREIGN KEY (`expedicao_numero`) REFERENCES `expedicoes` (`numero`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 CREATE TABLE IF NOT EXISTS `faturacao_faturas` (
@@ -737,6 +932,7 @@ CREATE TABLE IF NOT EXISTS `encomenda_espessuras` (
   `tempo_producao_min` decimal(10,2) DEFAULT NULL,
   `lote_baixa` varchar(100) DEFAULT NULL,
   `tempos_operacao_json` longtext,
+  `maquinas_operacao_json` longtext,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_enc_esp` (`encomenda_numero`,`material`,`espessura`),
   KEY `idx_enc_esp_num` (`encomenda_numero`),
@@ -806,6 +1002,18 @@ CREATE TABLE IF NOT EXISTS `pecas` (
   `operacoes_fluxo_json` longtext,
   `qtd_expedida` decimal(10,2) DEFAULT NULL,
   `hist_json` longtext,
+  `tipo_material` varchar(30) DEFAULT NULL,
+  `subtipo_material` varchar(100) DEFAULT NULL,
+  `dimensao` varchar(120) DEFAULT NULL,
+  `ficheiros_json` longtext,
+  `perfil_tipo` varchar(40) DEFAULT NULL,
+  `perfil_tamanho` varchar(80) DEFAULT NULL,
+  `tubo_forma` varchar(40) DEFAULT NULL,
+  `lado_a` decimal(10,2) DEFAULT NULL,
+  `lado_b` decimal(10,2) DEFAULT NULL,
+  `tubo_espessura` decimal(10,2) DEFAULT NULL,
+  `diametro` decimal(10,2) DEFAULT NULL,
+  `comprimento_mm` decimal(10,2) DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_pecas_encomenda_numero` (`encomenda_numero`),
   KEY `idx_pecas_estado` (`estado`),
@@ -839,6 +1047,7 @@ CREATE TABLE IF NOT EXISTS `orcamento_linhas` (
   `tempos_operacao_json` longtext,
   `custos_operacao_json` longtext,
   `quote_cost_snapshot_json` longtext,
+  `meta_json` longtext,
   PRIMARY KEY (`id`),
   KEY `idx_orcamento_linhas_orcamento_numero` (`orcamento_numero`),
   CONSTRAINT `orcamento_linhas_ibfk_1` FOREIGN KEY (`orcamento_numero`) REFERENCES `orcamentos` (`numero`) ON DELETE CASCADE
@@ -890,12 +1099,12 @@ CREATE TABLE IF NOT EXISTS `notas_encomenda_linha_entregas` (
   `localizacao` varchar(100) DEFAULT NULL,
   `entrega_total` tinyint(1) DEFAULT NULL,
   `stock_ref` varchar(30) DEFAULT NULL,
-  `logistic_status` varchar(30) DEFAULT NULL,
   `inspection_status` varchar(40) DEFAULT NULL,
   `inspection_defect` varchar(255) DEFAULT NULL,
   `inspection_decision` varchar(255) DEFAULT NULL,
   `quality_status` varchar(40) DEFAULT NULL,
   `quality_nc_id` varchar(30) DEFAULT NULL,
+  `logistic_status` varchar(30) DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_ne_linha_entregas_num_ord` (`ne_numero`,`linha_ordem`),
   CONSTRAINT `fk_ne_linha_entregas_ne` FOREIGN KEY (`ne_numero`) REFERENCES `notas_encomenda` (`numero`) ON DELETE CASCADE
@@ -933,12 +1142,17 @@ CREATE TABLE IF NOT EXISTS `notas_encomenda_linhas` (
   `obs_entrega` text,
   `desconto` decimal(6,2) DEFAULT NULL,
   `iva` decimal(6,2) DEFAULT NULL,
-  `logistic_status` varchar(30) DEFAULT NULL,
+  `material_familia` varchar(40) DEFAULT NULL,
+  `altura` decimal(10,2) DEFAULT NULL,
+  `diametro` decimal(10,2) DEFAULT NULL,
+  `kg_m` decimal(10,4) DEFAULT NULL,
+  `secao_tipo` varchar(40) DEFAULT NULL,
   `inspection_status` varchar(40) DEFAULT NULL,
   `inspection_defect` varchar(255) DEFAULT NULL,
   `inspection_decision` varchar(255) DEFAULT NULL,
   `quality_status` varchar(40) DEFAULT NULL,
   `quality_nc_id` varchar(30) DEFAULT NULL,
+  `logistic_status` varchar(30) DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_notas_encomenda_linhas_ne_numero` (`ne_numero`),
   KEY `idx_ne_linhas_num_ord` (`ne_numero`,`linha_ordem`),
@@ -960,10 +1174,10 @@ SET FOREIGN_KEY_CHECKS=1;
 -- Troca estas passwords logo apos a instalacao.
 
 INSERT IGNORE INTO `users` (`username`, `password`, `role`) VALUES
-  ('admin', 'pbkdf2_sha256$260000$o-8JTXRO86GxXxu7b710XQ$_4bqAVYXF9Rsz_ox9fUcyNOeJ3xtcUUvlJVNqo5IKl8', 'Admin'),
-  ('operador', 'pbkdf2_sha256$260000$EOmiWCqPUPfqnLT__Tk90g$22NZ2R_5OK42zwZLz4jRnS7KfuKuHXa_Ob9n7oZZogM', 'Operador'),
-  ('orcamentista', 'pbkdf2_sha256$260000$UfKacJMQVQFlRlhYpMoufw$q8LI849yDIBk4XErm5q25OR5Ijhm77Vsk4dRyGJP-8Y', 'Orcamentista'),
-  ('planeamento', 'pbkdf2_sha256$260000$HoI9JmsLMAfJXvqtYk5ehA$jmZnTTNLsuuKXc2NsE1cVtg172eNmaSigtS1LNJZdC4', 'Planeamento');
+  ('admin', 'pbkdf2_sha256$260000$twtWlO0GvBZetpBci2sOug$N1PMucMxankYQrlxeHs0s0kEMcb3Xw6bwO4cVqUmgDU', 'Admin'),
+  ('operador', 'pbkdf2_sha256$260000$M2XY3QEfYPvcEHy-M3AfKA$aGkQ3v7JehfVTQ3_AtwodGjCGjBgusMxoBP9gfygOBM', 'Operador'),
+  ('orcamentista', 'pbkdf2_sha256$260000$vLiE4itJMej_conHofffww$jw_m711a5wI7VDuAEtVFEJf-uWuAJg7Sc9GLIsD_s8s', 'Orcamentista'),
+  ('planeamento', 'pbkdf2_sha256$260000$ILI_Yby9QB0nXLh_oAq3dQ$5BN5tRNqGhi8LwYmLwiD8-5bHmzZ7s35uOF4lt20dIQ', 'Planeamento');
 
 INSERT IGNORE INTO `operadores` (`nome`) VALUES ('Operador 1');
 

@@ -82,16 +82,16 @@ def _mat_pdf_palette():
     return {
         "primary": colors.HexColor(primary_hex),
         "primary_dark": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#000000", 0.22)),
-        "primary_soft": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#FFFFFF", 0.82)),
-        "primary_soft_2": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#FFFFFF", 0.90)),
-        "surface_warm": colors.HexColor("#FCFCFD"),
-        "line": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#D7DEE8", 0.76)),
-        "line_strong": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#708090", 0.34)),
+        "primary_soft": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#FFFFFF", 0.91)),
+        "primary_soft_2": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#FFFFFF", 0.96)),
+        "surface_warm": colors.HexColor("#FDFEFF"),
+        "line": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#E6EBF2", 0.90)),
+        "line_strong": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#AAB7C6", 0.70)),
         "muted": colors.HexColor("#667085"),
         "ink": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#1A1A1A", 0.72)),
-        "danger_fill": colors.HexColor("#FEECEC"),
+        "danger_fill": colors.HexColor("#FFF5F5"),
         "danger_text": colors.HexColor("#B42318"),
-        "retalho_fill": colors.HexColor("#FFF4E5"),
+        "retalho_fill": colors.HexColor("#FFF9ED"),
         "retalho_text": colors.HexColor("#B54708"),
     }
 
@@ -967,8 +967,8 @@ def render_stock_a4_pdf(self, path_pdf):
     c = pdf_canvas.Canvas(path_pdf, pagesize=landscape(A4))
     margin = 22
     content_w = width - (2 * margin)
-    row_h = 18
-    table_header_h = 20
+    row_h = 16
+    table_header_h = 18
     table_first_top = 194
     table_next_top = 88
     footer_top = 474
@@ -1071,38 +1071,116 @@ def render_stock_a4_pdf(self, path_pdf):
     def dimension_text(record, formato):
         comp = fmt_num(record.get("comprimento", 0))
         larg = fmt_num(record.get("largura", 0))
+        diam = fmt_num(record.get("diametro", 0))
         metros = fmt_num(record.get("metros", 0))
+        raw_dim = str(record.get("dimensao", record.get("dimensoes", "")) or "").strip()
         if formato == "Chapa":
             if comp != "0" and larg != "0":
                 return f"{comp} x {larg} mm"
-            return "-"
+            return raw_dim or "-"
+        if formato == "Tubo":
+            secao = str(record.get("secao_tipo", "") or "").strip().casefold()
+            esp = str(record.get("espessura", "") or "").strip() or "-"
+            if secao == "redondo" and diam != "0":
+                return f"Ø{diam} x {esp} mm"
+            if comp != "0" and larg != "0":
+                return f"{comp} x {larg} x {esp} mm"
+            return raw_dim or "-"
+        if formato in {"Cantoneira", "Barra"}:
+            if comp != "0" and larg != "0":
+                return f"{comp} x {larg} mm"
+            return raw_dim or "-"
+        if formato == "Varão nervurado":
+            if diam != "0":
+                return f"Ø{diam} mm"
+            esp = str(record.get("espessura", "") or "").strip()
+            return f"Ø{esp} mm" if esp else (raw_dim or "-")
+        if formato == "Perfil":
+            secao = str(record.get("secao_tipo", "") or "").strip()
+            altura = fmt_num(record.get("altura", 0))
+            esp = str(record.get("espessura", "") or "").strip()
+            perfil_dim = altura if altura != "0" else esp
+            if secao and perfil_dim:
+                return f"{secao} {perfil_dim}"
+            if secao:
+                return secao
+            return raw_dim or "-"
         if metros != "0":
             return f"{metros} m"
         if comp != "0" or larg != "0":
             return f"{comp} x {larg}"
-        return "-"
+        return raw_dim or "-"
+
+    def section_text(record, formato):
+        base = dimension_text(record, formato)
+        metros = fmt_num(record.get("metros", 0))
+        kg_m = fmt_num(record.get("kg_m", 0))
+        peso_unid = fmt_num(record.get("peso_unid", 0))
+        details = []
+        if formato != "Chapa" and metros != "0":
+            details.append(f"{metros} m")
+        if kg_m != "0":
+            details.append(f"{kg_m} kg/m")
+        elif peso_unid != "0":
+            details.append(f"{peso_unid} kg/un")
+        if details:
+            return f"{base} | {' | '.join(details)}" if base and base != "-" else " | ".join(details)
+        return base
+
+    def group_label(record, formato):
+        material = str(record.get("material", "") or "-").strip() or "-"
+        esp = str(record.get("espessura", "") or "-").strip() or "-"
+        section = dimension_text(record, formato)
+        if formato in {"Tubo", "Perfil", "Cantoneira", "Barra", "Varão nervurado"}:
+            return f"{formato} | Esp. {esp} | {material} | {section}"
+        return f"{formato} | {material} | Esp. {esp}"
+
+    def format_order(value):
+        label = str(value or "").strip()
+        norm = _norm_material_key(label)
+        order = {
+            "chapa": 10,
+            "cantoneira": 20,
+            "barra": 30,
+            "tubo": 40,
+            "perfil": 50,
+            "varao nervurado": 60,
+            "varão nervurado": 60,
+        }
+        return order.get(norm, 90), label
 
     cols = [
-        ("Formato", 68, "w"),
-        ("Material", 150, "w"),
-        ("Esp.", 44, "center"),
-        ("Dimensao", 132, "w"),
+        ("Tipo", 62, "w"),
+        ("Material", 112, "w"),
+        ("Secao / dimensao", 196, "w"),
+        ("Esp.", 38, "center"),
         ("Qtd.", 44, "e"),
         ("Res.", 44, "e"),
         ("Disp.", 46, "e"),
-        ("Localizacao", 116, "w"),
-        ("Lote", 132, "w"),
+        ("Localizacao", 120, "w"),
+        ("Lote", 121, "w"),
     ]
     table_w = sum(cw for _, cw, _ in cols)
     x0 = margin
 
     source_rows = list(self.data.get("materiais", []) or [])
+    if bool(getattr(self, "stock_pdf_in_stock_only", False)):
+        source_rows = [
+            row
+            for row in source_rows
+            if (_num((row or {}).get("quantidade", 0), 0) - _num((row or {}).get("reservado", 0), 0)) > 0
+        ]
     source_rows = sorted(
         source_rows,
         key=lambda m: (
-            str(m.get("formato") or detect_materia_formato(m) or "Chapa"),
+            format_order(m.get("formato") or detect_materia_formato(m) or "Chapa"),
             float(parse_float(m.get("espessura", 0), 0)),
             str(m.get("material", "") or ""),
+            str(m.get("secao_tipo", "") or ""),
+            str(m.get("dimensao", m.get("dimensoes", "")) or ""),
+            float(parse_float(m.get("comprimento", 0), 0)),
+            float(parse_float(m.get("largura", 0), 0)),
+            float(parse_float(m.get("diametro", 0), 0)),
             str(m.get("Localizacao", m.get("LocalizaÃ§Ã£o", "")) or ""),
         ),
     )
@@ -1128,9 +1206,14 @@ def render_stock_a4_pdf(self, path_pdf):
         if is_retalho:
             retalho_count += 1
         format_counts[formato] = int(format_counts.get(formato, 0)) + 1
-        section_key = (formato, esp)
+        section = dimension_text(record, formato)
+        material_key = str(record.get("material", "") or "").strip()
+        if formato == "Chapa":
+            section_key = (formato, esp, material_key)
+        else:
+            section_key = (formato, esp, material_key, section)
         if section_key != last_section:
-            rows.append({"_group": f"{formato} | Esp. {esp}"})
+            rows.append({"_group": group_label(record, formato)})
             last_section = section_key
         item = dict(record)
         item["_formato"] = formato
@@ -1145,21 +1228,21 @@ def render_stock_a4_pdf(self, path_pdf):
 
     def draw_table_header(y_top):
         c.saveState()
-        c.setFillColor(palette["primary_soft"])
+        c.setFillColor(palette["primary_soft_2"])
         c.setStrokeColor(palette["line"])
-        c.setLineWidth(0.8)
-        c.roundRect(x0, yinv(y_top + table_header_h), table_w, table_header_h, 7, stroke=1, fill=1)
+        c.setLineWidth(0.45)
+        c.roundRect(x0, yinv(y_top + table_header_h), table_w, table_header_h, 5, stroke=1, fill=1)
         c.restoreState()
         c.setFillColor(palette["primary_dark"])
-        c.setFont(fonts["bold"], 8.2)
+        c.setFont(fonts["bold"], 7.6)
         xx = x0
         for name, cw, align in cols:
             if align == "e":
-                c.drawRightString(xx + cw - 6, yinv(y_top + 13), ntxt(name))
+                c.drawRightString(xx + cw - 6, yinv(y_top + 12), ntxt(name))
             elif align == "center":
-                c.drawCentredString(xx + cw / 2, yinv(y_top + 13), ntxt(name))
+                c.drawCentredString(xx + cw / 2, yinv(y_top + 12), ntxt(name))
             else:
-                c.drawString(xx + 6, yinv(y_top + 13), ntxt(name))
+                c.drawString(xx + 6, yinv(y_top + 12), ntxt(name))
             xx += cw
 
     def draw_header(page_no, total_pages, first_page):
@@ -1290,13 +1373,14 @@ def render_stock_a4_pdf(self, path_pdf):
             y_row = y_top + (local_i * row_h)
             if row.get("_group") is not None:
                 c.saveState()
-                c.setFillColor(palette["primary_soft"])
+                c.setFillColor(palette["primary_soft_2"])
                 c.setStrokeColor(palette["line"])
-                c.roundRect(x0, yinv(y_row + row_h), table_w, row_h, 5, stroke=1, fill=1)
+                c.setLineWidth(0.35)
+                c.roundRect(x0, yinv(y_row + row_h), table_w, row_h, 4, stroke=1, fill=1)
                 c.restoreState()
                 c.setFillColor(palette["primary_dark"])
-                c.setFont(fonts["bold"], 8.4)
-                c.drawString(x0 + 6, yinv(y_row + 11.5), ntxt(str(row.get("_group", ""))))
+                c.setFont(fonts["bold"], 7.5)
+                c.drawString(x0 + 6, yinv(y_row + 10.5), ntxt(str(row.get("_group", ""))))
                 continue
 
             available = _num(row.get("_available", 0), 0)
@@ -1307,22 +1391,22 @@ def render_stock_a4_pdf(self, path_pdf):
                 fill = palette["retalho_fill"]
                 text_color = palette["retalho_text"]
             else:
-                fill = palette["surface_warm"] if (int(row.get("_zebra", 0)) % 2 == 0) else colors.white
+                fill = colors.white
                 text_color = palette["ink"]
             c.saveState()
             c.setFillColor(fill)
             c.setStrokeColor(palette["line"])
-            c.setLineWidth(0.45)
-            c.roundRect(x0, yinv(y_row + row_h), table_w, row_h, 5, stroke=1, fill=1)
+            c.setLineWidth(0.28)
+            c.roundRect(x0, yinv(y_row + row_h), table_w, row_h, 4, stroke=1, fill=1)
             c.restoreState()
             c.setFillColor(text_color)
-            c.setFont(fonts["regular"], 8.0)
+            c.setFont(fonts["regular"], 7.3)
 
             vals = [
                 row.get("_formato", ""),
                 row.get("_material", ""),
+                section_text(row, str(row.get("_formato", "") or "")),
                 str(row.get("espessura", "") or ""),
-                dimension_text(row, str(row.get("_formato", "") or "")),
                 fmt_num(row.get("quantidade", 0)),
                 fmt_num(row.get("reservado", 0)),
                 fmt_num(available),
@@ -1331,13 +1415,13 @@ def render_stock_a4_pdf(self, path_pdf):
             ]
             xx = x0
             for (_name, cw, align), value in zip(cols, vals):
-                txt = _mat_pdf_clip_text(ntxt(value), cw - 12, fonts["regular"], 8.0)
+                txt = _mat_pdf_clip_text(ntxt(value), cw - 12, fonts["regular"], 7.3)
                 if align == "e":
-                    c.drawRightString(xx + cw - 6, yinv(y_row + 11.5), txt)
+                    c.drawRightString(xx + cw - 6, yinv(y_row + 10.5), txt)
                 elif align == "center":
-                    c.drawCentredString(xx + cw / 2, yinv(y_row + 11.5), txt)
+                    c.drawCentredString(xx + cw / 2, yinv(y_row + 10.5), txt)
                 else:
-                    c.drawString(xx + 6, yinv(y_row + 11.5), txt)
+                    c.drawString(xx + 6, yinv(y_row + 10.5), txt)
                 xx += cw
 
         idx += count
@@ -1596,4 +1680,3 @@ def preview_stock_a4(self):
         os.startfile(path)
     except Exception:
         messagebox.showerror("Erro", "Nao foi possivel abrir o PDF do stock.")
-

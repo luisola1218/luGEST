@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import unicodedata
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
@@ -37,6 +38,97 @@ from .bridge_mixins import (
 
 
 _STEEL_DENSITY_G_CM3 = 7.85
+
+
+def _search_normalize(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.casefold()
+    text = re.sub(r"(?<=\d),(?=\d)", ".", text)
+    text = re.sub(r"[^a-z0-9.]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _search_terms(value: Any) -> list[str]:
+    return [term for term in _search_normalize(value).split() if term]
+
+
+def _commercial_thickness_base_mm(value: Any) -> float:
+    text = str(value or "").strip().replace(",", ".")
+    match = re.search(r"(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)", text)
+    if not match:
+        return 0.0
+    try:
+        return float(match.group(1))
+    except Exception:
+        return 0.0
+
+
+def _commercial_thickness_label(value: Any) -> str:
+    text = str(value or "").strip().replace(",", ".")
+    match = re.search(r"(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)", text)
+    if not match:
+        return ""
+
+    def _clean(part: str) -> str:
+        return part.rstrip("0").rstrip(".") if "." in part else part
+
+    left = _clean(match.group(1))
+    right = _clean(match.group(2))
+    return f"{left}/{right}"
+
+
+_CHECKER_PLATE_WEIGHT_KG: dict[tuple[int, int], dict[str, float]] = {
+    (2000, 1000): {
+        "3/5": 51.1,
+        "4/6": 66.8,
+        "5/7": 82.5,
+        "6/8": 98.2,
+        "8/10": 129.6,
+    },
+    (2500, 1250): {
+        "3/5": 79.84,
+        "4/6": 104.38,
+        "5/7": 128.91,
+        "6/8": 153.44,
+        "8/10": 202.5,
+    },
+    (3000, 1500): {
+        "3/5": 112.23,
+        "4/6": 147.55,
+        "5/7": 182.88,
+        "6/8": 218.2,
+        "8/10": 288.85,
+        "10/12": 360.0,
+    },
+}
+
+
+def _checker_plate_weight_kg(length_mm: float, width_mm: float, thickness_label: str) -> float:
+    dims = (int(round(float(length_mm or 0))), int(round(float(width_mm or 0))))
+    label = _commercial_thickness_label(thickness_label) or str(thickness_label or "").strip()
+    if not label:
+        return 0.0
+    exact = float(_CHECKER_PLATE_WEIGHT_KG.get(dims, {}).get(label, 0.0) or 0.0)
+    if exact > 0:
+        return exact
+    area = max(0.0, float(length_mm or 0.0) * float(width_mm or 0.0))
+    if area <= 0:
+        return 0.0
+    candidates: list[tuple[float, float]] = []
+    target_ratio = max(float(length_mm or 0.0), float(width_mm or 0.0)) / max(1.0, min(float(length_mm or 0.0), float(width_mm or 0.0)))
+    for (base_length, base_width), rows in _CHECKER_PLATE_WEIGHT_KG.items():
+        base_weight = float(rows.get(label, 0.0) or 0.0)
+        if base_weight <= 0:
+            continue
+        base_area = float(base_length * base_width)
+        base_ratio = max(base_length, base_width) / max(1.0, min(base_length, base_width))
+        score = abs(base_area - area) / max(area, base_area) + abs(base_ratio - target_ratio)
+        candidates.append((score, base_weight / base_area))
+    if not candidates:
+        return 0.0
+    _score, kg_per_mm2 = min(candidates, key=lambda item: item[0])
+    return round(area * kg_per_mm2, 4)
 
 _PROFILE_STANDARD_KG_M: dict[str, dict[str, float]] = {
     "IPN": {
@@ -1672,9 +1764,14 @@ class LegacyBackend(
         data["audit_log"] = log[-3000:]
         return event
 
-    def _save(self, force: bool = False, audit: bool = True) -> None:
+    def _save(self, force: bool = False, audit: bool = True, blocking: bool = False) -> None:
         self._normalize_storage_paths_for_save()
-        payload, _changed = self._merge_latest_for_save()
+        async_enabled = bool(getattr(self.desktop_main, "_ASYNC_SAVE_ENABLED", False))
+        if async_enabled:
+            payload = self.ensure_data()
+            _changed = self._changed_data_buckets(payload, self._base_data_snapshot)
+        else:
+            payload, _changed = self._merge_latest_for_save()
         changed = [str(key) for key in list(_changed or []) if str(key or "") != "audit_log"]
         if audit and changed:
             self._append_audit_event(
@@ -1684,7 +1781,7 @@ class LegacyBackend(
                 entity_id=",".join(changed[:8]),
                 summary=f"Buckets alterados: {', '.join(changed[:8])}{'...' if len(changed) > 8 else ''}",
             )
-        self.desktop_main.save_data(payload, force=force)
+        self.desktop_main.save_data(payload, force=bool(force and (blocking or not async_enabled)))
         if isinstance(payload, dict):
             self._replace_data_cache(payload)
 
@@ -2224,8 +2321,12 @@ class LegacyBackend(
         material_familia = str(row.get("material_familia", row.get("familia", "")) or "").strip()
         family_profile = self.material_family_profile(material, material_familia)
         density = round(self._parse_float(family_profile.get("density", _STEEL_DENSITY_G_CM3), _STEEL_DENSITY_G_CM3), 3)
+        explicit_density = self._parse_float(row.get("densidade", row.get("density", 0)), 0)
+        if explicit_density > 0:
+            density = round(explicit_density / 1000.0 if explicit_density > 100 else explicit_density, 3)
         espessura = str(row.get("espessura", "") or "").strip()
-        espessura_mm = self._parse_float(espessura, 0)
+        commercial_espessura_label = _commercial_thickness_label(espessura)
+        espessura_mm = _commercial_thickness_base_mm(espessura) or self._parse_float(espessura, 0)
         comprimento = round(self._parse_dimension_mm(row.get("comprimento", 0), 0), 3)
         largura = round(self._parse_dimension_mm(row.get("largura", 0), 0), 3)
         altura = round(self._parse_dimension_mm(row.get("altura", 0), 0), 3)
@@ -2256,6 +2357,19 @@ class LegacyBackend(
                 auto_weight = False
             dimension_label = f"{self._fmt(comprimento)} x {self._fmt(largura)} mm" if comprimento > 0 and largura > 0 else "-"
             calc_hint = "Chapa: comprimento x largura x espessura x densidade."
+            if commercial_espessura_label or any(token in self.desktop_main.norm_text(" ".join(str(row.get(key, "") or "") for key in ("material", "descricao", "obs", "formato"))) for token in ("gota", "xadrez", "antiderrap")):
+                table_weight = _checker_plate_weight_kg(comprimento, largura, commercial_espessura_label)
+                if table_weight > 0:
+                    peso_unid = round(table_weight, 4)
+                calc_hint = (
+                    "Chapa gota/xadrez: peso comercial baseado na tabela de referência por dimensão/área e espessura "
+                    f"{commercial_espessura_label or self._fmt(espessura_mm)}."
+                    if table_weight > 0
+                    else (
+                        "Chapa gota/xadrez: peso calculado pela espessura base "
+                        f"{self._fmt(espessura_mm)} mm e espessura comercial {commercial_espessura_label or self._fmt(espessura_mm)}."
+                    )
+                )
         elif formato == "Tubo":
             if metros <= 0 and comprimento > 0 and largura <= 0 and diametro <= 0:
                 metros = round(comprimento / 1000.0, 4)
@@ -2394,7 +2508,7 @@ class LegacyBackend(
             peso_unid = peso_existente
             auto_weight = False
 
-        resolved_espessura = self._fmt(espessura_mm) if espessura_mm > 0 else espessura
+        resolved_espessura = commercial_espessura_label or (self._fmt(espessura_mm) if espessura_mm > 0 else espessura)
 
         return {
             "formato": formato,
@@ -2450,7 +2564,7 @@ class LegacyBackend(
 
     def material_rows(self, filter_text: str = "", in_stock_only: bool = False) -> list[dict[str, Any]]:
         data = self.ensure_data()
-        query = str(filter_text or "").strip().lower()
+        query_terms = _search_terms(filter_text)
         rows: list[dict[str, Any]] = []
         assigned_internal_lots = False
         for index, material in enumerate(data.get("materiais", [])):
@@ -2505,7 +2619,21 @@ class LegacyBackend(
                 "local": self._localizacao(material),
                 "id": str(material.get("id", "")).strip(),
             }
-            if query and not any(query in str(value).lower() for value in values.values()):
+            search_values = [
+                *values.values(),
+                preview.get("dimension_label", ""),
+                preview.get("secao_label", ""),
+                preview.get("secao_tipo", ""),
+                preview.get("material_familia_label", ""),
+                material.get("Localização", ""),
+                material.get("Localizacao", ""),
+                material.get("obs", ""),
+                material.get("observacoes", ""),
+                material.get("referencia", ""),
+                material.get("descricao", ""),
+            ]
+            haystack = _search_normalize(" ".join(str(value or "") for value in search_values))
+            if query_terms and not all(term in haystack for term in query_terms):
                 continue
             severity = "ok"
             if quality_blocked:
@@ -2888,11 +3016,12 @@ class LegacyBackend(
                 f"Material {material_id} bloqueado pela qualidade: "
                 f"{str(record.get('quality_status', record.get('inspection_status', '')) or 'em inspeção')}."
             )
-        qtd = self._parse_float(quantidade, 0)
-        if qtd <= 0 or qtd > self._parse_float(record.get("quantidade", 0), 0):
-            raise ValueError("Quantidade invalida.")
         retalho = dict(retalho or {})
-        has_retalho = any(str(retalho.get(key, "")).strip() for key in ("comprimento", "largura", "quantidade", "metros"))
+        has_retalho = any(str(retalho.get(key, "")).strip() for key in ("comprimento", "largura", "contorno_points", "shape_points", "quantidade", "metros"))
+        qtd = self._parse_float(quantidade, 0)
+        stock_qtd = self._parse_float(record.get("quantidade", 0), 0)
+        if qtd < 0 or qtd > stock_qtd or (qtd <= 0 and not has_retalho):
+            raise ValueError("Quantidade invalida.")
         retalho_row = None
         if has_retalho:
             comp = self._parse_float(retalho.get("comprimento", 0), 0)
@@ -2932,7 +3061,8 @@ class LegacyBackend(
             self.materia_actions._hydrate_retalho_record(data, retalho_row, template=record)
         record["quantidade"] = self._parse_float(record.get("quantidade", 0), 0) - qtd
         record["atualizado_em"] = self.desktop_main.now_iso()
-        self.desktop_main.log_stock(data, "BAIXA", f"{record.get('id')} qtd={qtd}", operador=self._current_user_label())
+        if qtd > 0:
+            self.desktop_main.log_stock(data, "BAIXA", f"{record.get('id')} qtd={qtd}", operador=self._current_user_label())
         if retalho_row is not None:
             data.setdefault("materiais", []).append(retalho_row)
             self.desktop_main.log_stock(
@@ -3371,9 +3501,9 @@ class LegacyBackend(
                 break
         return rows
 
-    def material_open_stock_pdf(self) -> Path:
+    def material_open_stock_pdf(self, in_stock_only: bool = False) -> Path:
         target = Path(tempfile.gettempdir()) / "lugest_stock.pdf"
-        helper = SimpleNamespace(data=self.ensure_data())
+        helper = SimpleNamespace(data=self.ensure_data(), stock_pdf_in_stock_only=bool(in_stock_only))
         renderer = getattr(self.materia_actions, "render_stock_a4_pdf", None)
         if callable(renderer):
             renderer(helper, str(target))
@@ -3382,9 +3512,9 @@ class LegacyBackend(
         self.materia_actions.preview_stock_a4(helper)
         return target
 
-    def material_render_stock_pdf(self, path: str | Path) -> Path:
+    def material_render_stock_pdf(self, path: str | Path, in_stock_only: bool = False) -> Path:
         target = Path(path)
-        helper = SimpleNamespace(data=self.ensure_data())
+        helper = SimpleNamespace(data=self.ensure_data(), stock_pdf_in_stock_only=bool(in_stock_only))
         renderer = getattr(self.materia_actions, "render_stock_a4_pdf", None)
         if callable(renderer):
             renderer(helper, str(target))
@@ -4421,6 +4551,7 @@ class LegacyBackend(
         rows = []
         for index, prod in enumerate(list(self.ensure_data().get("produtos", []) or [])):
             price_unit = round(self._parse_float(self.desktop_main.produto_preco_unitario(prod), 0), 4)
+            sale_unit = round(self._parse_float(self.desktop_main.produto_preco_venda(prod), 0), 4)
             catalog_fields = self._product_resolve_catalog_fields(prod)
             qty = self._parse_float(prod.get("qty", 0), 0)
             physical_qty = qty + max(0.0, self._parse_float(prod.get("quality_pending_qty", 0), 0))
@@ -4454,7 +4585,10 @@ class LegacyBackend(
                 "available_qty": qty,
                 "alerta": alerta,
                 "p_compra": round(self._parse_float(prod.get("p_compra", 0), 0), 4),
+                "pvp1": round(self._parse_float(prod.get("pvp1", 0), 0), 4),
+                "pvp2": round(self._parse_float(prod.get("pvp2", 0), 0), 4),
                 "preco_unid": price_unit,
+                "preco_venda": sale_unit,
                 "valor_stock": round(physical_qty * price_unit, 2),
                 "metros_unidade": round(self._parse_float(prod.get("metros_unidade", prod.get("metros", 0)), 0), 4),
                 "peso_unid": round(self._parse_float(prod.get("peso_unid", 0), 0), 4),
@@ -4631,10 +4765,11 @@ class LegacyBackend(
 
     def product_remove(self, codigo: str) -> None:
         code = str(codigo or "").strip()
-        rows = list(self.ensure_data().get("produtos", []) or [])
+        data = self.ensure_data()
+        rows = list(data.get("produtos", []) or [])
         before = len(rows)
-        self.ensure_data()["produtos"] = [row for row in rows if str(row.get("codigo", "") or "").strip() != code]
-        if len(self.ensure_data()["produtos"]) == before:
+        data["produtos"] = [row for row in rows if str(row.get("codigo", "") or "").strip() != code]
+        if len(data["produtos"]) == before:
             raise ValueError("Produto não encontrado.")
         self._save(force=True)
 
@@ -5091,7 +5226,7 @@ class LegacyBackend(
 
     def _save_operator_state(self, enc: dict[str, Any]) -> None:
         self.desktop_main.update_estado_encomenda_por_espessuras(enc)
-        self._save(force=True)
+        self._save(force=True, blocking=True)
 
     def _find_piece(self, enc_num: str, piece_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
         enc = self.get_encomenda_by_numero(enc_num)
@@ -8140,11 +8275,139 @@ class LegacyBackend(
         row = dict(item or {})
         if self.desktop_main.normalize_orc_line_type(row.get("tipo_item")) != self.desktop_main.ORC_LINE_TYPE_PIECE:
             return False
+        raw_fields = self._montagem_item_raw_material_fields(row)
         if str(row.get("stock_item_kind", "") or "").strip() == "raw_material":
             return True
         if str(row.get("stock_material_id", "") or "").strip():
             return True
-        return False
+        if str(row.get("desenho", "") or "").strip():
+            return False
+        if self._parse_float(row.get("tempo_peca_min", row.get("tempo_pecas_min", row.get("tempo_total_min", 0))), 0) > 0:
+            return False
+        operacao = str(row.get("operacao", row.get("operacoes", "")) or "").strip()
+        if operacao:
+            op_norm = self.desktop_main.norm_text(operacao)
+            if op_norm not in {"stockmp", "materia prima", "materia-prima"}:
+                return False
+        marker_text = " ".join(
+            str(row.get(key, "") or "")
+            for key in (
+                "ref_externa",
+                "descricao",
+                "material",
+                "material_family",
+                "material_subtype",
+                "calc_mode",
+                "dimensao",
+                "dimensoes",
+                "stock_item_kind",
+            )
+        )
+        marker_norm = self.desktop_main.norm_text(marker_text)
+        raw_tokens = (
+            "perfil",
+            "ipe",
+            "ipn",
+            "hea",
+            "heb",
+            "upn",
+            "barra",
+            "chapa",
+            "tubo",
+            "cantoneira",
+            "varao",
+            "ferro nervurado",
+            "stock mp",
+            "stockmp",
+        )
+        has_material = bool(str(raw_fields.get("material", "") or row.get("material", "") or "").strip())
+        has_size = bool(
+            str(
+                raw_fields.get("espessura", "")
+                or raw_fields.get("dimensao", "")
+                or row.get("espessura", "")
+                or row.get("dimensao", "")
+                or row.get("dimensoes", "")
+                or ""
+            ).strip()
+        )
+        return has_material and has_size and any(token in marker_norm for token in raw_tokens)
+
+    def _montagem_item_raw_material_fields(self, item: dict[str, Any] | None) -> dict[str, str]:
+        row = dict(item or {})
+        material = str(row.get("material", "") or "").strip()
+        espessura = str(row.get("espessura", "") or "").strip()
+        dimensao = str(row.get("dimensao", row.get("dimensoes", "")) or "").strip()
+        descricao = str(row.get("descricao", "") or "").strip()
+        if material and (espessura or dimensao):
+            return {"material": material, "espessura": espessura, "dimensao": dimensao}
+        match = re.search(
+            r"\b(tubo|chapa|perfil|barra|cantoneira|var[aã]o)\s+([A-Z0-9._/-]+)\s+([0-9]+(?:[,.][0-9]+)?(?:\s*x\s*[0-9]+(?:[,.][0-9]+)?){0,3})\s*mm\b",
+            descricao,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return {"material": material, "espessura": espessura, "dimensao": dimensao}
+        parsed_material = str(match.group(2) or "").strip()
+        parsed_dim = re.sub(r"\s+", "", str(match.group(3) or "").strip().replace(",", "."))
+        if not material:
+            material = parsed_material
+        if not dimensao:
+            dimensao = f"{parsed_dim} mm" if parsed_dim else ""
+        if not espessura and parsed_dim:
+            parts = [part for part in re.split(r"[xX]", parsed_dim) if part.strip()]
+            if parts:
+                espessura = parts[-1].strip()
+        return {"material": material, "espessura": espessura, "dimensao": dimensao}
+
+    def _montagem_item_dimension_numbers(self, item: dict[str, Any] | None) -> list[float]:
+        fields = self._montagem_item_raw_material_fields(item)
+        text = str(fields.get("dimensao", "") or (item or {}).get("descricao", "") or "").replace(",", ".")
+        match = re.search(r"([0-9]+(?:\.[0-9]+)?(?:\s*x\s*[0-9]+(?:\.[0-9]+)?){1,3})", text, flags=re.IGNORECASE)
+        if not match:
+            return []
+        values: list[float] = []
+        for token in re.split(r"[xX]", str(match.group(1) or "")):
+            try:
+                number = float(str(token or "").strip())
+            except Exception:
+                continue
+            if number > 0:
+                values.append(round(number, 3))
+        return values
+
+    def _montagem_material_candidate_matches_dimension(self, item: dict[str, Any] | None, candidate: dict[str, Any]) -> bool:
+        fields = self._montagem_item_raw_material_fields(item)
+        expected_material = str(fields.get("material", "") or (item or {}).get("material", "") or "").strip()
+        candidate_material = str(candidate.get("material", "") or "").strip()
+        if expected_material and candidate_material:
+            if self.encomendas_actions._norm_material(candidate_material) != self.encomendas_actions._norm_material(expected_material):
+                return False
+        expected_esp = str(fields.get("espessura", "") or (item or {}).get("espessura", "") or "").strip()
+        candidate_esp = str(candidate.get("espessura", "") or "").strip()
+        if expected_esp and candidate_esp:
+            if self.encomendas_actions._norm_espessura(candidate_esp) != self.encomendas_actions._norm_espessura(expected_esp):
+                return False
+        expected = self._montagem_item_dimension_numbers(item)
+        if len(expected) < 2:
+            return True
+        candidate_dims = [
+            round(self._parse_float(candidate.get("comprimento", 0), 0), 3),
+            round(self._parse_float(candidate.get("largura", 0), 0), 3),
+        ]
+        candidate_dims = [value for value in candidate_dims if value > 0]
+        if len(candidate_dims) < 2:
+            return False
+        expected_pair = sorted(expected[:2])
+        candidate_pair = sorted(candidate_dims[:2])
+        return all(abs(exp - got) <= 0.5 for exp, got in zip(expected_pair, candidate_pair))
+
+    def _montagem_material_candidates_for_item(self, item: dict[str, Any] | None) -> list[dict[str, Any]]:
+        fields = self._montagem_item_raw_material_fields(item)
+        material_txt = str(fields.get("material", "") or (item or {}).get("material", "") or "").strip()
+        esp_txt = str(fields.get("espessura", "") or (item or {}).get("espessura", "") or "").strip()
+        candidates = self.material_candidates(material_txt, esp_txt) if material_txt and esp_txt else []
+        return [row for row in candidates if self._montagem_material_candidate_matches_dimension(item, row)]
 
     def _montagem_item_key(self, item: dict[str, Any] | None) -> str:
         row = dict(item or {})
@@ -10793,7 +11056,7 @@ class LegacyBackend(
         return rows
 
     def client_rows(self, filter_text: str = "") -> list[dict[str, Any]]:
-        query = str(filter_text or "").strip().lower()
+        query_terms = _search_terms(filter_text)
         rows: list[dict[str, Any]] = []
         for raw in list(self.ensure_data().get("clientes", []) or []):
             row = {
@@ -10808,7 +11071,8 @@ class LegacyBackend(
                 "cond_pagamento": str(raw.get("cond_pagamento", "") or "").strip(),
                 "obs_tecnicas": str(raw.get("obs_tecnicas", "") or "").strip(),
             }
-            if query and not any(query in str(value).lower() for value in row.values()):
+            haystack = _search_normalize(" ".join(str(value or "") for value in row.values()))
+            if query_terms and not all(term in haystack for term in query_terms):
                 continue
             rows.append(row)
         rows.sort(key=lambda item: (item.get("codigo") or "", item.get("nome") or ""))
@@ -10844,7 +11108,9 @@ class LegacyBackend(
             existing.update(row)
             target = existing
         upsert = getattr(self.desktop_main, "mysql_upsert_cliente", None)
-        if callable(upsert):
+        if bool(getattr(self.desktop_main, "_ASYNC_SAVE_ENABLED", False)):
+            self._save(force=False)
+        elif callable(upsert):
             upsert(target)
             if isinstance(self._base_data_snapshot, dict):
                 base_rows = self._base_data_snapshot.setdefault("clientes", [])
@@ -12056,12 +12322,13 @@ class LegacyBackend(
 
     def order_remove(self, numero: str) -> None:
         numero = str(numero or "").strip()
+        data = self.ensure_data()
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
             raise ValueError("Encomenda não encontrada.")
         if list(enc.get("reservas", []) or []):
-            self.desktop_main.aplicar_reserva_em_stock(self.ensure_data(), list(enc.get("reservas", []) or []), -1)
-        self.ensure_data()["encomendas"] = [row for row in list(self.ensure_data().get("encomendas", []) or []) if str(row.get("numero", "") or "").strip() != numero]
+            self.desktop_main.aplicar_reserva_em_stock(data, list(enc.get("reservas", []) or []), -1)
+        data["encomendas"] = [row for row in list(data.get("encomendas", []) or []) if str(row.get("numero", "") or "").strip() != numero]
         delete_order_fn = getattr(self.operador_actions, "_mysql_ops_delete_order", None)
         if callable(delete_order_fn):
             try:
@@ -12074,7 +12341,7 @@ class LegacyBackend(
                 cache.pop(numero, None)
         except Exception:
             pass
-        for trip in list(self.ensure_data().get("transportes", []) or []):
+        for trip in list(data.get("transportes", []) or []):
             if not isinstance(trip, dict):
                 continue
             trip["paragens"] = [
@@ -13270,22 +13537,36 @@ class LegacyBackend(
         return path
 
     def operator_montagem_stock_group(self, numero: str) -> dict[str, Any]:
-        detail = self.order_detail(numero)
-        enc_num = str(detail.get("numero", "") or numero or "").strip()
+        enc = self.get_encomenda_by_numero(numero)
+        if enc is None:
+            return {}
+        data = self.ensure_data()
+        enc_num = str(enc.get("numero", "") or numero or "").strip()
         if not enc_num:
             return {}
-        raw_items = list(detail.get("montagem_items", []) or [])
+        cliente_codigo = str(enc.get("cliente", "") or "").strip()
+        cliente_nome = next(
+            (
+                str(row.get("nome", "") or "").strip()
+                for row in list(data.get("clientes", []) or [])
+                if isinstance(row, dict) and str(row.get("codigo", "") or "").strip() == cliente_codigo
+            ),
+            "",
+        )
+        raw_items = list(enc.get("montagem_itens", []) or [])
         rows: list[dict[str, Any]] = []
         for index, item in enumerate(raw_items):
             item_type = self.desktop_main.normalize_orc_line_type(item.get("tipo_item"))
-            is_stock = item_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT or bool(item.get("stock_material_id"))
-            if not is_stock:
+            is_raw = self._montagem_item_is_raw_material(item)
+            is_product = item_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT
+            if not is_product and not is_raw:
                 continue
+            raw_fields = self._montagem_item_raw_material_fields(item) if is_raw else {}
             plan = round(self._parse_float(item.get("qtd_planeada", 0), 0), 2)
             done = round(self._parse_float(item.get("qtd_consumida", 0), 0), 2)
             pending = round(max(0.0, plan - done), 2)
             shortage = 0.0
-            if item_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT:
+            if is_product:
                 code = str(item.get("produto_codigo", "") or "").strip()
                 product = next(
                     (
@@ -13297,18 +13578,33 @@ class LegacyBackend(
                 )
                 available = self._parse_float((product or {}).get("qty", 0), 0)
                 shortage = round(max(0.0, pending - available), 2)
-            elif bool(item.get("stock_material_id")):
+            elif is_raw:
                 stock = self.material_by_id(str(item.get("stock_material_id", "") or "").strip())
-                available = self._parse_float((stock or {}).get("quantidade", 0), 0) - self._parse_float((stock or {}).get("reservado", 0), 0)
+                if stock is not None:
+                    stock_candidate = {
+                        "material": stock.get("material", ""),
+                        "espessura": stock.get("espessura", ""),
+                        "comprimento": stock.get("comprimento", 0),
+                        "largura": stock.get("largura", 0),
+                    }
+                    if self._montagem_material_candidate_matches_dimension(item, stock_candidate):
+                        available = self._parse_float((stock or {}).get("quantidade", 0), 0) - self._parse_float((stock or {}).get("reservado", 0), 0)
+                    else:
+                        available = 0.0
+                else:
+                    candidates = self._montagem_material_candidates_for_item(item)
+                    available = sum(self._parse_float(row.get("disponivel", 0), 0) for row in candidates)
                 shortage = round(max(0.0, pending - available), 2)
             rows.append(
                 {
                     "id": f"COMP::{enc_num}::{index}",
-                    "espessura": str(item.get("espessura", "") or "").strip(),
+                    "espessura": str(raw_fields.get("espessura", "") or item.get("espessura", "") or "").strip(),
                     "codigo": str(item.get("produto_codigo", "") or item.get("stock_material_id", "") or item.get("item_key", "") or "-").strip() or "-",
                     "descricao": str(item.get("descricao", "") or item.get("material", "") or "-").strip() or "-",
                     "tipo_item": item_type,
-                    "tipo_label": str(item.get("tipo_label", "") or "Produto/stock").strip(),
+                    "tipo_label": "Matéria-prima" if is_raw else str(item.get("tipo_label", "") or "Produto/stock").strip(),
+                    "material": str(raw_fields.get("material", "") or item.get("material", "") or "").strip(),
+                    "dimensao": str(raw_fields.get("dimensao", "") or item.get("dimensao", item.get("dimensoes", "")) or "").strip(),
                     "unidade": str(item.get("produto_unid", "") or "UN").strip() or "UN",
                     "qtd_planeada": plan,
                     "qtd_consumida": done,
@@ -13327,14 +13623,14 @@ class LegacyBackend(
         return {
             "is_montagem_stock_group": True,
             "encomenda": enc_num,
-            "cliente": f"{detail.get('cliente', '-') or '-'} - {detail.get('cliente_nome', '') or ''}".strip(" -"),
-            "cliente_codigo": str(detail.get("cliente", "") or "").strip(),
-            "cliente_nome": str(detail.get("cliente_nome", "") or "").strip(),
+            "cliente": f"{cliente_codigo or '-'} - {cliente_nome}".strip(" -"),
+            "cliente_codigo": cliente_codigo,
+            "cliente_nome": cliente_nome,
             "estado": state,
             "estado_espessura": state,
-            "material": "Componentes Montagem/Stock",
+            "material": "Componentes/Matéria-prima",
             "espessura": "Stock",
-            "tempo_plan_min": float(detail.get("montagem_tempo_min", 0) or 0),
+            "tempo_plan_min": float(self.desktop_main.encomenda_montagem_tempo_min(enc) or 0),
             "tempo_real_min": 0.0,
             "desvio_min": 0.0,
             "progress_pct": progress,
@@ -13343,13 +13639,14 @@ class LegacyBackend(
             "can_consume_montagem": pending_total > 1e-9,
         }
 
-    def operator_consume_montagem_stock(self, numero: str, operador: str = "") -> dict[str, Any]:
+    def operator_consume_montagem_stock(self, numero: str, operador: str = "", item_ids: list[str] | None = None) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(numero)
         if enc is None:
             raise ValueError("Encomenda não encontrada.")
         items = list(enc.get("montagem_itens", []) or [])
         if not items:
             raise ValueError("Esta encomenda nao tem componentes de montagem.")
+        selected_ids = {str(value or "").strip() for value in list(item_ids or []) if str(value or "").strip()}
         actor = str(operador or (self.user or {}).get("username", "") or "Sistema").strip() or "Sistema"
         product_map = {
             str(prod.get("codigo", "") or "").strip(): prod
@@ -13358,7 +13655,10 @@ class LegacyBackend(
         }
         consumable = []
         shortages: list[str] = []
-        for item in items:
+        for item_index, item in enumerate(items):
+            item_id = f"COMP::{numero}::{item_index}"
+            if selected_ids and item_id not in selected_ids:
+                continue
             item_type = self.desktop_main.normalize_orc_line_type(item.get("tipo_item"))
             is_raw = self._montagem_item_is_raw_material(item)
             if item_type != self.desktop_main.ORC_LINE_TYPE_PRODUCT and not is_raw:
@@ -13375,19 +13675,35 @@ class LegacyBackend(
                 if product is None:
                     shortages.append(f"{code or '-'}: produto nao encontrado")
                     continue
+                if bool(product.get("quality_blocked")) or (str(product.get("quality_status", "") or "").strip() and not self._quality_status_is_available(product.get("quality_status", ""))):
+                    shortages.append(f"{code}: bloqueado pela qualidade")
+                    continue
                 available = self._parse_float(product.get("qty", 0), 0)
                 if pending > available + 1e-9:
                     shortages.append(f"{code}: faltam {pending - available:.2f} ({available:.2f} disponivel)")
             elif is_raw:
                 stock_id = str(item.get("stock_material_id", "") or "").strip()
+                raw_fields = self._montagem_item_raw_material_fields(item)
                 if stock_id:
                     material = self.material_by_id(stock_id)
                     if material is None:
                         shortages.append(f"{stock_id}: matéria-prima nao encontrada")
                         continue
-                    available = self._parse_float(material.get("quantidade", 0), 0) - self._parse_float(material.get("reservado", 0), 0)
+                    if self._material_quality_is_blocked(material):
+                        shortages.append(f"{stock_id}: bloqueado pela qualidade")
+                        continue
+                    stock_candidate = {
+                        "material": material.get("material", ""),
+                        "espessura": material.get("espessura", ""),
+                        "comprimento": material.get("comprimento", 0),
+                        "largura": material.get("largura", 0),
+                    }
+                    if self._montagem_material_candidate_matches_dimension(item, stock_candidate):
+                        available = self._parse_float(material.get("quantidade", 0), 0) - self._parse_float(material.get("reservado", 0), 0)
+                    else:
+                        available = 0.0
                 else:
-                    candidates = self.material_candidates(str(item.get("material", "") or ""), str(item.get("espessura", "") or ""))
+                    candidates = self._montagem_material_candidates_for_item(item)
                     available = sum(self._parse_float(row.get("disponivel", 0), 0) for row in candidates)
                 if pending > available + 1e-9:
                     shortages.append(f"{stock_id or item.get('descricao', '-')}: faltam {pending - available:.2f} ({available:.2f} disponivel)")
@@ -13406,6 +13722,8 @@ class LegacyBackend(
                 product = product_map.get(code)
                 if product is None:
                     continue
+                if bool(product.get("quality_blocked")) or (str(product.get("quality_status", "") or "").strip() and not self._quality_status_is_available(product.get("quality_status", ""))):
+                    raise ValueError(f"Produto {code} bloqueado pela qualidade.")
                 before = self._parse_float(product.get("qty", 0), 0)
                 product["qty"] = max(0.0, before - pending)
                 product["atualizado_em"] = now_txt
@@ -13424,18 +13742,40 @@ class LegacyBackend(
                 )
             elif self._montagem_item_is_raw_material(item):
                 stock_id = str(item.get("stock_material_id", "") or "").strip()
-                allocations = [{"material_id": stock_id, "quantidade": pending}] if stock_id else []
-                if not allocations:
-                    remaining = pending
-                    for candidate in self.material_candidates(str(item.get("material", "") or ""), str(item.get("espessura", "") or "")):
+                raw_fields = self._montagem_item_raw_material_fields(item)
+                allocations: list[dict[str, Any]] = []
+                remaining = pending
+                if stock_id:
+                    material = self.material_by_id(stock_id)
+                    if material is None:
+                        raise ValueError(f"Matéria-prima {stock_id} não encontrada.")
+                    if self._material_quality_is_blocked(material):
+                        raise ValueError(f"Matéria-prima {stock_id} bloqueada pela qualidade.")
+                    stock_candidate = {
+                        "material": material.get("material", ""),
+                        "espessura": material.get("espessura", ""),
+                        "comprimento": material.get("comprimento", 0),
+                        "largura": material.get("largura", 0),
+                    }
+                    if not self._montagem_material_candidate_matches_dimension(item, stock_candidate):
+                        raise ValueError(f"Matéria-prima {stock_id} não corresponde à dimensão pedida.")
+                    allocations.append({"material_id": stock_id, "quantidade": remaining})
+                else:
+                    for candidate in self._montagem_material_candidates_for_item(item):
                         if remaining <= 1e-9:
                             break
                         qty = min(self._parse_float(candidate.get("disponivel", 0), 0), remaining)
-                        if qty > 1e-9:
-                            allocations.append({"material_id": str(candidate.get("material_id", "") or "").strip(), "quantidade": qty})
-                            remaining = round(remaining - qty, 6)
-                if allocations:
-                    self.consume_material_allocations(allocations, reason=f"operador_montagem_{numero}")
+                        if qty <= 1e-9:
+                            continue
+                        allocations.append({"material_id": str(candidate.get("material_id", "") or "").strip(), "quantidade": qty})
+                        remaining = round(remaining - qty, 6)
+                result = self.consume_material_allocations(allocations, reason=f"operador_montagem_{numero}")
+                if not str(item.get("stock_material_id", "") or "").strip() and allocations:
+                    item["stock_material_id"] = str(allocations[0].get("material_id", "") or "").strip()
+                item["stock_consumption"] = {
+                    "consumed_total": round(self._parse_float(result.get("consumed_total", pending), pending), 2),
+                    "used_lots": list(result.get("used_lots", []) or []),
+                }
             item["qtd_consumida"] = round(plan, 2)
             item["estado"] = "Consumido"
             item["consumed_at"] = now_txt
@@ -17524,9 +17864,10 @@ class LegacyBackend(
             raise ValueError("Utilizador inválido.")
         if self.user and str(self.user.get("username", "") or "").strip().lower() == username_txt.lower():
             raise ValueError("Nao e permitido remover o utilizador atualmente autenticado.")
-        before = len(list(self.ensure_data().get("users", []) or []))
-        self.ensure_data()["users"] = [row for row in list(self.ensure_data().get("users", []) or []) if str(row.get("username", "") or "").strip().lower() != username_txt.lower()]
-        if len(list(self.ensure_data().get("users", []) or [])) == before:
+        data = self.ensure_data()
+        before = len(list(data.get("users", []) or []))
+        data["users"] = [row for row in list(data.get("users", []) or []) if str(row.get("username", "") or "").strip().lower() != username_txt.lower()]
+        if len(list(data.get("users", []) or [])) == before:
             raise ValueError("Utilizador não encontrado.")
         profiles = self._user_profiles()
         profiles.pop(username_txt.lower(), None)

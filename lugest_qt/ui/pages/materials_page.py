@@ -4,8 +4,9 @@ from datetime import datetime
 import os
 from pathlib import Path
 import re
+import unicodedata
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -99,6 +100,69 @@ _PROFILE_MASS_KG_M: dict[str, dict[str, float]] = {
         "300": 40.5,
     },
 }
+
+
+def _grid_search_normalize(value: object) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.casefold()
+    text = re.sub(r"(?<=\d),(?=\d)", ".", text)
+    text = re.sub(r"[^a-z0-9./]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _grid_numeric_key(value: object) -> str:
+    text = _grid_search_normalize(value).strip().strip("./")
+    if not re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return ""
+    try:
+        number = float(text)
+    except Exception:
+        return ""
+    return f"{number:.4f}".rstrip("0").rstrip(".")
+
+
+def _grid_search_terms(value: object) -> list[str]:
+    return [term for term in _grid_search_normalize(value).split() if term]
+
+
+def _grid_search_bucket(values: list[object]) -> tuple[str, set[str]]:
+    normalized = _grid_search_normalize(" ".join(str(value or "") for value in values))
+    tokens = set(normalized.split())
+    expanded = set(tokens)
+    for token in tokens:
+        numeric = _grid_numeric_key(token)
+        if numeric:
+            expanded.add(numeric)
+        if "/" in token:
+            for part in token.split("/"):
+                part = part.strip()
+                if part:
+                    expanded.add(part)
+                    part_numeric = _grid_numeric_key(part)
+                    if part_numeric:
+                        expanded.add(part_numeric)
+    return normalized, expanded
+
+
+def _grid_search_matches(values: list[object], query: object) -> bool:
+    terms = _grid_search_terms(query)
+    if not terms:
+        return True
+    normalized, tokens = _grid_search_bucket(values)
+    for term in terms:
+        numeric = _grid_numeric_key(term)
+        if numeric:
+            if numeric not in tokens and term not in tokens:
+                return False
+            continue
+        if "/" in term:
+            term_parts = [part for part in term.split("/") if part]
+            if term_parts and all((_grid_numeric_key(part) or part) in tokens for part in term_parts):
+                continue
+        if term not in normalized:
+            return False
+    return True
 
 
 def _detect_profile_section(text: str) -> tuple[str, str]:
@@ -1120,7 +1184,7 @@ class MaterialsPage(QWidget):
 
         root = QVBoxLayout(self)
         root.setContentsMargins(4, 4, 4, 4)
-        root.setSpacing(10)
+        root.setSpacing(6)
 
         form_card = CardFrame()
         form_card.setStyleSheet(
@@ -1133,7 +1197,7 @@ class MaterialsPage(QWidget):
         )
         form_layout = QVBoxLayout(form_card)
         form_layout.setContentsMargins(14, 12, 14, 12)
-        form_layout.setSpacing(8)
+        form_layout.setSpacing(6)
 
         top = QHBoxLayout()
         title = QLabel("Gestão de Stock")
@@ -1146,16 +1210,61 @@ class MaterialsPage(QWidget):
         ttl_wrap.addWidget(title)
         ttl_wrap.addWidget(subtitle)
         top.addLayout(ttl_wrap, 1)
+        self._stock_filter_timer = QTimer(self)
+        self._stock_filter_timer.setSingleShot(True)
+        self._stock_filter_timer.timeout.connect(self.refresh)
+        search_box = QWidget()
+        search_box.setObjectName("MaterialSearchBox")
+        search_box.setMaximumWidth(360)
+        search_box.setStyleSheet(
+            "QWidget#MaterialSearchBox { background: #ffffff; border: 1px solid #b8c9df; border-radius: 8px; }"
+            "QLineEdit { border: none; background: transparent; padding: 6px 8px 6px 0; }"
+        )
+        search_layout = QHBoxLayout(search_box)
+        search_layout.setContentsMargins(8, 0, 8, 0)
+        search_layout.setSpacing(6)
+        search_icon = QLabel("🔍")
+        search_icon.setFixedWidth(20)
+        search_icon.setAlignment(Qt.AlignCenter)
+        search_icon.setStyleSheet("font-size: 15px; color: #33516f;")
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Pesquisar material, lote, dimensão, local...")
-        self.filter_edit.setMaximumWidth(360)
-        self.filter_edit.textChanged.connect(self.refresh)
-        top.addWidget(self.filter_edit)
+        self.filter_edit.textChanged.connect(lambda _text: self._stock_filter_timer.start(180))
+        search_layout.addWidget(search_icon)
+        search_layout.addWidget(self.filter_edit, 1)
+        top.addWidget(search_box)
         self.only_stock_check = QCheckBox("Mostrar apenas com stock")
         self.only_stock_check.setChecked(False)
         self.only_stock_check.toggled.connect(self.refresh)
         top.addWidget(self.only_stock_check)
         form_layout.addLayout(top)
+
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(6)
+        self.format_filter_combo = QComboBox()
+        self.material_filter_combo = QComboBox()
+        self.thickness_filter_combo = QComboBox()
+        self.local_filter_combo = QComboBox()
+        self.state_filter_combo = QComboBox()
+        self.state_filter_combo.addItems(["Todos", "Disponível", "Baixo", "Crítico", "Última unid.", "Retalhos", "Bloqueado/Qualidade"])
+        for combo, width in (
+            (self.format_filter_combo, 128),
+            (self.material_filter_combo, 190),
+            (self.thickness_filter_combo, 118),
+            (self.local_filter_combo, 150),
+            (self.state_filter_combo, 150),
+        ):
+            combo.setMinimumWidth(width)
+            combo.setMaximumWidth(width + 36)
+            combo.currentTextChanged.connect(lambda _text: self._stock_filter_timer.start(120))
+            filter_row.addWidget(combo)
+        clear_filters_btn = QPushButton("Limpar filtros")
+        clear_filters_btn.setProperty("compact", "true")
+        clear_filters_btn.setProperty("variant", "secondary")
+        clear_filters_btn.clicked.connect(self._clear_stock_filters)
+        filter_row.addWidget(clear_filters_btn)
+        filter_row.addStretch(1)
+        form_layout.addLayout(filter_row)
 
         info_row = QHBoxLayout()
         info_row.setSpacing(10)
@@ -1279,7 +1388,7 @@ class MaterialsPage(QWidget):
         form_layout.addLayout(grid)
 
         actions_primary = QHBoxLayout()
-        actions_primary.setSpacing(8)
+        actions_primary.setSpacing(6)
         self.add_btn = QPushButton("Adicionar")
         self.add_btn.clicked.connect(self.add_material)
         self.edit_btn = QPushButton("Editar")
@@ -1290,7 +1399,7 @@ class MaterialsPage(QWidget):
         self.baixa_btn = QPushButton("Dar baixa")
         self.baixa_btn.setProperty("variant", "secondary")
         self.baixa_btn.clicked.connect(self.consume_material)
-        self.correct_btn = QPushButton("Corrigir stock")
+        self.correct_btn = QPushButton("Corrigir")
         self.correct_btn.setProperty("variant", "secondary")
         self.correct_btn.clicked.connect(self.correct_material)
         self.history_btn = QPushButton("Histórico")
@@ -1299,16 +1408,16 @@ class MaterialsPage(QWidget):
         self.label_btn = QPushButton("Etiqueta ID")
         self.label_btn.setProperty("variant", "secondary")
         self.label_btn.clicked.connect(self.preview_label)
-        self.label_print_btn = QPushButton("Imprimir etiqueta")
+        self.label_print_btn = QPushButton("Imprimir ID")
         self.label_print_btn.setProperty("variant", "secondary")
         self.label_print_btn.clicked.connect(self.print_label)
-        self.label_save_btn = QPushButton("Guardar etiqueta")
+        self.label_save_btn = QPushButton("Guardar ID")
         self.label_save_btn.setProperty("variant", "secondary")
         self.label_save_btn.clicked.connect(self.save_label)
-        self.pdf_btn = QPushButton("Pre-visualizar PDF")
+        self.pdf_btn = QPushButton("Preview PDF")
         self.pdf_btn.setProperty("variant", "secondary")
         self.pdf_btn.clicked.connect(self.preview_pdf)
-        self.pdf_save_btn = QPushButton("Guardar PDF")
+        self.pdf_save_btn = QPushButton("PDF")
         self.pdf_save_btn.setProperty("variant", "secondary")
         self.pdf_save_btn.clicked.connect(self.save_pdf)
         self.calc_btn = QPushButton("Calc. peso")
@@ -1317,23 +1426,18 @@ class MaterialsPage(QWidget):
         self.refresh_btn = QPushButton("Atualizar")
         self.refresh_btn.setProperty("variant", "secondary")
         self.refresh_btn.clicked.connect(self.refresh)
-        self.export_btn = QPushButton("Exportar CSV")
+        self.export_btn = QPushButton("CSV")
         self.export_btn.setProperty("variant", "secondary")
         self.export_btn.clicked.connect(self.export_csv)
+        self.full_grid_btn = QPushButton("Ver grelha")
+        self.full_grid_btn.setProperty("variant", "secondary")
+        self.full_grid_btn.clicked.connect(self.open_full_grid)
         for button in (
             self.add_btn,
             self.edit_btn,
             self.remove_btn,
             self.baixa_btn,
             self.correct_btn,
-        ):
-            actions_primary.addWidget(button)
-        actions_primary.addStretch(1)
-        form_layout.addLayout(actions_primary)
-
-        actions_secondary = QHBoxLayout()
-        actions_secondary.setSpacing(8)
-        for button in (
             self.history_btn,
             self.label_btn,
             self.label_print_btn,
@@ -1343,10 +1447,13 @@ class MaterialsPage(QWidget):
             self.calc_btn,
             self.refresh_btn,
             self.export_btn,
+            self.full_grid_btn,
         ):
-            actions_secondary.addWidget(button)
-        actions_secondary.addStretch(1)
-        form_layout.addLayout(actions_secondary)
+            button.setProperty("compact", "true")
+            button.setMinimumHeight(30)
+            actions_primary.addWidget(button)
+        actions_primary.addStretch(1)
+        form_layout.addLayout(actions_primary)
         root.addWidget(form_card)
 
         table_card = CardFrame()
@@ -1361,13 +1468,18 @@ class MaterialsPage(QWidget):
         table_header.addWidget(table_title)
         table_header.addStretch(1)
         table_header.addWidget(self.table_count_label)
+        open_grid_btn = QPushButton("Janela inteira")
+        open_grid_btn.setProperty("compact", "true")
+        open_grid_btn.setProperty("variant", "secondary")
+        open_grid_btn.clicked.connect(self.open_full_grid)
+        table_header.addWidget(open_grid_btn)
         table_layout.addLayout(table_header)
         self.table = QTableWidget(0, 18)
         self.table.setObjectName("StockTable")
         self.table.setStyleSheet(
             "QTableWidget {"
             " gridline-color: #d8e3f2;"
-            " selection-background-color: #dbeafe;"
+            " selection-background-color: #fff3bf;"
             " selection-color: #0f172a;"
             "}"
             "QHeaderView::section {"
@@ -1599,7 +1711,7 @@ class MaterialsPage(QWidget):
                 "border-radius: 10px; padding: 6px 10px; font-weight: 800;"
             )
         self.detail_available.setText(
-            f"Disponível: {self.backend._fmt(disponivel)}  |  Qtd: {self.backend._fmt(quantidade)}"
+            f"Qtd: {self.backend._fmt(quantidade)}  |  Disponível: {self.backend._fmt(disponivel)}"
         )
         self.detail_available.setStyleSheet(
             "background: white; color: #0f172a; border: 1px solid #d6e3f3; "
@@ -1822,6 +1934,75 @@ class MaterialsPage(QWidget):
         item.setBackground(QBrush(QColor(bg)))
         item.setForeground(QBrush(QColor(fg)))
 
+    def _set_filter_combo_values(self, combo: QComboBox, values: list[str], current_text: str = "Todos") -> None:
+        current = str(current_text or combo.currentText() or "Todos").strip() or "Todos"
+        ordered = ["Todos"]
+        for value in values:
+            text = str(value or "").strip()
+            if text and text not in ordered:
+                ordered.append(text)
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItems(ordered)
+        combo.setCurrentText(current if current in ordered else "Todos")
+        combo.blockSignals(False)
+
+    def _clear_stock_filters(self) -> None:
+        self.filter_edit.clear()
+        for combo in (
+            self.format_filter_combo,
+            self.material_filter_combo,
+            self.thickness_filter_combo,
+            self.local_filter_combo,
+            self.state_filter_combo,
+        ):
+            combo.blockSignals(True)
+            combo.setCurrentText("Todos")
+            combo.blockSignals(False)
+        self.refresh()
+
+    def _filter_combo_text(self, combo: QComboBox) -> str:
+        text = str(combo.currentText() or "").strip()
+        return "" if text.lower() in {"", "todos", "todas", "all"} else text
+
+    def _filter_material_payload_rows(self, rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        formato = self._filter_combo_text(self.format_filter_combo).casefold()
+        material = self._filter_combo_text(self.material_filter_combo).casefold()
+        espessura = self._filter_combo_text(self.thickness_filter_combo).casefold()
+        local = self._filter_combo_text(self.local_filter_combo).casefold()
+        estado = self._filter_combo_text(self.state_filter_combo).casefold()
+        filtered: list[dict[str, object]] = []
+        for payload in list(rows or []):
+            values = dict(payload.get("row", {}) or {})
+            record = dict(payload.get("record", {}) or {})
+            severity = str(payload.get("severity", "ok") or "ok")
+            state_label = self._stock_state_label(record, severity)
+            if formato and formato != str(values.get("formato", "") or "").casefold():
+                continue
+            if material and material != str(values.get("material", "") or "").casefold():
+                continue
+            if espessura and espessura != str(values.get("espessura", "") or "").casefold():
+                continue
+            if local and local != str(values.get("local", "") or "").casefold():
+                continue
+            if estado:
+                state_norm = state_label.casefold()
+                is_retalho = "retalho" in str(values.get("tipo", "") or "").casefold() or bool(record.get("is_sobra"))
+                if estado == "disponível" and state_norm != "disponível":
+                    continue
+                if estado == "baixo" and "baixo" not in state_norm:
+                    continue
+                if estado == "crítico" and "cr" not in state_norm:
+                    continue
+                if estado == "última unid." and "última" not in state_norm:
+                    continue
+                if estado == "retalhos" and not is_retalho:
+                    continue
+                if estado == "bloqueado/qualidade" and not any(token in state_norm for token in ("rejeit", "devol", "bloque", "inspec", "averig")):
+                    continue
+            filtered.append(payload)
+        return filtered
+
     def _selected_material_id(self) -> str:
         selection_model = self.table.selectionModel()
         if selection_model is None:
@@ -1854,12 +2035,17 @@ class MaterialsPage(QWidget):
         self._set_section_options(current_values["formato"] or "Chapa", current_values["secao_tipo"])
         self._set_combo_values(self.espessura_combo, presets["espessuras"], current_values["espessura"])
         self._set_combo_values(self.local_combo, presets["locais"], current_values["local"])
+        self._set_filter_combo_values(self.format_filter_combo, presets["formatos"], self.format_filter_combo.currentText())
+        self._set_filter_combo_values(self.material_filter_combo, presets["materiais"], self.material_filter_combo.currentText())
+        self._set_filter_combo_values(self.thickness_filter_combo, presets["espessuras"], self.thickness_filter_combo.currentText())
+        self._set_filter_combo_values(self.local_filter_combo, presets["locais"], self.local_filter_combo.currentText())
         self._refresh_form_state()
         self._refresh_price_preview()
 
-        rows = self.backend.material_rows(self.filter_edit.text(), in_stock_only=self.only_stock_check.isChecked())
+        all_rows = self.backend.material_rows(self.filter_edit.text(), in_stock_only=self.only_stock_check.isChecked())
+        rows = self._filter_material_payload_rows(all_rows)
         selected_id = self.current_material_id or self._selected_material_id()
-        self.table_count_label.setText(f"{len(rows)} registos")
+        self.table_count_label.setText(f"{len(rows)} de {len(all_rows)} registos")
         self.table.setSortingEnabled(False)
         self.table.setUpdatesEnabled(False)
         self.table.setRowCount(len(rows))
@@ -2034,40 +2220,305 @@ class MaterialsPage(QWidget):
         self.current_material_id = material_id
         self.refresh()
 
+    def _retalho_payload_has_data(self, payload: dict[str, str]) -> bool:
+        return any(str(payload.get(key, "") or "").strip() for key in ("comprimento", "largura", "contorno_points", "quantidade", "metros"))
+
+    def _consume_material_dialog(self, record: dict, *, include_baixa: bool = True) -> tuple[str, dict[str, str]] | None:
+        preview = dict(self.backend.material_geometry_preview(record) or {})
+        formato = str(preview.get("formato", record.get("formato", "")) or "").strip()
+        is_chapa = formato == "Chapa"
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Baixa de Material")
+        dialog.resize(560, 360 if is_chapa else 300)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        title = QLabel(
+            f"{str(record.get('id', '') or '').strip()} | {str(record.get('material', '') or '').strip()} | "
+            f"{formato or '-'} | Disp. {self.backend._fmt(max(0.0, self.backend._parse_float(record.get('quantidade', 0), 0) - self.backend._parse_float(record.get('reservado', 0), 0)))}"
+        )
+        title.setStyleSheet("font-weight: 800; color: #0f172a;")
+        layout.addWidget(title)
+
+        hint = QLabel(
+            "Regista a baixa e, se sobrar material útil, cria o retalho sobrante. "
+            + ("Para chapa, usa comprimento/largura ou contorno; metros não se aplica." if is_chapa else "Para materiais lineares, usa metros do retalho; contorno não se aplica.")
+        )
+        hint.setWordWrap(True)
+        hint.setProperty("role", "muted")
+        layout.addWidget(hint)
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(8)
+        qty_edit = QLineEdit()
+        qty_edit.setPlaceholderText("Quantidade retirada do stock")
+        if include_baixa:
+            form.addRow("Quantidade a baixar", qty_edit)
+
+        comp_edit = QLineEdit()
+        comp_edit.setPlaceholderText("mm")
+        larg_edit = QLineEdit()
+        larg_edit.setPlaceholderText("mm")
+        contorno_edit = QLineEdit()
+        contorno_edit.setPlaceholderText("Opcional: 0,0; 1000,0; 900,400; 0,400")
+        retalho_qty_edit = QLineEdit()
+        retalho_qty_edit.setPlaceholderText("Quantidade do retalho")
+        metros_edit = QLineEdit()
+        metros_edit.setPlaceholderText("Metros do retalho")
+
+        if is_chapa:
+            form.addRow("Retalho comprimento", comp_edit)
+            form.addRow("Retalho largura", larg_edit)
+            form.addRow("Retalho contorno", contorno_edit)
+            form.addRow("Retalho quantidade", retalho_qty_edit)
+        else:
+            form.addRow("Retalho metros", metros_edit)
+            form.addRow("Retalho quantidade", retalho_qty_edit)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Save).setText("Guardar")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        retalho = {
+            "comprimento": comp_edit.text().strip() if is_chapa else "",
+            "largura": larg_edit.text().strip() if is_chapa else "",
+            "contorno_points": contorno_edit.text().strip() if is_chapa else "",
+            "quantidade": retalho_qty_edit.text().strip(),
+            "metros": "" if is_chapa else metros_edit.text().strip(),
+        }
+        return (qty_edit.text().strip() if include_baixa else "0", retalho)
+
     def consume_material(self) -> None:
         material_id = self.current_material_id or self._selected_material_id()
         if not material_id:
             QMessageBox.warning(self, "Aviso", "Seleciona um material primeiro.")
             return
-        dlg = _SimpleFormDialog(
-            "Baixa de Material",
-            [
-                ("quantidade", "Quantidade a baixar"),
-                ("comprimento", "Retalho comprimento"),
-                ("largura", "Retalho largura"),
-                ("contorno_points", "Retalho contorno"),
-                ("quantidade_retalho", "Retalho quantidade"),
-                ("metros", "Retalho metros"),
-            ],
-            {"quantidade": "", "comprimento": "", "largura": "", "contorno_points": "", "quantidade_retalho": "", "metros": ""},
-            self,
-        )
-        if dlg.exec() != QDialog.Accepted:
-            return
-        values = dlg.values()
-        retalho = {
-            "comprimento": values["comprimento"],
-            "largura": values["largura"],
-            "contorno_points": values["contorno_points"],
-            "quantidade": values["quantidade_retalho"],
-            "metros": values["metros"],
-        }
-        try:
-            self.backend.consume_material(material_id, values["quantidade"], retalho)
-        except Exception as exc:
-            QMessageBox.critical(self, "Erro", str(exc))
-            return
+        added_any = False
+        include_baixa = True
+        while True:
+            record = self.backend.material_by_id(material_id)
+            if record is None:
+                QMessageBox.warning(self, "Aviso", "O material selecionado já não existe.")
+                return
+            result = self._consume_material_dialog(record, include_baixa=include_baixa)
+            if result is None:
+                break
+            quantidade, retalho = result
+            has_retalho = self._retalho_payload_has_data(retalho)
+            try:
+                self.backend.consume_material(material_id, quantidade, retalho if has_retalho else {})
+            except Exception as exc:
+                QMessageBox.critical(self, "Erro", str(exc))
+                return
+            added_any = True
+            if not has_retalho:
+                break
+            if QMessageBox.question(self, "Retalhos", "Adicionar outro retalho sobrante deste material?") != QMessageBox.Yes:
+                break
+            include_baixa = False
         self.current_material_id = material_id
+        if added_any:
+            self.refresh()
+
+    def open_full_grid(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Grelha de matéria-prima")
+        dialog.resize(1500, 820)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(10, 10, 10, 10)
+        header = QHBoxLayout()
+        title = QLabel("Stock de matéria-prima")
+        title.setStyleSheet("font-size: 16px; font-weight: 900; color: #10253d;")
+        info = QLabel(self.table_count_label.text())
+        info.setProperty("role", "muted")
+        header.addWidget(title)
+        header.addStretch(1)
+        header.addWidget(info)
+        layout.addLayout(header)
+
+        search_box = QWidget()
+        search_box.setObjectName("FullMaterialSearchBox")
+        search_box.setStyleSheet(
+            "QWidget#FullMaterialSearchBox { background: #ffffff; border: 1px solid #b8c9df; border-radius: 8px; }"
+            "QLineEdit { border: none; background: transparent; padding: 7px 8px 7px 0; }"
+        )
+        search_layout = QHBoxLayout(search_box)
+        search_layout.setContentsMargins(9, 0, 9, 0)
+        search_layout.setSpacing(6)
+        search_icon = QLabel("🔍")
+        search_icon.setFixedWidth(20)
+        search_icon.setAlignment(Qt.AlignCenter)
+        search_icon.setStyleSheet("font-size: 15px; color: #33516f;")
+        search_edit = QLineEdit()
+        search_edit.setPlaceholderText("Pesquisar por formato, material, espessura, lote, dimensão, localização...")
+        search_layout.addWidget(search_icon)
+        search_layout.addWidget(search_edit, 1)
+        layout.addWidget(search_box)
+
+        table = QTableWidget(0, self.table.columnCount())
+        table.setHorizontalHeaderLabels(
+            [
+                "Formato",
+                "Lote interno",
+                "Lote fornecedor",
+                "Material",
+                "Dim. A",
+                "Dim. B",
+                "Espessura",
+                "Quantidade",
+                "Reserva",
+                "Metros (m)",
+                "Peso/Un. (kg)",
+                "Compra (EUR)",
+                "Preço/Unid.",
+                "Disponível",
+                "Tipo",
+                "Localização",
+                "ID",
+                "Estado",
+            ]
+        )
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(28)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setSelectionMode(QTableWidget.SingleSelection)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setAlternatingRowColors(False)
+        table.setWordWrap(False)
+        table.setStyleSheet(self.table.styleSheet())
+        header_view = table.horizontalHeader()
+        header_view.setMinimumSectionSize(48)
+        full_grid_widths = [98, 134, 130, 260, 72, 72, 78, 86, 72, 92, 112, 104, 104, 104, 210, 132, 86, 118]
+        for column, width in enumerate(full_grid_widths):
+            header_view.setSectionResizeMode(column, QHeaderView.Interactive)
+            table.setColumnWidth(column, width)
+        table.setSortingEnabled(True)
+
+        render_timer = QTimer(dialog)
+        render_timer.setSingleShot(True)
+
+        def row_columns(payload: dict) -> list[object]:
+            values = payload["row"]
+            state_label = self._stock_state_label(payload.get("record"), str(payload.get("severity", "ok")))
+            return [
+                values["formato"],
+                values["lote"],
+                values.get("lote_fornecedor", ""),
+                values["material"],
+                values["comprimento"],
+                values["largura"],
+                values["espessura"],
+                values["quantidade"],
+                values["reservado"],
+                values["metros"],
+                values["peso_unid"],
+                values["p_compra"],
+                values["preco_unid"],
+                values["disponivel"],
+                values["tipo"],
+                values["local"],
+                values["id"],
+                state_label,
+            ]
+
+        def searchable_values(payload: dict) -> list[object]:
+            record = dict(payload.get("record") or {})
+            values = dict(payload.get("row") or {})
+            raw_values = [
+                record.get("formato", ""),
+                record.get("material", ""),
+                record.get("espessura", ""),
+                record.get("comprimento", ""),
+                record.get("largura", ""),
+                record.get("diametro", ""),
+                record.get("metros", ""),
+                record.get("quantidade", ""),
+                record.get("reservado", ""),
+                record.get("peso_unid", ""),
+                record.get("preco_unid", ""),
+                record.get("p_compra", ""),
+                record.get("lote_interno", ""),
+                record.get("lote_fornecedor", ""),
+                record.get("Localizacao", ""),
+                record.get("Localização", ""),
+                record.get("tipo", ""),
+                record.get("categoria", ""),
+                record.get("descricao", ""),
+                record.get("observacoes", ""),
+                record.get("obs", ""),
+                record.get("referencia", ""),
+                record.get("id", ""),
+            ]
+            raw_values.extend(row_columns(payload))
+            raw_values.extend(values.values())
+            return raw_values
+
+        def render_full_grid() -> None:
+            selected_id = ""
+            selection = table.selectionModel()
+            if selection is not None and selection.selectedRows():
+                selected_item = table.item(selection.selectedRows()[0].row(), 16)
+                selected_id = selected_item.text().strip() if selected_item is not None else ""
+            selected_id = selected_id or self.current_material_id or self._selected_material_id()
+            sort_col = header_view.sortIndicatorSection()
+            sort_order = header_view.sortIndicatorOrder()
+            table.setSortingEnabled(False)
+            query = search_edit.text().strip()
+            all_rows = self.backend.material_rows("", in_stock_only=self.only_stock_check.isChecked())
+            rows = [payload for payload in all_rows if _grid_search_matches(searchable_values(payload), query)]
+            info.setText(f"{len(rows)} registos")
+            table.setRowCount(len(rows))
+            selected_row = -1
+            for row_index, payload in enumerate(rows):
+                values = payload["row"]
+                columns = row_columns(payload)
+                for col_index, value in enumerate(columns):
+                    item = QTableWidgetItem(str(value))
+                    item.setToolTip(str(value))
+                    if col_index not in (1, 2, 3, 14, 15, 16):
+                        item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
+                    table.setItem(row_index, col_index, item)
+                if str(values.get("id", "") or "").strip() == selected_id:
+                    selected_row = row_index
+            table.setSortingEnabled(True)
+            table.sortItems(sort_col, sort_order)
+            if selected_id:
+                for row_index in range(table.rowCount()):
+                    item = table.item(row_index, 16)
+                    if item is not None and item.text().strip() == selected_id:
+                        table.selectRow(row_index)
+                        break
+            elif table.rowCount() > 0:
+                table.selectRow(0)
+
+        render_timer.timeout.connect(render_full_grid)
+        search_edit.textChanged.connect(lambda _text: render_timer.start(180))
+        render_full_grid()
+        search_edit.setFocus()
+        table.itemDoubleClicked.connect(lambda *_args: dialog.accept())
+        layout.addWidget(table, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Selecionar")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        selection = table.selectionModel()
+        if selection is None or not selection.selectedRows():
+            return
+        row = selection.selectedRows()[0].row()
+        item = table.item(row, 16)
+        if item is None:
+            return
+        self.current_material_id = item.text().strip()
         self.refresh()
 
     def _open_weight_calculator(self) -> None:
@@ -2113,7 +2564,7 @@ class MaterialsPage(QWidget):
 
     def preview_pdf(self) -> None:
         try:
-            self.backend.material_open_stock_pdf()
+            self.backend.material_open_stock_pdf(in_stock_only=self.only_stock_check.isChecked())
         except Exception as exc:
             QMessageBox.critical(self, "Erro", str(exc))
 
@@ -2123,7 +2574,7 @@ class MaterialsPage(QWidget):
         if not path:
             return
         try:
-            target = self.backend.material_render_stock_pdf(path)
+            target = self.backend.material_render_stock_pdf(path, in_stock_only=self.only_stock_check.isChecked())
         except Exception as exc:
             QMessageBox.critical(self, "Erro", str(exc))
             return

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+import re
+import unicodedata
+
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -77,6 +80,41 @@ def _prepare_partner_fields(*widgets: QWidget) -> None:
             widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
 
+def _search_box(edit: QLineEdit, object_name: str) -> QWidget:
+    box = QWidget()
+    box.setObjectName(object_name)
+    box.setStyleSheet(
+        f"QWidget#{object_name} {{ background: #ffffff; border: 1px solid #b8c9df; border-radius: 8px; }}"
+        "QLineEdit { border: none; background: transparent; padding: 7px 8px 7px 0; }"
+    )
+    layout = QHBoxLayout(box)
+    layout.setContentsMargins(9, 0, 9, 0)
+    layout.setSpacing(6)
+    icon = QLabel("🔍")
+    icon.setFixedWidth(20)
+    icon.setAlignment(Qt.AlignCenter)
+    icon.setStyleSheet("font-size: 15px; color: #33516f;")
+    layout.addWidget(icon)
+    layout.addWidget(edit, 1)
+    return box
+
+
+def _search_terms(value: str) -> list[str]:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"[^a-zA-Z0-9.]+", " ", text.casefold())
+    return [part for part in text.split() if part]
+
+
+def _row_matches_terms(row: dict, query: str) -> bool:
+    terms = _search_terms(query)
+    if not terms:
+        return True
+    text = unicodedata.normalize("NFKD", " ".join(str(value or "") for value in row.values()))
+    haystack = re.sub(r"[^a-zA-Z0-9.]+", " ", "".join(ch for ch in text if not unicodedata.combining(ch)).casefold())
+    return all(term in haystack for term in terms)
+
+
 def _metric_chip(title: str, value: str = "-", tone: str = "default") -> QLabel:
     colors = {
         "default": ("#eef4fb", "#3b5877"),
@@ -121,10 +159,13 @@ class ClientsPage(QWidget):
         hero_subtitle.setProperty("role", "muted")
         hero_text.addWidget(hero_title)
         hero_text.addWidget(hero_subtitle)
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.timeout.connect(self.refresh)
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Pesquisar codigo, nome, nif, contacto...")
         self.filter_edit.setProperty("compact", "true")
-        self.filter_edit.textChanged.connect(self.refresh)
+        self.filter_edit.textChanged.connect(lambda _text: self._filter_timer.start(180))
         self.new_btn = QPushButton("Novo cliente")
         self.new_btn.clicked.connect(self._new_client)
         self.save_btn = QPushButton("Guardar")
@@ -148,7 +189,7 @@ class ClientsPage(QWidget):
         metrics_row.addWidget(self.client_terms_chip)
         metrics_row.addStretch(1)
         top_layout.addLayout(hero_row)
-        top_layout.addWidget(self.filter_edit)
+        top_layout.addWidget(_search_box(self.filter_edit, "ClientSearchBox"))
         top_layout.addLayout(metrics_row)
         root.addWidget(top)
 
@@ -385,10 +426,13 @@ class SuppliersPage(QWidget):
         hero_subtitle.setProperty("role", "muted")
         hero_text.addWidget(hero_title)
         hero_text.addWidget(hero_subtitle)
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.timeout.connect(self.refresh)
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Pesquisar fornecedor, nif, contacto...")
         self.filter_edit.setProperty("compact", "true")
-        self.filter_edit.textChanged.connect(self.refresh)
+        self.filter_edit.textChanged.connect(lambda _text: self._filter_timer.start(180))
         self.new_btn = QPushButton("Novo fornecedor")
         self.new_btn.clicked.connect(self._new_supplier)
         self.save_btn = QPushButton("Guardar")
@@ -412,7 +456,7 @@ class SuppliersPage(QWidget):
         metrics_row.addWidget(self.supplier_terms_chip)
         metrics_row.addStretch(1)
         top_layout.addLayout(hero_row)
-        top_layout.addWidget(self.filter_edit)
+        top_layout.addWidget(_search_box(self.filter_edit, "SupplierSearchBox"))
         top_layout.addLayout(metrics_row)
         root.addWidget(top)
 
@@ -532,9 +576,9 @@ class SuppliersPage(QWidget):
     def refresh(self) -> None:
         previous = self.current_id
         self.rows = self.backend.ne_suppliers()
-        query = self.filter_edit.text().strip().lower()
+        query = self.filter_edit.text().strip()
         if query:
-            self.rows = [row for row in self.rows if any(query in str(value).lower() for value in row.values())]
+            self.rows = [row for row in self.rows if _row_matches_terms(row, query)]
         self.supplier_count_chip.setText(f"Fornecedores: {len(self.rows)}")
         self.supplier_contact_chip.setText(f"Com contacto: {sum(1 for r in self.rows if str(r.get('contacto', '') or '').strip())}")
         self.supplier_terms_chip.setText(f"Condicoes: {sum(1 for r in self.rows if str(r.get('cond_pagamento', '') or '').strip())}")

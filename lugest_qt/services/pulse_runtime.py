@@ -73,7 +73,17 @@ def _material_backend() -> LegacyBackend:
 
 
 def _make_context() -> SimpleNamespace:
-    data = desktop_main.load_data()
+    try:
+        flusher = getattr(desktop_main, "flush_pending_save", None)
+        if callable(flusher):
+            flusher(force=True)
+        drainer = getattr(desktop_main, "_drain_async_saves", None)
+        if callable(drainer):
+            drainer(timeout_sec=3.0)
+    except Exception:
+        pass
+    latest = getattr(desktop_main, "_LATEST_RUNTIME_DATA", None)
+    data = latest if isinstance(latest, dict) else desktop_main.load_data()
     ctx = SimpleNamespace()
     ctx.data = data
 
@@ -1048,7 +1058,11 @@ def get_dashboard(period: str | int = "7 dias", year: str | None = None, encomen
     ctx = _make_context()
     metrics = desktop_pulse._compute_production_pulse_metrics(ctx, period_days=_period_to_days(period), year_filter=year)
     backend = _material_backend()
-    backend.reload()
+    replace_cache = getattr(backend, "_replace_data_cache", None)
+    if callable(replace_cache):
+        replace_cache(ctx.data)
+    else:
+        backend.data = ctx.data
     enc_filter = str(encomenda or "Todas").strip()
     view_mode = str(visao or "Todas").strip()
     origin_mode = str(origem or "Ambos").strip()

@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$venvPython = Join-Path $repoRoot '.venv\Scripts\python.exe'
 $desktopRoot = Join-Path $env:USERPROFILE 'Desktop'
 $releaseDate = Get-Date
 $releaseDateTxt = $releaseDate.ToString('dd/MM/yyyy HH:mm')
@@ -84,10 +85,9 @@ Get-ChildItem $desktopRoot -ErrorAction SilentlyContinue |
 
 $dbDir = Join-Path $releaseRoot 'Base de Dados'
 $mysqlDir = Join-Path $dbDir 'mysql'
-$migrationsDir = Join-Path $mysqlDir 'Migracoes'
 $docsDir = Join-Path $releaseRoot 'Documentacao'
 
-New-Item -ItemType Directory -Force -Path $releaseRoot, $mysqlDir, $migrationsDir, $docsDir | Out-Null
+New-Item -ItemType Directory -Force -Path $releaseRoot, $mysqlDir, $docsDir | Out-Null
 
 if ($desktopExeParent -like (Join-Path $repoRoot 'dist\lugest_qt') -or $desktopExeParent -like (Join-Path $repoRoot 'dist_qt_stable\lugest_qt')) {
     Copy-Item -Path (Join-Path $desktopExeParent '*') -Destination $releaseRoot -Recurse -Force
@@ -173,30 +173,32 @@ Pause
 "@
 Write-Utf8NoBomFile -Path (Join-Path $releaseRoot 'INSTALAR_LUISGEST.ps1') -Content $installer
 
-foreach ($relativePath in @(
-    'README.md',
-    'lugest.sql',
-    'lugest_instalacao_unica.sql',
-    'install_lugest_mysql.py',
-    'install_lugest_mysql.ps1',
-    'validate_lugest_mysql.ps1',
-    'backup_lugest_mysql.py',
-    'backup_lugest_mysql.ps1',
-    'restore_lugest_mysql.py',
-    'restore_lugest_mysql.ps1',
-    'apply_lugest_migrations.py',
-    'apply_lugest_migrations.ps1',
-    'mysql_tooling.py'
-)) {
-    $source = Join-Path $databaseSource $relativePath
-    if (Test-Path $source) {
-        Copy-Item $source $mysqlDir -Force
-    }
+if (Test-Path $venvPython) {
+    & $venvPython (Join-Path $databaseSource 'export_current_schema_sql.py') --output (Join-Path $databaseSource 'lugest.sql') | Out-Null
+    & $venvPython (Join-Path $databaseSource 'export_current_schema_sql.py') --with-starter-users --output (Join-Path $databaseSource 'lugest_instalacao_unica.sql') | Out-Null
 }
 Copy-Item (Join-Path $databaseSource 'lugest_instalacao_unica.sql') (Join-Path $mysqlDir 'IMPORTAR_NO_HEIDI.sql') -Force
-Get-ChildItem $databaseSource -Filter 'patch_*.sql' -File | ForEach-Object {
-    Copy-Item $_.FullName $migrationsDir -Force
-}
+Copy-Item (Join-Path $databaseSource 'lugest.sql') (Join-Path $mysqlDir 'SCHEMA_SEM_UTILIZADORES.sql') -Force
+$dbReadme = @"
+# Base de Dados LuisGEST
+
+Para instalar uma base nova no cliente, importar no HeidiSQL:
+
+1. IMPORTAR_NO_HEIDI.sql
+
+Este ficheiro contem todas as tabelas atuais e utilizadores iniciais temporarios.
+
+Utilizadores temporarios:
+- admin / Trocar#Admin2026
+- operador / Trocar#Operador2026
+- orcamentista / Trocar#Orc2026
+- planeamento / Trocar#Planeamento2026
+
+Trocar as passwords logo apos a instalacao.
+
+O ficheiro SCHEMA_SEM_UTILIZADORES.sql contem apenas tabelas, sem utilizadores iniciais.
+"@
+Write-Utf8NoBomFile -Path (Join-Path $mysqlDir 'README_BASE_DADOS.txt') -Content $dbReadme
 
 Copy-Item $securityPlan (Join-Path $docsDir 'CHECKLIST - Seguranca e Testes.md') -Force
 Copy-Item $localGuide (Join-Path $docsDir 'GUIA - Arranque Desktop Local.md') -Force
@@ -217,7 +219,7 @@ Esta pasta foi simplificada para testes no cliente. Nesta fase segue apenas a ap
 - lugest.env.servidor.example: exemplo para o computador servidor.
 - lugest.env.posto.example: exemplo para os outros postos.
 - lugest_branding.json, lugest_qt_config.json e Logos: configuracao visual e PDFs.
-- Base de Dados\mysql: SQL, migracoes e ferramentas PowerShell/Python sem atalhos .bat.
+- Base de Dados\mysql: SQL unico para importar no HeidiSQL.
 - Documentacao: guias essenciais de instalacao e checklist.
 
 ## Como arrancar

@@ -486,7 +486,7 @@ except Exception:
     _SAVE_HEARTBEAT_MS = 5000
 if _SAVE_HEARTBEAT_MS < 900:
     _SAVE_HEARTBEAT_MS = 900
-_ASYNC_SAVE_ENABLED = str(os.environ.get("LUGEST_ASYNC_SAVE", "0") or "0").strip().lower() not in ("0", "false", "no", "off")
+_ASYNC_SAVE_ENABLED = str(os.environ.get("LUGEST_ASYNC_SAVE", "1") or "1").strip().lower() not in ("0", "false", "no", "off")
 _ASYNC_SAVE_LOCK = threading.Lock()
 _ASYNC_SAVE_EVENT = threading.Event()
 _ASYNC_SAVE_STOP = threading.Event()
@@ -496,6 +496,7 @@ _ASYNC_SAVE_PENDING_FP = ""
 _ASYNC_SAVE_PENDING_TOKEN = 0
 _ASYNC_SAVE_IN_PROGRESS = False
 _ASYNC_SAVE_LAST_ERROR = ""
+_LATEST_RUNTIME_DATA = None
 _MYSQL_RUNTIME_SCHEMA_FLAGS = set()
 _MYSQL_SCHEMA_CACHE_LOCK = threading.Lock()
 _MYSQL_TABLES_CACHE = None
@@ -589,7 +590,7 @@ PROD_TIPOS = [
     "Massa", "Oleo", "Disjuntor", "Contator",
     "Outros",
 ]
-PROD_UNIDS = ["UN", "M", "KG", "CX"]
+PROD_UNIDS = ["UN", "M", "KG", "L", "CX"]
 PDF_TEXT_REPLACEMENTS = {
     "\u00e1": "a", "\u00e0": "a", "\u00e3": "a", "\u00e2": "a", "\u00e4": "a",
     "\u00c1": "A", "\u00c0": "A", "\u00c3": "A", "\u00c2": "A", "\u00c4": "A",
@@ -7049,9 +7050,17 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
     if not num:
         return
     conn = None
+    lock_acquired = False
     try:
         conn = _mysql_connect()
         with conn.cursor() as cur:
+            try:
+                cur.execute(f"SET SESSION innodb_lock_wait_timeout = {_MYSQL_SAVE_LOCK_TIMEOUT_SEC}")
+            except Exception:
+                pass
+            lock_acquired = _mysql_named_lock_acquire(cur, _mysql_save_lock_name(), timeout_sec=_MYSQL_SAVE_LOCK_TIMEOUT_SEC)
+            if not lock_acquired:
+                raise RuntimeError("Nao foi possivel obter o lock global de gravacao do LuGEST.")
             if not _mysql_runtime_schema_ready("orcamento_upsert_schema"):
                 cur.execute(
                     """
@@ -7326,6 +7335,12 @@ def mysql_upsert_orcamento_com_linhas(data, orc):
         raise
     finally:
         if conn:
+            if lock_acquired:
+                try:
+                    with conn.cursor() as cur:
+                        _mysql_named_lock_release(cur, _mysql_save_lock_name())
+                except Exception:
+                    pass
             conn.close()
 
 
@@ -8413,10 +8428,12 @@ def flush_pending_save(force=False):
 
 
 def save_data(data, force=False):
-    global _LAST_SAVE_FINGERPRINT, _PENDING_SAVE_DATA, _SAVE_CHANGE_TOKEN, _LAST_SAVED_TOKEN
+    global _LAST_SAVE_FINGERPRINT, _PENDING_SAVE_DATA, _SAVE_CHANGE_TOKEN, _LAST_SAVED_TOKEN, _LATEST_RUNTIME_DATA
     if not USE_MYSQL_STORAGE:
         raise RuntimeError("A aplicação está configurada para usar apenas MySQL.")
     normalize_notas_encomenda(data)
+    if isinstance(data, dict):
+        _LATEST_RUNTIME_DATA = data
     token = 0
     fp = _save_data_fingerprint(data)
     if not force:
@@ -9848,6 +9865,43 @@ def orc_line_is_service(row):
     return normalize_orc_line_type(row) == ORC_LINE_TYPE_SERVICE
 
 
+def orc_line_is_raw_material(row):
+    data = dict(row or {}) if isinstance(row, dict) else {}
+    if normalize_orc_line_type(data.get("tipo_item")) != ORC_LINE_TYPE_PIECE:
+        return False
+    if str(data.get("stock_item_kind", "") or "").strip() == "raw_material":
+        return True
+    if str(data.get("stock_material_id", "") or "").strip():
+        return True
+    if str(data.get("desenho", "") or "").strip():
+        return False
+    if parse_float(data.get("tempo_peca_min", data.get("tempo_pecas_min", data.get("tempo_total_min", 0))), 0.0) > 0:
+        return False
+    operacao = str(data.get("operacao", data.get("operacoes", "")) or "").strip()
+    if operacao and norm_text(operacao) not in {"stockmp", "materia prima", "materia-prima"}:
+        return False
+    marker = norm_text(
+        " ".join(
+            str(data.get(key, "") or "")
+            for key in (
+                "ref_externa",
+                "descricao",
+                "material",
+                "material_family",
+                "material_subtype",
+                "calc_mode",
+                "dimensao",
+                "dimensoes",
+                "stock_item_kind",
+            )
+        )
+    )
+    raw_tokens = ("perfil", "ipe", "ipn", "hea", "heb", "upn", "barra", "chapa", "tubo", "cantoneira", "varao", "ferro nervurado", "stock mp", "stockmp")
+    has_material = bool(str(data.get("material", "") or "").strip())
+    has_size = bool(str(data.get("espessura", "") or data.get("dimensao", "") or data.get("dimensoes", "") or "").strip())
+    return has_material and has_size and any(token in marker for token in raw_tokens)
+
+
 def build_operacoes_fluxo(ops, existing=None):
     existing_map = {}
     for item in (existing or []):
@@ -10161,6 +10215,13 @@ def produto_preco_unitario(prod):
     return p
 
 
+def produto_preco_venda(prod):
+    pvp1 = parse_float((prod or {}).get("pvp1", 0), 0)
+    if pvp1 > 0:
+        return pvp1
+    return produto_preco_unitario(prod or {})
+
+
 def load_logo(max_width):
     # Resolve logo from branding candidates first (works with .jpg/.png and BASE_DIR).
     logo_path = get_orc_logo_path()
@@ -10237,13 +10298,7 @@ def encomenda_montagem_estado(enc):
         row
         for row in encomenda_montagem_itens(enc)
         if normalize_orc_line_type(row.get("tipo_item")) == ORC_LINE_TYPE_PRODUCT
-        or (
-            normalize_orc_line_type(row.get("tipo_item")) == ORC_LINE_TYPE_PIECE
-            and (
-                str(row.get("stock_item_kind", "") or "").strip() == "raw_material"
-                or str(row.get("stock_material_id", "") or "").strip()
-            )
-        )
+        or orc_line_is_raw_material(row)
     ]
     if not stock_items:
         return "Nao aplicavel"
@@ -10303,11 +10358,7 @@ def encomenda_montagem_resumo(enc):
     materias = sum(
         1
         for row in items
-        if normalize_orc_line_type((row or {}).get("tipo_item")) == ORC_LINE_TYPE_PIECE
-        and (
-            str((row or {}).get("stock_item_kind", "") or "").strip() == "raw_material"
-            or str((row or {}).get("stock_material_id", "") or "").strip()
-        )
+        if orc_line_is_raw_material(row)
     )
     servicos = sum(1 for row in items if normalize_orc_line_type((row or {}).get("tipo_item")) == ORC_LINE_TYPE_SERVICE)
     if produtos:

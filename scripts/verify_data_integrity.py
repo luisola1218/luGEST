@@ -309,7 +309,7 @@ def audit(fix_safe: bool = False) -> dict[str, Any]:
             int(_num(data.get("exp_seq", 1), 1)),
         )
         if changed:
-            backend._save(force=True)
+            backend._save(force=True, blocking=True)
 
     report = {
         "counts": {

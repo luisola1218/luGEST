@@ -481,7 +481,9 @@ class QuotesBridgeMixin:
             "desconto_perc": round(self._parse_float(orc.get("desconto_perc", 0), 0), 2),
             "desconto_modo": self._normalize_quote_discount_mode(orc.get("desconto_modo", "total")),
             "desconto_grupos": self._normalize_quote_discount_groups(orc.get("desconto_grupos", [])),
+            "incremento_preco_perc": round(self._parse_float(orc.get("incremento_preco_perc", 0), 0), 2),
             "desconto_valor": round(self._parse_float(orc.get("desconto_valor", 0), 0), 2),
+            "subtotal_linhas": round(self._parse_float(orc.get("subtotal_linhas", orc.get("subtotal_bruto", 0)), 0), 2),
             "subtotal_bruto": round(self._parse_float(orc.get("subtotal_bruto", 0), 0), 2),
             "preco_transporte": round(self._parse_float(orc.get("preco_transporte", 0), 0), 2),
             "custo_transporte": round(self._parse_float(orc.get("custo_transporte", 0), 0), 2),
@@ -616,7 +618,7 @@ class QuotesBridgeMixin:
             item["descricao"] = item["descricao"] or str((product or {}).get("descricao", "") or "").strip()
             item["produto_unid"] = item["produto_unid"] or str((product or {}).get("unid", "") or "UN").strip()
             if product is not None and item["preco_unit"] <= 0:
-                item["preco_unit"] = round(self._parse_float(self.desktop_main.produto_preco_unitario(product), 0), 4)
+                item["preco_unit"] = round(self._parse_float(self.desktop_main.produto_preco_venda(product), 0), 4)
             if not item["ref_externa"]:
                 item["ref_externa"] = item["produto_codigo"]
             item["material"] = ""
@@ -1061,7 +1063,7 @@ class QuotesBridgeMixin:
             line["descricao"] = line["descricao"] or str((product or {}).get("descricao", "") or "").strip()
             line["produto_unid"] = line["produto_unid"] or str((product or {}).get("unid", "") or "UN").strip()
             if product is not None and line["preco_unit"] <= 0:
-                line["preco_unit"] = round(self._parse_float(self.desktop_main.produto_preco_unitario(product), 0), 4)
+                line["preco_unit"] = round(self._parse_float(self.desktop_main.produto_preco_venda(product), 0), 4)
             if not line["ref_externa"]:
                 line["ref_externa"] = line["produto_codigo"]
             line["ref_interna"] = ""
@@ -1228,6 +1230,7 @@ class QuotesBridgeMixin:
         desconto_perc = round(max(0.0, min(100.0, self._parse_float(payload.get("desconto_perc", (existing or {}).get("desconto_perc", 0)), 0))), 2)
         desconto_modo = self._normalize_quote_discount_mode(payload.get("desconto_modo", (existing or {}).get("desconto_modo", "total")))
         desconto_grupos = self._normalize_quote_discount_groups(payload.get("desconto_grupos", (existing or {}).get("desconto_grupos", [])))
+        incremento_preco_perc = round(max(-100.0, self._parse_float(payload.get("incremento_preco_perc", (existing or {}).get("incremento_preco_perc", 0)), 0)), 2)
         preco_transporte = round(self._parse_float(payload.get("preco_transporte", 0), 0), 2)
         custo_transporte = round(self._parse_float(payload.get("custo_transporte", (existing or {}).get("custo_transporte", 0)), 0), 2)
         paletes = round(self._parse_float(payload.get("paletes", (existing or {}).get("paletes", 0)), 0), 2)
@@ -1237,8 +1240,15 @@ class QuotesBridgeMixin:
             payload.get("transportadora_id", (existing or {}).get("transportadora_id", "")),
             payload.get("transportadora_nome", (existing or {}).get("transportadora_nome", "")),
         )
-        referencia_transporte = str(payload.get("referencia_transporte", (existing or {}).get("referencia_transporte", "")) or "").strip()
-        zona_transporte = str(payload.get("zona_transporte", (existing or {}).get("zona_transporte", "")) or "").strip()
+        if "nota_transporte" in payload and not str(payload.get("nota_transporte", "") or "").strip() and preco_transporte <= 0:
+            custo_transporte = 0.0
+            transportadora_id = ""
+            transportadora_nome = ""
+            referencia_transporte = ""
+            zona_transporte = ""
+        else:
+            referencia_transporte = str(payload.get("referencia_transporte", (existing or {}).get("referencia_transporte", "")) or "").strip()
+            zona_transporte = str(payload.get("zona_transporte", (existing or {}).get("zona_transporte", "")) or "").strip()
         prazo_entrega_texto = str(
             payload.get(
                 "prazo_entrega_texto",
@@ -1255,16 +1265,21 @@ class QuotesBridgeMixin:
             line_total = round(self._parse_float(line.get("total", 0), 0), 2)
             qtd = round(self._parse_float(line.get("qtd", 0), 0), 2)
             preco_unit = round(self._parse_float(line.get("preco_unit", 0), 0), 4)
-            if line_total <= 0 and qtd > 0 and preco_unit > 0:
-                line_total = round(qtd * preco_unit, 2)
-                line["total"] = line_total
+            preco_unit_incrementado = round(max(0.0, preco_unit * (1.0 + (incremento_preco_perc / 100.0))), 4)
+            line_total = round(qtd * preco_unit_incrementado, 2)
+            line["preco_unit_incrementado"] = preco_unit_incrementado
+            line["total"] = line_total
             subtotal_linhas = round(subtotal_linhas + line_total, 2)
             discount_key = str(line.get("discount_group_key", "") or "").strip()
-            apply_discount = desconto_perc > 0 and (desconto_modo == "total" or discount_key in normalized_discount_groups)
+            apply_discount = desconto_perc > 0 and (
+                desconto_modo == "total"
+                or not normalized_discount_groups
+                or discount_key in normalized_discount_groups
+            )
             if apply_discount:
-                discounted_unit = round(preco_unit * (1.0 - (desconto_perc / 100.0)), 4)
+                discounted_unit = round(preco_unit_incrementado * (1.0 - (desconto_perc / 100.0)), 4)
             else:
-                discounted_unit = preco_unit
+                discounted_unit = preco_unit_incrementado
             discounted_total = round(qtd * discounted_unit, 2)
             line_discount = round(max(0.0, line_total - discounted_total), 2)
             line["preco_unit_desconto"] = discounted_unit
@@ -1286,6 +1301,7 @@ class QuotesBridgeMixin:
             "desconto_perc": desconto_perc,
             "desconto_modo": desconto_modo,
             "desconto_grupos": desconto_grupos,
+            "incremento_preco_perc": incremento_preco_perc,
             "desconto_valor": desconto_valor,
             "preco_transporte": preco_transporte,
             "custo_transporte": custo_transporte,
@@ -1303,7 +1319,11 @@ class QuotesBridgeMixin:
             "numero_encomenda": str(payload.get("numero_encomenda", "") or (existing or {}).get("numero_encomenda", "") or "").strip(),
             "ano": int(str(payload.get("ano", "") or (existing or {}).get("ano", "") or self.desktop_main.datetime.now().year)),
             "executado_por": str(payload.get("executado_por", "") or (existing or {}).get("executado_por", "") or "").strip(),
-            "nota_transporte": str(payload.get("nota_transporte", "") or (existing or {}).get("nota_transporte", "") or "").strip(),
+            "nota_transporte": (
+                str(payload.get("nota_transporte", "") or "").strip()
+                if "nota_transporte" in payload
+                else str((existing or {}).get("nota_transporte", "") or "").strip()
+            ),
             "notas_pdf": str(payload.get("notas_pdf", "") or (existing or {}).get("notas_pdf", "") or "").strip(),
             "prazo_entrega_texto": prazo_entrega_texto,
             "prazo_entrega_data": prazo_entrega_data,

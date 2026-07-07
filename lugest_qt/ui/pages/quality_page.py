@@ -7,6 +7,7 @@ from typing import Any
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -147,6 +148,7 @@ class QualityPage(QWidget):
         table.verticalHeader().setVisible(False)
         table.setAlternatingRowColors(True)
         table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         table.setSortingEnabled(True)
@@ -184,19 +186,25 @@ class QualityPage(QWidget):
         toolbar.setSpacing(8)
         toolbar.addWidget(self.reception_filter, 1)
         toolbar.addWidget(self.reception_state)
+        select_visible_btn = QPushButton("Selecionar visiveis")
+        select_visible_btn.setProperty("variant", "secondary")
+        select_visible_btn.clicked.connect(self.reception_table.selectAll)
         evaluate_btn = QPushButton("Avaliar")
         evaluate_btn.clicked.connect(self._evaluate_selected_reception)
         approve_btn = QPushButton("Aprovar")
         approve_btn.setProperty("variant", "success")
         approve_btn.clicked.connect(lambda: self._evaluate_selected_reception(default_status="APROVADO"))
+        approve_many_btn = QPushButton("Aprovar selecionados")
+        approve_many_btn.setProperty("variant", "success")
+        approve_many_btn.clicked.connect(self._approve_selected_receptions)
         reject_btn = QPushButton("Rejeitar / NC")
         reject_btn.setProperty("variant", "danger")
         reject_btn.clicked.connect(lambda: self._evaluate_selected_reception(default_status="REJEITADO"))
-        for button in (evaluate_btn, approve_btn, reject_btn):
+        for button in (select_visible_btn, evaluate_btn, approve_btn, approve_many_btn, reject_btn):
             button.setProperty("compact", "true")
             button.setProperty("qualityAction", "true")
             button.setProperty("toolbarAction", "true")
-            button.setMinimumWidth(104)
+            button.setMinimumWidth(104 if button is not approve_many_btn else 142)
             button.setMinimumHeight(36)
             toolbar.addWidget(button)
         layout.addWidget(toolbar_card)
@@ -440,6 +448,108 @@ class QualityPage(QWidget):
             if str(row.get("ref", "") or "").strip() == ref and str(row.get("tipo", "") or "").strip() == kind:
                 return dict(row)
         return {}
+
+    def _reception_payload_for_table_row(self, row_index: int) -> dict[str, Any]:
+        if row_index < 0:
+            return {}
+        first_item = self.reception_table.item(row_index, 0)
+        if first_item is not None:
+            payload = first_item.data(Qt.UserRole)
+            if isinstance(payload, dict) and payload:
+                return dict(payload)
+        movement_item = self.reception_table.item(row_index, 12)
+        movement_id = str(movement_item.text() if movement_item else "").strip()
+        if movement_id:
+            for row in self.reception_rows:
+                if str(row.get("movement_id", "") or "").strip() == movement_id:
+                    return dict(row)
+        return {}
+
+    def _selected_receptions(self) -> list[dict[str, Any]]:
+        selected_rows = sorted({index.row() for index in self.reception_table.selectionModel().selectedRows()})
+        if not selected_rows and self.reception_table.currentRow() >= 0:
+            selected_rows = [self.reception_table.currentRow()]
+        rows: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for row_index in selected_rows:
+            payload = self._reception_payload_for_table_row(row_index)
+            if not payload:
+                continue
+            key = str(payload.get("movement_id", "") or "").strip() or "|".join(
+                str(payload.get(part, "") or "").strip()
+                for part in ("tipo", "ref", "referencia")
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(payload)
+        return rows
+
+    def _approve_selected_receptions(self) -> None:
+        selected = self._selected_receptions()
+        candidates = [
+            row
+            for row in selected
+            if str(row.get("movement_id", "") or "").strip()
+            and float(row.get("qtd", 0) or 0) > 0
+            and str(row.get("quality_status", "") or "").strip().upper() != "APROVADO"
+        ]
+        if not selected:
+            QMessageBox.warning(self, "Qualidade", "Seleciona uma ou mais linhas recebidas.")
+            return
+        if not candidates:
+            QMessageBox.information(self, "Qualidade", "As linhas selecionadas nao tem quantidade pendente para aprovar.")
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Aprovar rececoes",
+            f"Aprovar {len(candidates)} linha(s) selecionada(s) e libertar as quantidades pendentes para stock?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        failures: list[str] = []
+        approved_count = 0
+        for row in candidates:
+            qty = float(row.get("qtd", 0) or 0)
+            payload = {
+                "tipo": row.get("tipo", ""),
+                "id": row.get("id", row.get("ref", "")),
+                "movement_id": row.get("movement_id", ""),
+                "referencia": row.get("referencia", ""),
+                "quality_status": "APROVADO",
+                "qtd_aprovada": qty,
+                "qtd_rejeitada": 0.0,
+                "defeito": "",
+                "decisao": "Libertar para stock",
+                "create_nc": False,
+            }
+            try:
+                self.backend.quality_reception_save(payload)
+                approved_count += 1
+            except Exception as exc:
+                label = " | ".join(
+                    part
+                    for part in (
+                        str(row.get("tipo", "") or ""),
+                        str(row.get("ref", "") or ""),
+                        str(row.get("referencia", "") or ""),
+                    )
+                    if part
+                )
+                failures.append(f"{label or row.get('movement_id', '')}: {exc}")
+
+        self.refresh()
+        if failures:
+            QMessageBox.warning(
+                self,
+                "Qualidade",
+                f"Aprovadas {approved_count} linha(s). Falharam {len(failures)}:\n" + "\n".join(failures[:8]),
+            )
+        else:
+            QMessageBox.information(self, "Qualidade", f"Aprovadas {approved_count} linha(s) com sucesso.")
 
     def _evaluate_selected_reception(self, default_status: str = "") -> None:
         current = self._selected_reception()

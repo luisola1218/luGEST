@@ -139,6 +139,7 @@ class MainWindow(QMainWindow):
         self._page_refresh_timer = QTimer(self)
         self._page_refresh_timer.setSingleShot(True)
         self._page_refresh_timer.timeout.connect(self._run_pending_page_refresh)
+        self._suppressed_scheduled_refresh_keys: set[str] = set()
         self.page_factories = {
             "home": lambda: HomePage(self.backend),
             "stock_dashboard": lambda: StockDashboardPage(self.backend),
@@ -432,11 +433,20 @@ class MainWindow(QMainWindow):
         self.status_label.setText("A abrir menu...")
         self._page_refresh_timer.start(80)
 
+    def suppress_next_scheduled_refresh(self, key: str) -> None:
+        key_txt = str(key or "").strip()
+        if key_txt:
+            self._suppressed_scheduled_refresh_keys.add(key_txt)
+
     def _run_pending_page_refresh(self) -> None:
         key = str(self._pending_page_refresh_key or "").strip()
         current = self.stack.currentWidget()
         current_key = next((page_key for page_key, page in self.pages.items() if page is current), "")
         if key and current_key and key != current_key:
+            return
+        if key and key in self._suppressed_scheduled_refresh_keys:
+            self._suppressed_scheduled_refresh_keys.discard(key)
+            self.status_label.setText("Atualizado agora")
             return
         self.refresh_current_page(force=False, background=False)
 
@@ -458,8 +468,10 @@ class MainWindow(QMainWindow):
             return
         if bool(getattr(current, "uses_backend_reload", False)):
             if not self._prepare_backend_reload(force=force):
-                return
-            self.backend.reload(force=force)
+                if force:
+                    return
+            else:
+                self.backend.reload(force=force)
         refresh = getattr(current, "refresh", None)
         if callable(refresh):
             refresh()
@@ -561,6 +573,11 @@ class MainWindow(QMainWindow):
         return True
 
     def _prepare_backend_reload(self, force: bool) -> bool:
+        if not force:
+            state = self._save_runtime_state()
+            if bool(state.get("pending", False) or state.get("in_progress", False)):
+                self.status_label.setText("A guardar...")
+                return False
         ok = self._finalize_save_pipeline(
             context="antes de atualizar os dados",
             timeout_sec=12.0 if force else 4.0,
