@@ -732,7 +732,7 @@ class StockDashboardPage(QWidget):
         )
         self._fill_simple_table(
             self.compras_table,
-            list(self.finance_payload.get("compras", []) or []),
+            list(self.finance_payload.get("compras", []) or [])[:200],
             [
                 lambda row: row.get("data", "-"),
                 lambda row: row.get("ne", "-"),

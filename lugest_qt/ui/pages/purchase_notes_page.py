@@ -356,15 +356,26 @@ class PurchaseNotesPage(QWidget):
         self.quick_supplier_btn = QPushButton("Fornecedor rápido")
         self.quick_supplier_btn.setProperty("variant", "secondary")
         self.quick_supplier_btn.clicked.connect(self._quick_assign_supplier)
+        self.apply_advice_btn = QPushButton("Aplicar sugestões")
+        self.apply_advice_btn.setProperty("variant", "secondary")
+        self.apply_advice_btn.clicked.connect(self._apply_purchase_advice)
         self.remove_line_btn = QPushButton("Remover Linha")
         self.remove_line_btn.setProperty("variant", "danger")
         self.remove_line_btn.clicked.connect(self._remove_line)
-        for button in (self.add_material_btn, self.add_product_btn, self.add_manual_btn, self.edit_line_btn, self.quick_supplier_btn, self.remove_line_btn):
+        for button in (
+            self.add_material_btn,
+            self.add_product_btn,
+            self.add_manual_btn,
+            self.edit_line_btn,
+            self.quick_supplier_btn,
+            self.apply_advice_btn,
+            self.remove_line_btn,
+        ):
             line_actions.addWidget(button)
         line_actions.addStretch(1)
         lines_layout.addLayout(line_actions)
 
-        self.lines_table = QTableWidget(0, 15)
+        self.lines_table = QTableWidget(0, 18)
         self.lines_table.setHorizontalHeaderLabels(
             [
                 "Código",
@@ -373,6 +384,9 @@ class PurchaseNotesPage(QWidget):
                 "Descrição",
                 "Origem",
                 "Fornecedor",
+                "Sugestão",
+                "Prazo",
+                "Alt. stock",
                 "Qtd",
                 "Unid.",
                 "Peso unit.",
@@ -397,15 +411,18 @@ class PurchaseNotesPage(QWidget):
                 (3, "stretch", 0),
                 (4, "fixed", 110),
                 (5, "stretch", 0),
-                (6, "fixed", 72),
-                (7, "fixed", 62),
-                (8, "fixed", 88),
-                (9, "fixed", 88),
-                (10, "fixed", 94),
-                (11, "fixed", 72),
-                (12, "fixed", 66),
-                (13, "fixed", 102),
-                (14, "fixed", 118),
+                (6, "stretch", 0),
+                (7, "fixed", 70),
+                (8, "stretch", 0),
+                (9, "fixed", 72),
+                (10, "fixed", 62),
+                (11, "fixed", 88),
+                (12, "fixed", 88),
+                (13, "fixed", 94),
+                (14, "fixed", 72),
+                (15, "fixed", 66),
+                (16, "fixed", 102),
+                (17, "fixed", 118),
             ],
         )
         self.lines_table.setStyleSheet(
@@ -570,6 +587,22 @@ class PurchaseNotesPage(QWidget):
                 return ""
             esp_txt = str(row.get("espessura", "") or "").strip()
             return esp_txt or "-"
+        def _advice(row: dict[str, Any]) -> dict[str, Any]:
+            payload = dict(row.get("purchase_advice", {}) or {})
+            if payload:
+                return payload
+            getter = getattr(self.backend, "purchase_advice_for_line", None)
+            return dict(getter(row) or {}) if callable(getter) else {}
+        def _advice_supplier(row: dict[str, Any]) -> str:
+            advice = _advice(row)
+            return str(advice.get("supplier_label", "") or advice.get("habitual_supplier", "") or "").strip()
+        def _advice_prazo(row: dict[str, Any]) -> str:
+            advice = _advice(row)
+            value = float(advice.get("lead_days", 0) or 0)
+            return f"{value:g} d" if value > 0 else "-"
+        def _advice_stock(row: dict[str, Any]) -> str:
+            advice = _advice(row)
+            return str(advice.get("stock_alternative_txt", "") or "").strip() or "-"
         _fill_table(
             self.lines_table,
             [
@@ -580,6 +613,9 @@ class PurchaseNotesPage(QWidget):
                     row.get("descricao", "-"),
                     row.get("origem", "-"),
                     row.get("fornecedor_linha", "-"),
+                    _advice_supplier(row) or "-",
+                    _advice_prazo(row),
+                    _advice_stock(row),
                     f"{float(row.get('qtd', 0) or 0):.2f}",
                     row.get("unid", "-"),
                     self._weight_text(self._line_weight_unit(row)),
@@ -592,11 +628,12 @@ class PurchaseNotesPage(QWidget):
                 ]
                 for row in self.line_rows
             ],
-            align_center_from=6,
+            align_center_from=7,
         )
         for row_index, row in enumerate(self.line_rows):
             row_total = float(row.get("total", 0) or 0)
             total += row_total
+            advice = _advice(row)
             origem = self.backend.desktop_main.norm_text(str(row.get("origem", "") or "").strip())
             if "mater" in origem:
                 materials_total += row_total
@@ -610,8 +647,11 @@ class PurchaseNotesPage(QWidget):
             esp_item = self.lines_table.item(row_index, 2)
             desc_item = self.lines_table.item(row_index, 3)
             supplier_item = self.lines_table.item(row_index, 5)
-            weight_unit_item = self.lines_table.item(row_index, 8)
-            weight_total_item = self.lines_table.item(row_index, 9)
+            advice_supplier_item = self.lines_table.item(row_index, 6)
+            advice_prazo_item = self.lines_table.item(row_index, 7)
+            advice_stock_item = self.lines_table.item(row_index, 8)
+            weight_unit_item = self.lines_table.item(row_index, 11)
+            weight_total_item = self.lines_table.item(row_index, 12)
             if code_item is not None:
                 code_item.setToolTip(_line_code(row))
             if material_item is not None:
@@ -622,6 +662,18 @@ class PurchaseNotesPage(QWidget):
                 desc_item.setToolTip(str(row.get("descricao", "") or "").strip())
             if supplier_item is not None:
                 supplier_item.setToolTip(str(row.get("fornecedor_linha", "") or "").strip())
+            advice_tip = str(advice.get("summary", "") or "").strip()
+            if advice:
+                extra = [
+                    f"Última compra: {advice.get('last_purchase', '-') or '-'}",
+                    f"Preço médio: {float(advice.get('avg_price', 0) or 0):.4f}",
+                    f"Quantidade mínima: {float(advice.get('min_qty', 0) or 0):.2f}",
+                    f"Alternativas: {advice.get('stock_alternative_txt', '-') or '-'}",
+                ]
+                advice_tip = (advice_tip + "\n" if advice_tip else "") + "\n".join(extra)
+            for advice_item in (advice_supplier_item, advice_prazo_item, advice_stock_item):
+                if advice_item is not None:
+                    advice_item.setToolTip(advice_tip or "Sem histórico de compra para esta linha.")
             if weight_unit_item is not None:
                 weight_unit_item.setToolTip(
                     f"{self._line_weight_unit(row):.3f} kg" if self._line_weight_unit(row) > 0 else "Sem peso associado"
@@ -2791,6 +2843,40 @@ class PurchaseNotesPage(QWidget):
         for idx in target_indexes:
             self.line_rows[idx]["fornecedor_linha"] = supplier_text
         self._render_lines()
+
+    def _apply_purchase_advice(self) -> None:
+        if not self.line_rows:
+            QMessageBox.warning(self, "Notas Encomenda", "Não existem linhas para aplicar sugestões.")
+            return
+        getter = getattr(self.backend, "purchase_advice_for_line", None)
+        if not callable(getter):
+            return
+        target_indexes = self._selected_line_indexes() or list(range(len(self.line_rows)))
+        applied_supplier = 0
+        applied_price = 0
+        for idx in target_indexes:
+            row = self.line_rows[idx]
+            advice = dict(getter(row) or {})
+            row["purchase_advice"] = advice
+            supplier = str(advice.get("supplier_label", "") or advice.get("habitual_supplier", "") or "").strip()
+            if supplier and not str(row.get("fornecedor_linha", "") or "").strip():
+                row["fornecedor_linha"] = supplier
+                applied_supplier += 1
+            avg_price = float(advice.get("avg_price", 0) or 0)
+            if avg_price > 0 and float(row.get("preco", 0) or 0) <= 0:
+                row["preco"] = avg_price
+                qty = float(row.get("qtd", 0) or 0)
+                discount = max(0.0, min(100.0, float(row.get("desconto", 0) or 0)))
+                vat = max(0.0, min(100.0, float(row.get("iva", 23) or 23)))
+                base = qty * avg_price * (1.0 - (discount / 100.0))
+                row["total"] = round(base * (1.0 + vat / 100.0), 4)
+                applied_price += 1
+        self._render_lines()
+        QMessageBox.information(
+            self,
+            "Sugestões de compra",
+            f"Sugestões aplicadas.\n\nFornecedores preenchidos: {applied_supplier}\nPreços preenchidos: {applied_price}",
+        )
 
     def _add_material_line(self) -> None:
         payload = self._line_dialog("Adicionar linha de Matéria-Prima", {"origem": "Matéria-Prima", "iva": 23, "qtd": 1}, material_mode=True)

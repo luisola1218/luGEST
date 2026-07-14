@@ -943,7 +943,7 @@ class QuotesBridgeMixin:
         stock_item_kind = str(payload.get("stock_item_kind", "") or "").strip()
         raw_by_stock_ref = self._quote_line_looks_stock_material_ref(payload.get("ref_externa"))
         if raw_by_stock_ref:
-            operacao_norm = self.desktop_main.norm_text(str(payload.get("operacao", "") or "").strip())
+            operacao_norm = self.desktop_main.norm_text(self._quote_line_operations_text(payload))
             raw_by_stock_ref = bool(
                 line_type == self.desktop_main.ORC_LINE_TYPE_PIECE
                 and not str(payload.get("desenho", "") or "").strip()
@@ -1037,24 +1037,33 @@ class QuotesBridgeMixin:
             line["produto_codigo"] = ""
             line["produto_unid"] = ""
             if stock_item_kind == "raw_material":
+                has_raw_operations = bool(
+                    self._quote_line_operations_value(payload)
+                    or list(payload.get("operacoes_lista", []) or [])
+                    or list(payload.get("operacoes_detalhe", []) or [])
+                    or dict(payload.get("tempos_operacao", {}) or {})
+                    or dict(payload.get("custos_operacao", {}) or {})
+                    or self._parse_float(line.get("tempo_peca_min", 0), 0) > 0
+                )
                 line["ref_interna"] = ""
                 line["produto_codigo"] = ""
                 line["produto_unid"] = ""
-                line["operacao"] = ""
-                line["desenho"] = ""
-                line["desenho_pdf"] = ""
-                line["desenhos_pdf"] = []
-                line["ficheiros"] = []
-                line["tempo_peca_min"] = 0.0
-                line["laser_base_active"] = False
-                line["laser_base_tempo_unit"] = 0.0
-                line["laser_base_preco_unit"] = 0.0
-                line["operacoes_lista"] = []
-                line["operacoes_fluxo"] = []
-                line["operacoes_detalhe"] = []
-                line["tempos_operacao"] = {}
-                line["custos_operacao"] = {}
-                line["quote_cost_snapshot"] = {}
+                if not has_raw_operations:
+                    line["desenho"] = ""
+                    line["desenho_pdf"] = ""
+                    line["desenhos_pdf"] = []
+                    line["ficheiros"] = []
+                    line["laser_base_active"] = False
+                    line["laser_base_tempo_unit"] = 0.0
+                    line["laser_base_preco_unit"] = 0.0
+                    line["operacao"] = ""
+                    line["tempo_peca_min"] = 0.0
+                    line["operacoes_lista"] = []
+                    line["operacoes_fluxo"] = []
+                    line["operacoes_detalhe"] = []
+                    line["tempos_operacao"] = {}
+                    line["custos_operacao"] = {}
+                    line["quote_cost_snapshot"] = {}
         elif line_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT:
             product = self._product_lookup(line["produto_codigo"])
             if product is None and not line["descricao"]:
@@ -1160,7 +1169,18 @@ class QuotesBridgeMixin:
             line["preco_unit"] = round(base_price + extra_price, 4)
             line["total"] = round(line["qtd"] * line["preco_unit"], 2)
 
-        if stock_item_kind == "raw_material":
+        raw_has_operations = bool(
+            stock_item_kind == "raw_material"
+            and (
+                str(line.get("operacao", "") or "").strip()
+                or list(payload.get("operacoes_lista", []) or [])
+                or list(payload.get("operacoes_detalhe", []) or [])
+                or dict(payload.get("tempos_operacao", {}) or {})
+                or dict(payload.get("custos_operacao", {}) or {})
+                or self._parse_float(line.get("tempo_peca_min", 0), 0) > 0
+            )
+        )
+        if stock_item_kind == "raw_material" and not raw_has_operations:
             line["operacoes_lista"] = []
             line["operacoes_fluxo"] = []
             line["operacoes_detalhe"] = []
@@ -1825,16 +1845,33 @@ class QuotesBridgeMixin:
         os.startfile(str(target))
         return target
 
+    def _quote_line_operations_value(self, line: dict[str, Any] | None = None) -> list[str]:
+        row = dict(line or {})
+        values: list[Any] = []
+        raw_text = str(row.get("operacao", "") or "").strip()
+        if raw_text:
+            values.append(raw_text)
+        for key in ("operacoes_lista", "operacoes_fluxo", "operacoes_detalhe"):
+            raw = row.get(key)
+            if isinstance(raw, list):
+                values.extend(raw)
+        for key in ("tempos_operacao", "custos_operacao"):
+            raw_map = row.get(key)
+            if isinstance(raw_map, dict):
+                values.extend(str(name or "").strip() for name in raw_map.keys() if str(name or "").strip())
+        return self.quote_parse_operacoes_lista(values)
+
+    def _quote_line_operations_text(self, line: dict[str, Any] | None = None) -> str:
+        return self.quote_format_operacoes(self._quote_line_operations_value(line))
+
     def _quote_line_is_production_ready(self, line: dict[str, Any] | None = None) -> bool:
         row = dict(line or {})
         if self.desktop_main.normalize_orc_line_type(row.get("tipo_item")) != self.desktop_main.ORC_LINE_TYPE_PIECE:
             return False
-        if self._quote_line_is_raw_material(row):
-            return False
         drawing_path = str(row.get("desenho", "") or "").strip()
         ops = [
             str(self.desktop_main.normalize_operacao_nome(op) or op or "").strip()
-            for op in self._planning_ops_from_ops_value(row.get("operacao", ""))
+            for op in self._quote_line_operations_value(row)
         ]
         ops = [op for op in ops if op and op != "Montagem"]
         material = str(row.get("material", "") or "").strip()
@@ -1882,7 +1919,7 @@ class QuotesBridgeMixin:
             return "montagem"
         if not self._quote_line_is_production_ready(row):
             return "conjunto"
-        ops = [str(self.desktop_main.normalize_operacao_nome(op) or op or "").strip() for op in self._planning_ops_from_ops_value(row.get("operacao", ""))]
+        ops = [str(self.desktop_main.normalize_operacao_nome(op) or op or "").strip() for op in self._quote_line_operations_value(row)]
         ops = [op for op in ops if op]
         subtype_norm = self.desktop_main.norm_text(str(row.get("material_subtype", "") or row.get("calc_mode", "") or "").strip())
         material_norm = self.desktop_main.norm_text(str(row.get("material", "") or "").strip())
@@ -2037,7 +2074,7 @@ class QuotesBridgeMixin:
                 espessura,
                 {"espessura": espessura, "tempo_min": 0.0, "tempos_operacao": {}, "maquinas_operacao": {}, "estado": "Preparacao", "pecas": []},
             )
-            planning_ops = [op for op in self._planning_ops_from_ops_value(line.get("operacao", "")) if op != "Montagem"]
+            planning_ops = [op for op in self._quote_line_operations_value(line) if op != "Montagem"]
             if production_route == "serralharia":
                 planning_ops = [op for op in planning_ops if op != "Corte Laser"]
                 if "Serralharia" not in planning_ops:
@@ -2081,7 +2118,7 @@ class QuotesBridgeMixin:
             else:
                 ref_interna = str(self.desktop_main.next_ref_interna_unique(data, cliente_code, list(used_refs)))
             used_refs.add(ref_interna)
-            ops_txt = self.quote_format_operacoes(line.get("operacao", ""))
+            ops_txt = self._quote_line_operations_text(line)
             peca = {
                 "id": f"PEC{piece_idx:05d}",
                 "ref_interna": ref_interna,

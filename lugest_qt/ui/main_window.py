@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from .pages.home_page import HomePage
 from .pages.billing_page import BillingPage
+from .pages.diagnostics_page import DiagnosticsPage
 from .pages.material_assistant_page import MaterialAssistantPage
 from .pages.materials_page import MaterialsPage
 from .pages.products_page import ProductsPage
@@ -160,6 +161,7 @@ class MainWindow(QMainWindow):
             "material_assistant": lambda: MaterialAssistantPage(self.backend),
             "transportes": lambda: TransportsPage(self.backend),
             "quality": lambda: QualityPage(self.backend),
+            "diagnostics": lambda: DiagnosticsPage(self.backend),
         }
 
         self.setWindowTitle("luGEST Qt")
@@ -279,6 +281,7 @@ class MainWindow(QMainWindow):
             ("billing", "Faturação"),
             ("purchase_notes", "Notas Encomenda"),
             ("quality", "Qualidade"),
+            ("diagnostics", "Diagnóstico"),
             ("pulse", "Pulse"),
             ("avarias", "Avarias"),
             ("home", "Resumo"),

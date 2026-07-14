@@ -1174,10 +1174,10 @@ SET FOREIGN_KEY_CHECKS=1;
 -- Troca estas passwords logo apos a instalacao.
 
 INSERT IGNORE INTO `users` (`username`, `password`, `role`) VALUES
-  ('admin', 'pbkdf2_sha256$260000$twtWlO0GvBZetpBci2sOug$N1PMucMxankYQrlxeHs0s0kEMcb3Xw6bwO4cVqUmgDU', 'Admin'),
-  ('operador', 'pbkdf2_sha256$260000$M2XY3QEfYPvcEHy-M3AfKA$aGkQ3v7JehfVTQ3_AtwodGjCGjBgusMxoBP9gfygOBM', 'Operador'),
-  ('orcamentista', 'pbkdf2_sha256$260000$vLiE4itJMej_conHofffww$jw_m711a5wI7VDuAEtVFEJf-uWuAJg7Sc9GLIsD_s8s', 'Orcamentista'),
-  ('planeamento', 'pbkdf2_sha256$260000$ILI_Yby9QB0nXLh_oAq3dQ$5BN5tRNqGhi8LwYmLwiD8-5bHmzZ7s35uOF4lt20dIQ', 'Planeamento');
+  ('admin', 'pbkdf2_sha256$260000$XEwLjAhDSD534B7x2y5B7w$4i5DW35qr0BX4eyOdLV4zj-wjWUSJrg7ZE7kta5X1x4', 'Admin'),
+  ('operador', 'pbkdf2_sha256$260000$k3IMxaZ8UYQ_f_PoJqXjbA$MJajOU-j6zq_vydbRSyhHjlrX48m2Xc0VYNa2GVlouQ', 'Operador'),
+  ('orcamentista', 'pbkdf2_sha256$260000$3eccSlMSNCb3epzf4Wl9yA$-Y2YrNIR1aUyp6_w0evg0Ng6QRTyJFH9CwoprCjADDY', 'Orcamentista'),
+  ('planeamento', 'pbkdf2_sha256$260000$h2TPEGiJWU7iwEKAX_Jv7Q$ix96g2VmERtREuCYalQpKAysXKA2CrhZh9sU2LWxx4I', 'Planeamento');
 
 INSERT IGNORE INTO `operadores` (`nome`) VALUES ('Operador 1');
 

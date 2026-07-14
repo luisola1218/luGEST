@@ -3,12 +3,201 @@
 import os
 import re
 import tempfile
+from collections import Counter
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 
 class PurchasingBridgeMixin:
     """Supplier, purchase note, and delivery operations for the Qt bridge."""
+
+    def _purchase_date(self, value: Any) -> date | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        text = text.replace("T", " ")[:10]
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(text, fmt).date()
+            except Exception:
+                continue
+        return None
+
+    def _purchase_supplier_label(self, supplier_id: str, supplier_name: str) -> str:
+        supplier_id = str(supplier_id or "").strip()
+        supplier_name = str(supplier_name or "").strip()
+        if supplier_id and supplier_name:
+            return f"{supplier_id} - {supplier_name}"
+        return supplier_name or supplier_id
+
+    def _purchase_line_match(self, target: dict[str, Any], candidate: dict[str, Any]) -> bool:
+        target_origin = self.desktop_main.origem_is_materia(target.get("origem", ""))
+        candidate_origin = self.desktop_main.origem_is_materia(candidate.get("origem", ""))
+        if target_origin != candidate_origin:
+            return False
+        if not target_origin:
+            target_ref = str(target.get("ref", "") or "").strip()
+            candidate_ref = str(candidate.get("ref", "") or "").strip()
+            if target_ref and candidate_ref:
+                return target_ref == candidate_ref
+            return self.desktop_main.norm_text(target.get("descricao", "")) == self.desktop_main.norm_text(candidate.get("descricao", ""))
+        target_material = self.encomendas_actions._norm_material(target.get("material", ""))
+        candidate_material = self.encomendas_actions._norm_material(candidate.get("material", ""))
+        if target_material and candidate_material and target_material != candidate_material:
+            return False
+        target_esp = self.encomendas_actions._norm_espessura(target.get("espessura", ""))
+        candidate_esp = self.encomendas_actions._norm_espessura(candidate.get("espessura", ""))
+        if target_esp and candidate_esp and target_esp != candidate_esp:
+            return False
+        target_format = self.desktop_main.norm_text(target.get("formato", ""))
+        candidate_format = self.desktop_main.norm_text(candidate.get("formato", ""))
+        if target_format and candidate_format and target_format != candidate_format:
+            return False
+        return True
+
+    def _purchase_stock_alternatives(self, line: dict[str, Any], limit: int = 3) -> list[dict[str, Any]]:
+        if self.desktop_main.origem_is_materia(line.get("origem", "")):
+            material = str(line.get("material", "") or "").strip()
+            esp = str(line.get("espessura", "") or "").strip()
+            rows = []
+            if material and esp:
+                rows = list(self.material_candidates(material, esp) or [])
+            alternatives = []
+            current_ref = str(line.get("ref", "") or "").strip()
+            for row in rows:
+                material_id = str(row.get("material_id", "") or "").strip()
+                if current_ref and material_id == current_ref:
+                    continue
+                alternatives.append(
+                    {
+                        "ref": material_id,
+                        "descricao": f"{row.get('material', '')} {row.get('espessura', '')} | {row.get('dimensao', '-')}",
+                        "disponivel": round(self._parse_float(row.get("disponivel", 0), 0), 2),
+                        "local": str(row.get("local", "") or "").strip(),
+                        "lote": str(row.get("lote", "") or "").strip(),
+                    }
+                )
+            return alternatives[: max(1, int(limit or 3))]
+        ref = str(line.get("ref", "") or "").strip()
+        product = next((row for row in list(self.ensure_data().get("produtos", []) or []) if str(row.get("codigo", "") or "").strip() == ref), None)
+        categoria = str((product or {}).get("categoria", line.get("categoria", "")) or "").strip()
+        tipo = str((product or {}).get("tipo", line.get("tipo", "")) or "").strip()
+        alternatives = []
+        for row in list(self.ensure_data().get("produtos", []) or []):
+            code = str(row.get("codigo", "") or "").strip()
+            if code == ref:
+                continue
+            qty = self._parse_float(row.get("qty", 0), 0)
+            if qty <= 0:
+                continue
+            if categoria and str(row.get("categoria", "") or "").strip() != categoria:
+                continue
+            if tipo and str(row.get("tipo", "") or "").strip() != tipo:
+                continue
+            alternatives.append(
+                {
+                    "ref": code,
+                    "descricao": str(row.get("descricao", "") or "").strip(),
+                    "disponivel": round(qty, 2),
+                    "local": str(row.get("localizacao", "") or row.get("local", "") or "").strip(),
+                    "lote": str(row.get("lote", "") or "").strip(),
+                }
+            )
+        alternatives.sort(key=lambda row: (-self._parse_float(row.get("disponivel", 0), 0), str(row.get("ref", "") or "")))
+        return alternatives[: max(1, int(limit or 3))]
+
+    def purchase_advice_for_line(self, line: dict[str, Any]) -> dict[str, Any]:
+        target = dict(line or {})
+        matches: list[dict[str, Any]] = []
+        for note in list(self.ensure_data().get("notas_encomenda", []) or []):
+            note_supplier = str(note.get("fornecedor", "") or "").strip()
+            note_supplier_id = str(note.get("fornecedor_id", "") or "").strip()
+            note_contact = str(note.get("contacto", "") or "").strip()
+            note_number = str(note.get("numero", "") or "").strip()
+            approved = self._purchase_date(note.get("data_aprovacao") or note.get("data_envio") or note.get("data_entrega"))
+            delivered = self._purchase_date(note.get("data_ultima_entrega") or note.get("data_entregue"))
+            for raw_line in list(note.get("linhas", []) or []):
+                candidate = dict(raw_line or {})
+                if self.desktop_main.origem_is_materia(candidate.get("origem", "")):
+                    candidate = self._infer_purchase_material_line(candidate)
+                if not self._purchase_line_match(target, candidate):
+                    continue
+                supplier_raw = str(candidate.get("fornecedor_linha", "") or note_supplier or "").strip()
+                supplier_id, supplier_name, supplier_contact = self._resolve_supplier(supplier_raw or note_supplier_id)
+                supplier_id = supplier_id or note_supplier_id
+                supplier_name = supplier_name or supplier_raw or note_supplier
+                qty = self._parse_float(candidate.get("qtd", 0), 0)
+                price = self._parse_float(candidate.get("preco", candidate.get("p_compra", 0)), 0)
+                if qty <= 0 and price <= 0 and not supplier_name:
+                    continue
+                line_delivered = self._purchase_date(candidate.get("data_entrega_real"))
+                delivery_date = line_delivered or delivered
+                lead_days = None
+                if approved and delivery_date:
+                    lead_days = max(0, int((delivery_date - approved).days))
+                matches.append(
+                    {
+                        "supplier_id": supplier_id,
+                        "supplier": supplier_name,
+                        "contact": supplier_contact or note_contact,
+                        "note": note_number,
+                        "date": str(note.get("data_aprovacao") or note.get("data_envio") or note.get("data_entrega") or ""),
+                        "qty": qty,
+                        "price": price,
+                        "lead_days": lead_days,
+                    }
+                )
+        supplier_counter = Counter(str(row.get("supplier", "") or "").strip() for row in matches if str(row.get("supplier", "") or "").strip())
+        habitual_supplier = supplier_counter.most_common(1)[0][0] if supplier_counter else ""
+        supplier_id = ""
+        supplier_contact = ""
+        if habitual_supplier:
+            for row in reversed(matches):
+                if str(row.get("supplier", "") or "").strip() == habitual_supplier:
+                    supplier_id = str(row.get("supplier_id", "") or "").strip()
+                    supplier_contact = str(row.get("contact", "") or "").strip()
+                    break
+        prices = [self._parse_float(row.get("price", 0), 0) for row in matches if self._parse_float(row.get("price", 0), 0) > 0]
+        quantities = [self._parse_float(row.get("qty", 0), 0) for row in matches if self._parse_float(row.get("qty", 0), 0) > 0]
+        lead_values = [int(row.get("lead_days")) for row in matches if row.get("lead_days") is not None]
+        last = matches[-1] if matches else {}
+        alternatives = self._purchase_stock_alternatives(target)
+        supplier_prazo = 0
+        if supplier_id:
+            supplier = next((row for row in list(self.ensure_data().get("fornecedores", []) or []) if str(row.get("id", "") or "").strip() == supplier_id), None)
+            supplier_prazo = int(self._parse_float((supplier or {}).get("prazo_entrega_dias", 0), 0))
+        prazo = round(sum(lead_values) / len(lead_values), 1) if lead_values else float(supplier_prazo or 0)
+        summary_parts = []
+        if habitual_supplier:
+            summary_parts.append(f"Fornecedor habitual: {habitual_supplier}")
+        if last:
+            summary_parts.append(f"Última compra: {last.get('note', '-')}")
+        if prices:
+            summary_parts.append(f"Preço médio: {round(sum(prices) / len(prices), 4)}")
+        if prazo:
+            summary_parts.append(f"Prazo: {prazo:g} dias")
+        if alternatives:
+            summary_parts.append(f"Alternativa em stock: {alternatives[0].get('ref', '-')}")
+        return {
+            "supplier_id": supplier_id,
+            "habitual_supplier": habitual_supplier,
+            "supplier_label": self._purchase_supplier_label(supplier_id, habitual_supplier),
+            "contact": supplier_contact,
+            "last_purchase": str(last.get("note", "") or ""),
+            "last_purchase_date": str(last.get("date", "") or ""),
+            "last_price": round(self._parse_float(last.get("price", 0), 0), 4) if last else 0.0,
+            "avg_price": round(sum(prices) / len(prices), 4) if prices else 0.0,
+            "lead_days": prazo,
+            "min_qty": round(min(quantities), 4) if quantities else 0.0,
+            "history_count": len(matches),
+            "stock_alternatives": alternatives,
+            "stock_alternative_txt": " ; ".join(
+                f"{row.get('ref', '-')}: {self._fmt(row.get('disponivel', 0))}"
+                for row in alternatives[:3]
+            ),
+            "summary": " | ".join(summary_parts) if summary_parts else "Sem histórico de compra para esta linha.",
+        }
 
     def ne_suppliers(self) -> list[dict[str, str]]:
         self._maybe_normalize_single_supplier_catalog()
@@ -443,6 +632,7 @@ class PurchasingBridgeMixin:
                         4,
                     ),
                     "price_basis": str(line.get("price_basis", (product or {}).get("price_basis", "")) or "").strip(),
+                    "purchase_advice": self.purchase_advice_for_line(line),
                     "_material_manual": bool(line.get("_material_manual")),
                     "_material_pending_create": bool(line.get("_material_pending_create")),
                     "_product_pending_create": bool(line.get("_product_pending_create")),
@@ -985,6 +1175,7 @@ class PurchasingBridgeMixin:
                     "_product_pending_create": bool(payload.get("_product_pending_create", product is None)),
                 }
             )
+        line["purchase_advice"] = self.purchase_advice_for_line(line)
         return line
 
     def ne_save(self, payload: dict[str, Any]) -> dict[str, Any]:
