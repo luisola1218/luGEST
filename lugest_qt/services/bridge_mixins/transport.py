@@ -1120,6 +1120,193 @@ class TransportBridgeMixin:
 
     def transport_route_sheet_render(self, numero: str, path: str | Path) -> Path:
         detail = self.transport_detail(numero)
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+
+        out_path = Path(path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        page_w, page_h = A4
+        margin = 32
+        inner_w = page_w - (2 * margin)
+        palette = self._operator_label_palette()
+        branding = self.branding_settings()
+        logo_text = str(branding.get("logo_path", "") or "").strip()
+        logo_path = Path(logo_text) if logo_text and Path(logo_text).exists() else None
+        printed_at = str(self.desktop_main.now_iso() or "").replace("T", " ")[:19]
+        regular = "Helvetica"
+        bold = "Helvetica-Bold"
+        c = canvas.Canvas(str(out_path), pagesize=A4)
+        c.setTitle(self._operator_pdf_text(f"Folha de rota {detail.get('numero', '')}"))
+        page_number = 1
+
+        def text(value: Any) -> str:
+            return self._operator_pdf_text(value)
+
+        def draw_card(x: float, y: float, width: float, height: float, label: str, value: str, *, accent: bool = False) -> None:
+            c.setFillColor(palette["primary_soft"] if accent else palette["surface"])
+            c.setStrokeColor(palette["line_strong"] if accent else palette["line"])
+            c.roundRect(x, y, width, height, 3, stroke=1, fill=1)
+            c.setFillColor(palette["muted"])
+            c.setFont(regular, 6.2)
+            c.drawString(x + 8, y + height - 11, text(_pdf_clip_text(label, width - 16, regular, 6.2)))
+            value_font = 9.4
+            while value_font > 6.5 and len(str(value or "")) * value_font * 0.52 > width - 16:
+                value_font -= 0.3
+            c.setFillColor(palette["ink"])
+            c.setFont(bold, value_font)
+            c.drawString(x + 8, y + 8, text(_pdf_clip_text(value or "-", width - 16, bold, value_font)))
+
+        def draw_footer() -> None:
+            c.setStrokeColor(palette["line"])
+            c.line(margin, 27, page_w - margin, 27)
+            c.setFillColor(palette["muted"])
+            c.setFont(regular, 6.3)
+            c.drawString(margin, 17, text(f"LUGEST | Folha de rota {detail.get('numero', '-') or '-'}"))
+            c.drawRightString(page_w - margin, 17, text(f"Pagina {page_number} | {printed_at}"))
+
+        def draw_header() -> float:
+            top = page_h - 26
+            c.setFillColor(palette["surface"])
+            c.rect(0, 0, page_w, page_h, stroke=0, fill=1)
+            c.setFillColor(palette["primary"])
+            c.rect(0, page_h - 9, page_w, 9, stroke=0, fill=1)
+            if logo_path:
+                self._draw_operator_logo_plate(c, palette, logo_path, margin, top - 54, 82, 40, radius=3, padding_x=4, padding_y=3)
+            title_x = margin + 96
+            title_w = inner_w - 190
+            c.setFillColor(palette["primary_dark"])
+            c.setFont(bold, 17)
+            c.drawString(title_x, top - 21, text("Transportes | Folha de rota"))
+            c.setFillColor(palette["muted"])
+            c.setFont(regular, 7.4)
+            c.drawString(title_x, top - 37, text(_pdf_clip_text(f"Viagem {detail.get('numero', '-') or '-'} | {detail.get('data_planeada', '-') or '-'} as {detail.get('hora_saida', '-') or '-'}", title_w, regular, 7.4)))
+            status = str(detail.get("estado", "") or "Planeado")
+            draw_card(page_w - margin - 86, top - 52, 86, 38, "Estado", status, accent=True)
+
+            metric_y = top - 101
+            gap = 7
+            metric_w = (inner_w - (3 * gap)) / 4
+            metrics = [
+                ("Paragens", str(len(list(detail.get("paragens", []) or [])))),
+                ("Paletes", self._fmt(detail.get("paletes", 0))),
+                ("Peso bruto", f"{self._fmt(detail.get('peso_bruto_kg', 0))} kg"),
+                ("Volume", f"{self._fmt(detail.get('volume_m3', 0))} m3"),
+            ]
+            for index, (label, value) in enumerate(metrics):
+                draw_card(margin + index * (metric_w + gap), metric_y, metric_w, 35, label, value, accent=index == 0)
+
+            meta_y = metric_y - 66
+            meta_gap = 8
+            meta_w = (inner_w - meta_gap) / 2
+            vehicle = " | ".join(
+                part for part in (
+                    str(detail.get("viatura", "") or "").strip(),
+                    str(detail.get("matricula", "") or "").strip(),
+                    str(detail.get("motorista", "") or "").strip(),
+                    str(detail.get("telefone_motorista", "") or "").strip(),
+                ) if part
+            ) or "Por definir"
+            carrier = " | ".join(
+                part for part in (
+                    str(detail.get("transportadora_nome", "") or "").strip(),
+                    str(detail.get("referencia_transporte", "") or "").strip(),
+                    str(detail.get("pedido_transporte_estado", "") or "").strip(),
+                    str(detail.get("pedido_transporte_ref", "") or "").strip(),
+                ) if part
+            ) or "Transporte proprio / sem pedido externo"
+            draw_card(margin, meta_y, meta_w, 50, "Viatura / matricula / motorista / contacto", vehicle)
+            draw_card(margin + meta_w + meta_gap, meta_y, meta_w, 50, "Transportadora / referencia / pedido", carrier)
+            return meta_y - 16
+
+        columns = [
+            ("Ord", 28), ("Encomenda", 74), ("Cliente", 90), ("Descarga", 138),
+            ("Planeado", 72), ("Guia", 58), ("Estado", inner_w - 460),
+        ]
+
+        def draw_table_header(y: float) -> float:
+            c.setFillColor(palette["primary_soft"])
+            c.setStrokeColor(palette["line_strong"])
+            c.rect(margin, y - 20, inner_w, 20, stroke=1, fill=1)
+            c.setFillColor(palette["primary_dark"])
+            c.setFont(bold, 6.8)
+            x = margin
+            for label, width in columns:
+                c.drawString(x + 5, y - 13, text(label))
+                x += width
+            return y - 25
+
+        def start_new_page() -> float:
+            nonlocal page_number
+            draw_footer()
+            c.showPage()
+            page_number += 1
+            return draw_table_header(draw_header())
+
+        y = draw_table_header(draw_header())
+        for row_index, stop in enumerate(list(detail.get("paragens", []) or [])):
+            checklist = (
+                f"Carga {'OK' if stop.get('check_carga_ok') else '-'} | "
+                f"Docs {'OK' if stop.get('check_docs_ok') else '-'} | "
+                f"Paletes {'OK' if stop.get('check_paletes_ok') else '-'}"
+            )
+            notes = " | ".join(
+                part for part in (
+                    f"Zona {stop.get('zona_transporte', '-') or '-'}",
+                    f"Carga {self._fmt(stop.get('paletes', 0))} pal / {self._fmt(stop.get('peso_bruto_kg', 0))} kg / {self._fmt(stop.get('volume_m3', 0))} m3",
+                    checklist,
+                    f"POD {stop.get('pod_estado', '-') or '-'}",
+                    str(stop.get("observacoes", "") or "").strip(),
+                ) if part
+            )
+            note_lines = _pdf_wrap_text(notes, regular, 6.4, inner_w - 18, max_lines=2) or []
+            row_height = 27 + (len(note_lines) * 8)
+            if y - row_height < 84:
+                y = start_new_page()
+            row_y = y - row_height
+            c.setFillColor(palette["surface"] if row_index % 2 == 0 else palette["surface_alt"])
+            c.setStrokeColor(palette["line"])
+            c.rect(margin, row_y, inner_w, row_height - 3, stroke=1, fill=1)
+            values = [
+                str(stop.get("ordem", "-") or "-"),
+                str(stop.get("encomenda_numero", "-") or "-"),
+                str(stop.get("cliente_nome", "-") or "-"),
+                str(stop.get("local_descarga", "-") or "-"),
+                str(stop.get("data_planeada", "") or detail.get("data_planeada", "-")).replace("T", " ")[:16] or "-",
+                str(stop.get("guia_numero", "-") or "-"),
+                str(stop.get("estado", "-") or "-"),
+            ]
+            x = margin
+            for column_index, (value, (_label, width)) in enumerate(zip(values, columns)):
+                font_name = bold if column_index in (0, 1, 6) else regular
+                c.setFillColor(palette["ink"] if column_index in (0, 1, 6) else palette["muted"])
+                c.setFont(font_name, 6.7)
+                c.drawString(x + 5, y - 17, text(_pdf_clip_text(value, width - 10, font_name, 6.7)))
+                x += width
+            c.setFillColor(palette["muted"])
+            c.setFont(regular, 6.4)
+            note_y = y - 27
+            for line in note_lines:
+                c.drawString(margin + 9, note_y, text(line))
+                note_y -= 8
+            y = row_y - 5
+
+        if y < 92:
+            y = start_new_page()
+        signature_y = 50
+        c.setStrokeColor(palette["line_strong"])
+        signature_w = (inner_w - 20) / 3
+        for index, label in enumerate(("Motorista / saida", "Conferencia de carga", "Rececao / chegada")):
+            x = margin + index * (signature_w + 10)
+            c.line(x, signature_y + 16, x + signature_w, signature_y + 16)
+            c.setFillColor(palette["muted"])
+            c.setFont(regular, 6.2)
+            c.drawCentredString(x + signature_w / 2, signature_y + 6, text(label))
+        draw_footer()
+        c.save()
+        return out_path
+
+    def _transport_route_sheet_render_legacy(self, numero: str, path: str | Path) -> Path:
+        detail = self.transport_detail(numero)
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4
         from reportlab.pdfgen import canvas

@@ -73,22 +73,25 @@ def _mat_pdf_mix_hex(base_hex, target_hex, ratio):
 def _mat_pdf_palette():
     from reportlab.lib import colors
 
-    primary_hex = "#1F3C88"
+    primary_hex = "#00A6A6"
     try:
-        cfg = get_branding_config() if callable(globals().get("get_branding_config")) else {}
-        primary_hex = str((cfg or {}).get("primary_color", "") or primary_hex).strip() or primary_hex
+        getter = globals().get("get_branding_config")
+        configured = str((getter() if callable(getter) else {}).get("primary_color", "") or "").strip()
+        token = configured.lstrip("#")
+        if len(token) == 6 and all(ch in "0123456789abcdefABCDEF" for ch in token):
+            primary_hex = f"#{token.upper()}"
     except Exception:
         pass
     return {
         "primary": colors.HexColor(primary_hex),
-        "primary_dark": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#000000", 0.22)),
-        "primary_soft": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#FFFFFF", 0.91)),
-        "primary_soft_2": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#FFFFFF", 0.96)),
+        "primary_dark": colors.HexColor("#0B1F33"),
+        "primary_soft": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#FFFFFF", 0.84)),
+        "primary_soft_2": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#FFFFFF", 0.94)),
         "surface_warm": colors.HexColor("#FDFEFF"),
-        "line": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#E6EBF2", 0.90)),
-        "line_strong": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#AAB7C6", 0.70)),
-        "muted": colors.HexColor("#667085"),
-        "ink": colors.HexColor(_mat_pdf_mix_hex(primary_hex, "#1A1A1A", 0.72)),
+        "line": colors.HexColor("#CAD3DA"),
+        "line_strong": colors.HexColor("#AEBCC7"),
+        "muted": colors.HexColor("#61717F"),
+        "ink": colors.HexColor("#14212B"),
         "danger_fill": colors.HexColor("#FFF5F5"),
         "danger_text": colors.HexColor("#B42318"),
         "retalho_fill": colors.HexColor("#FFF9ED"),
@@ -1449,234 +1452,3 @@ def preview_stock_a4(self):
     except Exception:
         messagebox.showerror("Erro", "Nao foi possivel abrir o PDF do stock.")
     return
-
-    def render_pdf(path_pdf):
-        from reportlab.lib.pagesizes import A4
-        from reportlab.pdfgen import canvas as pdf_canvas
-        from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.ttfonts import TTFont
-        from reportlab.lib.utils import ImageReader
-        width, height = A4
-        c = pdf_canvas.Canvas(path_pdf, pagesize=A4)
-
-        font_regular = "Helvetica"
-        font_bold = "Helvetica-Bold"
-        try:
-            arial = r"C:\Windows\Fonts\arial.ttf"
-            arial_b = r"C:\Windows\Fonts\arialbd.ttf"
-            if os.path.exists(arial):
-                pdfmetrics.registerFont(TTFont("Arial", arial))
-                font_regular = "Arial"
-            if os.path.exists(arial_b):
-                pdfmetrics.registerFont(TTFont("Arial-Bold", arial_b))
-                font_bold = "Arial-Bold"
-            seg = r"C:\Windows\Fonts\segoeui.ttf"
-            seg_b = r"C:\Windows\Fonts\segoeuib.ttf"
-            if font_regular == "Helvetica" and os.path.exists(seg):
-                pdfmetrics.registerFont(TTFont("SegoeUI", seg))
-                font_regular = "SegoeUI"
-            if font_bold == "Helvetica-Bold" and os.path.exists(seg_b):
-                pdfmetrics.registerFont(TTFont("SegoeUI-Bold", seg_b))
-                font_bold = "SegoeUI-Bold"
-        except Exception:
-            pass
-
-        def set_font(bold, size):
-            c.setFont(font_bold if bold else font_regular, size)
-
-        def yinv(y):
-            return height - y
-
-        def draw_logo(x, y, w, h):
-            logo = get_orc_logo_path()
-            if not logo or not os.path.exists(logo):
-                return
-            try:
-                img = ImageReader(logo)
-                c.drawImage(img, x, yinv(y + h), width=w, height=h, preserveAspectRatio=True, mask="auto")
-            except Exception:
-                pass
-
-        def fit_text(text, max_w, font_name, font_size):
-            s = pdf_normalize_text(text)
-            if pdfmetrics.stringWidth(s, font_name, font_size) <= max_w:
-                return s
-            ell = "..."
-            max_w = max(0, max_w - pdfmetrics.stringWidth(ell, font_name, font_size))
-            while s and pdfmetrics.stringWidth(s, font_name, font_size) > max_w:
-                s = s[:-1]
-            return (s + ell) if s else ell
-
-        margin = 20
-
-        def draw_std_header(page_num):
-            c.setStrokeColorRGB(0.78, 0.80, 0.84)
-            c.rect(margin, yinv(height - margin), width - margin * 2, height - margin * 2, stroke=1, fill=0)
-            draw_logo(margin + 4, margin + 6, 90, 40)
-
-            right_info_w = 150
-            title_area_left = margin + 100
-            title_area_right = width - margin - right_info_w
-            title_w = min(260, max(190, title_area_right - title_area_left))
-            title_left = title_area_left + max(0.0, ((title_area_right - title_area_left) - title_w) / 2.0)
-            title_y = margin + 10
-            title_h = 24
-            c.setStrokeColorRGB(0.48, 0.06, 0.12)
-            c.setLineWidth(1.15)
-            c.roundRect(title_left, yinv(title_y + title_h), title_w, title_h, 6, stroke=1, fill=0)
-            c.setFillColorRGB(0.55, 0.12, 0.18)
-            set_font(True, 13)
-            c.drawCentredString(title_left + (title_w / 2), yinv(title_y + 16), "Stock de Chapas")
-
-            c.setLineWidth(1)
-            c.setFillColorRGB(0, 0, 0)
-            set_font(False, 9)
-            c.drawRightString(width - margin - 4, yinv(margin + 18), f"Data: {datetime.now().strftime('%Y-%m-%d')}")
-            c.drawRightString(width - margin - 4, yinv(margin + 32), f"Pagina {page_num}")
-            c.line(margin, yinv(62), width - margin, yinv(62))
-
-        col_specs = [
-            ("Material", 130),
-            ("Esp.", 40),
-            ("Dimensao", 100),
-            ("Qtd.", 40),
-            ("Res.", 40),
-            ("Disp.", 45),
-            ("Localizacao", 85),
-            ("Lote", 75),
-        ]
-        table_w = sum(wc for _, wc in col_specs)
-        table_left = max(margin, (width - table_w) / 2.0)
-        cols = []
-        _x = table_left
-        for title, wc in col_specs:
-            cols.append((title, _x))
-            _x += wc
-        x_list = [x for _, x in cols]
-        x_ends = x_list[1:] + [table_left + table_w]
-        col_w = [x_ends[i] - x_list[i] for i in range(len(x_list))]
-        header_h = 18
-        header_fs = 9
-        row_h = 22
-        row_fs = 9
-        text_offset = (row_h / 2) + (row_fs / 2 - 1)
-
-        mats_sorted = sorted(self.data.get("materiais", []), key=lambda m: (float(m.get("espessura", 0) or 0), m.get("material","")))
-        rows = []
-        current_esp = None
-        for m in mats_sorted:
-            esp_val = str(m.get("espessura", ""))
-            if current_esp != esp_val:
-                current_esp = esp_val
-                rows.append(("section", [f"Espessura: {current_esp}"]))
-            disp = float(m.get("quantidade", 0)) - float(m.get("reservado", 0))
-            dim = f"{m.get('comprimento','')}x{m.get('largura','')}"
-            rows.append((
-                "row",
-                [
-                    m.get("material", ""),
-                    str(m.get("espessura", "")),
-                    dim,
-                    str(m.get("quantidade", 0)),
-                    str(m.get("reservado", 0)),
-                    str(disp),
-                    m.get("Localizacao", m.get("Localização", "")),
-                    m.get("lote_fornecedor", ""),
-                ],
-            ))
-
-        def draw_page_header(page_num):
-            draw_std_header(page_num)
-
-            set_font(True, 9)
-            y = 72
-            header_text_y = y + (header_h / 2) + (header_fs / 2 - 1)
-            c.setFillColorRGB(0.90, 0.94, 0.98)
-            c.rect(table_left, yinv(y + header_h), table_w, header_h, fill=1, stroke=0)
-            c.setFillColorRGB(0, 0, 0)
-            for (title, x), w in zip(cols, col_w):
-                c.drawCentredString(x + w / 2, yinv(header_text_y), fit_text(title, w - 6, font_bold, header_fs))
-            c.line(table_left, yinv(y), table_left + table_w, yinv(y))
-            c.line(table_left, yinv(y + header_h), table_left + table_w, yinv(y + header_h))
-            return y + header_h + 4, y
-
-        def draw_signature():
-            box_h = 40
-            box_y = height - margin - box_h
-            c.setStrokeColorRGB(0.6, 0.65, 0.7)
-            c.rect(margin, yinv(box_y + box_h), width - margin * 2, box_h, stroke=1, fill=0)
-            c.setStrokeColorRGB(0, 0, 0)
-            set_font(True, 8)
-            c.drawString(margin + 6, yinv(box_y + 14), "Data:")
-            c.drawString(margin + 180, yinv(box_y + 14), "Assinatura:")
-
-        def draw_footer():
-            set_font(False, 7)
-            footer_y = 30
-            for idx, line in enumerate(get_empresa_rodape_lines()):
-                c.drawString(margin, footer_y + idx * 9, line)
-
-        idx = 0
-        page_num = 1
-        while idx < len(rows) or idx == 0:
-            y, table_top = draw_page_header(page_num)
-            # available space
-            remaining = len(rows) - idx
-            max_y_full = height - margin - 12
-            max_y_sig = height - margin - 52
-            rows_fit_last = max(0, int((max_y_sig - y) // row_h))
-            rows_fit_full = max(0, int((max_y_full - y) // row_h))
-            if remaining <= rows_fit_last:
-                rows_fit = remaining
-                last_page = True
-            else:
-                last_page = False
-                if remaining <= rows_fit_full:
-                    rows_fit = max(1, remaining - rows_fit_last)
-                else:
-                    rows_fit = rows_fit_full
-
-            end = min(len(rows), idx + rows_fit)
-            set_font(False, 9)
-            while idx < end:
-                kind, payload = rows[idx]
-                if kind == "section":
-                    set_font(True, 9)
-                    c.drawString(table_left + 4, yinv(y + text_offset), payload[0])
-                    c.line(table_left, yinv(y + row_h), table_left + table_w, yinv(y + row_h))
-                    y += row_h
-                    set_font(False, 9)
-                else:
-                    for ((title, x), val, w) in zip(cols, payload, col_w):
-                        c.drawCentredString(x + w / 2, yinv(y + text_offset), fit_text(val, w - 6, font_regular, row_fs))
-                    c.line(table_left, yinv(y + row_h), table_left + table_w, yinv(y + row_h))
-                    y += row_h
-                idx += 1
-
-            table_bottom = y
-            x_lines = [table_left] + [x for _, x in cols[1:]] + [table_left + table_w]
-            for x in x_lines:
-                c.line(x, yinv(table_top), x, yinv(table_bottom))
-
-            if last_page:
-                draw_signature()
-                draw_footer()
-            if idx >= len(rows):
-                if last_page:
-                    break
-                c.showPage()
-                page_num += 1
-                continue
-            c.showPage()
-            page_num += 1
-        c.save()
-
-    try:
-        render_pdf(path)
-    except Exception as exc:
-        messagebox.showerror("Erro", f"Falha ao gerar PDF: {exc}")
-        return
-    try:
-        os.startfile(path)
-    except Exception:
-        messagebox.showerror("Erro", "Nao foi possivel abrir o PDF do stock.")

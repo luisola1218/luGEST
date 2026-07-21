@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lugest_qt.services.main_bridge import LegacyBackend
+from lugest_qt.services.legacy_backend import LegacyBackend
 from lugest_qt.services import pulse_runtime
 
 

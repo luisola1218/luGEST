@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lugest_qt.services.main_bridge import LegacyBackend
+from lugest_qt.services.legacy_backend import LegacyBackend
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -392,7 +392,7 @@ def main() -> int:
             data["of_seq"] = of_seq_snapshot
             data["opp_seq"] = opp_seq_snapshot
             data["orc_seq"] = orc_seq_snapshot
-            backend._save(force=True)
+            backend._save(force=True, blocking=True)
         except Exception as exc:
             cleanup_errors.append(f"data_cleanup:{exc}")
         try:

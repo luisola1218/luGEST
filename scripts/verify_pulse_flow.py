@@ -9,7 +9,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from lugest_qt.services import pulse_runtime
-from lugest_qt.services.main_bridge import LegacyBackend
+from lugest_qt.services.legacy_backend import LegacyBackend
 
 
 def _assert_no_data_scope() -> None:
@@ -66,6 +66,7 @@ def _assert_running_scope() -> None:
                 backend.order_remove(created_number)
             except Exception:
                 pass
+        backend._save(force=True, blocking=True)
 
 
 def _assert_plan_delay_scope() -> None:
@@ -168,6 +169,7 @@ def _assert_plan_delay_scope() -> None:
                 backend.order_remove(created_number)
             except Exception:
                 pass
+        backend._save(force=True, blocking=True)
 
 
 def main() -> int:

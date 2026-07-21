@@ -87,7 +87,11 @@ CREATE TABLE IF NOT EXISTS `conjuntos` (
   `total_final` decimal(12,2) DEFAULT NULL,
   `created_at` datetime DEFAULT NULL,
   `updated_at` datetime DEFAULT NULL,
-  PRIMARY KEY (`codigo`)
+  `param_codigo` varchar(4) DEFAULT NULL,
+  `ficha_tecnica_json` longtext,
+  `precos_atualizados_em` datetime DEFAULT NULL,
+  PRIMARY KEY (`codigo`),
+  KEY `idx_conjuntos_param` (`param_codigo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 CREATE TABLE IF NOT EXISTS `conjuntos_modelo` (
@@ -99,7 +103,10 @@ CREATE TABLE IF NOT EXISTS `conjuntos_modelo` (
   `updated_at` datetime DEFAULT NULL,
   `template` tinyint(1) DEFAULT NULL,
   `origem` varchar(80) DEFAULT NULL,
-  PRIMARY KEY (`codigo`)
+  `param_codigo` varchar(4) DEFAULT NULL,
+  `ficha_tecnica_json` longtext,
+  PRIMARY KEY (`codigo`),
+  KEY `idx_conjuntos_modelo_param` (`param_codigo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 CREATE TABLE IF NOT EXISTS `expedicoes` (
@@ -181,6 +188,15 @@ CREATE TABLE IF NOT EXISTS `fornecedores` (
   PRIMARY KEY (`id`),
   KEY `idx_fornecedores_nome` (`nome`),
   KEY `idx_fornecedores_nif` (`nif`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+CREATE TABLE IF NOT EXISTS `inventory_scan_codes` (
+  `scan_code` varchar(96) NOT NULL,
+  `entity_type` varchar(16) NOT NULL,
+  `entity_id` varchar(80) NOT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`scan_code`),
+  UNIQUE KEY `uq_inventory_scan_entity` (`entity_type`,`entity_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 CREATE TABLE IF NOT EXISTS `materiais` (
@@ -1174,10 +1190,10 @@ SET FOREIGN_KEY_CHECKS=1;
 -- Troca estas passwords logo apos a instalacao.
 
 INSERT IGNORE INTO `users` (`username`, `password`, `role`) VALUES
-  ('admin', 'pbkdf2_sha256$260000$XEwLjAhDSD534B7x2y5B7w$4i5DW35qr0BX4eyOdLV4zj-wjWUSJrg7ZE7kta5X1x4', 'Admin'),
-  ('operador', 'pbkdf2_sha256$260000$k3IMxaZ8UYQ_f_PoJqXjbA$MJajOU-j6zq_vydbRSyhHjlrX48m2Xc0VYNa2GVlouQ', 'Operador'),
-  ('orcamentista', 'pbkdf2_sha256$260000$3eccSlMSNCb3epzf4Wl9yA$-Y2YrNIR1aUyp6_w0evg0Ng6QRTyJFH9CwoprCjADDY', 'Orcamentista'),
-  ('planeamento', 'pbkdf2_sha256$260000$h2TPEGiJWU7iwEKAX_Jv7Q$ix96g2VmERtREuCYalQpKAysXKA2CrhZh9sU2LWxx4I', 'Planeamento');
+  ('admin', 'pbkdf2_sha256$260000$3_-eaidQ4IY6uqj7lTyN9A$6FkqssHXBrj0Hrew-dv5Xjf3S8s-uq_-tp2LhwU-WZU', 'Admin'),
+  ('operador', 'pbkdf2_sha256$260000$cduObu28kKoBE73HWK6Euw$tNRUgFjnzSPFVEGoln7YfnQ1qF_nhtMPCMIJ2dpFMvE', 'Operador'),
+  ('orcamentista', 'pbkdf2_sha256$260000$m_8UelokiZwLrR8ajK9wwQ$73cnzofOR6Vq8noZCCoe8nb66GvPSnsHvFEA0hAj5Zo', 'Orcamentista'),
+  ('planeamento', 'pbkdf2_sha256$260000$j0LqZYdavYiR7hc4a5wtvg$3V26fjdzFK_rddh0rMjebDPt149qRRoN1IC4JiXQkkI', 'Planeamento');
 
 INSERT IGNORE INTO `operadores` (`nome`) VALUES ('Operador 1');
 

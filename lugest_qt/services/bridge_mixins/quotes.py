@@ -2,6 +2,7 @@
 
 import copy
 import json
+import math
 import os
 import tempfile
 from datetime import datetime
@@ -424,7 +425,9 @@ class QuotesBridgeMixin:
                     "_product_pending_create": bool(row.get("_product_pending_create", False)),
                     "conjunto_codigo": str(row.get("conjunto_codigo", "") or "").strip(),
                     "conjunto_nome": str(row.get("conjunto_nome", "") or "").strip(),
+                    "conjunto_param_codigo": str(row.get("conjunto_param_codigo", "") or "").strip(),
                     "grupo_uuid": str(row.get("grupo_uuid", "") or "").strip(),
+                    "ficha_tecnica": self._normalize_conjunto_technical_sheet(row.get("ficha_tecnica", {})),
                     "qtd_base": round(self._parse_float(row.get("qtd_base", row.get("qtd", 0)), 0), 2),
                     "tempo_peca_min": display_time,
                     "qtd": line_qty,
@@ -537,6 +540,189 @@ class QuotesBridgeMixin:
                     continue
         return f"MOD{highest + 1:04d}"
 
+    def conjunto_next_param_codigo(self) -> str:
+        highest = 0
+        missing = 0
+        for row in list(self.ensure_data().get("conjuntos", []) or []):
+            raw = str((row or {}).get("param_codigo", "") or "").strip()
+            digits = "".join(ch for ch in raw if ch.isdigit())
+            if digits:
+                highest = max(highest, int(digits))
+            else:
+                missing += 1
+        return f"{highest + missing + 1:04d}"
+
+    def _ensure_conjunto_param_codes(self) -> bool:
+        changed = False
+        used: set[str] = set()
+        highest = 0
+        rows = [row for row in list(self.ensure_data().get("conjuntos", []) or []) if isinstance(row, dict)]
+        for row in rows:
+            raw = str(row.get("param_codigo", "") or "").strip()
+            digits = "".join(ch for ch in raw if ch.isdigit())
+            if digits:
+                normalized = f"{int(digits):04d}"
+                if normalized not in used:
+                    used.add(normalized)
+                    highest = max(highest, int(normalized))
+                    if raw != normalized:
+                        row["param_codigo"] = normalized
+                        changed = True
+                    continue
+            row["param_codigo"] = ""
+        for row in rows:
+            if str(row.get("param_codigo", "") or "").strip():
+                continue
+            highest += 1
+            while f"{highest:04d}" in used:
+                highest += 1
+            row["param_codigo"] = f"{highest:04d}"
+            used.add(row["param_codigo"])
+            changed = True
+        return changed
+
+    def _conjunto_find_quote_source(self, item: dict[str, Any], conjunto_codigo: str) -> tuple[dict[str, Any] | None, str]:
+        ref = str(item.get("source_ref_externa", "") or item.get("ref_externa", "") or "").strip()
+        quote_number = str(item.get("source_quote_number", "") or "").strip()
+        operation_norm = self.desktop_main.norm_text(str(item.get("operacao", "") or ""))
+        if not ref or ("laser" not in operation_norm and not str(item.get("desenho", "") or "").strip()):
+            return None, quote_number
+        quotes = list(self.ensure_data().get("orcamentos", []) or [])
+        if quote_number:
+            quotes = sorted(quotes, key=lambda row: str(row.get("numero", "") or "") != quote_number)
+        else:
+            quotes = list(reversed(quotes))
+        fallback: tuple[dict[str, Any] | None, str] = (None, "")
+        for quote in quotes:
+            number = str(quote.get("numero", "") or "").strip()
+            for line in list(quote.get("linhas", []) or []):
+                if str(line.get("ref_externa", "") or "").strip() != ref:
+                    continue
+                if str(line.get("conjunto_codigo", "") or "").strip() == conjunto_codigo:
+                    return line, number
+                if fallback[0] is None:
+                    fallback = (line, number)
+            if quote_number and number == quote_number and fallback[0] is not None:
+                return fallback
+        return fallback
+
+    def _conjunto_live_item(self, raw_item: dict[str, Any], conjunto_codigo: str) -> tuple[dict[str, Any], bool]:
+        item = self._normalize_assembly_model_item(dict(raw_item or {}))
+        old_price = round(self._parse_float(item.get("preco_unit", 0), 0), 4)
+        live_price = old_price
+        source_type = "manual"
+        source_label = "Valor manual"
+        source_ref = ""
+        linked = False
+
+        if self.desktop_main.orc_line_is_product(item):
+            product = self._product_lookup(item.get("produto_codigo", ""))
+            if product is not None:
+                live_price = round(self._parse_float(self.desktop_main.produto_preco_unitario(product), 0), 4)
+                source_type = "product_stock"
+                source_label = "Stock produtos"
+                source_ref = str(product.get("codigo", "") or "").strip()
+                linked = True
+        else:
+            stock_id = str(item.get("stock_material_id", "") or "").strip()
+            material_record = self.material_by_id(stock_id) if stock_id else None
+            if material_record is None and item.get("calc_mode") and self._parse_float(item.get("stock_metric_value", 0), 0) > 0:
+                wanted_mode = self.desktop_main.norm_text(str(item.get("calc_mode", "") or ""))
+                base_value = self._parse_float(item.get("price_base_value", 0), 0)
+                candidates = []
+                for candidate in list(self.ensure_data().get("materiais", []) or []):
+                    candidate_mode = self.desktop_main.norm_text(
+                        str(candidate.get("formato", "") or self.desktop_main.detect_materia_formato(candidate) or "")
+                    )
+                    if wanted_mode and candidate_mode != wanted_mode:
+                        continue
+                    delta = abs(self._parse_float(candidate.get("p_compra", 0), 0) - base_value)
+                    candidates.append((delta, candidate))
+                if candidates:
+                    candidates.sort(key=lambda pair: pair[0])
+                    if candidates[0][0] <= 0.0002:
+                        material_record = candidates[0][1]
+                        stock_id = str(material_record.get("id", "") or "").strip()
+                        item["stock_material_id"] = stock_id
+            if material_record is not None:
+                preview = self.material_price_preview(material_record)
+                metric = self._parse_float(item.get("stock_metric_value", 0), 0)
+                base_label = str(item.get("price_base_label", "") or "").strip().lower()
+                if metric > 0 and base_label:
+                    current_base = self._parse_float(material_record.get("p_compra", 0), 0)
+                    live_price = round(current_base * metric, 4)
+                    item["price_base_value"] = round(current_base, 4)
+                else:
+                    live_price = round(self._parse_float(preview.get("preco_unid", old_price), old_price), 4)
+                source_type = "material_stock"
+                source_label = "Stock materia-prima"
+                source_ref = stock_id
+                linked = True
+            elif self.desktop_main.orc_line_is_piece(item):
+                quote_line, quote_number = self._conjunto_find_quote_source(item, conjunto_codigo)
+                if quote_line is not None:
+                    live_price = round(self._parse_float(quote_line.get("preco_unit", old_price), old_price), 4)
+                    source_type = "quote_laser"
+                    source_label = f"Orcamento laser {quote_number}".strip()
+                    source_ref = str(quote_line.get("ref_externa", "") or "").strip()
+                    item["source_quote_number"] = quote_number
+                    item["source_ref_externa"] = source_ref
+                    linked = True
+
+        changed = abs(live_price - old_price) > 0.00005
+        if changed:
+            item["preco_anterior"] = old_price
+            item["preco_unit"] = live_price
+            item["preco_atualizado_em"] = self.desktop_main.now_iso()
+        item["pricing_source"] = source_type
+        item["pricing_source_label"] = source_label
+        item["pricing_source_ref"] = source_ref
+        item["pricing_linked"] = linked
+        return item, changed or any(item.get(key) != raw_item.get(key) for key in (
+            "stock_material_id", "source_quote_number", "source_ref_externa", "pricing_source", "pricing_source_ref"
+        ))
+
+    def _conjunto_refresh_model_prices(self, model: dict[str, Any]) -> bool:
+        code = str(model.get("codigo", "") or "").strip()
+        refreshed: list[dict[str, Any]] = []
+        changed = False
+        for index, raw_item in enumerate(list(model.get("itens", []) or []), start=1):
+            item, item_changed = self._conjunto_live_item(dict(raw_item or {}), code)
+            item["linha_ordem"] = index
+            refreshed.append(item)
+            changed = changed or item_changed
+        total_cost = round(sum(self._parse_float(item.get("qtd", 0), 0) * self._parse_float(item.get("preco_unit", 0), 0) for item in refreshed), 2)
+        margin = self._parse_float(model.get("margem_perc", 0), 0)
+        total_final = round(total_cost * (1.0 + margin / 100.0), 2)
+        if abs(total_cost - self._parse_float(model.get("total_custo", 0), 0)) > 0.005:
+            changed = True
+        if abs(total_final - self._parse_float(model.get("total_final", 0), 0)) > 0.005:
+            changed = True
+        model["itens"] = refreshed
+        model["total_custo"] = total_cost
+        model["total_final"] = total_final
+        if changed:
+            model["precos_atualizados_em"] = self.desktop_main.now_iso()
+        return changed
+
+    def conjunto_refresh_prices(self, codigo: str = "") -> dict[str, Any]:
+        code = str(codigo or "").strip()
+        changed = self._ensure_conjunto_param_codes()
+        matched = False
+        for model in list(self.ensure_data().get("conjuntos", []) or []):
+            if not isinstance(model, dict) or (code and str(model.get("codigo", "") or "").strip() != code):
+                continue
+            matched = True
+            changed = self._conjunto_refresh_model_prices(model) or changed
+        if code and not matched:
+            raise ValueError("Conjunto nao encontrado.")
+        if changed:
+            self._save(force=True)
+        if code:
+            model = next(row for row in self.ensure_data().get("conjuntos", []) if str(row.get("codigo", "") or "").strip() == code)
+            return dict(model)
+        return {"updated": changed}
+
     def _normalize_assembly_model_item(self, payload: dict[str, Any]) -> dict[str, Any]:
         item_type = self.desktop_main.normalize_orc_line_type(payload.get("tipo_item"))
         quantity = round(self._parse_float(payload.get("qtd", 0), 0), 2)
@@ -592,6 +778,21 @@ class QuotesBridgeMixin:
             "price_base_label": str(payload.get("price_base_label", "") or "").strip(),
             "material_family": str(payload.get("material_family", "") or "").strip(),
             "material_subtype": str(payload.get("material_subtype", "") or "").strip(),
+            "operacoes_lista": list(payload.get("operacoes_lista", []) or []),
+            "operacoes_fluxo": [dict(row or {}) for row in list(payload.get("operacoes_fluxo", []) or []) if isinstance(row, dict)],
+            "operacoes_detalhe": [dict(row or {}) for row in list(payload.get("operacoes_detalhe", []) or []) if isinstance(row, dict)],
+            "tempos_operacao": dict(payload.get("tempos_operacao", {}) or {}),
+            "custos_operacao": dict(payload.get("custos_operacao", {}) or {}),
+            "quote_cost_snapshot": dict(payload.get("quote_cost_snapshot", {}) or {}),
+            "laser_base_active": bool(payload.get("laser_base_active", False)),
+            "laser_base_tempo_unit": round(self._parse_float(payload.get("laser_base_tempo_unit", 0), 0), 4),
+            "laser_base_preco_unit": round(self._parse_float(payload.get("laser_base_preco_unit", 0), 0), 4),
+            "source_quote_number": str(payload.get("source_quote_number", "") or "").strip(),
+            "source_ref_externa": str(payload.get("source_ref_externa", "") or "").strip(),
+            "pricing_source": str(payload.get("pricing_source", "") or "").strip(),
+            "pricing_source_ref": str(payload.get("pricing_source_ref", "") or "").strip(),
+            "preco_anterior": round(self._parse_float(payload.get("preco_anterior", 0), 0), 4),
+            "preco_atualizado_em": str(payload.get("preco_atualizado_em", "") or "").strip(),
         }
         if item_type == self.desktop_main.ORC_LINE_TYPE_PIECE:
             if not item["descricao"]:
@@ -677,6 +878,7 @@ class QuotesBridgeMixin:
         items = [self._normalize_assembly_model_item(dict(item or {})) for item in list(model.get("itens", []) or [])]
         return {
             "codigo": str(model.get("codigo", "") or "").strip(),
+            "param_codigo": str(model.get("param_codigo", "") or "").strip(),
             "descricao": str(model.get("descricao", "") or "").strip(),
             "notas": str(model.get("notas", "") or "").strip(),
             "ativo": bool(model.get("ativo", True)),
@@ -684,8 +886,26 @@ class QuotesBridgeMixin:
             "origem": str(model.get("origem", "") or "").strip(),
             "created_at": str(model.get("created_at", "") or "").strip(),
             "updated_at": str(model.get("updated_at", "") or "").strip(),
+            "ficha_tecnica": self._normalize_conjunto_technical_sheet(model.get("ficha_tecnica", {})),
             "itens": items,
         }
+
+    @staticmethod
+    def _normalize_conjunto_technical_sheet(raw: Any) -> dict[str, str]:
+        source = dict(raw or {}) if isinstance(raw, dict) else {}
+        keys = (
+            "familia_produto",
+            "aplicacao",
+            "modelo_versao",
+            "configuracao",
+            "dimensoes_gerais",
+            "materiais_acabamentos",
+            "caracteristicas",
+            "requisitos_instalacao",
+            "normas_conformidade",
+            "controlo_qualidade",
+        )
+        return {key: str(source.get(key, "") or "").strip() for key in keys}
 
     def assembly_model_save(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = self.ensure_data()
@@ -698,6 +918,7 @@ class QuotesBridgeMixin:
             raise ValueError("O conjunto precisa de pelo menos um item.")
         model = {
             "codigo": code,
+            "param_codigo": str(payload.get("param_codigo", "") or "").strip(),
             "descricao": descricao,
             "notas": str(payload.get("notas", "") or "").strip(),
             "ativo": bool(payload.get("ativo", True)),
@@ -705,6 +926,7 @@ class QuotesBridgeMixin:
             "origem": str(payload.get("origem", "") or "").strip(),
             "created_at": str(payload.get("created_at", "") or "").strip() or self.desktop_main.now_iso(),
             "updated_at": self.desktop_main.now_iso(),
+            "ficha_tecnica": self._normalize_conjunto_technical_sheet(payload.get("ficha_tecnica", {})),
             "itens": [{**item, "linha_ordem": index} for index, item in enumerate(items, start=1)],
         }
         existing = next(
@@ -719,6 +941,8 @@ class QuotesBridgeMixin:
             data.setdefault("conjuntos_modelo", []).append(model)
         else:
             model["created_at"] = str(existing.get("created_at", "") or "").strip() or model["created_at"]
+            if "ficha_tecnica" not in payload:
+                model["ficha_tecnica"] = self._normalize_conjunto_technical_sheet(existing.get("ficha_tecnica", {}))
             existing.update(model)
         self._save(force=True)
         return self.assembly_model_detail(code)
@@ -755,7 +979,9 @@ class QuotesBridgeMixin:
                 "produto_unid": str(item.get("produto_unid", "") or "").strip(),
                 "conjunto_codigo": str(detail.get("codigo", "") or "").strip(),
                 "conjunto_nome": str(detail.get("descricao", "") or "").strip(),
+                "conjunto_param_codigo": str(detail.get("param_codigo", "") or "").strip(),
                 "grupo_uuid": group_uuid,
+                "ficha_tecnica": dict(detail.get("ficha_tecnica", {}) or {}),
                 "qtd_base": round(self._parse_float(item.get("qtd", 0), 0), 2),
                 "tempo_peca_min": round(self._parse_float(item.get("tempo_peca_min", 0), 0), 2),
                 "qtd": round(self._parse_float(item.get("qtd", 0), 0) * multiplier, 2),
@@ -785,6 +1011,7 @@ class QuotesBridgeMixin:
 
     def conjunto_rows(self, filter_text: str = "") -> list[dict[str, Any]]:
         query = str(filter_text or "").strip().lower()
+        self.conjunto_refresh_prices()
         rows: list[dict[str, Any]] = []
         for model in list(self.ensure_data().get("conjuntos", []) or []):
             if not isinstance(model, dict):
@@ -792,6 +1019,7 @@ class QuotesBridgeMixin:
             items = list(model.get("itens", []) or [])
             row = {
                 "codigo": str(model.get("codigo", "") or "").strip(),
+                "param_codigo": str(model.get("param_codigo", "") or "").strip(),
                 "descricao": str(model.get("descricao", "") or "").strip(),
                 "ativo": bool(model.get("ativo", True)),
                 "template": bool(model.get("template", False)),
@@ -806,6 +1034,8 @@ class QuotesBridgeMixin:
                 "notas": str(model.get("notas", "") or "").strip(),
                 "created_at": str(model.get("created_at", "") or "").strip(),
                 "updated_at": str(model.get("updated_at", "") or "").strip(),
+                "precos_atualizados_em": str(model.get("precos_atualizados_em", "") or "").strip(),
+                "itens_ligados": sum(1 for item in items if bool(item.get("pricing_linked"))),
             }
             if query and not any(query in str(value).lower() for value in row.values()):
                 continue
@@ -815,6 +1045,7 @@ class QuotesBridgeMixin:
 
     def conjunto_detail(self, codigo: str) -> dict[str, Any]:
         code = str(codigo or "").strip()
+        self.conjunto_refresh_prices(code)
         model = next(
             (
                 row
@@ -825,9 +1056,10 @@ class QuotesBridgeMixin:
         )
         if model is None:
             raise ValueError("Conjunto nao encontrado.")
-        items = [self._normalize_assembly_model_item(dict(item or {})) for item in list(model.get("itens", []) or [])]
+        items = [dict(item or {}) for item in list(model.get("itens", []) or [])]
         return {
             "codigo": str(model.get("codigo", "") or "").strip(),
+            "param_codigo": str(model.get("param_codigo", "") or "").strip(),
             "descricao": str(model.get("descricao", "") or "").strip(),
             "notas": str(model.get("notas", "") or "").strip(),
             "ativo": bool(model.get("ativo", True)),
@@ -838,11 +1070,14 @@ class QuotesBridgeMixin:
             "total_final": round(self._parse_float(model.get("total_final", 0), 0), 2),
             "created_at": str(model.get("created_at", "") or "").strip(),
             "updated_at": str(model.get("updated_at", "") or "").strip(),
+            "precos_atualizados_em": str(model.get("precos_atualizados_em", "") or "").strip(),
+            "ficha_tecnica": self._normalize_conjunto_technical_sheet(model.get("ficha_tecnica", {})),
             "itens": items,
         }
 
     def conjunto_save(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = self.ensure_data()
+        self._ensure_conjunto_param_codes()
         code = str(payload.get("codigo", "") or "").strip() or self._next_assembly_model_code()
         descricao = str(payload.get("descricao", "") or "").strip()
         if not descricao:
@@ -852,6 +1087,7 @@ class QuotesBridgeMixin:
             raise ValueError("O conjunto precisa de pelo menos um item.")
         model = {
             "codigo": code,
+            "param_codigo": str(payload.get("param_codigo", "") or "").strip(),
             "descricao": descricao,
             "notas": str(payload.get("notas", "") or "").strip(),
             "ativo": bool(payload.get("ativo", True)),
@@ -862,6 +1098,7 @@ class QuotesBridgeMixin:
             "total_final": round(self._parse_float(payload.get("total_final", 0), 0), 2),
             "created_at": str(payload.get("created_at", "") or "").strip() or self.desktop_main.now_iso(),
             "updated_at": self.desktop_main.now_iso(),
+            "ficha_tecnica": self._normalize_conjunto_technical_sheet(payload.get("ficha_tecnica", {})),
             "itens": [{**item, "linha_ordem": index} for index, item in enumerate(items, start=1)],
         }
         existing = next(
@@ -873,10 +1110,21 @@ class QuotesBridgeMixin:
             None,
         )
         if existing is None:
+            used_params = {
+                str(row.get("param_codigo", "") or "").strip()
+                for row in list(data.get("conjuntos", []) or [])
+                if isinstance(row, dict)
+            }
+            if not model["param_codigo"] or model["param_codigo"] in used_params:
+                model["param_codigo"] = self.conjunto_next_param_codigo()
             data.setdefault("conjuntos", []).append(model)
         else:
+            model["param_codigo"] = str(existing.get("param_codigo", "") or model["param_codigo"] or self.conjunto_next_param_codigo()).strip()
             model["created_at"] = str(existing.get("created_at", "") or "").strip() or model["created_at"]
+            if "ficha_tecnica" not in payload:
+                model["ficha_tecnica"] = self._normalize_conjunto_technical_sheet(existing.get("ficha_tecnica", {}))
             existing.update(model)
+        self._conjunto_refresh_model_prices(model if existing is None else existing)
         self._save(force=True)
         return self.conjunto_detail(code)
 
@@ -910,7 +1158,9 @@ class QuotesBridgeMixin:
                 "produto_unid": str(item.get("produto_unid", "") or "").strip(),
                 "conjunto_codigo": str(detail.get("codigo", "") or "").strip(),
                 "conjunto_nome": str(detail.get("descricao", "") or "").strip(),
+                "conjunto_param_codigo": str(detail.get("param_codigo", "") or "").strip(),
                 "grupo_uuid": group_uuid,
+                "ficha_tecnica": dict(detail.get("ficha_tecnica", {}) or {}),
                 "qtd_base": round(self._parse_float(item.get("qtd", 0), 0), 2),
                 "tempo_peca_min": round(self._parse_float(item.get("tempo_peca_min", 0), 0), 2),
                 "qtd": round(self._parse_float(item.get("qtd", 0), 0) * multiplier, 2),
@@ -981,7 +1231,9 @@ class QuotesBridgeMixin:
             "produto_unid": str(payload.get("produto_unid", "") or "").strip(),
             "conjunto_codigo": str(payload.get("conjunto_codigo", "") or "").strip(),
             "conjunto_nome": str(payload.get("conjunto_nome", "") or "").strip(),
+            "conjunto_param_codigo": str(payload.get("conjunto_param_codigo", "") or "").strip(),
             "grupo_uuid": str(payload.get("grupo_uuid", "") or "").strip(),
+            "ficha_tecnica": self._normalize_conjunto_technical_sheet(payload.get("ficha_tecnica", {})),
             "qtd_base": round(self._parse_float(payload.get("qtd_base", payload.get("qtd", 0)), 0), 2),
             "tempo_peca_min": round(self._parse_float(payload.get("tempo_peca_min", payload.get("tempo_pecas_min", 0)), 0), 2),
             "qtd": round(self._parse_float(payload.get("qtd", 0), 0), 2),
@@ -1419,6 +1671,398 @@ class QuotesBridgeMixin:
         os.startfile(str(target))
         return target
 
+    def orc_print_pdf(self, numero: str) -> Path:
+        target = Path(tempfile.gettempdir()) / f"lugest_orcamento_{str(numero or '').strip()}_print.pdf"
+        self.orc_render_pdf(numero, target)
+        try:
+            os.startfile(str(target), "print")
+        except Exception:
+            os.startfile(str(target))
+        return target
+
+    def conjunto_sheet_pdf(self, codigo: str, output_path: str | Path | None = None) -> Path:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import mm
+        from reportlab.pdfgen import canvas as pdf_canvas
+
+        detail = self.conjunto_detail(codigo)
+        code = str(detail.get("codigo", "") or "CONJUNTO").strip() or "CONJUNTO"
+        param_code = str(detail.get("param_codigo", "") or "-").strip() or "-"
+        technical = dict(detail.get("ficha_tecnica", {}) or {})
+        items = list(detail.get("itens", []) or [])
+        name = str(detail.get("descricao", "") or code).strip() or code
+        safe_code = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in code).strip("_") or "conjunto"
+        target = Path(output_path) if output_path else self._storage_output_path("quotes/assembly_sheets", f"Dossier_Tecnico_{safe_code}.pdf")
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        page_w, page_h = A4
+        margin = 11 * mm
+        inner_w = page_w - 2 * margin
+        navy = colors.HexColor("#0B1F33")
+        steel = colors.HexColor("#34495E")
+        cyan = self._operator_label_palette()["primary"]
+        green = colors.HexColor("#78BE20")
+        ink = colors.HexColor("#14212B")
+        muted = colors.HexColor("#61717F")
+        line = colors.HexColor("#CAD3DA")
+        surface = colors.HexColor("#F3F6F8")
+        white = colors.white
+        palette = self._operator_label_palette()
+        branding = self.branding_settings()
+        logo_txt = str(branding.get("logo_path", "") or "").strip()
+        logo_path = Path(logo_txt) if logo_txt and Path(logo_txt).exists() else None
+        issued_at = str(self.desktop_main.now_iso() or "").replace("T", " ")[:19]
+        revision = str(technical.get("modelo_versao", "") or "REV. 00").strip() or "REV. 00"
+
+        fabricated_count = sum(1 for item in items if self.desktop_main.orc_line_is_piece(item) and not str(item.get("stock_material_id", "") or "").strip())
+        stock_count = sum(1 for item in items if self.desktop_main.orc_line_is_product(item) or str(item.get("stock_material_id", "") or "").strip())
+        service_count = sum(1 for item in items if self.desktop_main.orc_line_is_service(item))
+        material_names = {
+            str(item.get("material", "") or "").strip()
+            for item in items
+            if str(item.get("material", "") or "").strip()
+        }
+        rows_per_page = 20
+        bom_pages = max(1, math.ceil(max(1, len(items)) / rows_per_page))
+        total_pages = 1 + bom_pages
+        canvas_obj = pdf_canvas.Canvas(str(target), pagesize=A4)
+        canvas_obj.setTitle(self._operator_pdf_text(f"Dossier tecnico {code}"))
+        canvas_obj.setAuthor("LUGEST")
+        canvas_obj.setSubject("Ficha tecnica e lista de materiais do conjunto")
+
+        def txt(value: object) -> str:
+            return self._operator_pdf_text(value)
+
+        def controlled_footer(page_number: int, section: str) -> None:
+            canvas_obj.setStrokeColor(line)
+            canvas_obj.line(margin, margin + 5.2 * mm, page_w - margin, margin + 5.2 * mm)
+            canvas_obj.setFillColor(muted)
+            canvas_obj.setFont("Helvetica", 5.8)
+            canvas_obj.drawString(margin, margin + 1.8 * mm, txt(f"DOCUMENTO CONTROLADO | PARAM {param_code} | {revision}"))
+            canvas_obj.drawCentredString(page_w / 2, margin + 1.8 * mm, txt(section))
+            canvas_obj.drawRightString(page_w - margin, margin + 1.8 * mm, txt(f"{page_number}/{total_pages} | {issued_at}"))
+
+        def label_value(x: float, y_top: float, width: float, label: str, value: str, height: float = 17 * mm) -> None:
+            canvas_obj.setFillColor(surface)
+            canvas_obj.setStrokeColor(line)
+            canvas_obj.roundRect(x, y_top - height, width, height, 2.5, stroke=1, fill=1)
+            canvas_obj.setFillColor(steel)
+            canvas_obj.setFont("Helvetica-Bold", 6.1)
+            canvas_obj.drawString(x + 3 * mm, y_top - 4.8 * mm, txt(label.upper()))
+            canvas_obj.setFillColor(ink)
+            canvas_obj.setFont("Helvetica", 7.4)
+            height_mm = height / mm
+            max_lines = max(1, min(4, int((height_mm - 7.0) // 3.5)))
+            wrapped = _pdf_wrap_text(
+                str(value or "POR DEFINIR") or "POR DEFINIR",
+                "Helvetica",
+                7.4,
+                width - 6 * mm,
+                max_lines=max_lines,
+            ) or ["POR DEFINIR"]
+            y_line = y_top - 9.3 * mm
+            for wrapped_line in wrapped:
+                canvas_obj.drawString(x + 3 * mm, y_line, txt(wrapped_line))
+                y_line -= 3.5 * mm
+
+        def section_title(y: float, index: str, title: str, subtitle: str = "") -> float:
+            canvas_obj.setFillColor(surface)
+            canvas_obj.setStrokeColor(line)
+            canvas_obj.rect(margin, y - 8 * mm, inner_w, 8 * mm, stroke=1, fill=1)
+            canvas_obj.setFillColor(cyan)
+            canvas_obj.rect(margin, y - 8 * mm, 13 * mm, 8 * mm, stroke=0, fill=1)
+            canvas_obj.setFillColor(white)
+            canvas_obj.setFont("Helvetica-Bold", 7.2)
+            canvas_obj.drawCentredString(margin + 6.5 * mm, y - 5.4 * mm, txt(index))
+            canvas_obj.setFillColor(navy)
+            canvas_obj.setFont("Helvetica-Bold", 8)
+            canvas_obj.drawString(margin + 17 * mm, y - 5.4 * mm, txt(title.upper()))
+            if subtitle:
+                canvas_obj.setFillColor(muted)
+                canvas_obj.setFont("Helvetica", 5.8)
+                canvas_obj.drawRightString(page_w - margin - 3 * mm, y - 5.2 * mm, txt(subtitle))
+            return y - 11 * mm
+
+        # Capa tecnica: documento de engenharia, sem dados comerciais.
+        canvas_obj.setFillColor(white)
+        canvas_obj.rect(0, page_h - 51 * mm, page_w, 51 * mm, stroke=0, fill=1)
+        canvas_obj.setStrokeColor(line)
+        canvas_obj.line(margin, page_h - 51 * mm, page_w - margin, page_h - 51 * mm)
+        canvas_obj.setFillColor(cyan)
+        canvas_obj.rect(0, page_h - 3 * mm, page_w, 3 * mm, stroke=0, fill=1)
+        self._draw_operator_logo_plate(canvas_obj, palette, logo_path, margin, page_h - 34 * mm, 39 * mm, 17 * mm, radius=3, padding_x=3, padding_y=2)
+        canvas_obj.setFillColor(navy)
+        canvas_obj.setFont("Helvetica-Bold", 7)
+        canvas_obj.drawString(margin + 47 * mm, page_h - 15 * mm, txt("DOSSIER TECNICO DE CONJUNTO"))
+        title_text = txt(name)
+        title_width = 104 * mm
+        title_size = 14.5
+        title_lines = _pdf_wrap_text(title_text, "Helvetica-Bold", title_size, title_width, max_lines=3)
+        while title_size > 11.0 and len(title_lines) > 2:
+            title_size -= 0.5
+            title_lines = _pdf_wrap_text(title_text, "Helvetica-Bold", title_size, title_width, max_lines=3)
+        title_lines = title_lines[:2] or [title_text]
+        canvas_obj.setFont("Helvetica-Bold", title_size)
+        title_y = page_h - (21.5 * mm if len(title_lines) > 1 else 25 * mm)
+        for title_line in title_lines:
+            canvas_obj.drawString(margin + 47 * mm, title_y, txt(title_line))
+            title_y -= 6 * mm
+        canvas_obj.setFont("Helvetica", 7.2)
+        canvas_obj.drawString(margin + 47 * mm, page_h - 39 * mm, txt(_pdf_clip_text(f"ENGENHARIA DE PRODUTO | {technical.get('familia_produto', '') or 'FAMILIA POR DEFINIR'}", 104 * mm, "Helvetica", 7.2)))
+        canvas_obj.setFillColor(green)
+        canvas_obj.roundRect(page_w - margin - 34 * mm, page_h - 18 * mm, 34 * mm, 8 * mm, 2, stroke=0, fill=1)
+        canvas_obj.setFillColor(navy)
+        canvas_obj.setFont("Helvetica-Bold", 6.2)
+        canvas_obj.drawCentredString(page_w - margin - 17 * mm, page_h - 15.3 * mm, txt("LIBERTADO P/ PRODUCAO"))
+
+        y = page_h - 61 * mm
+        y = section_title(y, "01", "Identificacao e rastreabilidade", "Digital product passport")
+        half = (inner_w - 4 * mm) / 2
+        label_value(margin, y, half, "Codigo de produto", code, 15 * mm)
+        label_value(margin + half + 4 * mm, y, half, "Codigo de parametrizacao", param_code, 15 * mm)
+        y -= 18 * mm
+        label_value(margin, y, half, "Modelo / revisao", revision, 15 * mm)
+        label_value(margin + half + 4 * mm, y, half, "Aplicacao / destino", str(technical.get("aplicacao", "") or "POR DEFINIR"), 15 * mm)
+        barcode_y = y - 33 * mm
+        canvas_obj.setFillColor(white)
+        canvas_obj.setStrokeColor(line)
+        canvas_obj.roundRect(margin, barcode_y, inner_w, 14 * mm, 3, stroke=1, fill=1)
+        canvas_obj.setFillColor(steel)
+        canvas_obj.setFont("Helvetica-Bold", 5.7)
+        canvas_obj.drawString(margin + 3 * mm, barcode_y + 9.2 * mm, txt("IDENTIFICADOR DIGITAL"))
+        canvas_obj.setFont("Helvetica", 5.3)
+        canvas_obj.drawString(margin + 3 * mm, barcode_y + 4.6 * mm, txt(_pdf_clip_text(f"PARAM {param_code} | {code}", 60 * mm, "Helvetica", 5.3)))
+        barcode_value = f"CFG|{param_code}|{code}"
+        self._draw_code128_fit(canvas_obj, barcode_value, margin + 67 * mm, barcode_y + 3.7 * mm, inner_w - 72 * mm, 8 * mm, min_bar_width=0.25, max_bar_width=0.62)
+        canvas_obj.setFont("Helvetica-Bold", 4.8)
+        canvas_obj.drawCentredString(margin + 67 * mm + (inner_w - 72 * mm) / 2, barcode_y + 1.4 * mm, txt(_pdf_clip_text(barcode_value, inner_w - 72 * mm, "Helvetica-Bold", 4.8)))
+
+        y = barcode_y - 5 * mm
+        y = section_title(y, "02", "Definicao tecnica", "Especificacao funcional")
+        label_value(margin, y, half, "Configuracao principal", str(technical.get("configuracao", "") or "POR DEFINIR"), 15 * mm)
+        label_value(margin + half + 4 * mm, y, half, "Dimensoes / capacidade", str(technical.get("dimensoes_gerais", "") or "POR DEFINIR"), 15 * mm)
+        y -= 18 * mm
+        label_value(margin, y, half, "Materiais / acabamentos", str(technical.get("materiais_acabamentos", "") or "POR DEFINIR"), 15 * mm)
+        label_value(margin + half + 4 * mm, y, half, "Instalacao / interfaces", str(technical.get("requisitos_instalacao", "") or "POR DEFINIR"), 15 * mm)
+        y -= 18 * mm
+        label_value(margin, y, inner_w, "Caracteristicas e desempenho", str(technical.get("caracteristicas", "") or "POR DEFINIR"), 17 * mm)
+
+        y -= 21 * mm
+        y = section_title(y, "03", "Composicao do produto", "Resumo da estrutura")
+        metric_gap = 3 * mm
+        metric_w = (inner_w - 4 * metric_gap) / 5
+        metrics = [
+            ("REFERENCIAS", len(items), cyan),
+            ("FABRICADAS", fabricated_count, green),
+            ("STOCK / MP", stock_count, colors.HexColor("#F0A202")),
+            ("OPERACOES", service_count, colors.HexColor("#7A6FF0")),
+            ("MATERIAIS", len(material_names), steel),
+        ]
+        for index, (label, value, accent) in enumerate(metrics):
+            x = margin + index * (metric_w + metric_gap)
+            canvas_obj.setFillColor(white)
+            canvas_obj.setStrokeColor(line)
+            canvas_obj.roundRect(x, y - 15 * mm, metric_w, 15 * mm, 3, stroke=1, fill=1)
+            canvas_obj.setFillColor(accent)
+            canvas_obj.rect(x, y - 15 * mm, 3 * mm, 15 * mm, stroke=0, fill=1)
+            canvas_obj.setFillColor(muted)
+            canvas_obj.setFont("Helvetica-Bold", 5.8)
+            canvas_obj.drawString(x + 5 * mm, y - 5.3 * mm, txt(label))
+            canvas_obj.setFillColor(ink)
+            canvas_obj.setFont("Helvetica-Bold", 14)
+            canvas_obj.drawString(x + 5 * mm, y - 11.8 * mm, txt(str(value)))
+
+        y -= 19 * mm
+        y = section_title(y, "04", "Conformidade e pontos de controlo", "Validacao antes da expedicao")
+        quality_text = str(technical.get("controlo_qualidade", "") or "Criterios especificos por definir.")
+        standards_text = str(technical.get("normas_conformidade", "") or "Normas aplicaveis por definir.")
+        gates = [
+            ("01", "INSPECAO DIMENSIONAL", "Conferir dimensoes criticas e tolerancias do desenho."),
+            ("02", "MATERIAIS E ACABAMENTO", "Validar materiais, tratamentos, cor e integridade superficial."),
+            ("03", "MONTAGEM E INTERFACES", "Confirmar fixacoes, ligacoes e configuracao final."),
+            ("04", "ENSAIO FINAL", quality_text),
+        ]
+        gate_w = (inner_w - 3 * mm) / 2
+        for index, (gate_no, gate_name, gate_text) in enumerate(gates):
+            col = index % 2
+            row = index // 2
+            x = margin + col * (gate_w + 3 * mm)
+            y_top = y - row * 16 * mm
+            canvas_obj.setFillColor(surface)
+            canvas_obj.setStrokeColor(line)
+            canvas_obj.roundRect(x, y_top - 13 * mm, gate_w, 13 * mm, 2, stroke=1, fill=1)
+            canvas_obj.setFillColor(cyan)
+            canvas_obj.circle(x + 6 * mm, y_top - 6.5 * mm, 3.2 * mm, stroke=0, fill=1)
+            canvas_obj.setFillColor(white)
+            canvas_obj.setFont("Helvetica-Bold", 5.8)
+            canvas_obj.drawCentredString(x + 6 * mm, y_top - 8.3 * mm, txt(gate_no))
+            canvas_obj.setFillColor(ink)
+            canvas_obj.setFont("Helvetica-Bold", 6)
+            canvas_obj.drawString(x + 12 * mm, y_top - 4.5 * mm, txt(gate_name))
+            canvas_obj.setFont("Helvetica", 4.9)
+            gate_lines = _pdf_wrap_text(gate_text, "Helvetica", 4.9, gate_w - 15 * mm, max_lines=2) or ["-"]
+            gate_line_y = y_top - 8.5 * mm
+            for gate_line in gate_lines:
+                canvas_obj.drawString(x + 12 * mm, gate_line_y, txt(gate_line))
+                gate_line_y -= 2.5 * mm
+        canvas_obj.setFillColor(muted)
+        canvas_obj.setFont("Helvetica", 5.4)
+        canvas_obj.drawString(margin, margin + 9.2 * mm, txt(_pdf_clip_text(f"REFERENCIAL: {standards_text}", inner_w, "Helvetica", 5.4)))
+        controlled_footer(1, "CAPA TECNICA")
+
+        columns = [
+            ("POS", 10 * mm), ("TIPO", 13 * mm), ("CODIGO / REF.", 27 * mm), ("DESCRICAO", 48 * mm),
+            ("MATERIAL / ESPECIFICACAO", 38 * mm), ("QTD", 14 * mm), ("UN.", 10 * mm), ("PROCESSO / DESTINO", inner_w - 160 * mm),
+        ]
+
+        def item_kind(item: dict[str, Any]) -> str:
+            if self.desktop_main.orc_line_is_product(item):
+                return "STOCK"
+            if self.desktop_main.orc_line_is_service(item):
+                return "OPER."
+            if str(item.get("stock_material_id", "") or "").strip():
+                return "M.PRIMA"
+            return "FAB."
+
+        def technical_text(value: object) -> str:
+            parts = []
+            for part in str(value or "").split("|"):
+                clean = part.strip()
+                normalized = clean.lower()
+                if not clean:
+                    continue
+                if (
+                    "eur" in normalized
+                    or "€" in clean
+                    or "preco" in normalized
+                    or "preço" in normalized
+                    or "custo" in normalized
+                ):
+                    continue
+                parts.append(clean)
+            return " | ".join(parts)
+
+        for bom_page in range(bom_pages):
+            canvas_obj.showPage()
+            page_number = bom_page + 2
+            top = page_h - margin
+            canvas_obj.setFillColor(white)
+            canvas_obj.setStrokeColor(line)
+            canvas_obj.roundRect(margin, top - 27 * mm, inner_w, 27 * mm, 4, stroke=1, fill=1)
+            canvas_obj.setFillColor(cyan)
+            canvas_obj.rect(margin, top - 27 * mm, 4 * mm, 27 * mm, stroke=0, fill=1)
+            canvas_obj.setFillColor(navy)
+            canvas_obj.setFont("Helvetica-Bold", 14)
+            canvas_obj.drawString(margin + 9 * mm, top - 9 * mm, txt("BOM | BILL OF MATERIALS"))
+            header_left_w = inner_w - 53 * mm
+            canvas_obj.setFont("Helvetica", 6.4)
+            header_lines = _pdf_wrap_text(
+                f"{name} | PRODUTO {code} | PARAM {param_code} | {revision}",
+                "Helvetica",
+                6.4,
+                header_left_w,
+                max_lines=2,
+            )
+            header_line_y = top - 15.5 * mm
+            for header_line in header_lines:
+                canvas_obj.drawString(margin + 9 * mm, header_line_y, txt(header_line))
+                header_line_y -= 3.2 * mm
+            canvas_obj.setFillColor(green)
+            canvas_obj.roundRect(page_w - margin - 45 * mm, top - 12.5 * mm, 38 * mm, 7.5 * mm, 2, stroke=0, fill=1)
+            canvas_obj.setFillColor(navy)
+            canvas_obj.setFont("Helvetica-Bold", 7)
+            canvas_obj.drawCentredString(page_w - margin - 26 * mm, top - 9.8 * mm, txt("MATERIAL + QTD."))
+            canvas_obj.setFillColor(muted)
+            canvas_obj.setFont("Helvetica", 6)
+            canvas_obj.drawRightString(page_w - margin - 7 * mm, top - 16 * mm, txt(f"FOLHA {bom_page + 1}/{bom_pages}"))
+
+            table_top = top - 33 * mm
+            canvas_obj.setFillColor(surface)
+            canvas_obj.setStrokeColor(line)
+            canvas_obj.rect(margin, table_top - 8 * mm, inner_w, 8 * mm, stroke=1, fill=1)
+            canvas_obj.setFillColor(navy)
+            canvas_obj.setFont("Helvetica-Bold", 5.7)
+            x = margin
+            for label, width in columns:
+                header_label = _pdf_clip_text(label, width - 4, "Helvetica-Bold", 5.7)
+                canvas_obj.drawString(x + 2, table_top - 5.2 * mm, txt(header_label))
+                x += width
+            table_top -= 8 * mm
+
+            page_items = items[bom_page * rows_per_page:(bom_page + 1) * rows_per_page]
+            for local_index, item in enumerate(page_items):
+                global_index = bom_page * rows_per_page + local_index + 1
+                row_h = 10.4 * mm
+                row_y = table_top - row_h
+                canvas_obj.setFillColor(white if local_index % 2 == 0 else surface)
+                canvas_obj.setStrokeColor(line)
+                canvas_obj.rect(margin, row_y, inner_w, row_h, stroke=1, fill=1)
+                ref = str(item.get("produto_codigo", "") or item.get("stock_material_id", "") or item.get("ref_externa", "") or "-").strip() or "-"
+                material = str(item.get("material", "") or "").strip()
+                thickness = str(item.get("espessura", "") or "").strip()
+                dimensions = technical_text(item.get("dimensao", item.get("dimensoes", "")))
+                material_parts = [part for part in (material, f"e={thickness}" if thickness and thickness != "-" else "", dimensions) if part]
+                material_spec = " | ".join(material_parts) or "-"
+                process = str(item.get("operacao", "") or ("Montagem" if self.desktop_main.orc_line_is_product(item) else "-")).strip() or "-"
+                unit = str(item.get("produto_unid", "") or ("SV" if self.desktop_main.orc_line_is_service(item) else "UN")).strip() or "UN"
+                values = [
+                    f"{global_index:03d}", item_kind(item), ref, technical_text(item.get("descricao", "")) or "-",
+                    material_spec, self._fmt(item.get("qtd", 0)), unit, process,
+                ]
+                x = margin
+                canvas_obj.setFillColor(ink)
+                for col_index, (value, (_label, width)) in enumerate(zip(values, columns)):
+                    font_name = "Helvetica-Bold" if col_index in {0, 1, 2, 5} else "Helvetica"
+                    font_size = 5.7 if col_index not in {3, 4, 7} else 5.35
+                    canvas_obj.setFont(font_name, font_size)
+                    if col_index in {3, 4, 7}:
+                        cell_lines = _pdf_wrap_text(value, font_name, font_size, width - 4, max_lines=2) or ["-"]
+                    else:
+                        cell_lines = [_pdf_clip_text(value, width - 4, font_name, font_size)]
+                    if col_index in {0, 1, 5, 6}:
+                        first_line = txt(cell_lines[0])
+                        if col_index == 5:
+                            canvas_obj.drawRightString(x + width - 2, row_y + 5.8 * mm, first_line)
+                        else:
+                            canvas_obj.drawCentredString(x + width / 2, row_y + 5.8 * mm, first_line)
+                    else:
+                        cell_y = row_y + 6.5 * mm
+                        for cell_line in cell_lines:
+                            canvas_obj.drawString(x + 2, cell_y, txt(cell_line))
+                            cell_y -= 3.0 * mm
+                    if col_index < len(columns) - 1:
+                        canvas_obj.setStrokeColor(colors.HexColor("#DFE5EA"))
+                        canvas_obj.line(x + width, row_y, x + width, row_y + row_h)
+                    x += width
+                table_top = row_y
+
+            summary_y = margin + 11 * mm
+            canvas_obj.setFillColor(surface)
+            canvas_obj.setStrokeColor(line)
+            canvas_obj.roundRect(margin, summary_y, inner_w, 12 * mm, 2.5, stroke=1, fill=1)
+            canvas_obj.setFillColor(steel)
+            canvas_obj.setFont("Helvetica-Bold", 6.2)
+            canvas_obj.drawString(margin + 3 * mm, summary_y + 7.2 * mm, txt("ESTRUTURA DO CONJUNTO"))
+            canvas_obj.setFillColor(ink)
+            canvas_obj.setFont("Helvetica", 6)
+            canvas_obj.drawString(margin + 3 * mm, summary_y + 3.2 * mm, txt(f"{len(items)} referencias | {fabricated_count} fabricadas | {stock_count} stock/materia-prima | {service_count} operacoes"))
+            canvas_obj.setFillColor(green)
+            canvas_obj.roundRect(page_w - margin - 42 * mm, summary_y + 2 * mm, 39 * mm, 8 * mm, 2, stroke=0, fill=1)
+            canvas_obj.setFillColor(navy)
+            canvas_obj.setFont("Helvetica-Bold", 6)
+            canvas_obj.drawCentredString(page_w - margin - 22.5 * mm, summary_y + 4.8 * mm, txt("BOM CONTROLADA"))
+            controlled_footer(page_number, "LISTA DE MATERIAIS")
+
+        canvas_obj.save()
+        return target
+
+
+    def conjunto_open_sheet_pdf(self, codigo: str) -> Path:
+        target = self.conjunto_sheet_pdf(codigo)
+        os.startfile(str(target))
+        return target
+
     def orc_render_nesting_study_pdf(self, numero: str, path: str | Path, group_key: str = "") -> Path:
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4, landscape
@@ -1453,6 +2097,8 @@ class QuotesBridgeMixin:
         target = Path(path)
         palette = self._operator_label_palette()
         branding = self.branding_settings()
+        nesting_logo_txt = str(branding.get("logo_path", "") or "").strip()
+        logo_path = Path(nesting_logo_txt) if nesting_logo_txt and Path(nesting_logo_txt).exists() else None
         page_width, page_height = landscape(A4)
         margin = 26
         c = pdf_canvas.Canvas(str(target), pagesize=landscape(A4))
@@ -1478,16 +2124,27 @@ class QuotesBridgeMixin:
             c.setFont(font_bold if bold else font_regular, size)
 
         def draw_header(title: str, subtitle: str) -> float:
-            c.setFillColor(palette["primary"])
-            c.roundRect(margin, page_height - margin - 60, page_width - (margin * 2), 60, 18, stroke=0, fill=1)
             c.setFillColor(colors.white)
+            c.rect(0, 0, page_width, page_height, stroke=0, fill=1)
+            c.setFillColor(palette["primary"])
+            c.rect(0, page_height - 9, page_width, 9, stroke=0, fill=1)
+            c.setFillColor(colors.white)
+            c.setStrokeColor(palette["line"])
+            c.roundRect(margin, page_height - margin - 60, page_width - (margin * 2), 60, 4, stroke=1, fill=1)
+            c.setFillColor(palette["primary"])
+            c.rect(margin, page_height - margin - 60, 9, 60, stroke=0, fill=1)
+            self._draw_operator_logo_plate(c, palette, logo_path, margin + 15, page_height - margin - 48, 76, 36, radius=3, padding_x=3, padding_y=2, line_width=0.7)
+            c.setFillColor(palette["primary_dark"])
             set_font(True, 18)
-            c.drawString(margin + 16, page_height - margin - 24, title)
+            c.drawString(margin + 104, page_height - margin - 24, title)
             set_font(False, 9)
-            c.drawString(margin + 16, page_height - margin - 40, subtitle)
+            c.setFillColor(palette["muted"])
+            c.drawString(margin + 104, page_height - margin - 40, _pdf_clip_text(subtitle, page_width - (margin * 2) - 290, font_regular, 9))
             company = str(branding.get("company_name", "") or "luGEST").strip() or "luGEST"
             generated = datetime.now().strftime("%d/%m/%Y %H:%M")
+            c.setFillColor(palette["primary_dark"])
             c.drawRightString(page_width - margin - 16, page_height - margin - 24, company)
+            c.setFillColor(palette["muted"])
             c.drawRightString(page_width - margin - 16, page_height - margin - 40, generated)
             return page_height - margin - 74
 
@@ -1500,7 +2157,7 @@ class QuotesBridgeMixin:
         def draw_metric_card(x: float, y_top: float, width: float, title: str, value: str, accent: Any) -> None:
             c.setFillColor(colors.white)
             c.setStrokeColor(palette["line"])
-            c.roundRect(x, y_top - 52, width, 46, 12, stroke=1, fill=1)
+            c.roundRect(x, y_top - 52, width, 46, 3, stroke=1, fill=1)
             c.setFillColor(accent)
             c.rect(x + 10, y_top - 20, 26, 4, stroke=0, fill=1)
             c.setFillColor(palette["muted"])
@@ -1519,7 +2176,7 @@ class QuotesBridgeMixin:
             tone_fill = palette["primary_soft_2"] if tone == "info" else colors.HexColor("#FFF8EB") if tone == "warning" else colors.white
             c.setFillColor(tone_fill)
             c.setStrokeColor(palette["line"])
-            c.roundRect(x, y_top - box_height, width, box_height, 12, stroke=1, fill=1)
+            c.roundRect(x, y_top - box_height, width, box_height, 3, stroke=1, fill=1)
             c.setFillColor(palette["ink"])
             set_font(True, 10)
             c.drawString(x + 10, y_top - 16, title)
@@ -1539,9 +2196,10 @@ class QuotesBridgeMixin:
 
         def draw_table_header(y_top: float, columns: list[tuple[str, float]]) -> tuple[float, list[float], float]:
             total_width = page_width - (margin * 2)
+            c.setFillColor(palette["surface_alt"])
+            c.setStrokeColor(palette["line"])
+            c.rect(margin, y_top - 20, total_width, 18, stroke=1, fill=1)
             c.setFillColor(palette["primary_dark"])
-            c.roundRect(margin, y_top - 20, total_width, 18, 8, stroke=0, fill=1)
-            c.setFillColor(colors.white)
             set_font(True, 8)
             x_positions: list[float] = []
             cursor_x = margin + 7
@@ -2018,7 +2676,45 @@ class QuotesBridgeMixin:
             "montagem_itens": [],
             "numero_orcamento": orc.get("numero"),
             "tipo_encomenda": "Cliente",
+            "produto_fichas": [],
         }
+        sheet_groups: dict[str, dict[str, float]] = {}
+        sheet_sources: dict[str, dict[str, Any]] = {}
+        for source_line in list(orc.get("linhas", []) or []):
+            sheet_code = str(source_line.get("conjunto_codigo", "") or "").strip()
+            if not sheet_code:
+                continue
+            group_key = str(source_line.get("grupo_uuid", "") or "").strip() or sheet_code
+            base_qty = self._parse_float(source_line.get("qtd_base", 0), 0)
+            line_qty = self._parse_float(source_line.get("qtd", 0), 0)
+            group_qty = (line_qty / base_qty) if base_qty > 0 and line_qty > 0 else 1.0
+            code_groups = sheet_groups.setdefault(sheet_code, {})
+            code_groups[group_key] = max(float(code_groups.get(group_key, 0) or 0), group_qty)
+            if sheet_code in sheet_sources:
+                continue
+            try:
+                stored_sheet = dict(self.conjunto_detail(sheet_code) or {})
+            except Exception:
+                stored_sheet = {}
+            sheet_sources[sheet_code] = {
+                "codigo": sheet_code,
+                "param_codigo": str(stored_sheet.get("param_codigo", "") or source_line.get("conjunto_param_codigo", "") or "").strip(),
+                "descricao": str(
+                    stored_sheet.get("descricao", "")
+                    or source_line.get("conjunto_nome", "")
+                    or sheet_code
+                ).strip(),
+                "notas": str(stored_sheet.get("notas", "") or "").strip(),
+                "ficha_tecnica": self._normalize_conjunto_technical_sheet(
+                    source_line.get("ficha_tecnica", {}) or stored_sheet.get("ficha_tecnica", {})
+                ),
+            }
+        for sheet_code, snapshot in sheet_sources.items():
+            snapshot["quantidade_conjuntos"] = round(
+                max(1.0, sum(sheet_groups.get(sheet_code, {}).values())),
+                2,
+            )
+            enc["produto_fichas"].append(snapshot)
         enc_of = str(self._order_of_code(enc, create=True) or "").strip()
         mats: dict[str, dict[str, Any]] = {}
         piece_idx = 1
@@ -2131,6 +2827,9 @@ class QuotesBridgeMixin:
                 "quantidade_pedida": qtd_line,
                 "Operacoes": ops_txt,
                 "Observacoes": str(line.get("descricao", "") or "").strip(),
+                "conjunto_codigo": str(line.get("conjunto_codigo", "") or "").strip(),
+                "conjunto_nome": str(line.get("conjunto_nome", "") or "").strip(),
+                "grupo_uuid": str(line.get("grupo_uuid", "") or "").strip(),
                 "desenho": str(line.get("desenho", "") or "").strip(),
                 "desenho_pdf": str(line.get("desenho_pdf", "") or "").strip(),
                 "desenhos_pdf": [

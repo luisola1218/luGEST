@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 import re
@@ -55,7 +55,7 @@ os.environ.setdefault("LUGEST_DB_NAME", settings.db_name)
 import main as desktop_main  # noqa: E402
 from lugest_desktop.legacy import menu_rooting as desktop_pulse  # noqa: E402
 from lugest_desktop.legacy import plan_actions as desktop_plan  # noqa: E402
-from lugest_qt.services.main_bridge import LegacyBackend  # noqa: E402
+from lugest_qt.services.legacy_backend import LegacyBackend  # noqa: E402
 
 PERIOD_MAP = {"hoje": 1, "1": 1, "7 dias": 7, "7": 7, "30 dias": 30, "30": 30, "tudo": 0, "0": 0}
 _MATERIAL_BACKEND: LegacyBackend | None = None
@@ -73,15 +73,8 @@ def _material_backend() -> LegacyBackend:
 
 
 def _make_context() -> SimpleNamespace:
-    try:
-        flusher = getattr(desktop_main, "flush_pending_save", None)
-        if callable(flusher):
-            flusher(force=True)
-        drainer = getattr(desktop_main, "_drain_async_saves", None)
-        if callable(drainer):
-            drainer(timeout_sec=3.0)
-    except Exception:
-        pass
+    # Read-only dashboards use the latest in-process snapshot. Waiting for the
+    # asynchronous MySQL writer here made navigation block for up to 3 seconds.
     latest = getattr(desktop_main, "_LATEST_RUNTIME_DATA", None)
     data = latest if isinstance(latest, dict) else desktop_main.load_data()
     ctx = SimpleNamespace()

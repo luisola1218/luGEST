@@ -8303,6 +8303,24 @@ class TransportsPage(QWidget):
         filters_layout.addWidget(self.state_combo)
         root.addWidget(filters)
 
+        stats_host = QWidget()
+        stats_layout = QHBoxLayout(stats_host)
+        stats_layout.setContentsMargins(0, 0, 0, 0)
+        stats_layout.setSpacing(8)
+        self.transport_stats = [
+            StatCard("Viagens visiveis"),
+            StatCard("Em curso"),
+            StatCard("Incidentes"),
+            StatCard("Paragens"),
+            StatCard("Carga planeada"),
+            StatCard("Entregas concluidas"),
+        ]
+        for index, card in enumerate(self.transport_stats):
+            card.set_tone(("info", "warning", "danger", "default", "info", "success")[index])
+            card.setMinimumWidth(150)
+            stats_layout.addWidget(card, 1)
+        root.addWidget(stats_host)
+
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
         root.addWidget(splitter, 1)
@@ -8498,6 +8516,26 @@ class TransportsPage(QWidget):
         )
         for row_index, row in enumerate(self.trip_rows):
             _paint_table_row(self.trip_table, row_index, str(row.get("estado", "")))
+        in_progress = sum(
+            1
+            for row in self.trip_rows
+            if any(token in self.backend.desktop_main.norm_text(str(row.get("estado", "") or "")) for token in ("carga", "transito"))
+        )
+        incidents = sum(1 for row in self.trip_rows if "inciden" in self.backend.desktop_main.norm_text(str(row.get("estado", "") or "")))
+        stops_total = sum(int(row.get("paragens", 0) or 0) for row in self.trip_rows)
+        delivered_total = sum(int(row.get("entregues", 0) or 0) for row in self.trip_rows)
+        pallets_total = sum(float(row.get("paletes", 0) or 0) for row in self.trip_rows)
+        weight_total = sum(float(row.get("peso_bruto_kg", 0) or 0) for row in self.trip_rows)
+        stat_values = [
+            (str(len(self.trip_rows)), f"{len(self.pending_rows)} encomendas por agendar"),
+            (str(in_progress), "em carga ou em transito"),
+            (str(incidents), "exigem acompanhamento"),
+            (str(stops_total), "destinos planeados"),
+            (f"{pallets_total:.1f} pal", f"{weight_total:.0f} kg"),
+            (str(delivered_total), f"de {stops_total} paragens"),
+        ]
+        for card, (value, subtitle) in zip(self.transport_stats, stat_values):
+            card.set_data(value, subtitle)
         self.trip_empty.setVisible(self.trip_table.rowCount() == 0)
         self._restore_trip_selection(previous_trip)
         if self.trip_table.rowCount() == 0:
@@ -13127,12 +13165,15 @@ class QuotesPage(QWidget):
         purchase_note_btn = QPushButton("Enviar nota de encomenda")
         purchase_note_btn.setProperty("variant", "secondary")
         purchase_note_btn.clicked.connect(self._create_quote_purchase_note)
-        preview_btn = QPushButton("Pre-visualizar")
+        preview_btn = QPushButton("Previsualizar PDF")
         preview_btn.setProperty("variant", "secondary")
         preview_btn.clicked.connect(self._preview_quote)
         pdf_btn = QPushButton("Guardar PDF")
         pdf_btn.setProperty("variant", "secondary")
         pdf_btn.clicked.connect(self._save_quote_pdf)
+        print_btn = QPushButton("Imprimir PDF")
+        print_btn.setProperty("variant", "secondary")
+        print_btn.clicked.connect(self._print_quote_pdf)
         for button, width in (
             (back_btn, 126),
             (save_btn, 100),
@@ -13142,11 +13183,12 @@ class QuotesPage(QWidget):
             (reject_btn, 112),
             (convert_btn, 188),
             (purchase_note_btn, 196),
-            (preview_btn, 126),
+            (preview_btn, 146),
             (pdf_btn, 120),
+            (print_btn, 126),
         ):
             button.setMinimumWidth(width)
-        for button in (back_btn, save_btn, edit_btn, sent_btn, approve_btn, reject_btn, convert_btn, purchase_note_btn, preview_btn, pdf_btn):
+        for button in (back_btn, save_btn, edit_btn, sent_btn, approve_btn, reject_btn, convert_btn, purchase_note_btn, preview_btn, pdf_btn, print_btn):
             detail_actions_layout.addWidget(button)
         detail_actions_layout.addStretch(1)
         detail_layout.addWidget(detail_actions)
@@ -18491,7 +18533,7 @@ class QuotesPage(QWidget):
         initial = dict(initial or {})
         dialog = QDialog(self)
         dialog.setWindowTitle("Conjunto calculado")
-        dialog.resize(980, 760)
+        dialog.resize(1040, 840)
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(8)
@@ -18504,13 +18546,20 @@ class QuotesPage(QWidget):
         intro.setProperty("role", "muted")
         layout.addWidget(intro)
 
-        header_card = CardFrame()
-        header_card.set_tone("default")
-        header_form = QFormLayout(header_card)
+        header_tabs = QTabWidget()
+        identity_tab = QWidget()
+        header_form = QFormLayout(identity_tab)
         header_form.setContentsMargins(10, 10, 10, 10)
         header_form.setHorizontalSpacing(10)
         header_form.setVerticalSpacing(6)
         code_edit = QLineEdit(str(initial.get("codigo", "") or f"CJ-{datetime.now().strftime('%Y%m%d%H%M%S')}").strip())
+        try:
+            suggested_param = str(self.backend.conjunto_next_param_codigo() or "").strip()
+        except Exception:
+            suggested_param = ""
+        param_edit = QLineEdit(str(initial.get("param_codigo", "") or suggested_param or "0001").strip())
+        param_edit.setReadOnly(True)
+        param_edit.setToolTip("Codigo sequencial e permanente da parametrizacao do conjunto")
         name_edit = QLineEdit(str(initial.get("descricao", "") or "").strip())
         name_edit.setPlaceholderText("Ex.: Construcao de Bascula")
         margin_spin = QDoubleSpinBox()
@@ -18524,11 +18573,86 @@ class QuotesPage(QWidget):
         notes_edit.setMaximumHeight(70)
         notes_edit.setPlainText(str(initial.get("notas", "") or "").strip())
         header_form.addRow("Codigo conjunto", code_edit)
+        header_form.addRow("Codigo parametrizacao", param_edit)
         header_form.addRow("Descricao", name_edit)
         header_form.addRow("Margem", margin_spin)
         header_form.addRow("Notas", notes_edit)
         header_form.addRow("", save_template_check)
-        layout.addWidget(header_card)
+        header_tabs.addTab(identity_tab, "Identificacao e valor")
+
+        technical = dict(initial.get("ficha_tecnica", {}) or {})
+        technical_tab = QWidget()
+        technical_grid = QGridLayout(technical_tab)
+        technical_grid.setContentsMargins(10, 10, 10, 10)
+        technical_grid.setHorizontalSpacing(10)
+        technical_grid.setVerticalSpacing(6)
+
+        family_combo = QComboBox()
+        family_combo.setEditable(True)
+        family_combo.addItems([
+            "Equipamento de pesagem",
+            "Quiosque multimedia",
+            "Caixilharia",
+            "Estrutura metalica",
+            "Maquina / equipamento",
+            "Mobiliario tecnico",
+            "Outro produto fabricado",
+        ])
+        family_value = str(technical.get("familia_produto", "") or "").strip()
+        if family_value:
+            family_combo.setCurrentText(family_value)
+        application_edit = QLineEdit(str(technical.get("aplicacao", "") or "").strip())
+        application_edit.setPlaceholderText("Ex.: pesagem industrial, atendimento publico, fachada exterior")
+        model_edit = QLineEdit(str(technical.get("modelo_versao", "") or "").strip())
+        model_edit.setPlaceholderText("Modelo, variante ou revisao")
+        configuration_edit = QLineEdit(str(technical.get("configuracao", "") or "").strip())
+        configuration_edit.setPlaceholderText("Ex.: 1500 kg / visor remoto / 2 folhas / RAL 7016")
+        dimensions_edit = QLineEdit(str(technical.get("dimensoes_gerais", "") or "").strip())
+        dimensions_edit.setPlaceholderText("C x L x A, vao, capacidade ou formato relevante")
+        finishes_edit = QLineEdit(str(technical.get("materiais_acabamentos", "") or "").strip())
+        finishes_edit.setPlaceholderText("Materiais principais, cor e acabamento")
+
+        characteristics_edit = QTextEdit()
+        characteristics_edit.setMaximumHeight(66)
+        characteristics_edit.setPlaceholderText("Funcoes, desempenho, opcoes e caracteristicas essenciais")
+        characteristics_edit.setPlainText(str(technical.get("caracteristicas", "") or "").strip())
+        installation_edit = QTextEdit()
+        installation_edit.setMaximumHeight(66)
+        installation_edit.setPlaceholderText("Alimentacao, fixacao, ligacoes, ambiente e pre-requisitos")
+        installation_edit.setPlainText(str(technical.get("requisitos_instalacao", "") or "").strip())
+        standards_edit = QTextEdit()
+        standards_edit.setMaximumHeight(58)
+        standards_edit.setPlaceholderText("Normas, diretivas, classe, IP, CE ou requisitos do cliente")
+        standards_edit.setPlainText(str(technical.get("normas_conformidade", "") or "").strip())
+        quality_edit = QTextEdit()
+        quality_edit.setMaximumHeight(58)
+        quality_edit.setPlaceholderText("Inspecoes, ensaios, tolerancias e criterios de aceitacao")
+        quality_edit.setPlainText(str(technical.get("controlo_qualidade", "") or "").strip())
+
+        technical_grid.addWidget(QLabel("Familia de produto"), 0, 0)
+        technical_grid.addWidget(family_combo, 0, 1)
+        technical_grid.addWidget(QLabel("Aplicacao / destino"), 0, 2)
+        technical_grid.addWidget(application_edit, 0, 3)
+        technical_grid.addWidget(QLabel("Modelo / versao"), 1, 0)
+        technical_grid.addWidget(model_edit, 1, 1)
+        technical_grid.addWidget(QLabel("Configuracao principal"), 1, 2)
+        technical_grid.addWidget(configuration_edit, 1, 3)
+        technical_grid.addWidget(QLabel("Dimensoes / capacidade"), 2, 0)
+        technical_grid.addWidget(dimensions_edit, 2, 1)
+        technical_grid.addWidget(QLabel("Materiais / acabamentos"), 2, 2)
+        technical_grid.addWidget(finishes_edit, 2, 3)
+        technical_grid.addWidget(QLabel("Caracteristicas"), 3, 0)
+        technical_grid.addWidget(characteristics_edit, 3, 1)
+        technical_grid.addWidget(QLabel("Instalacao"), 3, 2)
+        technical_grid.addWidget(installation_edit, 3, 3)
+        technical_grid.addWidget(QLabel("Normas / conformidade"), 4, 0)
+        technical_grid.addWidget(standards_edit, 4, 1)
+        technical_grid.addWidget(QLabel("Controlo de qualidade"), 4, 2)
+        technical_grid.addWidget(quality_edit, 4, 3)
+        technical_grid.setColumnStretch(1, 1)
+        technical_grid.setColumnStretch(3, 1)
+        header_tabs.addTab(technical_tab, "Ficha tecnica do produto")
+        layout.addWidget(header_tabs)
 
         items: list[dict] = [self._wrap_assembly_item(dict(row or {})) for row in list(initial.get("itens", []) or [])]
         table = QTableWidget(0, 8)
@@ -18750,6 +18874,12 @@ class QuotesPage(QWidget):
         assembly_code = code_edit.text().strip() or f"CJ-{datetime.now().strftime('%Y%m%d%H%M%S')}"
         assembly_name = name_edit.text().strip() or assembly_code
         lines = [dict(item.get("line") or {}) for item in items if isinstance(item.get("line"), dict)]
+        for line in lines:
+            operation_norm = self.backend.desktop_main.norm_text(str(line.get("operacao", "") or ""))
+            if self.backend.desktop_main.orc_line_is_piece(line) and "laser" in operation_norm:
+                line["source_quote_number"] = str(self.current_number or "").strip()
+                line["source_ref_externa"] = str(line.get("ref_externa", "") or "").strip()
+                line["pricing_source"] = "quote_laser"
         totals = {"material": 0.0, "labor": 0.0, "consumable": 0.0, "product": 0.0}
         for item in items:
             kind = str(item.get("kind", "") or "")
@@ -18767,21 +18897,36 @@ class QuotesPage(QWidget):
         ]
         if notes_edit.toPlainText().strip():
             notes_lines.append(notes_edit.toPlainText().strip())
+        technical_sheet = {
+            "familia_produto": family_combo.currentText().strip(),
+            "aplicacao": application_edit.text().strip(),
+            "modelo_versao": model_edit.text().strip(),
+            "configuracao": configuration_edit.text().strip(),
+            "dimensoes_gerais": dimensions_edit.text().strip(),
+            "materiais_acabamentos": finishes_edit.text().strip(),
+            "caracteristicas": characteristics_edit.toPlainText().strip(),
+            "requisitos_instalacao": installation_edit.toPlainText().strip(),
+            "normas_conformidade": standards_edit.toPlainText().strip(),
+            "controlo_qualidade": quality_edit.toPlainText().strip(),
+        }
         try:
             self.backend.assembly_model_save(
                 {
                     "codigo": assembly_code,
+                    "param_codigo": param_edit.text().strip(),
                     "descricao": assembly_name,
                     "notas": "\n".join(notes_lines),
                     "itens": lines,
                     "template": bool(save_template_check.isChecked()),
                     "origem": "orcamento_conjunto_calculado",
                     "created_at": str(initial.get("created_at", "") or "").strip(),
+                    "ficha_tecnica": technical_sheet,
                 }
             )
             self.backend.conjunto_save(
                 {
                     "codigo": assembly_code,
+                    "param_codigo": param_edit.text().strip(),
                     "descricao": assembly_name,
                     "notas": "\n".join(notes_lines),
                     "itens": lines,
@@ -18791,6 +18936,7 @@ class QuotesPage(QWidget):
                     "total_custo": subtotal,
                     "total_final": final_total,
                     "created_at": str(initial.get("created_at", "") or "").strip(),
+                    "ficha_tecnica": technical_sheet,
                 }
             )
         except Exception as exc:
@@ -20892,7 +21038,7 @@ class QuotesPage(QWidget):
     def _manage_saved_conjuntos(self) -> None:
         dialog = QDialog(self)
         dialog.setWindowTitle("Conjuntos guardados")
-        dialog.resize(980, 640)
+        dialog.resize(1080, 640)
         layout = QVBoxLayout(dialog)
         intro = QLabel(
             "Os conjuntos guardados funcionam como produto montado: materiais, mao de obra, consumiveis e produtos. "
@@ -20902,12 +21048,12 @@ class QuotesPage(QWidget):
         intro.setProperty("role", "muted")
         layout.addWidget(intro)
 
-        table = QTableWidget(0, 7)
-        table.setHorizontalHeaderLabels(["Codigo", "Descricao", "Itens", "Template", "Margem", "Custo", "Final"])
+        table = QTableWidget(0, 9)
+        table.setHorizontalHeaderLabels(["Codigo", "Param.", "Descricao", "Itens", "Ligados", "Template", "Margem", "Custo atual", "Final atual"])
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)
-        _configure_table(table, stretch=(1,), contents=(0, 2, 3, 4, 5, 6))
+        _configure_table(table, stretch=(2,), contents=(0, 1, 3, 4, 5, 6, 7, 8))
         layout.addWidget(table, 1)
 
         def current_code() -> str:
@@ -20924,8 +21070,10 @@ class QuotesPage(QWidget):
                 [
                     [
                         row.get("codigo", "-"),
+                        row.get("param_codigo", "-"),
                         row.get("descricao", "-"),
                         row.get("itens", 0),
+                        f"{int(row.get('itens_ligados', 0) or 0)}/{int(row.get('itens', 0) or 0)}",
                         "Sim" if bool(row.get("template", False)) else "Nao",
                         f"{float(row.get('margem_perc', 0) or 0):.2f} %",
                         _fmt_eur(float(row.get("total_custo", 0) or 0)),
@@ -20933,7 +21081,7 @@ class QuotesPage(QWidget):
                     ]
                     for row in rows
                 ],
-                align_center_from=2,
+                align_center_from=3,
             )
             if table.rowCount() <= 0:
                 return
@@ -20954,11 +21102,13 @@ class QuotesPage(QWidget):
         duplicate_btn.setProperty("variant", "secondary")
         apply_btn = QPushButton("Adicionar ao orçamento")
         apply_btn.setProperty("variant", "secondary")
+        preview_btn = QPushButton("Previsualizar PDF")
+        preview_btn.setProperty("variant", "secondary")
         remove_btn = QPushButton("Remover")
         remove_btn.setProperty("variant", "danger")
         close_btn = QPushButton("Fechar")
         close_btn.setProperty("variant", "secondary")
-        for button in (new_btn, edit_btn, duplicate_btn, apply_btn, remove_btn):
+        for button in (new_btn, edit_btn, duplicate_btn, apply_btn, preview_btn, remove_btn):
             actions.addWidget(button)
         actions.addStretch(1)
         actions.addWidget(close_btn)
@@ -20996,6 +21146,7 @@ class QuotesPage(QWidget):
                 QMessageBox.critical(dialog, "Conjuntos", str(exc))
                 return
             detail["codigo"] = f"CJ-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            detail.pop("param_codigo", None)
             detail["descricao"] = f"{str(detail.get('descricao', code) or code).strip()} (Copia)"
             detail.pop("created_at", None)
             detail.pop("updated_at", None)
@@ -21020,6 +21171,18 @@ class QuotesPage(QWidget):
             self._render_quote_lines()
             QMessageBox.information(dialog, "Conjuntos", f"O conjunto {code} foi adicionado ao orçamento.")
 
+        def preview_conjunto() -> None:
+            code = current_code()
+            if not code:
+                QMessageBox.warning(dialog, "Conjuntos", "Seleciona um conjunto.")
+                return
+            try:
+                path = self.backend.conjunto_open_sheet_pdf(code)
+            except Exception as exc:
+                QMessageBox.critical(dialog, "Conjuntos", str(exc))
+                return
+            QMessageBox.information(dialog, "Conjuntos", f"Ficha PDF aberta:\n{path}")
+
         def remove_conjunto() -> None:
             code = current_code()
             if not code:
@@ -21038,6 +21201,7 @@ class QuotesPage(QWidget):
         edit_btn.clicked.connect(edit_conjunto)
         duplicate_btn.clicked.connect(duplicate_conjunto)
         apply_btn.clicked.connect(apply_conjunto)
+        preview_btn.clicked.connect(preview_conjunto)
         remove_btn.clicked.connect(remove_conjunto)
         close_btn.clicked.connect(dialog.reject)
         refresh_rows()
@@ -21232,6 +21396,11 @@ class QuotesPage(QWidget):
             row.pop("total", None)
             if self.backend.desktop_main.orc_line_is_product(row) and not str(row.get("ref_externa", "") or "").strip():
                 row["ref_externa"] = str(row.get("produto_codigo", "") or "").strip()
+            operation_norm = self.backend.desktop_main.norm_text(str(row.get("operacao", "") or ""))
+            if self.backend.desktop_main.orc_line_is_piece(row) and "laser" in operation_norm:
+                row["source_quote_number"] = str(self.current_number or "").strip()
+                row["source_ref_externa"] = str(row.get("ref_externa", "") or "").strip()
+                row["pricing_source"] = "quote_laser"
             return row
 
         def _compose_rows_for_save(destination: str, target_code: str, overwrite: bool) -> list[dict]:
@@ -22596,6 +22765,17 @@ class QuotesPage(QWidget):
             QMessageBox.critical(self, "Orçamentos", str(exc))
             return
         QMessageBox.information(self, "Orçamentos", f"PDF guardado em:\n{path}")
+
+    def _print_quote_pdf(self) -> None:
+        try:
+            detail = self.backend.orc_save(self._quote_payload())
+            numero = str(detail.get("numero", "") or self.current_number).strip()
+            self.current_number = numero
+            path = self.backend.orc_print_pdf(numero)
+        except Exception as exc:
+            QMessageBox.critical(self, "Orçamentos", str(exc))
+            return
+        QMessageBox.information(self, "Orçamentos", f"PDF enviado para impressão:\n{path}")
 
     def _convert_quote(self) -> None:
         if not self.current_number:

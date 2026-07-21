@@ -72,13 +72,7 @@
     }
   },
   "material_assistant_feedback": {},
-  "material_assistant_checks": {
-    "ASSIST-VERIFY-0001|ASSIST-RETALHO|5|ASSIST-LOT-Z|principal": {
-      "sep": false,
-      "conf": false,
-      "updated_at": "2026-07-06T17:44:38"
-    }
-  },
+  "material_assistant_checks": {},
   "pulse_plan_delay_reasons": {},
   "laser_quote": {
     "active_machine": "TRUMPF TruLaser 5030 12kW",
@@ -3020,9 +3014,16 @@
     }
   },
   "update_settings": {
-    "manifest_url": "C:\\Users\\engenharia\\Desktop\\App LuisGEST - Revisão Final\\Atualizacoes\\latest.json",
-    "github_token": "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",
+    "manifest_url": "https://github.com/luisola1218/luGEST/releases/latest/download/latest.json",
     "auto_check": true,
-    "current_version": "2026.05.05.1"
+    "current_version": "2026.07.20.4",
+    "channel": "stable"
+  },
+  "pdf": {
+    "theme": "light_v2",
+    "accent": "#454567",
+    "ink": "#14212B",
+    "large_color_blocks": false,
+    "inventory_scan_schema": 1
   }
 }

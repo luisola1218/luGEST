@@ -5,6 +5,12 @@ Estado atual: a aplicacao ja tem separacao parcial em `lugest_core`,
 ficheiros muito grandes que concentram demasiado comportamento:
 `lugest_qt/ui/pages/runtime_pages.py` e `lugest_qt/services/main_bridge.py`.
 
+Atualizacao incremental: a janela principal deve importar paginas pelos modulos
+proprios em `lugest_qt/ui/pages/*_page.py`, mesmo quando a implementacao ainda
+e uma fachada para `runtime_pages.py`. O backend Qt deve ser importado por
+`lugest_qt.services.legacy_backend`, deixando `main_bridge.py` como detalhe de
+compatibilidade legacy.
+
 ## Alvo modular
 
 ```text
@@ -46,6 +52,8 @@ lugest/
 - Runtime local fica fora do Git: sequencias, trial, estado de UI e similares.
 - O codigo novo deve entrar primeiro em `lugest_core`, `lugest_infra` ou em
   mixins pequenos de `lugest_qt/services/bridge_mixins`.
+- Novas chamadas externas ao backend Qt devem importar `LegacyBackend` de
+  `lugest_qt.services.legacy_backend`, nao de `main_bridge.py`.
 
 ## Proximos refactors recomendados
 

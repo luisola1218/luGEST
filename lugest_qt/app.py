@@ -7,7 +7,7 @@ import sys
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
-from .services.main_bridge import LegacyBackend
+from .services.legacy_backend import LegacyBackend
 from .services.runtime_service import RuntimeService
 from .ui.login_dialog import LoginDialog
 from .ui.main_window import MainWindow
@@ -97,6 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication([args[0], *qt_args])
     try:
         backend = LegacyBackend()
+        backend.ensure_inventory_scan_codes()
+        backend.ensure_pdf_light_theme()
         logo_path = backend.logo_path
         if logo_path is not None:
             try:

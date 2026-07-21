@@ -28,17 +28,17 @@ from PySide6.QtWidgets import (
 )
 
 from ..widgets import CardFrame, FlexibleDecimalSpinBox as QDoubleSpinBox, StatCard
-from .runtime_pages import (
-    _apply_state_chip,
-    _cap_width,
-    _coerce_editor_qdate,
-    _configure_table,
-    _fill_table,
-    _fmt_eur,
-    _paint_table_row,
-    _set_panel_tone,
-    _state_tone,
-    _table_visible_height,
+from .runtime_common import (
+    apply_state_chip as _apply_state_chip,
+    cap_width as _cap_width,
+    coerce_editor_qdate as _coerce_editor_qdate,
+    configure_table as _configure_table,
+    fill_table as _fill_table,
+    fmt_eur as _fmt_eur,
+    paint_table_row as _paint_table_row,
+    set_panel_tone as _set_panel_tone,
+    state_tone as _state_tone,
+    table_visible_height as _table_visible_height,
 )
 
 

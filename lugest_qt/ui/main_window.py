@@ -9,8 +9,10 @@ from PySide6.QtCore import QObject, QPoint, QRect, QRectF, QSize, QProcess, Qt, 
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
+    QColorDialog,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -28,6 +30,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QStackedWidget,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -37,27 +40,25 @@ from PySide6.QtWidgets import (
 )
 
 from .pages.home_page import HomePage
+from .pages.avarias_page import AvariasPage
 from .pages.billing_page import BillingPage
 from .pages.diagnostics_page import DiagnosticsPage
 from .pages.material_assistant_page import MaterialAssistantPage
 from .pages.materials_page import MaterialsPage
+from .pages.operator_page import OperatorPage
+from .pages.opp_page import OppPage
+from .pages.orders_page import OrdersPage
+from .pages.partners_pages import ClientsPage, SuppliersPage
+from .pages.planning_page import PlanningPage
 from .pages.products_page import ProductsPage
+from .pages.pulse_page import PulsePage
+from .pages.purchase_notes_legacy_page import PurchaseNotesPage
 from .pages.quality_page import QualityPage
-from .pages.runtime_pages import (
-    AvariasPage,
-    ClientsPage,
-    LegacyExpeditionPage as ExpeditionPage,
-    LegacyOperatorPage as OperatorPage,
-    OppPage,
-    LegacyOrdersPage as OrdersPage,
-    LegacyPlanningPage as PlanningPage,
-    LegacyPurchaseNotesPage as PurchaseNotesPage,
-    PulsePage,
-    QuotesPage,
-    SuppliersPage,
-    TransportsPage,
-)
+from .pages.quotes_page import QuotesPage
+from .pages.shipping_page import ExpeditionPage
 from .pages.stock_dashboard_page import StockDashboardPage
+from .pages.transports_page import TransportsPage
+from .theme import apply_theme
 
 
 class _UpdateCheckWorker(QObject):
@@ -85,7 +86,7 @@ class _BrandMark(QWidget):
 
     def __init__(self, logo_path=None, parent=None) -> None:
         super().__init__(parent)
-        self.setFixedSize(118, 62)
+        self.setFixedSize(72, 52)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
@@ -144,7 +145,7 @@ class MainWindow(QMainWindow):
         self.page_factories = {
             "home": lambda: HomePage(self.backend),
             "stock_dashboard": lambda: StockDashboardPage(self.backend),
-            "pulse": lambda: PulsePage(self.runtime_service),
+            "pulse": lambda: PulsePage(self.runtime_service, self.backend),
             "operator": lambda: OperatorPage(self.runtime_service, self.backend),
             "planning": lambda: PlanningPage(self.runtime_service, self.backend),
             "avarias": lambda: AvariasPage(self.runtime_service),
@@ -177,16 +178,16 @@ class MainWindow(QMainWindow):
         shell = QFrame()
         shell.setObjectName("TopBar")
         shell_layout = QHBoxLayout(shell)
-        shell_layout.setContentsMargins(16, 10, 16, 10)
-        shell_layout.setSpacing(10)
+        shell_layout.setContentsMargins(14, 8, 14, 8)
+        shell_layout.setSpacing(12)
 
         brand_frame = QFrame()
         brand_frame.setObjectName("AppBrandPlate")
-        brand_frame.setMinimumWidth(210)
-        brand_frame.setFixedHeight(62)
+        brand_frame.setMinimumWidth(188)
+        brand_frame.setFixedHeight(54)
         brand_layout = QHBoxLayout(brand_frame)
         brand_layout.setContentsMargins(0, 0, 0, 0)
-        brand_layout.setSpacing(4)
+        brand_layout.setSpacing(8)
 
         brand_mark = _BrandMark(getattr(self.backend, "logo_path", None))
         brand_layout.addWidget(brand_mark, 0, Qt.AlignTop)
@@ -195,23 +196,23 @@ class MainWindow(QMainWindow):
         brand_text_col.setContentsMargins(0, 0, 0, 0)
         brand_text_col.setSpacing(0)
         brand_label = QLabel("LUGEST")
-        brand_label.setStyleSheet("font-size: 23px; font-weight: 950; letter-spacing: 0.7px; color: #24313c;")
+        brand_label.setStyleSheet("font-size: 21px; font-weight: 950; color: #24313c;")
         brand_sub = QLabel("ERP industrial")
         brand_sub.setProperty("role", "muted")
-        brand_sub.setStyleSheet("font-size: 10px; letter-spacing: 0.8px; color: #f47a18; font-weight: 800;")
+        brand_sub.setStyleSheet("font-size: 10px; color: #f47a18; font-weight: 800;")
         brand_text_col.addWidget(brand_label)
         brand_text_col.addWidget(brand_sub)
         brand_text_col.addStretch(1)
         brand_layout.addLayout(brand_text_col)
-        shell_layout.addWidget(brand_frame, 0, Qt.AlignTop)
+        shell_layout.addWidget(brand_frame, 0, Qt.AlignVCenter)
 
-        shell_layout.addSpacing(18)
+        shell_layout.addSpacing(8)
 
         page_col = QVBoxLayout()
         page_col.setContentsMargins(0, 0, 0, 0)
         page_col.setSpacing(2)
         self.title_label = QLabel("Resumo")
-        self.title_label.setStyleSheet("font-size: 24px; font-weight: 900; color: #0f172a;")
+        self.title_label.setStyleSheet("font-size: 20px; font-weight: 900; color: #0f172a;")
         self.subtitle_label = QLabel("Base de trabalho pronta para testes.")
         self.subtitle_label.setProperty("role", "muted")
         page_col.addWidget(self.title_label)
@@ -221,30 +222,42 @@ class MainWindow(QMainWindow):
         right_col = QHBoxLayout()
         right_col.setContentsMargins(0, 0, 0, 0)
         right_col.setSpacing(10)
-        self.status_label = QLabel("Pronto")
-        self.status_label.setProperty("role", "muted")
+        self.status_label = QLabel("Sincronizado")
+        self.status_label.setProperty("role", "state_chip")
         right_col.addWidget(self.status_label, 0, Qt.AlignVCenter)
         user = self.backend.user or {}
-        self.user_chip = QLabel(f"{user.get('username', '-')} | {user.get('role', '-')}")
-        self.user_chip.setProperty("role", "badge")
+        self.user_chip = QLabel(f"{user.get('username', '-')} | {str(user.get('role', '-')).title()}")
+        self.user_chip.setProperty("role", "state_chip")
         right_col.addWidget(self.user_chip, 0, Qt.AlignVCenter)
         is_admin = str(user.get("role", "") or "").strip().lower() == "admin"
         if is_admin:
-            extras_btn = QPushButton("Extras")
+            extras_btn = QPushButton("Definições")
             extras_btn.setProperty("variant", "secondary")
             extras_btn.setProperty("toolbarAction", "true")
             extras_btn.setMinimumHeight(38)
+            extras_btn.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
+            extras_btn.setToolTip("Configuração, empresa, documentos e manutenção")
+            extras_btn.setText("")
+            extras_btn.setFixedWidth(42)
             extras_btn.clicked.connect(self._open_admin_extras)
             right_col.addWidget(extras_btn)
         refresh_btn = QPushButton("Atualizar")
         refresh_btn.setProperty("toolbarAction", "true")
         refresh_btn.setMinimumHeight(38)
+        refresh_btn.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        refresh_btn.setToolTip("Recarregar os dados do menu atual")
+        refresh_btn.setText("")
+        refresh_btn.setFixedWidth(42)
         refresh_btn.clicked.connect(lambda: self.refresh_current_page(force=True, background=False))
         right_col.addWidget(refresh_btn)
-        logout_btn = QPushButton("Logout")
+        logout_btn = QPushButton("Sair")
         logout_btn.setProperty("variant", "logout")
         logout_btn.setProperty("toolbarAction", "true")
         logout_btn.setMinimumHeight(38)
+        logout_btn.setIcon(self.style().standardIcon(QStyle.SP_DialogCloseButton))
+        logout_btn.setToolTip("Terminar a sessão atual")
+        logout_btn.setText("")
+        logout_btn.setFixedWidth(42)
         logout_btn.clicked.connect(self._logout)
         right_col.addWidget(logout_btn)
         shell_layout.addLayout(right_col)
@@ -266,6 +279,7 @@ class MainWindow(QMainWindow):
         nav_content_width = 16
         for key, label in (
             ("stock_dashboard", "Dashboard"),
+            ("pulse", "Pulse"),
             ("materials", "Matéria-Prima"),
             ("products", "Produtos"),
             ("clients", "Clientes"),
@@ -282,7 +296,6 @@ class MainWindow(QMainWindow):
             ("purchase_notes", "Notas Encomenda"),
             ("quality", "Qualidade"),
             ("diagnostics", "Diagnóstico"),
-            ("pulse", "Pulse"),
             ("avarias", "Avarias"),
             ("home", "Resumo"),
         ):
@@ -789,7 +802,7 @@ class MainWindow(QMainWindow):
         title = QLabel("Atualizações do software")
         title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
         layout.addWidget(title)
-        hint = QLabel("Usa um manifest latest.json em pasta partilhada, GitHub privado ou servidor proprio. O instalador faz backup antes de trocar os ficheiros.")
+        hint = QLabel("Usa um manifest latest.json publico, numa pasta partilhada ou num servidor proprio. O instalador faz backup antes de trocar os ficheiros.")
         hint.setWordWrap(True)
         hint.setProperty("role", "muted")
         layout.addWidget(hint)
@@ -800,14 +813,10 @@ class MainWindow(QMainWindow):
         version_label = QLabel(str(settings.get("current_version", "-") or "-"))
         manifest_edit = QLineEdit(str(settings.get("manifest_url", "") or ""))
         manifest_edit.setPlaceholderText(r"..\Atualizacoes\latest.json ou https://servidor/latest.json")
-        token_edit = QLineEdit(str(settings.get("github_token", "") or ""))
-        token_edit.setEchoMode(QLineEdit.Password)
-        token_edit.setPlaceholderText("Opcional para GitHub privado")
         auto_check_box = QCheckBox("Verificar automaticamente no arranque")
         auto_check_box.setChecked(bool(settings.get("auto_check", False)))
         form.addRow("Versao instalada", version_label)
         form.addRow("Manifest", manifest_edit)
-        form.addRow("Token GitHub", token_edit)
         form.addRow("", auto_check_box)
         layout.addLayout(form)
 
@@ -820,7 +829,6 @@ class MainWindow(QMainWindow):
         def save_settings() -> dict:
             payload = {
                 "manifest_url": manifest_edit.text().strip(),
-                "github_token": token_edit.text().strip(),
                 "auto_check": auto_check_box.isChecked(),
             }
             saved = dict(self.backend.update_save_settings(payload) or {})
@@ -1159,7 +1167,20 @@ class MainWindow(QMainWindow):
             logo_row_layout.addWidget(logo_edit, 1)
             logo_row_layout.addWidget(use_default_logo_btn)
             logo_row_layout.addWidget(browse_logo_btn)
-            primary_edit = QLineEdit(str(data.get("primary_color", "#000040") or "#000040"))
+            primary_edit = QLineEdit(str(data.get("primary_color", "#00A6A6") or "#00A6A6"))
+            primary_edit.setMaxLength(7)
+            primary_edit.setPlaceholderText("#00A6A6")
+            primary_swatch = QFrame()
+            primary_swatch.setFixedSize(34, 34)
+            choose_primary_btn = QPushButton("Escolher cor")
+            choose_primary_btn.setProperty("variant", "secondary")
+            primary_row = QWidget()
+            primary_row_layout = QHBoxLayout(primary_row)
+            primary_row_layout.setContentsMargins(0, 0, 0, 0)
+            primary_row_layout.setSpacing(8)
+            primary_row_layout.addWidget(primary_swatch)
+            primary_row_layout.addWidget(primary_edit, 1)
+            primary_row_layout.addWidget(choose_primary_btn)
             logo_scale_spin = QSpinBox()
             logo_scale_spin.setRange(50, 250)
             logo_scale_spin.setSingleStep(5)
@@ -1173,7 +1194,7 @@ class MainWindow(QMainWindow):
             guia_validation_edit = QLineEdit(str(data.get("guia_validation_code", "") or "").strip())
             brand_form.addRow("Logo", logo_row)
             brand_form.addRow("Escala logo PDF", logo_scale_spin)
-            brand_form.addRow("Cor principal", primary_edit)
+            brand_form.addRow("Cor dos documentos", primary_row)
             brand_form.addRow("Nome emitente", emit_name_edit)
             brand_form.addRow("NIF", emit_nif_edit)
             brand_form.addRow("Morada", emit_address_edit)
@@ -1213,8 +1234,27 @@ class MainWindow(QMainWindow):
                 if path:
                     logo_edit.setText(path)
 
+            def refresh_primary_swatch() -> None:
+                value = primary_edit.text().strip()
+                color = QColor(value)
+                valid = bool(color.isValid() and len(value) == 7 and value.startswith("#"))
+                fill = color.name() if valid else "#FFFFFF"
+                border = "#8A9AAA" if valid else "#B42318"
+                primary_swatch.setStyleSheet(f"background: {fill}; border: 1px solid {border}; border-radius: 4px;")
+
+            def choose_primary_color() -> None:
+                initial = QColor(primary_edit.text().strip())
+                if not initial.isValid():
+                    initial = QColor("#00A6A6")
+                selected = QColorDialog.getColor(initial, brand_dialog, "Cor dos documentos")
+                if selected.isValid():
+                    primary_edit.setText(selected.name().upper())
+
             use_default_logo_btn.clicked.connect(use_default_logo)
             browse_logo_btn.clicked.connect(browse_logo)
+            choose_primary_btn.clicked.connect(choose_primary_color)
+            primary_edit.textChanged.connect(refresh_primary_swatch)
+            refresh_primary_swatch()
 
             buttons_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
             buttons_box.button(QDialogButtonBox.Ok).setText("Guardar")
@@ -1226,7 +1266,7 @@ class MainWindow(QMainWindow):
             if brand_dialog.exec() != QDialog.Accepted:
                 return
             try:
-                saver_brand(
+                saved_branding = saver_brand(
                     {
                         "logo_path": logo_edit.text().strip(),
                         "logo_scale_pct": int(logo_scale_spin.value()),
@@ -1243,6 +1283,9 @@ class MainWindow(QMainWindow):
                         "guia_info_extra": extra_edit.toPlainText(),
                     }
                 )
+                app = QApplication.instance()
+                if app is not None:
+                    apply_theme(app, dict(saved_branding or {}))
             except Exception as exc:
                 QMessageBox.critical(brand_dialog, "Empresa / PDFs", str(exc))
                 return

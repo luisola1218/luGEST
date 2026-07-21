@@ -1,3 +1,7 @@
+param(
+    [switch]$Commercial
+)
+
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -5,10 +9,11 @@ $venvPython = Join-Path $repoRoot '.venv\Scripts\python.exe'
 $desktopRoot = Join-Path $env:USERPROFILE 'Desktop'
 $releaseDate = Get-Date
 $releaseDateTxt = $releaseDate.ToString('dd/MM/yyyy HH:mm')
-$releaseName = 'App LuisGEST - Revis' + [char]0x00E3 + 'o Final'
+$releaseName = if ($Commercial) { 'LuisGEST - Pacote Comercial Piloto' } else { 'App LuisGEST - Revis' + [char]0x00E3 + 'o Final' }
 $releaseRoot = Join-Path $desktopRoot $releaseName
 
 $envExample = Join-Path $repoRoot 'config\examples\lugest.env.example'
+$activeEnvFile = Join-Path $repoRoot 'lugest.env'
 $serverEnvExample = Join-Path $repoRoot 'config\examples\lugest.env.servidor.example'
 $postEnvExample = Join-Path $repoRoot 'config\examples\lugest.env.posto.example'
 $brandingFile = Join-Path $repoRoot 'lugest_branding.json'
@@ -21,6 +26,11 @@ $versionFile = Join-Path $repoRoot 'VERSION'
 $securityPlan = Join-Path $repoRoot 'docs\plans\SECURITY_TEST_PLAN.md'
 $localGuide = Join-Path $repoRoot 'docs\install\GUIA_ARRANQUE_QT_LOCAL.md'
 $updateGuide = Join-Path $repoRoot 'docs\install\UPDATE_FLOW_CLIENTE.md'
+$readinessGuide = Join-Path $repoRoot 'docs\install\PRONTIDAO_COMERCIAL.md'
+$preservedConfigRoot = Join-Path $env:TEMP ("lugest_release_config_" + [guid]::NewGuid().ToString('N'))
+$preservedEnv = Join-Path $preservedConfigRoot 'lugest.env'
+$preservedTrial = Join-Path $preservedConfigRoot 'lugest_trial.json'
+$preservedBackups = Join-Path $preservedConfigRoot 'Backups'
 
 function Resolve-DesktopExePath {
     foreach ($relativePath in @(
@@ -72,16 +82,34 @@ foreach ($requiredPath in @(
     $versionFile,
     $securityPlan,
     $localGuide,
-    $updateGuide
+    $updateGuide,
+    $readinessGuide
 )) {
     if (-not (Test-Path $requiredPath)) {
         throw "Falta ficheiro/pasta obrigatoria para a release: $requiredPath"
     }
 }
 
-Get-ChildItem $desktopRoot -ErrorAction SilentlyContinue |
-    Where-Object { $_.PSIsContainer -and $_.Name -like 'App LuisGEST*' } |
-    ForEach-Object { Remove-Item $_.FullName -Recurse -Force }
+$existingRelease = Get-ChildItem $desktopRoot -ErrorAction SilentlyContinue |
+    Where-Object { $_.PSIsContainer -and $_.Name -eq $releaseName } |
+    Select-Object -First 1
+if ($existingRelease -and -not $Commercial) {
+    New-Item -ItemType Directory -Force -Path $preservedConfigRoot | Out-Null
+    foreach ($name in @('lugest.env', 'lugest_trial.json')) {
+        $source = Join-Path $existingRelease.FullName $name
+        if (Test-Path $source) {
+            Copy-Item $source (Join-Path $preservedConfigRoot $name) -Force
+        }
+    }
+    $existingBackups = Join-Path $existingRelease.FullName 'Base de Dados\Backups'
+    if (Test-Path $existingBackups) {
+        Copy-Item $existingBackups $preservedBackups -Recurse -Force
+    }
+}
+
+if (Test-Path $releaseRoot) {
+    Remove-Item $releaseRoot -Recurse -Force
+}
 
 $dbDir = Join-Path $releaseRoot 'Base de Dados'
 $mysqlDir = Join-Path $dbDir 'mysql'
@@ -134,13 +162,44 @@ $trialTemplate = [ordered]@{
     notes = ''
 }
 $trialTemplate | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $releaseRoot 'lugest_trial.json') -Encoding UTF8
+if (-not $Commercial -and (Test-Path $preservedEnv)) {
+    $preservedHash = (Get-FileHash $preservedEnv -Algorithm SHA256).Hash
+    $exampleHash = (Get-FileHash $envExample -Algorithm SHA256).Hash
+    if ($preservedHash -ne $exampleHash) {
+        Copy-Item $preservedEnv (Join-Path $releaseRoot 'lugest.env') -Force
+    }
+    elseif (Test-Path $activeEnvFile) {
+        Copy-Item $activeEnvFile (Join-Path $releaseRoot 'lugest.env') -Force
+    }
+}
+elseif (-not $Commercial -and (Test-Path $activeEnvFile)) {
+    Copy-Item $activeEnvFile (Join-Path $releaseRoot 'lugest.env') -Force
+}
+if (-not $Commercial -and (Test-Path $preservedTrial)) {
+    Copy-Item $preservedTrial (Join-Path $releaseRoot 'lugest_trial.json') -Force
+}
+if (-not $Commercial -and (Test-Path $preservedBackups)) {
+    $releaseBackups = Join-Path $releaseRoot 'Base de Dados\Backups'
+    New-Item -ItemType Directory -Force -Path $releaseBackups | Out-Null
+    Copy-Item (Join-Path $preservedBackups '*') $releaseBackups -Recurse -Force
+}
+if (Test-Path $preservedConfigRoot) {
+    Remove-Item $preservedConfigRoot -Recurse -Force
+}
 
 $installer = @"
+param(
+    [string]`$InstallRoot = 'C:\LuisGEST',
+    [switch]`$NoShortcut,
+    [switch]`$NoPause
+)
+
 `$ErrorActionPreference = 'Stop'
 
 `$sourceRoot = Split-Path -Parent `$MyInvocation.MyCommand.Path
-`$installRoot = 'C:\LuisGEST'
+`$installRoot = `$InstallRoot
 `$desktopShortcut = Join-Path `$env:USERPROFILE 'Desktop\LuisGEST.lnk'
+`$preserveRoot = Join-Path `$env:TEMP ('lugest_install_' + [guid]::NewGuid().ToString('N'))
 
 if (-not (Test-Path (Join-Path `$sourceRoot 'LuisGEST.exe'))) {
     throw 'Esta pasta nao contem LuisGEST.exe.'
@@ -149,27 +208,42 @@ if (-not (Test-Path (Join-Path `$sourceRoot '_internal\PySide6'))) {
     throw 'Instalacao incompleta: falta a pasta _internal\PySide6. Copia a pasta LuisGEST completa.'
 }
 
-New-Item -ItemType Directory -Force -Path `$installRoot | Out-Null
-Get-ChildItem `$installRoot -Force -ErrorAction SilentlyContinue |
-    Where-Object { `$_.Name -notin @('generated', 'backups') } |
-    ForEach-Object { Remove-Item `$_.FullName -Recurse -Force }
+New-Item -ItemType Directory -Force -Path `$installRoot, `$preserveRoot | Out-Null
+foreach (`$name in @('lugest.env', 'lugest_trial.json', 'lugest_branding.json', 'lugest_qt_config.json', 'Logos')) {
+    `$existing = Join-Path `$installRoot `$name
+    if (Test-Path `$existing) {
+        Copy-Item `$existing (Join-Path `$preserveRoot `$name) -Recurse -Force
+    }
+}
+try {
+    Get-ChildItem `$installRoot -Force -ErrorAction SilentlyContinue |
+        Where-Object { `$_.Name -notin @('generated', 'backups') } |
+        ForEach-Object { Remove-Item `$_.FullName -Recurse -Force }
 
-Copy-Item -Path (Join-Path `$sourceRoot '*') -Destination `$installRoot -Recurse -Force
+    Copy-Item -Path (Join-Path `$sourceRoot '*') -Destination `$installRoot -Recurse -Force
+    Get-ChildItem `$preserveRoot -Force -ErrorAction SilentlyContinue |
+        ForEach-Object { Copy-Item `$_.FullName (Join-Path `$installRoot `$_.Name) -Recurse -Force }
+}
+finally {
+    Remove-Item `$preserveRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 
-`$shell = New-Object -ComObject WScript.Shell
-`$shortcut = `$shell.CreateShortcut(`$desktopShortcut)
-`$shortcut.TargetPath = Join-Path `$installRoot 'LuisGEST.exe'
-`$shortcut.WorkingDirectory = `$installRoot
-`$shortcut.IconLocation = Join-Path `$installRoot 'app.ico'
-`$shortcut.Description = 'LuisGEST ERP industrial'
-`$shortcut.Save()
+if (-not `$NoShortcut) {
+    `$shell = New-Object -ComObject WScript.Shell
+    `$shortcut = `$shell.CreateShortcut(`$desktopShortcut)
+    `$shortcut.TargetPath = Join-Path `$installRoot 'LuisGEST.exe'
+    `$shortcut.WorkingDirectory = `$installRoot
+    `$shortcut.IconLocation = Join-Path `$installRoot 'app.ico'
+    `$shortcut.Description = 'LuisGEST ERP industrial'
+    `$shortcut.Save()
+}
 
 Write-Host ''
-Write-Host 'LuisGEST instalado com sucesso em C:\LuisGEST'
-Write-Host 'Atalho criado no Ambiente de Trabalho: LuisGEST'
+Write-Host "LuisGEST instalado com sucesso em `$installRoot"
+if (-not `$NoShortcut) { Write-Host 'Atalho criado no Ambiente de Trabalho: LuisGEST' }
 Write-Host ''
-Write-Host 'Se este posto for cliente, confirma o ficheiro C:\LuisGEST\lugest.env com o IP/nome do servidor MySQL.'
-Pause
+Write-Host "Se este posto for cliente, confirma o ficheiro `$installRoot\lugest.env com o IP/nome do servidor MySQL."
+if (-not `$NoPause) { Pause }
 "@
 Write-Utf8NoBomFile -Path (Join-Path $releaseRoot 'INSTALAR_LUISGEST.ps1') -Content $installer
 
@@ -203,13 +277,14 @@ Write-Utf8NoBomFile -Path (Join-Path $mysqlDir 'README_BASE_DADOS.txt') -Content
 Copy-Item $securityPlan (Join-Path $docsDir 'CHECKLIST - Seguranca e Testes.md') -Force
 Copy-Item $localGuide (Join-Path $docsDir 'GUIA - Arranque Desktop Local.md') -Force
 Copy-Item $updateGuide (Join-Path $docsDir 'GUIA - Atualizacao Cliente.md') -Force
+Copy-Item $readinessGuide (Join-Path $docsDir 'PRONTIDAO COMERCIAL.md') -Force
 
 $readme = @"
 # LuisGEST Desktop
 
 Preparado em: $releaseDateTxt
 
-Esta pasta foi simplificada para testes no cliente. Nesta fase segue apenas a aplicacao desktop.
+Esta pasta contem a aplicacao desktop LuisGEST preparada para instalacao e validacao controlada.
 
 ## O que interessa
 - LuisGEST.exe: aplicacao principal.

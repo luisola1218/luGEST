@@ -93,6 +93,32 @@ def _runtime_data() -> dict:
     return {}
 
 
+def _load_mysql_qt_config() -> dict:
+    runtime_main = _load_runtime_main()
+    connect = getattr(runtime_main, "_mysql_connect", None) if runtime_main is not None else None
+    if not callable(connect):
+        return {}
+    conn = None
+    try:
+        conn = connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT cvalue FROM app_config WHERE ckey=%s LIMIT 1", ("qt_desktop_config",))
+            row = cur.fetchone()
+        raw = row.get("cvalue") if isinstance(row, dict) else (row[0] if row else "")
+        if isinstance(raw, (bytes, bytearray)):
+            raw = raw.decode("utf-8", errors="ignore")
+        payload = json.loads(str(raw or "{}"))
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
+
 def _is_weak_password(username: str, password: str) -> bool:
     runtime_main = _load_runtime_main()
     if (
@@ -164,13 +190,14 @@ def _audit_qt_config(findings: list[Finding]) -> None:
     cfg = _load_json(ROOT / "lugest_qt_config.json")
     ui_options = dict(cfg.get("ui_options", {}) or {})
     supervisor_password = str(ui_options.get("operator_supervisor_password", "") or "").strip()
+    supervisor_is_hash = False
     if runtime_main is not None and callable(getattr(runtime_main, "is_password_hash", None)):
         try:
             if runtime_main.is_password_hash(supervisor_password):
-                return
+                supervisor_is_hash = True
         except Exception:
             pass
-    if _is_weak_password("supervisor", supervisor_password):
+    if not supervisor_is_hash and _is_weak_password("supervisor", supervisor_password):
         findings.append(
             Finding(
                 "HIGH",
@@ -179,6 +206,32 @@ def _audit_qt_config(findings: list[Finding]) -> None:
                 ROOT / "lugest_qt_config.json",
             )
         )
+
+    for source, payload, path in (
+        ("ficheiro local", cfg, ROOT / "lugest_qt_config.json"),
+        ("configuracao central MySQL", _load_mysql_qt_config(), None),
+    ):
+        update_settings = dict(payload.get("update_settings", {}) or {})
+        github_token = str(update_settings.get("github_token", "") or "").strip()
+        if github_token:
+            findings.append(
+                Finding(
+                    "HIGH",
+                    "Atualizacoes",
+                    f"A {source} inclui um token GitHub em texto simples. Remover e revogar o token antes de distribuir.",
+                    path,
+                )
+            )
+        manifest_url = str(update_settings.get("manifest_url", "") or "").strip()
+        if re.match(r"^[A-Za-z]:\\", manifest_url):
+            findings.append(
+                Finding(
+                    "MEDIUM",
+                    "Atualizacoes",
+                    f"O manifesto da {source} aponta para um caminho absoluto desta maquina.",
+                    path,
+                )
+            )
 
 
 def _audit_env_files(findings: list[Finding]) -> None:

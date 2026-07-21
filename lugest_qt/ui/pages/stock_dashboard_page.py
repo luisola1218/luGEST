@@ -33,6 +33,14 @@ def _text(value: Any, fallback: str = "-") -> str:
     return raw or fallback
 
 
+def _money(value: Any) -> str:
+    try:
+        amount = float(value or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    return f"{amount:,.2f} EUR".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 def _tone_colors(tone: str) -> tuple[str, str]:
     tone_txt = str(tone or "default").strip().lower()
     if tone_txt == "danger":
@@ -68,8 +76,8 @@ def _paint_row(table: QTableWidget, row: int, tone: str) -> None:
 
 
 class StockDashboardPage(QWidget):
-    page_title = "Dashboard"
-    page_subtitle = "Visao operacional clara do estado das encomendas, stock, compras e logistica."
+    page_title = "Visão Executiva"
+    page_subtitle = "Património, compras, vendas e operação numa leitura única da empresa."
     uses_backend_reload = True
     allow_auto_timer_refresh = False
 
@@ -100,10 +108,10 @@ class StockDashboardPage(QWidget):
         title_col = QVBoxLayout()
         title_col.setContentsMargins(0, 0, 0, 0)
         title_col.setSpacing(3)
-        title = QLabel("Painel de comando")
+        title = QLabel("Cockpit de gestão")
         title.setStyleSheet("font-size: 20px; font-weight: 900; color: #0f172a;")
         subtitle = QLabel(
-            "Leitura rapida do que esta em curso, do que precisa de acao e do que impacta entregas e compras."
+            "Uma leitura auditável do valor da empresa, dos compromissos e da execução operacional."
         )
         subtitle.setProperty("role", "muted")
         subtitle.setWordWrap(True)
@@ -131,29 +139,117 @@ class StockDashboardPage(QWidget):
         self.export_btn = QPushButton("Exportar CSV")
         self.export_btn.setProperty("variant", "secondary")
         self.export_btn.clicked.connect(self._export_csv)
-        for widget in (
-            self.refresh_btn,
-            self.open_order_btn,
-            self.open_transport_btn,
-            self.create_note_btn,
-            self.export_btn,
-        ):
+        self.report_btn = QPushButton("Relatório PDF")
+        self.report_btn.setProperty("variant", "success")
+        self.report_btn.clicked.connect(self._open_company_report)
+        for widget in (self.report_btn, self.refresh_btn):
             widget.setProperty("toolbarAction", "true")
             widget.setMinimumHeight(36)
             top_row.addWidget(widget)
         toolbar_layout.addLayout(top_row)
 
+        command_row = QHBoxLayout()
+        command_row.setContentsMargins(0, 0, 0, 0)
+        command_row.setSpacing(8)
         self.updated_label = QLabel("Sem leitura carregada.")
         self.updated_label.setProperty("role", "muted")
-        toolbar_layout.addWidget(self.updated_label)
+        command_row.addWidget(self.updated_label, 1)
+        for widget in (self.open_order_btn, self.open_transport_btn, self.create_note_btn, self.export_btn):
+            widget.setProperty("toolbarAction", "true")
+            widget.setMinimumHeight(34)
+            command_row.addWidget(widget)
+        toolbar_layout.addLayout(command_row)
         root.addWidget(toolbar)
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
         root.addWidget(self.tabs, 1)
 
+        self._build_executive_tab()
         self._build_operation_tab()
         self._build_stock_tab()
+        self.tabs.currentChanged.connect(lambda _index: self._sync_actions())
+
+    def _build_executive_tab(self) -> None:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
+        cards_host = QWidget()
+        cards_layout = QGridLayout(cards_host)
+        cards_layout.setContentsMargins(0, 0, 0, 0)
+        cards_layout.setHorizontalSpacing(12)
+        cards_layout.setVerticalSpacing(12)
+        self.executive_cards = [StatCard(title) for title in (
+            "Património em stock",
+            "Compras recebidas",
+            "Compromissos abertos",
+            "Vendas registadas",
+            "Faturado",
+            "Saldo de clientes",
+        )]
+        for index, card in enumerate(self.executive_cards):
+            cards_layout.addWidget(card, index // 3, index % 3)
+        layout.addWidget(cards_host)
+
+        split = QSplitter(Qt.Horizontal)
+        split.setChildrenCollapsible(False)
+
+        value_card = CardFrame()
+        value_layout = QVBoxLayout(value_card)
+        value_layout.setContentsMargins(14, 12, 14, 12)
+        value_layout.setSpacing(8)
+        value_title = QLabel("Composição do património")
+        value_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
+        value_subtitle = QLabel("Valor físico atual, parcela disponível e stock reservado.")
+        value_subtitle.setProperty("role", "muted")
+        value_layout.addWidget(value_title)
+        value_layout.addWidget(value_subtitle)
+        self.value_table = self._build_table(["Componente", "Valor físico", "Disponível", "Reservado", "Critério"])
+        self.value_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.value_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.value_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.value_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.value_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        value_layout.addWidget(self.value_table, 1)
+        split.addWidget(value_card)
+
+        flow_card = CardFrame()
+        flow_layout = QVBoxLayout(flow_card)
+        flow_layout.setContentsMargins(14, 12, 14, 12)
+        flow_layout.setSpacing(8)
+        flow_title = QLabel("Movimento comercial e financeiro")
+        flow_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
+        flow_subtitle = QLabel("Compras, compromissos, faturação e cobrança no período selecionado.")
+        flow_subtitle.setProperty("role", "muted")
+        flow_layout.addWidget(flow_title)
+        flow_layout.addWidget(flow_subtitle)
+        self.flow_table = self._build_table(["Indicador", "Valor", "Leitura"])
+        self.flow_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.flow_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.flow_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        flow_layout.addWidget(self.flow_table, 1)
+        split.addWidget(flow_card)
+        split.setStretchFactor(0, 3)
+        split.setStretchFactor(1, 2)
+        layout.addWidget(split, 1)
+
+        quality_card = CardFrame()
+        quality_card.set_tone("info")
+        quality_layout = QHBoxLayout(quality_card)
+        quality_layout.setContentsMargins(14, 10, 14, 10)
+        quality_layout.setSpacing(12)
+        quality_title = QLabel("Qualidade da leitura")
+        quality_title.setStyleSheet("font-weight: 800; color: #0f172a;")
+        self.quality_label = QLabel("A aguardar dados.")
+        self.quality_label.setProperty("role", "muted")
+        self.quality_label.setWordWrap(True)
+        quality_layout.addWidget(quality_title)
+        quality_layout.addWidget(self.quality_label, 1)
+        layout.addWidget(quality_card)
+
+        self.tabs.addTab(page, "Visão Executiva")
 
     def _build_operation_tab(self) -> None:
         page = QWidget()
@@ -684,6 +780,48 @@ class StockDashboardPage(QWidget):
             self._clear_operational_detail()
 
     def _fill_finance(self) -> None:
+        executive_cards = list(self.finance_payload.get("executive_cards", []) or [])
+        for card, payload in zip(self.executive_cards, executive_cards):
+            card.set_data(_text(payload.get("value")), _text(payload.get("subtitle"), ""))
+            card.set_tone(_text(payload.get("tone"), "default"))
+        for card in self.executive_cards[len(executive_cards):]:
+            card.set_data("-", "")
+            card.set_tone("default")
+
+        value_rows = list(self.finance_payload.get("value_rows", []) or [])
+        self._fill_simple_table(
+            self.value_table,
+            value_rows,
+            [
+                lambda row: row.get("componente", "-"),
+                lambda row: _money(row.get("valor", 0)),
+                lambda row: _money(row.get("disponivel", 0)),
+                lambda row: _money(row.get("reservado", 0)),
+                lambda row: row.get("criterio", "-"),
+            ],
+        )
+        self._fill_simple_table(
+            self.flow_table,
+            list(self.finance_payload.get("flow_rows", []) or []),
+            [
+                lambda row: row.get("indicador", "-"),
+                lambda row: _money(row.get("valor", 0)),
+                lambda row: row.get("leitura", "-"),
+            ],
+        )
+        summary = dict(self.finance_payload.get("executive_summary", {}) or {})
+        missing_prices = int(summary.get("referencias_sem_preco", 0) or 0)
+        commitments = len(list(self.finance_payload.get("compromissos", []) or []))
+        quality_bits = [
+            f"Stock valorizado com os preços unitários atuais",
+            f"{commitments} linha(s) aprovada(s) por receber",
+        ]
+        if missing_prices:
+            quality_bits.append(f"atenção: {missing_prices} referência(s) com stock e sem preço")
+        else:
+            quality_bits.append("todas as referências em stock têm preço")
+        self.quality_label.setText(" | ".join(quality_bits) + ".")
+
         cards = list(self.finance_payload.get("cards", []) or [])
         for card, payload in zip(self.finance_cards, cards):
             card.set_data(_text(payload.get("value")), _text(payload.get("subtitle"), ""))
@@ -964,8 +1102,17 @@ class StockDashboardPage(QWidget):
             return
         QMessageBox.information(self, "Dashboard", f"CSV guardado em:\n{Path(path)}")
 
+    def _open_company_report(self) -> None:
+        year = str(self.year_combo.currentText() or "Todos").strip() or "Todos"
+        try:
+            self.backend.dashboard_open_company_report_pdf(year)
+        except Exception as exc:
+            QMessageBox.critical(self, "Relatório de Valor Empresarial", str(exc))
+
     def _current_export_table(self) -> tuple[QTableWidget | None, str]:
         if self.tabs.currentIndex() == 0:
+            return self.value_table, "dashboard_visao_executiva.csv"
+        if self.tabs.currentIndex() == 1:
             mapping = {
                 "radar": (self.order_table, "dashboard_operacao_radar.csv"),
                 "actions": (self.action_table, "dashboard_operacao_acoes.csv"),
@@ -984,6 +1131,6 @@ class StockDashboardPage(QWidget):
         selected_trip = self._selected_transport_number()
         has_transport = bool(selected_trip and selected_trip != "-")
         has_montagem = bool(self._current_montagem_row())
-        self.open_order_btn.setEnabled(has_order)
-        self.open_transport_btn.setEnabled(has_transport)
-        self.create_note_btn.setEnabled(has_montagem and self.tabs.currentIndex() == 1 and self._stock_view_key == "montagem")
+        self.open_order_btn.setEnabled(has_order and self.tabs.currentIndex() == 1)
+        self.open_transport_btn.setEnabled(has_transport and self.tabs.currentIndex() == 1)
+        self.create_note_btn.setEnabled(has_montagem and self.tabs.currentIndex() == 2 and self._stock_view_key == "montagem")

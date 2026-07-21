@@ -55,7 +55,6 @@ backups/                        copias locais, fora do Git
 - [Indice da documentacao](docs/README.md)
 - [Manual de operacao](docs/manual/MANUAL_OPERACAO_LUISGEST_PROFISSIONAL.md)
 - [Guia de arranque Qt local](docs/install/GUIA_ARRANQUE_QT_LOCAL.md)
-- [Guia de instalacao total](docs/install/GUIA_INSTALACAO_TOTAL.md)
 - [Plano de faturacao](docs/plans/FATURACAO_PLAN.md)
 - [Plano de conjuntos e montagem](docs/plans/CONJUNTOS_MONTAGEM_PLAN.md)
 - [Estrutura recomendada](docs/architecture/PROJECT_STRUCTURE.md)

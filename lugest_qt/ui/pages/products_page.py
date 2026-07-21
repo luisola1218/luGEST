@@ -189,8 +189,9 @@ class ProductsPage(QWidget):
         search_icon.setAlignment(Qt.AlignCenter)
         search_icon.setStyleSheet("font-size: 15px; color: #33516f;")
         self.filter_edit = QLineEdit()
-        self.filter_edit.setPlaceholderText("Pesquisar codigo, descricao, categoria, subcategoria ou tipo...")
+        self.filter_edit.setPlaceholderText("Pesquisar ou picar PRD|...")
         self.filter_edit.textChanged.connect(lambda _text: self._product_filter_timer.start(180))
+        self.filter_edit.returnPressed.connect(self._select_scanned_product)
         search_layout.addWidget(search_icon)
         search_layout.addWidget(self.filter_edit, 1)
         top_bar.addWidget(search_box)
@@ -258,7 +259,7 @@ class ProductsPage(QWidget):
         self.consume_btn = QPushButton("Baixa")
         self.consume_btn.setProperty("variant", "secondary")
         self.consume_btn.clicked.connect(self._consume_product)
-        self.pdf_btn = QPushButton("PDF")
+        self.pdf_btn = QPushButton("Ficha PDF")
         self.pdf_btn.setProperty("variant", "secondary")
         self.pdf_btn.clicked.connect(self._open_pdf)
         self.label_btn = QPushButton("Etiqueta")
@@ -278,7 +279,7 @@ class ProductsPage(QWidget):
             (self.save_btn, 86),
             (self.remove_btn, 88),
             (self.consume_btn, 78),
-            (self.pdf_btn, 66),
+            (self.pdf_btn, 96),
             (self.label_btn, 82),
             (self.form_mode_btn, 72),
             (self.moves_mode_btn, 72),
@@ -505,6 +506,35 @@ class ProductsPage(QWidget):
         self.only_stock_check.setChecked(False)
         self.only_stock_check.blockSignals(False)
         self.refresh()
+
+    def _select_scanned_product(self) -> None:
+        value = self.filter_edit.text().strip()
+        if not value:
+            return
+        try:
+            result = self.backend.inventory_scan_lookup(value, expected_type="PRD")
+        except Exception as exc:
+            if "|" in value or re.fullmatch(r"PRD[-_A-Z0-9]+", value, flags=re.IGNORECASE):
+                QMessageBox.warning(self, "Picagem", str(exc))
+            return
+        self.current_code = str(result.get("entity_id", "") or "").strip()
+        self.filter_edit.blockSignals(True)
+        self.filter_edit.clear()
+        self.filter_edit.blockSignals(False)
+        for combo, value in (
+            (self.filter_category_combo, "Todas"),
+            (self.filter_subcat_combo, "Todas"),
+            (self.filter_type_combo, "Todas"),
+            (self.filter_state_combo, "Todos"),
+        ):
+            combo.blockSignals(True)
+            combo.setCurrentText(value)
+            combo.blockSignals(False)
+        self.only_stock_check.blockSignals(True)
+        self.only_stock_check.setChecked(False)
+        self.only_stock_check.blockSignals(False)
+        self.refresh()
+        self.table.setFocus()
 
     def _filter_combo_text(self, combo: QComboBox) -> str:
         text = str(combo.currentText() or "").strip()
@@ -799,7 +829,7 @@ class ProductsPage(QWidget):
         search_icon.setAlignment(Qt.AlignCenter)
         search_icon.setStyleSheet("font-size: 15px; color: #33516f;")
         search_edit = QLineEdit()
-        search_edit.setPlaceholderText("Pesquisar por codigo, descricao, categoria, tipo, dimensao, fabricante, modelo, stock...")
+        search_edit.setPlaceholderText("Pesquisar ou picar PRD|... por codigo, descricao, categoria, tipo, dimensao...")
         search_layout.addWidget(search_icon)
         search_layout.addWidget(search_edit, 1)
         layout.addWidget(search_box)
@@ -907,8 +937,29 @@ class ProductsPage(QWidget):
             elif table.rowCount() > 0:
                 table.selectRow(0)
 
+        def select_scanned_product() -> None:
+            value = search_edit.text().strip()
+            try:
+                result = self.backend.inventory_scan_lookup(value, expected_type="PRD")
+            except ValueError as exc:
+                if "|" in value or re.fullmatch(r"PRD[-_A-Z0-9]+", value, flags=re.IGNORECASE):
+                    QMessageBox.warning(dialog, "Codigo de picagem", str(exc))
+                return
+            code = str(result.get("entity_id", "") or "").strip()
+            self.current_code = code
+            search_edit.setText(code)
+            render_full_grid()
+            for row_index in range(table.rowCount()):
+                item = table.item(row_index, 0)
+                if item is not None and item.text().strip().upper() == code.upper():
+                    table.selectRow(row_index)
+                    table.scrollToItem(item)
+                    table.setFocus()
+                    break
+
         render_timer.timeout.connect(render_full_grid)
         search_edit.textChanged.connect(lambda _text: render_timer.start(180))
+        search_edit.returnPressed.connect(select_scanned_product)
         render_full_grid()
         search_edit.setFocus()
         table.itemDoubleClicked.connect(lambda *_args: dialog.accept())
@@ -1033,8 +1084,12 @@ class ProductsPage(QWidget):
         self._show_moves_page()
 
     def _open_pdf(self) -> None:
+        code = self.code_edit.text().strip() or self.current_code
+        if not code:
+            QMessageBox.warning(self, "Produtos", "Seleciona um produto.")
+            return
         try:
-            self.backend.product_open_stock_pdf()
+            self.backend.product_open_sheet_pdf(code)
         except Exception as exc:
             QMessageBox.critical(self, "Produtos", str(exc))
 

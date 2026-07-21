@@ -1,6 +1,9 @@
 ﻿from __future__ import annotations
 
 from datetime import date, datetime
+import os
+from pathlib import Path
+import tempfile
 from typing import Any
 
 
@@ -12,6 +15,8 @@ class DashboardBridgeMixin:
         year_filter = str(ano or "Todos").strip()
         all_years: set[str] = set()
         valor_produtos = 0.0
+        valor_produtos_disponivel = 0.0
+        valor_produtos_reservado = 0.0
         compras_produtos_total = 0.0
         compras_materias_total = 0.0
         compras_fornecedor_totais: dict[str, float] = {}
@@ -23,17 +28,27 @@ class DashboardBridgeMixin:
                 continue
             price_unit = self._parse_float(self.desktop_main.produto_preco_unitario(prod), 0)
             total = round(qty * price_unit, 2)
+            reserved_qty = min(qty, max(0.0, self._parse_float(prod.get("reservado", prod.get("reserved", 0)), 0)))
+            available_qty = max(0.0, qty - reserved_qty)
             valor_produtos += total
+            valor_produtos_disponivel += round(available_qty * price_unit, 2)
+            valor_produtos_reservado += round(reserved_qty * price_unit, 2)
             produtos_rows.append(
                 {
                     "codigo": str(prod.get("codigo", "") or "").strip(),
                     "descricao": str(prod.get("descricao", "") or "").strip(),
                     "qty": round(qty, 2),
+                    "reservado": round(reserved_qty, 2),
+                    "disponivel": round(available_qty, 2),
                     "preco_unid": round(price_unit, 4),
                     "valor": total,
+                    "categoria": str(prod.get("categoria", "") or "").strip(),
+                    "localizacao": str(prod.get("localizacao", "") or "").strip(),
                 }
             )
         valor_materias = 0.0
+        valor_materias_disponivel = 0.0
+        valor_materias_reservado = 0.0
         materias_rows = []
         for mat in list(data.get("materiais", []) or []):
             qty = self._parse_float(mat.get("quantidade", 0), 0)
@@ -41,21 +56,33 @@ class DashboardBridgeMixin:
                 continue
             price_unit = self._parse_float(self.materia_actions._materia_preco_unid_record(mat), 0)
             total = round(qty * price_unit, 2)
+            reserved_qty = min(qty, max(0.0, self._parse_float(mat.get("reservado", 0), 0)))
+            available_qty = max(0.0, qty - reserved_qty)
             valor_materias += total
+            valor_materias_disponivel += round(available_qty * price_unit, 2)
+            valor_materias_reservado += round(reserved_qty * price_unit, 2)
             materias_rows.append(
                 {
                     "id": str(mat.get("id", "") or "").strip(),
                     "material": str(mat.get("material", "") or "").strip(),
                     "espessura": str(mat.get("espessura", "") or "").strip(),
                     "qty": round(qty, 2),
+                    "reservado": round(reserved_qty, 2),
+                    "disponivel": round(available_qty, 2),
                     "preco_unid": round(price_unit, 4),
                     "valor": total,
+                    "tipo": str(mat.get("tipo", mat.get("formato", "")) or "").strip(),
+                    "dimensao": str(mat.get("dimensao", mat.get("seccao", "")) or "").strip(),
+                    "localizacao": str(mat.get("localizacao", "") or "").strip(),
+                    "lote": str(mat.get("lote", mat.get("lote_interno", "")) or "").strip(),
                 }
             )
         compras_rows = []
         compras_materias_rows = []
         compras_produtos_rows = []
         valor_ne_aprovadas = 0.0
+        compromissos_total = 0.0
+        compromissos_rows: list[dict[str, Any]] = []
         for note in list(data.get("notas_encomenda", []) or []):
             estado_txt = str(note.get("estado", "") or "").strip()
             estado_norm = self.desktop_main.norm_text(estado_txt)
@@ -69,7 +96,26 @@ class DashboardBridgeMixin:
             for line in list(note.get("linhas", []) or []):
                 qtd_tot = self._parse_float(line.get("qtd", 0), 0)
                 qtd_ent = self._parse_float(line.get("qtd_entregue", 0), 0)
+                preco = self._parse_float(line.get("preco", 0), 0)
                 entregue = bool(line.get("entregue") or line.get("_stock_in"))
+                received_for_commitment = qtd_ent if qtd_ent > 0 else (qtd_tot if entregue else 0.0)
+                remaining_qty = max(0.0, qtd_tot - received_for_commitment)
+                note_matches_year = year_filter.lower() in ("todos", "todas", "all", "") or note_year == year_filter
+                if "aprov" in estado_norm and remaining_qty > 0 and note_matches_year:
+                    remaining_total = round(remaining_qty * preco, 2)
+                    compromissos_total += remaining_total
+                    compromissos_rows.append(
+                        {
+                            "ne": str(note.get("numero", "") or "").strip(),
+                            "fornecedor": str(note.get("fornecedor", "") or "").strip(),
+                            "artigo": str(line.get("descricao", "") or line.get("ref", "") or "").strip(),
+                            "qtd_pendente": round(remaining_qty, 2),
+                            "preco": round(preco, 4),
+                            "total": remaining_total,
+                            "entrega": str(line.get("data_entrega", "") or note.get("data_entrega", "") or "").strip(),
+                            "estado": estado_txt,
+                        }
+                    )
                 qtd_hist = qtd_ent if qtd_ent > 0 else (qtd_tot if entregue else 0.0)
                 if qtd_hist <= 0:
                     continue
@@ -79,7 +125,6 @@ class DashboardBridgeMixin:
                     all_years.add(line_year)
                 if year_filter.lower() not in ("todos", "todas", "all", "") and line_year != year_filter:
                     continue
-                preco = self._parse_float(line.get("preco", 0), 0)
                 total_l = round(qtd_hist * preco, 2)
                 compras_rows.append(
                     {
@@ -188,6 +233,21 @@ class DashboardBridgeMixin:
             key=lambda item: str(item.get("mes", "") or ""),
             reverse=True,
         )
+        compromissos_rows.sort(key=lambda item: (str(item.get("entrega", "") or "9999-99-99"), str(item.get("ne", "") or "")))
+        billing_rows = list(self.billing_rows("", "Todas", year_filter or "Todos") or [])
+        for row in billing_rows:
+            sale_date = str(row.get("data_venda", "") or "").strip()
+            if len(sale_date) >= 4 and sale_date[:4].isdigit():
+                all_years.add(sale_date[:4])
+        vendido_total = round(sum(self._parse_float(row.get("vendido", 0), 0) for row in billing_rows), 2)
+        faturado_total = round(sum(self._parse_float(row.get("faturado", 0), 0) for row in billing_rows), 2)
+        recebido_total = round(sum(self._parse_float(row.get("recebido", 0), 0) for row in billing_rows), 2)
+        saldo_clientes = round(sum(self._parse_float(row.get("saldo", 0), 0) for row in billing_rows), 2)
+        compras_total = round(compras_materias_total + compras_produtos_total, 2)
+        stock_total = round(valor_materias + valor_produtos, 2)
+        stock_disponivel = round(valor_materias_disponivel + valor_produtos_disponivel, 2)
+        stock_reservado = round(valor_materias_reservado + valor_produtos_reservado, 2)
+        referencias_sem_preco = sum(1 for row in materias_rows + produtos_rows if self._parse_float(row.get("preco_unid", 0), 0) <= 0)
         subtitle_suffix = f"Ano {year_filter}" if year_filter.lower() not in ("todos", "todas", "all", "") else "Todos os anos"
         return {
             "cards": [
@@ -195,21 +255,100 @@ class DashboardBridgeMixin:
                 {"title": "Stock Produtos", "value": self._fmt_eur(valor_produtos), "subtitle": f"{len(data.get('produtos', []))} refs | montagem {len(montagem_alertas)}", "tone": "success"},
                 {"title": "Compras MP", "value": self._fmt_eur(compras_materias_total), "subtitle": subtitle_suffix, "tone": "warning"},
                 {"title": "Compras Produtos", "value": self._fmt_eur(compras_produtos_total), "subtitle": subtitle_suffix, "tone": "success"},
-                {"title": "Stock Total", "value": self._fmt_eur(valor_produtos + valor_materias), "subtitle": "Matéria-prima + produto acabado", "tone": "info"},
+                {"title": "Stock Total", "value": self._fmt_eur(stock_total), "subtitle": "Matéria-prima + produto acabado", "tone": "info"},
                 {"title": "NE Aprovadas", "value": self._fmt_eur(valor_ne_aprovadas), "subtitle": subtitle_suffix, "tone": "default"},
+            ],
+            "executive_cards": [
+                {"title": "Património em stock", "value": self._fmt_eur(stock_total), "subtitle": f"Disponível {self._fmt_eur(stock_disponivel)}", "tone": "info"},
+                {"title": "Compras recebidas", "value": self._fmt_eur(compras_total), "subtitle": subtitle_suffix, "tone": "warning"},
+                {"title": "Compromissos abertos", "value": self._fmt_eur(compromissos_total), "subtitle": f"{len(compromissos_rows)} linhas por receber", "tone": "warning" if compromissos_total else "success"},
+                {"title": "Vendas registadas", "value": self._fmt_eur(vendido_total), "subtitle": subtitle_suffix, "tone": "success"},
+                {"title": "Faturado", "value": self._fmt_eur(faturado_total), "subtitle": f"Recebido {self._fmt_eur(recebido_total)}", "tone": "info"},
+                {"title": "Saldo de clientes", "value": self._fmt_eur(saldo_clientes), "subtitle": f"{sum(1 for row in billing_rows if self._parse_float(row.get('saldo', 0), 0) > 0)} registos em aberto", "tone": "danger" if saldo_clientes else "success"},
+            ],
+            "executive_summary": {
+                "stock_total": stock_total,
+                "stock_disponivel": stock_disponivel,
+                "stock_reservado": stock_reservado,
+                "stock_materias": round(valor_materias, 2),
+                "stock_produtos": round(valor_produtos, 2),
+                "compras_total": compras_total,
+                "compras_materias": round(compras_materias_total, 2),
+                "compras_produtos": round(compras_produtos_total, 2),
+                "compromissos_total": round(compromissos_total, 2),
+                "ne_aprovadas": round(valor_ne_aprovadas, 2),
+                "vendido_total": vendido_total,
+                "faturado_total": faturado_total,
+                "recebido_total": recebido_total,
+                "saldo_clientes": saldo_clientes,
+                "referencias_sem_preco": referencias_sem_preco,
+                "periodo": subtitle_suffix,
+            },
+            "value_rows": [
+                {"componente": "Matéria-prima", "valor": round(valor_materias, 2), "disponivel": round(valor_materias_disponivel, 2), "reservado": round(valor_materias_reservado, 2), "criterio": "Qtd. física x preço unitário atual"},
+                {"componente": "Produto acabado", "valor": round(valor_produtos, 2), "disponivel": round(valor_produtos_disponivel, 2), "reservado": round(valor_produtos_reservado, 2), "criterio": "Stock físico x preço unitário atual"},
+                {"componente": "Total em stock", "valor": stock_total, "disponivel": stock_disponivel, "reservado": stock_reservado, "criterio": "MP + produto acabado"},
+            ],
+            "flow_rows": [
+                {"indicador": "Compras recebidas", "valor": compras_total, "leitura": subtitle_suffix},
+                {"indicador": "Compromissos por receber", "valor": round(compromissos_total, 2), "leitura": "Linhas aprovadas ainda não rececionadas"},
+                {"indicador": "Vendas registadas", "valor": vendido_total, "leitura": subtitle_suffix},
+                {"indicador": "Faturado", "valor": faturado_total, "leitura": subtitle_suffix},
+                {"indicador": "Recebido", "valor": recebido_total, "leitura": subtitle_suffix},
+                {"indicador": "Saldo de clientes", "valor": saldo_clientes, "leitura": "Faturado ainda não recebido"},
             ],
             "order_status": [{"estado": key, "total": value} for key, value in status_counts.items()],
             "top_materias": materias_rows[:10],
             "top_produtos": produtos_rows[:10],
+            "materias": materias_rows,
+            "produtos": produtos_rows,
             "compras": compras_rows,
             "compras_materias": compras_materias_rows,
             "compras_produtos": compras_produtos_rows,
             "compras_por_fornecedor": compras_fornecedor_rows[:12],
             "compras_por_mes": compras_mes_rows[:12],
+            "compromissos": compromissos_rows,
+            "billing_rows": billing_rows,
             "montagem_alertas": montagem_alertas[:12],
             "years": sorted(all_years, reverse=True),
             "selected_year": year_filter or "Todos",
         }
+
+    def dashboard_render_company_report_pdf(self, ano: str = "Todos", output_path: str = "") -> Path:
+        from lugest_infra.pdf.company_report import render_company_value_report
+
+        payload = self.finance_dashboard(ano)
+        if output_path:
+            path = Path(output_path)
+        else:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            path = Path(tempfile.gettempdir()) / f"lugest_relatorio_empresarial_{stamp}.pdf"
+        return render_company_value_report(self, path, payload)
+
+    def dashboard_open_company_report_pdf(self, ano: str = "Todos") -> Path:
+        path = self.dashboard_render_company_report_pdf(ano)
+        os.startfile(str(path))
+        return path
+
+    def dashboard_render_pulse_report_pdf(
+        self,
+        payload: dict[str, Any],
+        scope: dict[str, Any] | None = None,
+        output_path: str = "",
+    ) -> Path:
+        from lugest_infra.pdf.company_report import render_pulse_performance_report
+
+        if output_path:
+            path = Path(output_path)
+        else:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            path = Path(tempfile.gettempdir()) / f"lugest_pulse_oee_{stamp}.pdf"
+        return render_pulse_performance_report(self, path, dict(payload or {}), dict(scope or {}))
+
+    def dashboard_open_pulse_report_pdf(self, payload: dict[str, Any], scope: dict[str, Any] | None = None) -> Path:
+        path = self.dashboard_render_pulse_report_pdf(payload, scope)
+        os.startfile(str(path))
+        return path
 
     def operational_dashboard(self, ano: str = "Todos") -> dict[str, Any]:
         data = self.ensure_data()

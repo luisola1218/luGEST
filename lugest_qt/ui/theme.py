@@ -15,6 +15,9 @@ def _shade(color_hex: str, factor: float) -> str:
 
 def apply_theme(app: QApplication, branding: dict) -> None:
     primary = str(branding.get("primary_color") or "#0b1f66").strip() or "#0b1f66"
+    primary_color = QColor(primary)
+    primary_luminance = (primary_color.red() * 0.299) + (primary_color.green() * 0.587) + (primary_color.blue() * 0.114)
+    primary_text = "#0b1f33" if primary_luminance >= 165 else "#ffffff"
     primary_dark = _shade(primary, 0.82)
     primary_soft = _shade(primary, 1.65)
     primary_surface = _shade(primary, 1.9)
@@ -109,7 +112,7 @@ def apply_theme(app: QApplication, branding: dict) -> None:
                 stop:0 {primary_soft},
                 stop:0.12 {primary},
                 stop:1 {primary_dark});
-            color: #ffffff;
+            color: {primary_text};
             border: 1px solid {primary_dark};
             border-bottom: 2px solid #071b48;
             border-radius: 9px;
@@ -363,7 +366,7 @@ def apply_theme(app: QApplication, branding: dict) -> None:
         }}
         QLabel[role="badge"] {{
             background: {primary};
-            color: #ffffff;
+            color: {primary_text};
             border-radius: 999px;
             padding: 5px 11px;
             font-weight: 700;
@@ -410,7 +413,7 @@ def apply_theme(app: QApplication, branding: dict) -> None:
         }}
         QHeaderView::section {{
             background: {primary};
-            color: #ffffff;
+            color: {primary_text};
             border: 0;
             padding: 8px 6px;
             font-weight: 700;

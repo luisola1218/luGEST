@@ -15,7 +15,7 @@ def main() -> int:
 
     from PySide6.QtWidgets import QApplication
 
-    from lugest_qt.services.main_bridge import LegacyBackend
+    from lugest_qt.services.legacy_backend import LegacyBackend
     from lugest_qt.services.runtime_service import RuntimeService
     from lugest_qt.ui.main_window import MainWindow
 
@@ -26,10 +26,13 @@ def main() -> int:
     data = backend.ensure_data()
     initial_load_sec = time.perf_counter() - start
 
-    backend.user = next(
-        (row for row in data.get("users", []) if isinstance(row, dict)),
-        {"username": "verify", "role": "admin"},
-    )
+    backend.user = {
+        **next(
+            (row for row in data.get("users", []) if isinstance(row, dict)),
+            {"username": "verify", "role": "admin"},
+        ),
+        "owner_session": True,
+    }
     window = MainWindow(backend, RuntimeService())
 
     page_keys = [

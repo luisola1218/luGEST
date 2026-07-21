@@ -16,6 +16,7 @@ SCRIPTS = [
     "scripts/verify_shipping_flow.py",
     "scripts/verify_shipping_edge_cases.py",
     "scripts/verify_pulse_flow.py",
+    "scripts/verify_management_reports.py",
     "scripts/verify_opp_dashboard_flow.py",
 ]
 

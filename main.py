@@ -2201,13 +2201,16 @@ def _mysql_sync_relational_schema(cur, data):
             """
             CREATE TABLE IF NOT EXISTS conjuntos_modelo (
                 codigo VARCHAR(40) PRIMARY KEY,
+                param_codigo VARCHAR(4) NULL,
                 descricao VARCHAR(150) NOT NULL,
                 notas TEXT NULL,
                 ativo BOOLEAN NULL,
                 template BOOLEAN NULL,
                 origem VARCHAR(80) NULL,
+                ficha_tecnica_json LONGTEXT NULL,
                 created_at DATETIME NULL,
-                updated_at DATETIME NULL
+                updated_at DATETIME NULL,
+                INDEX idx_conjuntos_modelo_param (param_codigo)
             )
             """
         )
@@ -2216,6 +2219,7 @@ def _mysql_sync_relational_schema(cur, data):
             """
             CREATE TABLE IF NOT EXISTS conjuntos (
                 codigo VARCHAR(40) PRIMARY KEY,
+                param_codigo VARCHAR(4) NULL,
                 descricao VARCHAR(150) NOT NULL,
                 notas TEXT NULL,
                 ativo BOOLEAN NULL,
@@ -2224,8 +2228,11 @@ def _mysql_sync_relational_schema(cur, data):
                 margem_perc DECIMAL(10,2) NULL,
                 total_custo DECIMAL(12,2) NULL,
                 total_final DECIMAL(12,2) NULL,
+                ficha_tecnica_json LONGTEXT NULL,
+                precos_atualizados_em DATETIME NULL,
                 created_at DATETIME NULL,
-                updated_at DATETIME NULL
+                updated_at DATETIME NULL,
+                INDEX idx_conjuntos_param (param_codigo)
             )
             """
         )
@@ -2839,14 +2846,18 @@ def _mysql_sync_relational_schema(cur, data):
     if "app_config" in tables:
         cur.execute("DELETE FROM app_config WHERE ckey=%s", ("quality_runtime",))
     if "conjuntos_modelo" in tables:
+        _mysql_ensure_column(cur, "conjuntos_modelo", "param_codigo", "VARCHAR(4) NULL")
         _mysql_ensure_column(cur, "conjuntos_modelo", "descricao", "VARCHAR(150) NOT NULL")
         _mysql_ensure_column(cur, "conjuntos_modelo", "notas", "TEXT NULL")
         _mysql_ensure_column(cur, "conjuntos_modelo", "ativo", "BOOLEAN NULL")
         _mysql_ensure_column(cur, "conjuntos_modelo", "template", "BOOLEAN NULL")
         _mysql_ensure_column(cur, "conjuntos_modelo", "origem", "VARCHAR(80) NULL")
+        _mysql_ensure_column(cur, "conjuntos_modelo", "ficha_tecnica_json", "LONGTEXT NULL")
         _mysql_ensure_column(cur, "conjuntos_modelo", "created_at", "DATETIME NULL")
         _mysql_ensure_column(cur, "conjuntos_modelo", "updated_at", "DATETIME NULL")
+        _mysql_ensure_index(cur, "conjuntos_modelo", "idx_conjuntos_modelo_param", "`param_codigo`")
     if "conjuntos" in tables:
+        _mysql_ensure_column(cur, "conjuntos", "param_codigo", "VARCHAR(4) NULL")
         _mysql_ensure_column(cur, "conjuntos", "descricao", "VARCHAR(150) NOT NULL")
         _mysql_ensure_column(cur, "conjuntos", "notas", "TEXT NULL")
         _mysql_ensure_column(cur, "conjuntos", "ativo", "BOOLEAN NULL")
@@ -2855,8 +2866,11 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "conjuntos", "margem_perc", "DECIMAL(10,2) NULL")
         _mysql_ensure_column(cur, "conjuntos", "total_custo", "DECIMAL(12,2) NULL")
         _mysql_ensure_column(cur, "conjuntos", "total_final", "DECIMAL(12,2) NULL")
+        _mysql_ensure_column(cur, "conjuntos", "ficha_tecnica_json", "LONGTEXT NULL")
+        _mysql_ensure_column(cur, "conjuntos", "precos_atualizados_em", "DATETIME NULL")
         _mysql_ensure_column(cur, "conjuntos", "created_at", "DATETIME NULL")
         _mysql_ensure_column(cur, "conjuntos", "updated_at", "DATETIME NULL")
+        _mysql_ensure_index(cur, "conjuntos", "idx_conjuntos_param", "`param_codigo`")
     if "conjuntos_itens" in tables:
         _mysql_ensure_column(cur, "conjuntos_itens", "linha_ordem", "INT NULL")
         _mysql_ensure_column(cur, "conjuntos_itens", "tipo_item", "VARCHAR(30) NULL")
@@ -3364,16 +3378,18 @@ def _mysql_sync_relational_schema(cur, data):
             cur.execute(
                 """
                 INSERT INTO conjuntos_modelo (
-                    codigo, descricao, notas, ativo, template, origem, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    codigo, param_codigo, descricao, notas, ativo, template, origem, ficha_tecnica_json, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     codigo,
+                    _clip(model.get("param_codigo"), 4),
                     _clip(model.get("descricao"), 150) or codigo,
                     model.get("notas"),
                     1 if _to_bool(model.get("ativo", True)) else 0,
                     1 if _to_bool(model.get("template", False)) else 0,
                     _clip(model.get("origem"), 80),
+                    json.dumps(dict(model.get("ficha_tecnica", {}) or {}), ensure_ascii=False),
                     _to_mysql_datetime(model.get("created_at") or now_iso()),
                     _to_mysql_datetime(model.get("updated_at") or now_iso()),
                 ),
@@ -3434,6 +3450,22 @@ def _mysql_sync_relational_schema(cur, data):
                                         "price_base_label",
                                         "material_family",
                                         "material_subtype",
+                                        "operacoes_lista",
+                                        "operacoes_fluxo",
+                                        "operacoes_detalhe",
+                                        "tempos_operacao",
+                                        "custos_operacao",
+                                        "quote_cost_snapshot",
+                                        "laser_base_active",
+                                        "laser_base_tempo_unit",
+                                        "laser_base_preco_unit",
+                                        "source_quote_number",
+                                        "source_ref_externa",
+                                        "pricing_source",
+                                        "pricing_source_ref",
+                                        "pricing_linked",
+                                        "preco_anterior",
+                                        "preco_atualizado_em",
                                         "material_supplied_by_client",
                                         "material_fornecido_cliente",
                                         "exclude_material_cost",
@@ -3462,11 +3494,13 @@ def _mysql_sync_relational_schema(cur, data):
             cur.execute(
                 """
                 INSERT INTO conjuntos (
-                    codigo, descricao, notas, ativo, template, origem, margem_perc, total_custo, total_final, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    codigo, param_codigo, descricao, notas, ativo, template, origem, margem_perc, total_custo, total_final,
+                    ficha_tecnica_json, precos_atualizados_em, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     codigo,
+                    _clip(model.get("param_codigo"), 4),
                     _clip(model.get("descricao"), 150) or codigo,
                     model.get("notas"),
                     1 if _to_bool(model.get("ativo", True)) else 0,
@@ -3475,6 +3509,8 @@ def _mysql_sync_relational_schema(cur, data):
                     _to_num(model.get("margem_perc")),
                     _to_num(model.get("total_custo")),
                     _to_num(model.get("total_final")),
+                    json.dumps(dict(model.get("ficha_tecnica", {}) or {}), ensure_ascii=False),
+                    _to_mysql_datetime(model.get("precos_atualizados_em")),
                     _to_mysql_datetime(model.get("created_at") or now_iso()),
                     _to_mysql_datetime(model.get("updated_at") or now_iso()),
                 ),
@@ -3535,6 +3571,22 @@ def _mysql_sync_relational_schema(cur, data):
                                         "price_base_label",
                                         "material_family",
                                         "material_subtype",
+                                        "operacoes_lista",
+                                        "operacoes_fluxo",
+                                        "operacoes_detalhe",
+                                        "tempos_operacao",
+                                        "custos_operacao",
+                                        "quote_cost_snapshot",
+                                        "laser_base_active",
+                                        "laser_base_tempo_unit",
+                                        "laser_base_preco_unit",
+                                        "source_quote_number",
+                                        "source_ref_externa",
+                                        "pricing_source",
+                                        "pricing_source_ref",
+                                        "pricing_linked",
+                                        "preco_anterior",
+                                        "preco_atualizado_em",
                                     )
                                     if item.get(key) not in (None, "", [], {})
                                 },
@@ -4998,13 +5050,22 @@ def _mysql_load_relational_data():
                 codigo = str(row.get("codigo", "") or "").strip()
                 if not codigo:
                     continue
+                ficha_tecnica = {}
+                try:
+                    parsed_ficha = json.loads(row.get("ficha_tecnica_json") or "{}")
+                    if isinstance(parsed_ficha, dict):
+                        ficha_tecnica = parsed_ficha
+                except Exception:
+                    ficha_tecnica = {}
                 modelos_map[codigo] = {
                     "codigo": codigo,
+                    "param_codigo": str(row.get("param_codigo", "") or "").strip(),
                     "descricao": str(row.get("descricao", "") or "").strip() or codigo,
                     "notas": str(row.get("notas", "") or "").strip(),
                     "ativo": bool(row.get("ativo")) if row.get("ativo") is not None else True,
                     "template": bool(row.get("template")) if row.get("template") is not None else False,
                     "origem": str(row.get("origem", "") or "").strip(),
+                    "ficha_tecnica": ficha_tecnica,
                     "created_at": _db_to_iso(row.get("created_at")),
                     "updated_at": _db_to_iso(row.get("updated_at")),
                     "itens": [],
@@ -5062,8 +5123,16 @@ def _mysql_load_relational_data():
                 codigo = str(row.get("codigo", "") or "").strip()
                 if not codigo:
                     continue
+                ficha_tecnica = {}
+                try:
+                    parsed_ficha = json.loads(row.get("ficha_tecnica_json") or "{}")
+                    if isinstance(parsed_ficha, dict):
+                        ficha_tecnica = parsed_ficha
+                except Exception:
+                    ficha_tecnica = {}
                 conjuntos_map[codigo] = {
                     "codigo": codigo,
+                    "param_codigo": str(row.get("param_codigo", "") or "").strip(),
                     "descricao": str(row.get("descricao", "") or "").strip() or codigo,
                     "notas": str(row.get("notas", "") or "").strip(),
                     "ativo": bool(row.get("ativo")) if row.get("ativo") is not None else True,
@@ -5072,6 +5141,8 @@ def _mysql_load_relational_data():
                     "margem_perc": _to_num(row.get("margem_perc")) or 0.0,
                     "total_custo": _to_num(row.get("total_custo")) or 0.0,
                     "total_final": _to_num(row.get("total_final")) or 0.0,
+                    "ficha_tecnica": ficha_tecnica,
+                    "precos_atualizados_em": _db_to_iso(row.get("precos_atualizados_em")),
                     "created_at": _db_to_iso(row.get("created_at")),
                     "updated_at": _db_to_iso(row.get("updated_at")),
                     "itens": [],
@@ -9327,7 +9398,7 @@ def draw_pdf_logo_plate(
     box_h=54,
     *,
     padding=4,
-    radius=12,
+    radius=4,
     fill_color="#FFFFFF",
     stroke_color="#D7DEE8",
     line_width=0.9,
@@ -9342,7 +9413,7 @@ def draw_pdf_logo_plate(
         c.setFillColor(colors.HexColor(str(fill_color or "#FFFFFF")))
         c.setStrokeColor(colors.HexColor(str(stroke_color or "#D7DEE8")))
         c.setLineWidth(float(line_width or 0.9))
-        c.roundRect(x, y, box_w, box_h, float(radius or 12), stroke=1, fill=1)
+        c.roundRect(x, y, box_w, box_h, float(radius or 4), stroke=1, fill=1)
     finally:
         c.restoreState()
     draw_pdf_logo_box(c, page_h, x, y_top, box_size=box_w, box_h=box_h, padding=padding, draw_border=False)
@@ -9356,7 +9427,7 @@ def draw_pdf_header_panel(
     width,
     height,
     *,
-    radius=14,
+    radius=4,
     fill_color="#FFFFFF",
     stroke_color="#D7DEE8",
     line_width=1.0,
@@ -9373,11 +9444,11 @@ def draw_pdf_header_panel(
         c.setFillColor(colors.HexColor(str(fill_color or "#FFFFFF")))
         c.setStrokeColor(colors.HexColor(str(stroke_color or "#D7DEE8")))
         c.setLineWidth(float(line_width or 1.0))
-        c.roundRect(x, y, width, height, float(radius or 14), stroke=1, fill=1)
+        c.roundRect(x, y, width, height, float(radius or 4), stroke=1, fill=1)
         if accent_height and accent_color:
             accent_h = max(1.0, min(float(accent_height), height * 0.16))
             c.setFillColor(colors.HexColor(str(accent_color)))
-            c.roundRect(x + 1.2, y + height - accent_h - 1.2, max(8.0, width - 2.4), accent_h, max(2.0, float(radius or 14) * 0.45), stroke=0, fill=1)
+            c.rect(x + 1.2, y + height - accent_h - 1.2, max(8.0, width - 2.4), accent_h, stroke=0, fill=1)
     finally:
         c.restoreState()
 

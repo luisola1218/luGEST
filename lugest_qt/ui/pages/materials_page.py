@@ -1228,8 +1228,9 @@ class MaterialsPage(QWidget):
         search_icon.setAlignment(Qt.AlignCenter)
         search_icon.setStyleSheet("font-size: 15px; color: #33516f;")
         self.filter_edit = QLineEdit()
-        self.filter_edit.setPlaceholderText("Pesquisar material, lote, dimensão, local...")
+        self.filter_edit.setPlaceholderText("Pesquisar ou picar MAT|...")
         self.filter_edit.textChanged.connect(lambda _text: self._stock_filter_timer.start(180))
+        self.filter_edit.returnPressed.connect(self._select_scanned_material)
         search_layout.addWidget(search_icon)
         search_layout.addWidget(self.filter_edit, 1)
         top.addWidget(search_box)
@@ -1961,6 +1962,36 @@ class MaterialsPage(QWidget):
             combo.blockSignals(False)
         self.refresh()
 
+    def _select_scanned_material(self) -> None:
+        value = self.filter_edit.text().strip()
+        if not value:
+            return
+        try:
+            result = self.backend.inventory_scan_lookup(value, expected_type="MAT")
+        except Exception as exc:
+            if "|" in value or re.fullmatch(r"MAT\d+", value, flags=re.IGNORECASE):
+                QMessageBox.warning(self, "Picagem", str(exc))
+            return
+        self.current_material_id = str(result.get("entity_id", "") or "").strip()
+        self.filter_edit.blockSignals(True)
+        self.filter_edit.clear()
+        self.filter_edit.blockSignals(False)
+        for combo in (
+            self.format_filter_combo,
+            self.material_filter_combo,
+            self.thickness_filter_combo,
+            self.local_filter_combo,
+            self.state_filter_combo,
+        ):
+            combo.blockSignals(True)
+            combo.setCurrentText("Todos")
+            combo.blockSignals(False)
+        self.only_stock_check.blockSignals(True)
+        self.only_stock_check.setChecked(False)
+        self.only_stock_check.blockSignals(False)
+        self.refresh()
+        self.table.setFocus()
+
     def _filter_combo_text(self, combo: QComboBox) -> str:
         text = str(combo.currentText() or "").strip()
         return "" if text.lower() in {"", "todos", "todas", "all"} else text
@@ -2357,7 +2388,7 @@ class MaterialsPage(QWidget):
         search_icon.setAlignment(Qt.AlignCenter)
         search_icon.setStyleSheet("font-size: 15px; color: #33516f;")
         search_edit = QLineEdit()
-        search_edit.setPlaceholderText("Pesquisar por formato, material, espessura, lote, dimensão, localização...")
+        search_edit.setPlaceholderText("Pesquisar ou picar MAT|... por formato, material, espessura, lote, dimensão...")
         search_layout.addWidget(search_icon)
         search_layout.addWidget(search_edit, 1)
         layout.addWidget(search_box)
@@ -2498,8 +2529,29 @@ class MaterialsPage(QWidget):
             elif table.rowCount() > 0:
                 table.selectRow(0)
 
+        def select_scanned_material() -> None:
+            value = search_edit.text().strip()
+            try:
+                result = self.backend.inventory_scan_lookup(value, expected_type="MAT")
+            except ValueError as exc:
+                if "|" in value or re.fullmatch(r"MAT[-_A-Z0-9]+", value, flags=re.IGNORECASE):
+                    QMessageBox.warning(dialog, "Codigo de picagem", str(exc))
+                return
+            material_id = str(result.get("entity_id", "") or "").strip()
+            self.current_material_id = material_id
+            search_edit.setText(material_id)
+            render_full_grid()
+            for row_index in range(table.rowCount()):
+                item = table.item(row_index, 16)
+                if item is not None and item.text().strip().upper() == material_id.upper():
+                    table.selectRow(row_index)
+                    table.scrollToItem(item)
+                    table.setFocus()
+                    break
+
         render_timer.timeout.connect(render_full_grid)
         search_edit.textChanged.connect(lambda _text: render_timer.start(180))
+        search_edit.returnPressed.connect(select_scanned_material)
         render_full_grid()
         search_edit.setFocus()
         table.itemDoubleClicked.connect(lambda *_args: dialog.accept())

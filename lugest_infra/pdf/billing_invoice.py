@@ -73,22 +73,27 @@ def _wrap_text(value: Any, font_name: str, font_size: float, max_width: float, m
 def _pdf_palette(desktop_main) -> dict[str, Any]:
     from reportlab.lib import colors
 
-    primary_hex = str((desktop_main.get_branding_config() or {}).get("primary_color", "#0F1F5C") or "#0F1F5C")
-    mix_fn = getattr(desktop_main, "_orc_pdf_mix_hex", None)
-    if not callable(mix_fn):
-        mix_fn = getattr(desktop_main, "_pdf_mix_hex", None)
-    if not callable(mix_fn):
-        mix_fn = lambda base, target, _ratio: target if target else base
+    primary_hex = "#00A6A6"
+    try:
+        configured = str((desktop_main.get_branding_config() or {}).get("primary_color", "") or "").strip()
+        token = configured.lstrip("#")
+        if len(token) == 6 and all(ch in "0123456789abcdefABCDEF" for ch in token):
+            primary_hex = f"#{token.upper()}"
+    except Exception:
+        pass
+    base = tuple(int(primary_hex[index : index + 2], 16) for index in (1, 3, 5))
+    def mixed(ratio: float) -> str:
+        return "#" + "".join(f"{round(value + ((255 - value) * ratio)):02X}" for value in base)
     return {
         "primary": colors.HexColor(primary_hex),
-        "primary_dark": colors.HexColor(mix_fn(primary_hex, "#000000", 0.18)),
-        "primary_soft": colors.HexColor(mix_fn(primary_hex, "#FFFFFF", 0.84)),
-        "primary_soft_2": colors.HexColor(mix_fn(primary_hex, "#FFFFFF", 0.92)),
-        "line": colors.HexColor(mix_fn(primary_hex, "#D9E2EC", 0.76)),
-        "line_strong": colors.HexColor(mix_fn(primary_hex, "#6B7C93", 0.42)),
-        "ink": colors.HexColor(mix_fn(primary_hex, "#111827", 0.72)),
-        "muted": colors.HexColor("#52637A"),
-        "surface_alt": colors.HexColor("#F8FAFC"),
+        "primary_dark": colors.HexColor("#0B1F33"),
+        "primary_soft": colors.HexColor(mixed(0.84)),
+        "primary_soft_2": colors.HexColor(mixed(0.94)),
+        "line": colors.HexColor("#CAD3DA"),
+        "line_strong": colors.HexColor("#AEBCC7"),
+        "ink": colors.HexColor("#14212B"),
+        "muted": colors.HexColor("#61717F"),
+        "surface_alt": colors.HexColor("#F3F6F8"),
     }
 
 
@@ -168,11 +173,16 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
     width, height = A4
     margin = 24
     content_w = width - (margin * 2)
-    row_h = 22
-    footer_top = 786
-    first_table_top = 306
-    next_table_top = 92
-    reserved_bottom = 232
+    row_h = 18
+    table_header_h = 18
+    table_header_gap = 4
+    footer_top = 790
+    first_table_top = 218
+    next_table_top = 78
+    atcud_h = 76
+    summary_h = 94
+    summary_y = footer_top - summary_h - 6
+    atcud_y = summary_y - atcud_h - 10
     lines = list(doc.get("lines", []) or [])
 
     table_cols = [
@@ -186,13 +196,18 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
         ("Total", 57, "e"),
     ]
     table_w = sum(width_col for _, width_col, _ in table_cols)
-    first_capacity = max(1, int((footer_top - first_table_top - reserved_bottom) // row_h))
-    next_capacity = max(1, int((footer_top - next_table_top - reserved_bottom) // row_h))
-    if len(lines) <= first_capacity:
+    first_row_top = first_table_top + table_header_h + table_header_gap
+    next_row_top = next_table_top + table_header_h + table_header_gap
+    first_last_capacity = max(1, int((atcud_y - first_row_top) // row_h))
+    first_full_capacity = max(1, int((footer_top - first_row_top) // row_h))
+    next_last_capacity = max(1, int((atcud_y - next_row_top) // row_h))
+    next_full_capacity = max(1, int((footer_top - next_row_top) // row_h))
+    if len(lines) <= first_last_capacity:
         total_pages = 1
     else:
-        remaining = len(lines) - first_capacity
-        total_pages = 1 + ((remaining + next_capacity - 1) // next_capacity)
+        total_pages = 2
+        while len(lines) > first_full_capacity + ((total_pages - 2) * next_full_capacity) + next_last_capacity:
+            total_pages += 1
 
     canvas_obj = pdf_canvas.Canvas(str(target), pagesize=A4)
     canvas_obj.setTitle(str(doc.get("legal_invoice_no", "") or doc.get("numero_fatura", "") or "Fatura"))
@@ -207,41 +222,41 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
     def ntxt(value: Any) -> str:
         return normalize_text(value)
 
-    def chip(x: float, top_y: float, width_box: float, label: str, value: str, height_box: float = 24) -> None:
+    def chip(x: float, top_y: float, width_box: float, label: str, value: str, height_box: float = 20) -> None:
         canvas_obj.saveState()
         canvas_obj.setFillColor(colors.white)
         canvas_obj.setStrokeColor(palette["line"])
-        canvas_obj.roundRect(x, yinv(top_y + height_box), width_box, height_box, 7, stroke=1, fill=1)
+        canvas_obj.roundRect(x, yinv(top_y + height_box), width_box, height_box, 3, stroke=1, fill=1)
         canvas_obj.restoreState()
         canvas_obj.setFillColor(palette["muted"])
-        canvas_obj.setFont(fonts["regular"], 6.8)
-        canvas_obj.drawString(x + 7, yinv(top_y + 8.8), ntxt(label))
+        canvas_obj.setFont(fonts["regular"], 5.8)
+        canvas_obj.drawString(x + 7, yinv(top_y + 7.0), ntxt(label))
         canvas_obj.setFillColor(palette["primary_dark"])
-        canvas_obj.setFont(fonts["bold"], 9.2)
-        canvas_obj.drawString(x + 7, yinv(top_y + 18.2), ntxt(_clip_text(value, width_box - 14, fonts["bold"], 9.2)))
+        canvas_obj.setFont(fonts["bold"], 8.0)
+        canvas_obj.drawString(x + 7, yinv(top_y + 15.6), ntxt(_clip_text(value, width_box - 14, fonts["bold"], 8.0)))
 
     def block(x: float, top_y: float, width_box: float, title: str, rows: list[str], height_box: float = 96) -> None:
         canvas_obj.saveState()
         canvas_obj.setFillColor(colors.white)
         canvas_obj.setStrokeColor(palette["line_strong"])
-        canvas_obj.roundRect(x, yinv(top_y + height_box), width_box, height_box, 8, stroke=1, fill=1)
+        canvas_obj.roundRect(x, yinv(top_y + height_box), width_box, height_box, 3, stroke=1, fill=1)
         canvas_obj.setFillColor(palette["primary_soft"])
-        canvas_obj.roundRect(x + 1, yinv(top_y + 24), width_box - 2, 22, 8, stroke=0, fill=1)
+        canvas_obj.rect(x + 1, yinv(top_y + 19), width_box - 2, 18, stroke=0, fill=1)
         canvas_obj.restoreState()
         canvas_obj.setFillColor(palette["primary_dark"])
-        canvas_obj.setFont(fonts["bold"], 9.2)
-        canvas_obj.drawString(x + 8, yinv(top_y + 14), ntxt(title))
-        yy = top_y + 36
+        canvas_obj.setFont(fonts["bold"], 8.0)
+        canvas_obj.drawString(x + 8, yinv(top_y + 12), ntxt(title))
+        yy = top_y + 27
         for idx, row in enumerate(rows):
             font_name = fonts["bold"] if idx == 0 else fonts["regular"]
-            font_size = 9.4 if idx == 0 else 8.6
+            font_size = 8.0 if idx == 0 else 7.6
             wrapped = _wrap_text(row, font_name, font_size, width_box - 16, max_lines=2)
             for item in wrapped:
                 canvas_obj.setFillColor(palette["ink"])
                 canvas_obj.setFont(font_name, font_size)
                 canvas_obj.drawString(x + 8, yinv(yy), ntxt(item))
-                yy += 10.8
-                if yy > top_y + height_box - 8:
+                yy += 9.0
+                if yy > top_y + height_box - 6:
                     return
 
     def draw_table_header(top_y: float) -> float:
@@ -249,27 +264,27 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
         canvas_obj.setFillColor(palette["primary_soft"])
         canvas_obj.setStrokeColor(palette["line"])
         canvas_obj.setLineWidth(0.8)
-        canvas_obj.roundRect(margin, yinv(top_y + 22), table_w, 22, 7, stroke=1, fill=1)
+        canvas_obj.rect(margin, yinv(top_y + table_header_h), table_w, table_header_h, stroke=1, fill=1)
         canvas_obj.restoreState()
         canvas_obj.setFillColor(palette["primary_dark"])
-        canvas_obj.setFont(fonts["bold"], 8.4)
+        canvas_obj.setFont(fonts["bold"], 7.4)
         xx = margin
         for label, width_col, align in table_cols:
             if align == "e":
-                canvas_obj.drawRightString(xx + width_col - 7, yinv(top_y + 14.2), ntxt(label))
+                canvas_obj.drawRightString(xx + width_col - 6, yinv(top_y + 12.0), ntxt(label))
             elif align == "center":
-                canvas_obj.drawCentredString(xx + (width_col / 2.0), yinv(top_y + 14.2), ntxt(label))
+                canvas_obj.drawCentredString(xx + (width_col / 2.0), yinv(top_y + 12.0), ntxt(label))
             else:
-                canvas_obj.drawString(xx + 7, yinv(top_y + 14.2), ntxt(label))
+                canvas_obj.drawString(xx + 6, yinv(top_y + 12.0), ntxt(label))
             xx += width_col
-        return top_y + 26
+        return top_y + table_header_h + table_header_gap
 
     def draw_row(top_y: float, row_index: int, line: dict[str, Any]) -> None:
         fill = palette["surface_alt"] if row_index % 2 == 0 else colors.white
         canvas_obj.saveState()
         canvas_obj.setFillColor(fill)
         canvas_obj.setStrokeColor(palette["line"])
-        canvas_obj.roundRect(margin, yinv(top_y + row_h), table_w, row_h, 5, stroke=1, fill=1)
+        canvas_obj.rect(margin, yinv(top_y + row_h), table_w, row_h, stroke=1, fill=1)
         canvas_obj.restoreState()
         values = [
             str(line.get("reference", "") or "-").strip(),
@@ -285,17 +300,17 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
         for (label, width_col, align), value in zip(table_cols, values):
             canvas_obj.setFillColor(palette["ink"])
             font_name = fonts["bold"] if label == "Ref." else fonts["regular"]
-            font_size = 8.3 if label == "Ref." else 8.2
+            font_size = 7.2 if label == "Ref." else 7.1
             canvas_obj.setFont(font_name, font_size)
             clipped = _clip_text(value, width_col - 14, font_name, font_size)
             if label == "Descricao":
-                clipped = _clip_text(value, width_col - 14, fonts["regular"], 7.8)
+                clipped = _clip_text(value, width_col - 12, fonts["regular"], 6.9)
             if align == "e":
-                canvas_obj.drawRightString(xx + width_col - 7, yinv(top_y + 13.4), ntxt(clipped))
+                canvas_obj.drawRightString(xx + width_col - 6, yinv(top_y + 11.5), ntxt(clipped))
             elif align == "center":
-                canvas_obj.drawCentredString(xx + (width_col / 2.0), yinv(top_y + 13.4), ntxt(clipped))
+                canvas_obj.drawCentredString(xx + (width_col / 2.0), yinv(top_y + 11.5), ntxt(clipped))
             else:
-                canvas_obj.drawString(xx + 7, yinv(top_y + 13.4), ntxt(clipped))
+                canvas_obj.drawString(xx + 6, yinv(top_y + 11.5), ntxt(clipped))
             xx += width_col
 
     def draw_footer(page_no: int) -> None:
@@ -334,9 +349,13 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
             canvas_obj.drawRightString(width - margin, yinv(footer_top + 26), ntxt(f"NIF {str(issuer.get('nif', '') or '-').strip()}"))
 
     def draw_first_page_header() -> float:
-        banner_top = 24
-        banner_h = 106
-        inner_pad = 14
+        canvas_obj.setFillColor(colors.white)
+        canvas_obj.rect(0, 0, width, height, stroke=0, fill=1)
+        canvas_obj.setFillColor(palette["primary"])
+        canvas_obj.rect(0, height - 9, width, 9, stroke=0, fill=1)
+        banner_top = 20
+        banner_h = 82
+        inner_pad = 10
         logo_slot_w = 102
         logo_plate_gap = 12
         metrics_w = 206
@@ -346,7 +365,7 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
         draw_header_panel = getattr(desktop_main, "draw_pdf_header_panel", None)
         if callable(draw_header_panel):
             try:
-                draw_header_panel(canvas_obj, height, banner_x, banner_top, banner_w, banner_h, radius=12, stroke_color="#D5DDE7", accent_color="#EAF0F6", accent_height=5)
+                draw_header_panel(canvas_obj, height, banner_x, banner_top, banner_w, banner_h, radius=4, stroke_color="#D5DDE7", accent_color="#EAF0F6", accent_height=5)
             except Exception:
                 draw_header_panel = None
         if not callable(draw_header_panel):
@@ -354,7 +373,7 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
             canvas_obj.setFillColor(colors.white)
             canvas_obj.setStrokeColor(palette["line_strong"])
             canvas_obj.setLineWidth(1.0)
-            canvas_obj.roundRect(banner_x, yinv(banner_top + banner_h), banner_w, banner_h, 12, stroke=1, fill=1)
+            canvas_obj.roundRect(banner_x, yinv(banner_top + banner_h), banner_w, banner_h, 4, stroke=1, fill=1)
             canvas_obj.restoreState()
 
         draw_logo_plate = getattr(desktop_main, "draw_pdf_logo_plate", None)
@@ -364,9 +383,9 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
                     canvas_obj,
                     height,
                     margin,
-                    50,
+                    36,
                     box_w=logo_slot_w,
-                    box_h=54,
+                    box_h=46,
                     padding=4,
                 )
             except Exception:
@@ -381,26 +400,26 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
         canvas_obj.setFillColor(palette["primary_dark"])
         title_text = str(doc.get("titulo", "Fatura")) or "Fatura"
         subtitle_text = str(doc.get("subtitulo", "Documento comercial")) or "Documento comercial"
-        canvas_obj.setFont(fonts["bold"], 19)
-        canvas_obj.drawCentredString(title_x + (title_w / 2.0), yinv(50), ntxt(title_text))
-        canvas_obj.setFont(fonts["regular"], 9.6)
+        canvas_obj.setFont(fonts["bold"], 8.0)
+        canvas_obj.drawCentredString(title_x + (title_w / 2.0), yinv(42), ntxt(title_text))
+        canvas_obj.setFont(fonts["regular"], 7.2)
         canvas_obj.setFillColor(palette["muted"])
         canvas_obj.drawCentredString(
             title_x + (title_w / 2.0),
-            yinv(68),
-            ntxt(_clip_text(subtitle_text, title_w, fonts["regular"], 9.6)),
+            yinv(57),
+            ntxt(_clip_text(subtitle_text, title_w, fonts["regular"], 8.2)),
         )
 
         gap = 6
         chip_w = (metrics_w - gap) / 2.0
-        chip(metrics_x, 32, chip_w, "Documento", str(doc.get("legal_invoice_no", "") or doc.get("numero_fatura", "") or "-"))
-        chip(metrics_x + chip_w + gap, 32, chip_w, "Série", str(doc.get("serie", "") or "-"))
-        chip(metrics_x, 58, chip_w, "Emissão", _fmt_date(doc.get("data_emissao", "")))
-        chip(metrics_x + chip_w + gap, 58, chip_w, "Vencimento", _fmt_date(doc.get("data_vencimento", "")))
-        chip(metrics_x, 84, chip_w, "Moeda", str(doc.get("moeda", "EUR") or "EUR"))
+        chip(metrics_x, 26, chip_w, "Documento", str(doc.get("legal_invoice_no", "") or doc.get("numero_fatura", "") or "-"))
+        chip(metrics_x + chip_w + gap, 26, chip_w, "Série", str(doc.get("serie", "") or "-"))
+        chip(metrics_x, 48, chip_w, "Emissão", _fmt_date(doc.get("data_emissao", "")))
+        chip(metrics_x + chip_w + gap, 48, chip_w, "Vencimento", _fmt_date(doc.get("data_vencimento", "")))
+        chip(metrics_x, 70, chip_w, "Moeda", str(doc.get("moeda", "EUR") or "EUR"))
         chip(
             metrics_x + chip_w + gap,
-            84,
+            70,
             chip_w,
             "Guia",
             str((doc.get("references", {}) or {}).get("guia", "") or "-"),
@@ -410,10 +429,10 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
         customer = dict(doc.get("customer", {}) or {})
         top_cards_gap = 12
         top_card_w = (content_w - top_cards_gap) / 2.0
-        top_card_h = 92
+        top_card_h = 60
         block(
             margin,
-            124,
+            110,
             top_card_w,
             "Emitente",
             [
@@ -426,7 +445,7 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
         )
         block(
             margin + top_card_w + top_cards_gap,
-            124,
+            110,
             top_card_w,
             "Cliente",
             [
@@ -443,18 +462,22 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
             f"Encomenda: {str(refs.get('encomenda', '') or '-').strip()} | "
             f"Guia: {str(refs.get('guia', '') or '-').strip()}"
         )
-        block(margin, 228, content_w, "Referências", [refs_txt], height_box=50)
+        block(margin, 178, content_w, "Referências", [refs_txt], height_box=32)
         return draw_table_header(first_table_top)
 
     def draw_next_page_header(page_no: int) -> float:
         canvas_obj.saveState()
+        canvas_obj.setFillColor(colors.white)
+        canvas_obj.rect(0, 0, width, height, stroke=0, fill=1)
+        canvas_obj.setFillColor(palette["primary"])
+        canvas_obj.rect(0, height - 9, width, 9, stroke=0, fill=1)
         canvas_obj.setFillColor(palette["primary_soft"])
-        canvas_obj.roundRect(margin, yinv(24 + 48), content_w, 48, 12, stroke=0, fill=1)
+        canvas_obj.roundRect(margin, yinv(24 + 48), content_w, 48, 4, stroke=0, fill=1)
         canvas_obj.restoreState()
         canvas_obj.setFillColor(palette["primary_dark"])
-        canvas_obj.setFont(fonts["bold"], 15)
+        canvas_obj.setFont(fonts["bold"], 8.0)
         canvas_obj.drawString(margin + 12, yinv(43), ntxt(str(doc.get("legal_invoice_no", "") or doc.get("numero_fatura", "") or "Fatura")))
-        canvas_obj.setFont(fonts["regular"], 8.8)
+        canvas_obj.setFont(fonts["regular"], 7.0)
         canvas_obj.drawString(margin + 12, yinv(58), ntxt(f"Cliente: {str((doc.get('customer', {}) or {}).get('nome', '') or '-').strip()}"))
         canvas_obj.drawRightString(width - margin, yinv(43), ntxt(f"Pag. {page_no}/{total_pages}"))
         return draw_table_header(next_table_top)
@@ -463,7 +486,14 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
     for page_no in range(1, total_pages + 1):
         first_page = page_no == 1
         table_y = draw_first_page_header() if first_page else draw_next_page_header(page_no)
-        capacity = first_capacity if first_page else next_capacity
+        if total_pages == 1:
+            capacity = first_last_capacity
+        elif first_page:
+            capacity = first_full_capacity
+        elif page_no == total_pages:
+            capacity = next_last_capacity
+        else:
+            capacity = next_full_capacity
         page_lines = remaining_lines[:capacity]
         remaining_lines = remaining_lines[capacity:]
         row_top = table_y
@@ -472,37 +502,34 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
             row_top += row_h
 
         if page_no == total_pages:
-            atcud_h = 98
-            summary_h = 118
-            summary_y = footer_top - summary_h - 6
-            atcud_y = summary_y - atcud_h - 10
-
             summary_gap = 10
             fiscal_x = margin
             fiscal_w = (content_w - summary_gap) / 2.0
             canvas_obj.saveState()
             canvas_obj.setFillColor(colors.white)
             canvas_obj.setStrokeColor(palette["line_strong"])
-            canvas_obj.roundRect(fiscal_x, yinv(summary_y + summary_h), fiscal_w, summary_h, 10, stroke=1, fill=1)
+            canvas_obj.roundRect(fiscal_x, yinv(summary_y + summary_h), fiscal_w, summary_h, 3, stroke=1, fill=1)
             canvas_obj.setFillColor(palette["primary_soft"])
-            canvas_obj.roundRect(fiscal_x + 1, yinv(summary_y + 24), fiscal_w - 2, 22, 9, stroke=0, fill=1)
+            canvas_obj.rect(fiscal_x + 1, yinv(summary_y + 19), fiscal_w - 2, 18, stroke=0, fill=1)
             canvas_obj.restoreState()
             canvas_obj.setFillColor(palette["primary_dark"])
-            canvas_obj.setFont(fonts["bold"], 8.8)
-            canvas_obj.drawString(fiscal_x + 8, yinv(summary_y + 14), ntxt("Fiscalidade e documento"))
-            tax_y = summary_y + 40
+            canvas_obj.setFont(fonts["bold"], 8.0)
+            canvas_obj.drawString(fiscal_x + 8, yinv(summary_y + 12), ntxt("Fiscalidade e documento"))
+            tax_y = summary_y + 31
             for row in list(doc.get("tax_summary", []) or [])[:3]:
                 canvas_obj.setFillColor(palette["ink"])
-                canvas_obj.setFont(fonts["regular"], 8.2)
-                canvas_obj.drawString(fiscal_x + 10, yinv(tax_y), ntxt(f"{str(row.get('label', '') or '').strip()}: {_fmt_money(row.get('base', 0))}"))
-                tax_y += 12
-                canvas_obj.drawString(fiscal_x + 10, yinv(tax_y), ntxt(f"IVA {str(row.get('rate_label', '') or '').strip()}: {_fmt_money(row.get('tax', 0))}"))
+                canvas_obj.setFont(fonts["regular"], 7.1)
+                tax_line = (
+                    f"{str(row.get('label', '') or '').strip()}: base {_fmt_money(row.get('base', 0))} | "
+                    f"IVA {str(row.get('rate_label', '') or '').strip()} {_fmt_money(row.get('tax', 0))}"
+                )
+                canvas_obj.drawString(fiscal_x + 10, yinv(tax_y), ntxt(_clip_text(tax_line, fiscal_w - 20, fonts["regular"], 7.1)))
                 tax_y += 12
             canvas_obj.setFillColor(palette["muted"])
-            canvas_obj.setFont(fonts["regular"], 8.0)
+            canvas_obj.setFont(fonts["regular"], 7.0)
             canvas_obj.drawString(
                 fiscal_x + 10,
-                yinv(summary_y + 94),
+                yinv(summary_y + 82),
                 ntxt(
                     f"Guia: {str((doc.get('references', {}) or {}).get('guia', '') or '-').strip()} | "
                     f"Vencimento: {_fmt_date(doc.get('data_vencimento', ''))}"
@@ -514,16 +541,16 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
             canvas_obj.saveState()
             canvas_obj.setFillColor(colors.white)
             canvas_obj.setStrokeColor(palette["line_strong"])
-            canvas_obj.roundRect(totals_x, yinv(atcud_y + atcud_h), totals_w, atcud_h, 10, stroke=1, fill=1)
+            canvas_obj.roundRect(totals_x, yinv(atcud_y + atcud_h), totals_w, atcud_h, 3, stroke=1, fill=1)
             canvas_obj.setFillColor(palette["primary_soft"])
-            canvas_obj.roundRect(totals_x + 1, yinv(atcud_y + 24), totals_w - 2, 22, 9, stroke=0, fill=1)
+            canvas_obj.rect(totals_x + 1, yinv(atcud_y + 19), totals_w - 2, 18, stroke=0, fill=1)
             canvas_obj.restoreState()
             canvas_obj.setFillColor(palette["primary_dark"])
-            canvas_obj.setFont(fonts["bold"], 8.8)
-            canvas_obj.drawString(totals_x + 8, yinv(atcud_y + 14), ntxt("ATCUD e validação"))
-            card_inner_pad = 12
+            canvas_obj.setFont(fonts["bold"], 8.0)
+            canvas_obj.drawString(totals_x + 8, yinv(atcud_y + 12), ntxt("ATCUD e validação"))
+            card_inner_pad = 8
             qr_frame_pad = 4
-            body_top = atcud_y + 28
+            body_top = atcud_y + 23
             body_bottom = atcud_y + atcud_h - card_inner_pad
             body_h = max(36.0, body_bottom - body_top)
             qr_frame_size = min(58.0, body_h)
@@ -536,26 +563,26 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
             canvas_obj.saveState()
             canvas_obj.setFillColor(palette["primary_soft_2"])
             canvas_obj.setStrokeColor(palette["line"])
-            canvas_obj.roundRect(qr_frame_x, yinv(qr_frame_y + qr_frame_size), qr_frame_size, qr_frame_size, 8, stroke=1, fill=1)
+            canvas_obj.roundRect(qr_frame_x, yinv(qr_frame_y + qr_frame_size), qr_frame_size, qr_frame_size, 3, stroke=1, fill=1)
             canvas_obj.restoreState()
             canvas_obj.setFillColor(palette["ink"])
-            canvas_obj.setFont(fonts["bold"], 9.4)
+            canvas_obj.setFont(fonts["bold"], 8.0)
             canvas_obj.drawString(
                 totals_x + 10,
-                yinv(atcud_y + 38),
-                ntxt(_clip_text(str(doc.get("atcud", "") or "Pendente"), text_w, fonts["bold"], 9.4)),
+                yinv(atcud_y + 32),
+                ntxt(_clip_text(str(doc.get("atcud", "") or "Pendente"), text_w, fonts["bold"], 8.0)),
             )
             canvas_obj.setFillColor(palette["muted"])
-            canvas_obj.setFont(fonts["regular"], 7.8)
+            canvas_obj.setFont(fonts["regular"], 6.7)
             canvas_obj.drawString(
                 totals_x + 10,
-                yinv(atcud_y + 52),
-                ntxt(_clip_text("Código único do documento fiscal", text_w, fonts["regular"], 7.8)),
+                yinv(atcud_y + 45),
+                ntxt(_clip_text("Código único do documento fiscal", text_w, fonts["regular"], 6.7)),
             )
             canvas_obj.drawString(
                 totals_x + 10,
-                yinv(atcud_y + 66),
-                ntxt(_clip_text(f"Doc.: {str(doc.get('numero_fatura', '') or '-').strip()}", text_w, fonts["regular"], 7.8)),
+                yinv(atcud_y + 58),
+                ntxt(_clip_text(f"Doc.: {str(doc.get('numero_fatura', '') or '-').strip()}", text_w, fonts["regular"], 6.7)),
             )
             _draw_qr(
                 canvas_obj,
@@ -570,13 +597,13 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
             canvas_obj.saveState()
             canvas_obj.setFillColor(colors.white)
             canvas_obj.setStrokeColor(palette["line_strong"])
-            canvas_obj.roundRect(totals_x, yinv(summary_y + summary_h), totals_w, summary_h, 10, stroke=1, fill=1)
+            canvas_obj.roundRect(totals_x, yinv(summary_y + summary_h), totals_w, summary_h, 3, stroke=1, fill=1)
             canvas_obj.setFillColor(palette["primary_soft"])
-            canvas_obj.roundRect(totals_x + 1, yinv(summary_y + 24), totals_w - 2, 22, 9, stroke=0, fill=1)
+            canvas_obj.rect(totals_x + 1, yinv(summary_y + 19), totals_w - 2, 18, stroke=0, fill=1)
             canvas_obj.restoreState()
             canvas_obj.setFillColor(palette["primary_dark"])
-            canvas_obj.setFont(fonts["bold"], 8.8)
-            canvas_obj.drawString(totals_x + 8, yinv(summary_y + 14), ntxt("Totais da fatura"))
+            canvas_obj.setFont(fonts["bold"], 8.0)
+            canvas_obj.drawString(totals_x + 8, yinv(summary_y + 12), ntxt("Totais da fatura"))
             totals = [
                 ("Base tributavel", _fmt_money(doc.get("subtotal", 0))),
                 ("IVA", _fmt_money(doc.get("valor_iva", 0))),
@@ -584,15 +611,15 @@ def render_invoice_pdf(backend, output_path: str | Path, doc: dict[str, Any]) ->
                 ("Recebido", _fmt_money(doc.get("valor_recebido", 0))),
                 ("Por regularizar", _fmt_money(doc.get("saldo", doc.get("valor_total", 0)))),
             ]
-            yy = summary_y + 40
+            yy = summary_y + 31
             for label, value in totals:
                 canvas_obj.setFillColor(palette["muted"])
-                canvas_obj.setFont(fonts["regular"], 8.5)
+                canvas_obj.setFont(fonts["regular"], 7.4)
                 canvas_obj.drawString(totals_x + 10, yinv(yy), ntxt(label))
                 canvas_obj.setFillColor(palette["ink"])
-                canvas_obj.setFont(fonts["bold"], 9.1)
+                canvas_obj.setFont(fonts["bold"], 8.0)
                 canvas_obj.drawRightString(totals_x + totals_w - 10, yinv(yy), ntxt(value))
-                yy += 15
+                yy += 12
 
         draw_footer(page_no)
         if page_no < total_pages:

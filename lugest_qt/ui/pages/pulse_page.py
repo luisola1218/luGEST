@@ -36,12 +36,13 @@ from .runtime_common import (
 
 class PulsePage(QWidget):
     page_title = "Pulse"
-    page_subtitle = "OEE, desvios, paragens e pecas em curso com o backend desktop."
+    page_subtitle = "OEE, disponibilidade, perdas e execução industrial em tempo real."
     allow_auto_timer_refresh = True
 
-    def __init__(self, runtime_service, parent=None) -> None:
+    def __init__(self, runtime_service, backend=None, parent=None) -> None:
         super().__init__(parent)
         self.runtime_service = runtime_service
+        self.backend = backend
         self.last_pulse_data: dict = {}
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -49,8 +50,26 @@ class PulsePage(QWidget):
 
         filters = CardFrame()
         filters.set_tone("info")
-        filters_layout = QHBoxLayout(filters)
-        filters_layout.setContentsMargins(14, 10, 14, 10)
+        filters_root = QVBoxLayout(filters)
+        filters_root.setContentsMargins(16, 12, 16, 12)
+        filters_root.setSpacing(9)
+        heading_row = QHBoxLayout()
+        heading_col = QVBoxLayout()
+        heading_col.setContentsMargins(0, 0, 0, 0)
+        heading_col.setSpacing(2)
+        heading = QLabel("Cockpit de desempenho industrial")
+        heading.setStyleSheet("font-size: 18px; font-weight: 900; color: #0f172a;")
+        heading_subtitle = QLabel("Eficiência, perdas e desvios convertidos em ações operacionais.")
+        heading_subtitle.setProperty("role", "muted")
+        heading_col.addWidget(heading)
+        heading_col.addWidget(heading_subtitle)
+        heading_row.addLayout(heading_col, 1)
+        self.updated_label = QLabel("Sem leitura carregada")
+        self.updated_label.setProperty("role", "state_chip")
+        heading_row.addWidget(self.updated_label, 0, Qt.AlignVCenter)
+        filters_root.addLayout(heading_row)
+        filters_layout = QHBoxLayout()
+        filters_layout.setContentsMargins(0, 0, 0, 0)
         filters_layout.setSpacing(8)
         self.period_combo = QComboBox()
         self.period_combo.addItems(["Hoje", "7 dias", "30 dias", "Tudo"])
@@ -69,6 +88,9 @@ class PulsePage(QWidget):
         self.plan_delay_btn = QPushButton("Atrasos planeamento")
         self.plan_delay_btn.setProperty("variant", "secondary")
         self.plan_delay_btn.clicked.connect(self._show_plan_delay_dialog)
+        self.report_btn = QPushButton("Relatório PDF")
+        self.report_btn.setProperty("variant", "success")
+        self.report_btn.clicked.connect(self._open_report_pdf)
         for widget in (self.period_combo, self.year_combo, self.origin_combo, self.view_combo):
             widget.currentTextChanged.connect(self.refresh)
         for widget, width in ((self.period_combo, 140), (self.year_combo, 110), (self.origin_combo, 130), (self.view_combo, 130)):
@@ -84,6 +106,8 @@ class PulsePage(QWidget):
         filters_layout.addStretch(1)
         filters_layout.addWidget(self.plan_delay_btn)
         filters_layout.addWidget(self.graphs_btn)
+        filters_layout.addWidget(self.report_btn)
+        filters_root.addLayout(filters_layout)
         root.addWidget(filters)
 
         cards_host = QWidget()
@@ -91,15 +115,16 @@ class PulsePage(QWidget):
         cards_layout.setContentsMargins(0, 0, 0, 0)
         cards_layout.setHorizontalSpacing(10)
         cards_layout.setVerticalSpacing(10)
-        self.cards = [StatCard(title) for title in ("OEE", "Disponibilidade", "Performance", "Paragens", "Desvio max.")]
+        self.cards = [StatCard(title) for title in ("OEE", "Disponibilidade", "Performance", "Qualidade", "Paragens", "Desvio máximo")]
         for index, card in enumerate(self.cards):
             card.setMaximumHeight(112)
-            cards_layout.addWidget(card, 0, index)
+            cards_layout.addWidget(card, index // 3, index % 3)
         self.cards[0].set_tone("info")
         self.cards[1].set_tone("success")
         self.cards[2].set_tone("warning")
-        self.cards[3].set_tone("danger")
-        self.cards[4].set_tone("warning")
+        self.cards[3].set_tone("success")
+        self.cards[4].set_tone("danger")
+        self.cards[5].set_tone("warning")
         root.addWidget(cards_host)
 
         self.alert_card = CardFrame()
@@ -196,10 +221,13 @@ class PulsePage(QWidget):
         perf_plan = float(summary.get("perf_plan_total", 0) or 0)
         perf_real = float(summary.get("perf_real_total", 0) or 0)
         self.cards[2].set_data(f"{summary.get('performance', 0):.1f}%", f"Plano {perf_plan:.1f} | Real {perf_real:.1f}")
-        self.cards[3].set_data(f"{summary.get('paragens_min', 0):.1f} min", f"Fora do tempo {summary.get('pecas_fora_tempo', 0)}")
-        self.cards[4].set_data(f"{summary.get('desvio_max_min', 0):.1f} min", f"Em curso {summary.get('pecas_em_curso', 0)}")
+        self.cards[3].set_data(f"{summary.get('qualidade', 0):.1f}%", f"Peças analisadas {summary.get('pecas_total', summary.get('pecas_em_curso', 0))}")
+        self.cards[4].set_data(f"{summary.get('paragens_min', 0):.1f} min", f"Fora do tempo {summary.get('pecas_fora_tempo', 0)}")
+        self.cards[5].set_data(f"{summary.get('desvio_max_min', 0):.1f} min", f"Em curso {summary.get('pecas_em_curso', 0)}")
         perf_value = float(summary.get("performance", 0) or 0)
         self.cards[2].set_tone("success" if perf_value >= 100.0 else ("warning" if perf_value >= 80.0 else "danger"))
+        self.cards[3].set_tone("success" if float(summary.get("qualidade", 0) or 0) >= 98.0 else "warning")
+        self.updated_label.setText(f"Atualizado {str(data.get('updated_at', '-') or '-')}")
         self.alert_label.setText(str(summary.get("alerts", "-")))
         _set_panel_tone(self.alert_card, "danger" if str(summary.get("alerts", "") or "-").strip() not in {"", "-"} else "default")
         plan_delay = dict(data.get("plan_delay", {}) or {})
@@ -231,6 +259,23 @@ class PulsePage(QWidget):
             [[r.get("encomenda", "-"), r.get("ops", 0), f"{r.get('elapsed_min', 0):.1f}", f"{r.get('plan_min', 0):.1f}", f"{r.get('delta_min', 0):.1f}"] for r in data.get("history", [])],
             align_center_from=1,
         )
+
+    def _open_report_pdf(self) -> None:
+        if self.backend is None:
+            QMessageBox.warning(self, "Relatório Pulse", "O gerador de relatórios não está disponível nesta sessão.")
+            return
+        if not self.last_pulse_data:
+            self.refresh()
+        scope = {
+            "period": self.period_combo.currentText(),
+            "year": self.year_combo.currentText(),
+            "origin": self.origin_combo.currentText(),
+            "view": self.view_combo.currentText(),
+        }
+        try:
+            self.backend.dashboard_open_pulse_report_pdf(self.last_pulse_data, scope)
+        except Exception as exc:
+            QMessageBox.critical(self, "Relatório Pulse", str(exc))
 
     def _prompt_plan_delay_reason(self, current_reason: str = "") -> str:
         options = [

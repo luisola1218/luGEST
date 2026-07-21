@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lugest_qt.services.main_bridge import LegacyBackend
+from lugest_qt.services.legacy_backend import LegacyBackend
 from pypdf import PdfReader
 
 
@@ -124,7 +124,7 @@ def main() -> int:
             ]
             data["orc_seq"] = orc_seq_snapshot
             data["seq"] = seq_snapshot
-            backend._save(force=True)
+            backend._save(force=True, blocking=True)
         finally:
             if pdf_path.exists():
                 try:

@@ -73,16 +73,26 @@ def _orc_pdf_mix_hex(base_hex, target_hex, ratio):
 def _orc_pdf_brand_palette():
     from reportlab.lib import colors
 
-    primary_hex = str(get_branding_config().get("primary_color", "") or "#1F3C88").strip() or "#1F3C88"
+    primary_hex = "#00A6A6"
+    try:
+        getter = globals().get("get_branding_config")
+        configured = str((getter() if callable(getter) else {}).get("primary_color", "") or "").strip()
+        token = configured.lstrip("#")
+        if len(token) == 6 and all(ch in "0123456789abcdefABCDEF" for ch in token):
+            primary_hex = f"#{token.upper()}"
+    except Exception:
+        pass
+    primary_soft = _orc_pdf_mix_hex(primary_hex, "#FFFFFF", 0.84)
+    primary_soft_2 = _orc_pdf_mix_hex(primary_hex, "#FFFFFF", 0.94)
     return {
         "primary": colors.HexColor(primary_hex),
-        "primary_dark": colors.HexColor(_orc_pdf_mix_hex(primary_hex, "#000000", 0.22)),
-        "primary_soft": colors.HexColor(_orc_pdf_mix_hex(primary_hex, "#FFFFFF", 0.80)),
-        "primary_soft_2": colors.HexColor(_orc_pdf_mix_hex(primary_hex, "#FFFFFF", 0.90)),
-        "ink": colors.HexColor(_orc_pdf_mix_hex(primary_hex, "#1A1A1A", 0.72)),
-        "muted": colors.HexColor("#667085"),
-        "line": colors.HexColor(_orc_pdf_mix_hex(primary_hex, "#D7DEE8", 0.76)),
-        "line_strong": colors.HexColor(_orc_pdf_mix_hex(primary_hex, "#708090", 0.36)),
+        "primary_dark": colors.HexColor("#0B1F33"),
+        "primary_soft": colors.HexColor(primary_soft),
+        "primary_soft_2": colors.HexColor(primary_soft_2),
+        "ink": colors.HexColor("#14212B"),
+        "muted": colors.HexColor("#61717F"),
+        "line": colors.HexColor("#CAD3DA"),
+        "line_strong": colors.HexColor("#AEBCC7"),
         "surface": colors.white,
         "surface_alt": colors.HexColor("#F7F9FC"),
         "surface_warm": colors.HexColor("#FCFCFD"),
@@ -1869,396 +1879,6 @@ def prompt_orc_nota_cliente(self):
 def render_orc_pdf(self, path, orc):
     _ensure_configured()
     return _render_orc_pdf_portrait(self, path, orc)
-    from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.pdfgen import canvas as pdf_canvas
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
-    from reportlab.lib.utils import ImageReader
-    width, height = landscape(A4)
-    c = pdf_canvas.Canvas(path, pagesize=landscape(A4))
-
-    def yinv(y):
-        return height - y
-
-    font_regular = "Helvetica"
-    font_bold = "Helvetica-Bold"
-    try:
-        arial = r"C:\Windows\Fonts\arial.ttf"
-        arial_b = r"C:\Windows\Fonts\arialbd.ttf"
-        if os.path.exists(arial):
-            pdfmetrics.registerFont(TTFont("Arial", arial))
-            font_regular = "Arial"
-        if os.path.exists(arial_b):
-            pdfmetrics.registerFont(TTFont("Arial-Bold", arial_b))
-            font_bold = "Arial-Bold"
-        seg = r"C:\Windows\Fonts\segoeui.ttf"
-        seg_b = r"C:\Windows\Fonts\segoeuib.ttf"
-        if font_regular == "Helvetica" and os.path.exists(seg):
-            pdfmetrics.registerFont(TTFont("SegoeUI", seg))
-            font_regular = "SegoeUI"
-        if font_bold == "Helvetica-Bold" and os.path.exists(seg_b):
-            pdfmetrics.registerFont(TTFont("SegoeUI-Bold", seg_b))
-            font_bold = "SegoeUI-Bold"
-    except Exception:
-        pass
-
-    def set_font(bold, size):
-        c.setFont(font_bold if bold else font_regular, size)
-
-    def normalize_text(text):
-        return pdf_normalize_text(text)
-
-    def clip_text(text, max_width, font_name=None, font_size=9):
-        if text is None:
-            return ""
-        s = normalize_text(text)
-        fname = font_name or font_regular
-        if pdfmetrics.stringWidth(s, fname, font_size) <= max_width:
-            return s
-        ell = "..."
-        while s and pdfmetrics.stringWidth(s + ell, fname, font_size) > max_width:
-            s = s[:-1]
-        return s + ell if s else ""
-
-    def wrap_text(text, max_width, font_name=None, font_size=8):
-        text = normalize_text("" if text is None else str(text))
-        words = text.split()
-        if not words:
-            return [""]
-        lines = []
-        line = words[0]
-        fname = font_name or font_regular
-        for w in words[1:]:
-            test = f"{line} {w}"
-            if pdfmetrics.stringWidth(test, fname, font_size) <= max_width:
-                line = test
-            else:
-                lines.append(line)
-                line = w
-        lines.append(line)
-        return lines
-
-    margin = 20
-    # Paleta azul para o orçamento
-    BLUE_BORDER = (0.16, 0.36, 0.64)
-    BLUE_TITLE = (0.10, 0.30, 0.56)
-    BLUE_HEADER = (0.15, 0.36, 0.66)
-    BLUE_ROW = (0.93, 0.96, 1.00)
-    subtotal = float(orc.get("subtotal", 0))
-    iva = subtotal * float(orc.get("iva_perc", 0)) / 100.0
-    total = subtotal + iva
-
-    avail_w = width - (margin * 2)
-    cols_base = [
-        ("Linha", 28),
-        ("Artigo", 140),
-        ("Descricao", 95),
-        ("Materia Prima", 80),
-        ("Espessura", 48),
-        ("Operacoes", 110),
-        ("Quant.", 42),
-        ("Preco (EUR)", 62),
-        ("IVA %", 40),
-        ("Total (EUR)", 70),
-    ]
-    base_sum = sum(w for _, w in cols_base) or 1
-    scale = min(1.0, float(avail_w) / float(base_sum))
-    cols = []
-    for i, (title, w) in enumerate(cols_base):
-        if i == len(cols_base) - 1:
-            used = sum(x[1] for x in cols)
-            cols.append((title, max(34, int(avail_w - used))))
-        else:
-            cols.append((title, max(24, int(round(w * scale)))))
-    table_w = sum(w for _, w in cols)
-    table_x = margin
-
-    header_h = 54
-    client_h = 60
-    gap = 8
-    table_header_h = 16
-    row_h = 14
-
-    notes_h = 62
-    complaints_h = 58
-    boxes_h = 70
-    footer_h = 44
-    bottom_h = notes_h + complaints_h + boxes_h + footer_h + 18
-    bottom_h_nonlast = 20
-
-    def draw_header(page_num):
-        c.setStrokeColorRGB(*BLUE_BORDER)
-        c.rect(margin, yinv(height - margin), width - margin * 2, height - margin * 2, stroke=1, fill=0)
-        logo_w = 138
-        logo_h = 54
-        logo_x = margin + 4
-        draw_pdf_logo_box(
-            c,
-            height,
-            logo_x,
-            margin + 2,
-            box_size=logo_w,
-            box_h=logo_h,
-            padding=1,
-            draw_border=False,
-        )
-        right_x = width - 210
-        title_left = logo_x + logo_w + 10
-        title_right = right_x - 10
-        box_w = min(340, max(210, title_right - title_left))
-        box_x = title_left + max(0.0, ((title_right - title_left) - box_w) / 2.0)
-        box_y = margin + 16
-        box_h = 22
-        c.setStrokeColorRGB(*BLUE_BORDER)
-        c.setLineWidth(1.25)
-        c.roundRect(box_x, yinv(box_y + box_h), box_w, box_h, 5, stroke=1, fill=0)
-        c.setFillColorRGB(*BLUE_TITLE)
-        set_font(False, 8.2)
-        c.drawCentredString(box_x + (box_w / 2), yinv(box_y - 2), "Orcamento")
-        set_font(True, 13)
-        c.drawCentredString(
-            box_x + (box_w / 2),
-            yinv(box_y + 15),
-            clip_text(f"N ORC: {orc.get('numero', '')}", box_w - 10, font_name=font_bold, font_size=13),
-        )
-        data_txt = (orc.get("data", "") or "")[:10]
-        right_box_w = 210
-        right_box_h = 18
-        right_x = width - margin - right_box_w
-        y_data = margin + 8
-        y_ref = y_data + right_box_h + 4
-        c.setLineWidth(1)
-        c.setStrokeColorRGB(*BLUE_BORDER)
-        c.roundRect(right_x, yinv(y_data + right_box_h), right_box_w, right_box_h, 3, stroke=1, fill=0)
-        c.roundRect(right_x, yinv(y_ref + right_box_h), right_box_w, right_box_h, 3, stroke=1, fill=0)
-        c.setFillColorRGB(*BLUE_TITLE)
-        set_font(False, 9)
-        c.drawCentredString(right_x + (right_box_w / 2), yinv(y_data + 12), f"Data: {data_txt}")
-        c.drawCentredString(right_x + (right_box_w / 2), yinv(y_ref + 12), f"Ref. Orcamento: {orc.get('numero','')}")
-        if page_num > 1:
-            c.setFillColorRGB(0, 0, 0)
-            c.drawRightString(width - (margin + 6), yinv(margin + 52), f"Pagina {page_num}")
-        c.setLineWidth(1)
-        c.setFillColorRGB(0, 0, 0)
-
-    def draw_client_box():
-        cli = orc.get("cliente", {})
-        if not cli.get("nome") and cli.get("codigo"):
-            code = cli.get("codigo", "")
-            if " - " in code:
-                code = code.split(" - ")[0]
-            cobj = find_cliente(self.data, code)
-            if cobj:
-                cli = {**cobj}
-        y = margin + header_h + gap
-        set_font(False, 9)
-        c.rect(margin, yinv(y + client_h), width - (margin * 2), client_h, stroke=1, fill=0)
-        c.drawString(margin + 8, yinv(y + 20), clip_text(cli.get("nome", ""), 700, font_size=9))
-        c.drawString(margin + 8, yinv(y + 36), f"NIF: {cli.get('nif','')}")
-        c.drawString(margin + 8, yinv(y + 52), clip_text(f"Contacto: {cli.get('contacto','')}  Email: {cli.get('email','')}", 700, font_size=9))
-
-    def draw_table_header(y):
-        c.setFillColorRGB(*BLUE_HEADER)
-        c.rect(table_x, yinv(y + table_header_h), table_w, table_header_h, fill=1, stroke=0)
-        c.setFillColorRGB(1, 1, 1)
-        set_font(True, 8)
-        x = table_x + 4
-        for title, w in cols:
-            c.drawString(x, yinv(y + 11), title)
-            x += w
-        c.setFillColorRGB(0, 0, 0)
-
-    def draw_rows(start_y, rows, start_index):
-        y = start_y
-        set_font(False, 8)
-        def fmt_num(val, decimals=2):
-            try:
-                v = float(val)
-            except Exception:
-                return str(val) if val is not None else ""
-            s = f"{v:.{decimals}f}"
-            if "." in s:
-                s = s.rstrip("0").rstrip(".")
-            return s
-        for i, l in enumerate(rows):
-            idx = start_index + i
-            if idx % 2 == 0:
-                c.setFillColorRGB(*BLUE_ROW)
-                c.rect(table_x, yinv(y + row_h - 1), table_w, row_h, fill=1, stroke=0)
-                c.setFillColorRGB(0, 0, 0)
-            x = table_x + 4
-            iva_val = l.get("iva", orc.get("iva_perc", 0))
-            values = [
-                f"{idx+1:03d}",
-                clip_text(l.get("ref_externa", ""), cols[1][1] - 6, font_size=8),
-                clip_text(l.get("descricao", ""), cols[2][1] - 6, font_size=8),
-                clip_text(l.get("material", ""), cols[3][1] - 6, font_size=8),
-                clip_text(fmt_num(l.get("espessura", "")), cols[4][1] - 6, font_size=8),
-                clip_text(l.get("operacao", ""), cols[5][1] - 6, font_size=8),
-                fmt_num(l.get("qtd", 0), decimals=2),
-                fmt_num(l.get("preco_unit", 0), decimals=2),
-                fmt_num(iva_val, decimals=2),
-                fmt_num(l.get("total", 0), decimals=2),
-            ]
-            for (title, w), val in zip(cols, values):
-                if title in ("Preco (EUR)", "IVA %", "Total (EUR)"):
-                    c.drawRightString(x + w - 6, yinv(y + 10), val)
-                elif title in ("Materia Prima", "Espessura", "Operacoes", "Quant."):
-                    c.drawCentredString(x + (w / 2), yinv(y + 10), val)
-                else:
-                    c.drawString(x, yinv(y + 10), val)
-                x += w
-            y += row_h
-        return y
-
-    def draw_bottom_sections():
-        y_top = height - margin - bottom_h
-        notes_lines = self._build_orc_notes_lines(orc)
-
-        # Notas
-        set_font(True, 9)
-        c.rect(margin, yinv(y_top + notes_h), 520, notes_h, stroke=1, fill=0)
-        c.drawString(margin + 8, yinv(y_top + 10), "Notas")
-        set_font(False, 7)
-        ytxt = y_top + 18
-        for line in notes_lines:
-            if ytxt > y_top + notes_h - 6:
-                break
-            c.drawString(margin + 8, yinv(ytxt), clip_text(line, 500, font_size=7))
-            ytxt += 8
-
-        # Reclamacoes / Devolucoes (caixa fixa, sem sobreposicao)
-        y_recl = y_top + notes_h + 4
-        c.rect(margin, yinv(y_recl + complaints_h), table_w, complaints_h, stroke=1, fill=0)
-        inner_x = margin + 6
-        inner_w = table_w - 12
-        line_h = 7
-        y_line = y_recl + 10
-        y_limit = y_recl + complaints_h - 9
-
-        set_font(True, 7.2)
-        c.drawString(inner_x, yinv(y_line), "Reclamacoes de cliente:")
-        y_line += line_h + 1
-        set_font(False, 6.6)
-        recl_lines = wrap_text(ORC_RECLAMACOES, inner_w, font_size=6.6)
-        for line in recl_lines:
-            if y_line > y_limit:
-                break
-            c.drawString(inner_x, yinv(y_line), clip_text(line, inner_w, font_size=6.6))
-            y_line += line_h
-
-        if y_line <= y_limit - (line_h + 2):
-            y_line += 1
-            set_font(True, 7.2)
-            c.drawString(inner_x, yinv(y_line), "Devolucao de materiais:")
-            y_line += line_h + 1
-            set_font(False, 6.6)
-            devol_lines = wrap_text(ORC_DEVOLUCOES, inner_w, font_size=6.6)
-            for line in devol_lines:
-                if y_line > y_limit:
-                    break
-                c.drawString(inner_x, yinv(y_line), clip_text(line, inner_w, font_size=6.6))
-                y_line += line_h
-
-        # Condicoes / Legenda / Resumo
-        y_boxes = y_top + notes_h + complaints_h + 8
-        cond_w = 360
-        leg_w = 180
-        sum_w = 240
-        set_font(True, 9)
-        c.rect(margin, yinv(y_boxes + boxes_h), cond_w, boxes_h, stroke=1, fill=0)
-        c.drawString(margin + 8, yinv(y_boxes + 16), "Condicoes Gerais")
-        set_font(False, 8)
-        ytxt = y_boxes + 24
-        for line in ORC_CONDICOES_GERAIS:
-            c.drawString(margin + 8, yinv(ytxt), clip_text(line, cond_w - 16, font_size=8))
-            ytxt += 10
-
-        leg_x = margin + cond_w + 8
-        set_font(True, 9)
-        c.rect(leg_x, yinv(y_boxes + boxes_h), leg_w, boxes_h, stroke=1, fill=0)
-        c.drawString(leg_x + 8, yinv(y_boxes + 16), "Legenda")
-        set_font(False, 7)
-        ytxt = y_boxes + 26
-        for line in ORC_LEGENDA_OPERACOES:
-            if ytxt > y_boxes + boxes_h - 6:
-                break
-            c.drawString(leg_x + 8, yinv(ytxt), clip_text(line, leg_w - 16, font_size=7))
-            ytxt += 8
-
-        sum_x = width - margin - sum_w
-        set_font(True, 9)
-        c.rect(sum_x, yinv(y_boxes + boxes_h), sum_w, boxes_h, stroke=1, fill=0)
-        c.drawString(sum_x + 8, yinv(y_boxes + 16), "Resumo financeiro")
-        set_font(False, 7.2)
-        c.drawString(sum_x + 8, yinv(y_boxes + 30), "Valor sem IVA")
-        set_font(True, 15)
-        c.drawRightString(sum_x + sum_w - 8, yinv(y_boxes + 44), f"{subtotal:.2f} EUR")
-        set_font(False, 7.2)
-        c.drawString(sum_x + 8, yinv(y_boxes + 58), "Ao valor sem IVA acresce o IVA")
-        c.drawString(sum_x + 8, yinv(y_boxes + 67), "a taxa legal em vigor.")
-
-        # Rodap? empresa
-        yb = margin + 6
-        set_font(False, 7.5)
-        for line in get_empresa_rodape_lines():
-            c.drawString(margin, yb, line)
-            yb += 9
-        executado = str(orc.get("executado_por", "") or "").strip()
-        set_font(False, 8)
-        c.drawRightString(width - margin - 6, yinv(height - margin - 14), f"Executado por: {executado}" if executado else "")
-
-    def rows_fit_for(first_page, bottom_space):
-        y_table_top = margin + header_h + (client_h + gap if first_page else gap)
-        y_rows = y_table_top + table_header_h + 2
-        max_table_y = height - margin - bottom_space
-        return max(0, int((max_table_y - y_rows) // row_h))
-
-    lines = list(orc.get("linhas", []))
-    idx = 0
-    page_num = 1
-    while idx < len(lines) or idx == 0:
-        first_page = page_num == 1
-        remaining = len(lines) - idx
-        rows_fit_last = rows_fit_for(first_page, bottom_h)
-        rows_fit_nonlast = rows_fit_for(first_page, bottom_h_nonlast)
-        if remaining <= rows_fit_last:
-            is_last = True
-            rows_fit = remaining
-        else:
-            is_last = False
-            if remaining <= rows_fit_nonlast:
-                # reservar espaco para a pagina final com resumo
-                rows_fit = max(1, remaining - rows_fit_last)
-            else:
-                rows_fit = rows_fit_nonlast
-
-        draw_header(page_num)
-        if first_page:
-            draw_client_box()
-        y_table_top = margin + header_h + (client_h + gap if first_page else gap)
-        draw_table_header(y_table_top)
-        y_rows = y_table_top + table_header_h + 2
-        page_rows = lines[idx: idx + rows_fit]
-        _ = draw_rows(y_rows, page_rows, idx)
-        idx += len(page_rows)
-
-        if is_last:
-            draw_bottom_sections()
-        else:
-            set_font(False, 8)
-            c.drawRightString(width - margin, yinv(height - margin - 8), "Continua na proxima pagina...")
-
-        if idx >= len(lines) and len(lines) > 0:
-            if is_last:
-                break
-            # forcar pagina final com resumo
-            c.showPage()
-            page_num += 1
-            continue
-        c.showPage()
-        page_num += 1
-    c.save()
 
 
 def _render_orc_pdf_portrait(self, path, orc):
@@ -2348,15 +1968,13 @@ def _render_orc_pdf_portrait(self, path, orc):
 
     def draw_shell():
         c.saveState()
-        c.setFillColor(palette["surface_alt"])
-        c.roundRect(margin - 8, yinv(height - margin + 8), content_w + 16, height - (2 * margin) + 16, 18, stroke=0, fill=1)
         c.setFillColor(colors.white)
-        c.roundRect(margin - 3, yinv(height - margin + 3), content_w + 6, height - (2 * margin) + 6, 16, stroke=0, fill=1)
+        c.rect(0, 0, width, height, stroke=0, fill=1)
         c.setStrokeColor(palette["line"])
         c.setLineWidth(0.45)
-        c.roundRect(margin - 3, yinv(height - margin + 3), content_w + 6, height - (2 * margin) + 6, 16, stroke=1, fill=0)
+        c.roundRect(margin - 3, yinv(height - margin + 3), content_w + 6, height - (2 * margin) + 6, 4, stroke=1, fill=0)
         c.setFillColor(palette["primary"])
-        c.roundRect(margin, yinv(58), content_w, 5, 2, stroke=0, fill=1)
+        c.rect(0, height - 9, width, 9, stroke=0, fill=1)
         c.restoreState()
 
     def fit_text(value, font_name, size, min_size, max_w, max_h, *, max_lines=None, leading_ratio=1.12):
@@ -2368,7 +1986,7 @@ def _render_orc_pdf_portrait(self, path, orc):
         left = x if align == "left" else x - box_w
         c.saveState()
         c.setFillColor(fill or palette["primary_soft"])
-        c.roundRect(left, yinv(top_y + 18), box_w, 18, 9, stroke=0, fill=1)
+        c.roundRect(left, yinv(top_y + 18), box_w, 18, 3, stroke=0, fill=1)
         c.restoreState()
         c.setFillColor(ink or palette["primary_dark"])
         c.setFont(fonts["bold"], 7.6)
@@ -2463,7 +2081,7 @@ def _render_orc_pdf_portrait(self, path, orc):
             hero_w = content_w - logo_w - 16
             header_panel = globals().get("draw_pdf_header_panel")
             if callable(header_panel):
-                header_panel(c, height, hero_x, 26, hero_w, 66, radius=13, stroke_color="#D5DDE7", accent_color="#EAF0F6", accent_height=5)
+                header_panel(c, height, hero_x, 26, hero_w, 66, radius=4, stroke_color="#D5DDE7", accent_color="#EAF0F6", accent_height=5)
             else:
                 c.saveState()
                 c.setFillColor(colors.white)
@@ -2871,15 +2489,13 @@ def _render_orc_pdf_modern(self, path, orc):
 
     def draw_shell() -> None:
         c.saveState()
-        c.setFillColor(palette["primary"])
-        c.roundRect(margin, yinv(64), content_w, 5, 2, stroke=0, fill=1)
-        c.setFillColor(palette["surface_alt"])
-        c.roundRect(margin, yinv(height - (margin * 2)), content_w, height - (margin * 2), 18, stroke=0, fill=1)
         c.setFillColor(colors.white)
-        c.roundRect(margin + 1, yinv(height - (margin * 2) - 1), content_w - 2, height - (margin * 2) - 2, 18, stroke=0, fill=1)
+        c.rect(0, 0, width, height, stroke=0, fill=1)
+        c.setFillColor(palette["primary"])
+        c.rect(0, height - 9, width, 9, stroke=0, fill=1)
         c.setStrokeColor(palette["line"])
         c.setLineWidth(1)
-        c.roundRect(margin, yinv(height - (margin * 2)), content_w, height - (margin * 2), 18, stroke=1, fill=0)
+        c.roundRect(margin, yinv(height - (margin * 2)), content_w, height - (margin * 2), 4, stroke=1, fill=0)
         c.restoreState()
 
     def draw_badge(x, top_y, text, *, fill_color=None, text_color=None, height_box=20, align="left"):
@@ -2889,7 +2505,7 @@ def _render_orc_pdf_modern(self, path, orc):
         txt_color = text_color or palette["primary_dark"]
         c.saveState()
         c.setFillColor(fill)
-        c.roundRect(x if align == "left" else x - box_w, yinv(top_y + height_box), box_w, height_box, 10, stroke=0, fill=1)
+        c.roundRect(x if align == "left" else x - box_w, yinv(top_y + height_box), box_w, height_box, 3, stroke=0, fill=1)
         c.restoreState()
         c.setFillColor(txt_color)
         c.setFont(fonts["bold"], 8.2)
@@ -3121,7 +2737,7 @@ def _render_orc_pdf_modern(self, path, orc):
             draw_pdf_logo_plate(c, height, margin + 10, 30, box_w=logo_plate_w, box_h=62, padding=8)
             header_panel = globals().get("draw_pdf_header_panel")
             if callable(header_panel):
-                header_panel(c, height, hero_x, 26, hero_w, 88, radius=16, stroke_color="#D5DDE7", accent_color="#EAF0F6", accent_height=5)
+                header_panel(c, height, hero_x, 26, hero_w, 88, radius=4, stroke_color="#D5DDE7", accent_color="#EAF0F6", accent_height=5)
             else:
                 c.saveState()
                 c.setFillColor(colors.white)

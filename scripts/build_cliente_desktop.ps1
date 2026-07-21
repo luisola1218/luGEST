@@ -13,7 +13,15 @@ try {
 import importlib
 import sys
 
-required = ["PySide6", "pypdf", "reportlab", "pymysql"]
+required = [
+    "PySide6",
+    "PIL",
+    "cryptography",
+    "ezdxf",
+    "pypdf",
+    "pymysql",
+    "reportlab",
+]
 missing = []
 for name in required:
     try:

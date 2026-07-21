@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from lugest_infra.storage import files as lugest_storage
-from lugest_qt.services.main_bridge import LegacyBackend
+from lugest_qt.services.legacy_backend import LegacyBackend
 
 
 def _reset_piece_ops(backend: LegacyBackend, enc_num: str, piece_id: str) -> None:

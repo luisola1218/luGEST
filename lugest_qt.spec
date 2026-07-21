@@ -4,6 +4,8 @@ from PyInstaller.utils.hooks import collect_submodules
 
 hiddenimports = ['main']
 hiddenimports += collect_submodules('lugest_qt')
+hiddenimports += collect_submodules('lugest_core')
+hiddenimports += collect_submodules('lugest_infra')
 hiddenimports += collect_submodules('reportlab.graphics.barcode')
 hiddenimports += collect_submodules('pypdf')
 

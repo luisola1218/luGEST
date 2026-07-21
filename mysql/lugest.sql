@@ -87,7 +87,11 @@ CREATE TABLE IF NOT EXISTS `conjuntos` (
   `total_final` decimal(12,2) DEFAULT NULL,
   `created_at` datetime DEFAULT NULL,
   `updated_at` datetime DEFAULT NULL,
-  PRIMARY KEY (`codigo`)
+  `param_codigo` varchar(4) DEFAULT NULL,
+  `ficha_tecnica_json` longtext,
+  `precos_atualizados_em` datetime DEFAULT NULL,
+  PRIMARY KEY (`codigo`),
+  KEY `idx_conjuntos_param` (`param_codigo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 CREATE TABLE IF NOT EXISTS `conjuntos_modelo` (
@@ -99,7 +103,10 @@ CREATE TABLE IF NOT EXISTS `conjuntos_modelo` (
   `updated_at` datetime DEFAULT NULL,
   `template` tinyint(1) DEFAULT NULL,
   `origem` varchar(80) DEFAULT NULL,
-  PRIMARY KEY (`codigo`)
+  `param_codigo` varchar(4) DEFAULT NULL,
+  `ficha_tecnica_json` longtext,
+  PRIMARY KEY (`codigo`),
+  KEY `idx_conjuntos_modelo_param` (`param_codigo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 CREATE TABLE IF NOT EXISTS `expedicoes` (
@@ -181,6 +188,15 @@ CREATE TABLE IF NOT EXISTS `fornecedores` (
   PRIMARY KEY (`id`),
   KEY `idx_fornecedores_nome` (`nome`),
   KEY `idx_fornecedores_nif` (`nif`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+CREATE TABLE IF NOT EXISTS `inventory_scan_codes` (
+  `scan_code` varchar(96) NOT NULL,
+  `entity_type` varchar(16) NOT NULL,
+  `entity_id` varchar(80) NOT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`scan_code`),
+  UNIQUE KEY `uq_inventory_scan_entity` (`entity_type`,`entity_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 CREATE TABLE IF NOT EXISTS `materiais` (

@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from lugest_qt.services.main_bridge import LegacyBackend
+from lugest_qt.services.legacy_backend import LegacyBackend
 
 
 def main() -> int:
@@ -114,11 +114,13 @@ def main() -> int:
     finally:
         data = backend.ensure_data()
         if record_num:
-            data["faturacao"] = [
-                row
-                for row in list(data.get("faturacao", []) or [])
-                if str((row or {}).get("numero", "") or "").strip() != record_num
-            ]
+            for key in ("faturacao", "faturacao_registos"):
+                data[key] = [
+                    row
+                    for row in list(data.get(key, []) or [])
+                    if str((row or {}).get("numero", "") or "").strip() != record_num
+                ]
+            backend._save(force=True, blocking=True)
         if order_num:
             try:
                 backend.order_remove(order_num)
@@ -129,7 +131,7 @@ def main() -> int:
                 backend.orc_remove(quote_num)
             except Exception:
                 pass
-        backend._save(force=True)
+        backend._save(force=True, blocking=True)
 
 
 if __name__ == "__main__":

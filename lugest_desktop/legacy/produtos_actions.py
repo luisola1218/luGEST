@@ -71,22 +71,25 @@ def _prod_pdf_mix_hex(base_hex, target_hex, ratio):
 def _prod_pdf_palette():
     from reportlab.lib import colors
 
-    primary_hex = "#1F3C88"
+    primary_hex = "#00A6A6"
     try:
-        cfg = get_branding_config() if callable(globals().get("get_branding_config")) else {}
-        primary_hex = str((cfg or {}).get("primary_color", "") or primary_hex).strip() or primary_hex
+        getter = globals().get("get_branding_config")
+        configured = str((getter() if callable(getter) else {}).get("primary_color", "") or "").strip()
+        token = configured.lstrip("#")
+        if len(token) == 6 and all(ch in "0123456789abcdefABCDEF" for ch in token):
+            primary_hex = f"#{token.upper()}"
     except Exception:
         pass
     return {
         "primary": colors.HexColor(primary_hex),
-        "primary_dark": colors.HexColor(_prod_pdf_mix_hex(primary_hex, "#000000", 0.22)),
-        "primary_soft": colors.HexColor(_prod_pdf_mix_hex(primary_hex, "#FFFFFF", 0.82)),
-        "primary_soft_2": colors.HexColor(_prod_pdf_mix_hex(primary_hex, "#FFFFFF", 0.90)),
+        "primary_dark": colors.HexColor("#0B1F33"),
+        "primary_soft": colors.HexColor(_prod_pdf_mix_hex(primary_hex, "#FFFFFF", 0.84)),
+        "primary_soft_2": colors.HexColor(_prod_pdf_mix_hex(primary_hex, "#FFFFFF", 0.94)),
         "surface_warm": colors.HexColor("#FCFCFD"),
-        "line": colors.HexColor(_prod_pdf_mix_hex(primary_hex, "#D7DEE8", 0.76)),
-        "line_strong": colors.HexColor(_prod_pdf_mix_hex(primary_hex, "#708090", 0.34)),
-        "muted": colors.HexColor("#667085"),
-        "ink": colors.HexColor(_prod_pdf_mix_hex(primary_hex, "#1A1A1A", 0.72)),
+        "line": colors.HexColor("#CAD3DA"),
+        "line_strong": colors.HexColor("#AEBCC7"),
+        "muted": colors.HexColor("#61717F"),
+        "ink": colors.HexColor("#14212B"),
         "danger_fill": colors.HexColor("#FEECEC"),
         "danger_text": colors.HexColor("#B42318"),
     }
@@ -1559,6 +1562,4 @@ def _dialog_escolher_produto(self, for_ne=False):
     tree.bind("<Return>", lambda _e: on_ok())
     dlg.wait_window()
     return chosen if chosen else None
-
-
 
