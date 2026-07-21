@@ -28,7 +28,20 @@ def _box(c, x: float, y: float, width: float, height: float, palette, *, fill=No
     c.roundRect(x, y, width, height, radius, stroke=1, fill=1)
 
 
-def _label_value(c, x: float, y: float, width: float, height: float, label: str, value: str, palette, *, value_size: float = 8, fill=None) -> None:
+def _label_value(
+    c,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    label: str,
+    value: str,
+    palette,
+    *,
+    value_size: float = 8,
+    fill=None,
+    max_value_size: float | None = None,
+) -> None:
     _box(c, x, y, width, height, palette, fill=fill)
     compact = height <= 22
     label_size = 4.4 if compact else 5.6
@@ -37,7 +50,7 @@ def _label_value(c, x: float, y: float, width: float, height: float, label: str,
     c.setFillColor(palette["muted"])
     c.setFont(REGULAR, label_size)
     c.drawString(x + 7, label_y, clip_text(label, width - 14, REGULAR, label_size))
-    preferred = min(float(value_size), 6.8 if compact else 8.0)
+    preferred = min(float(value_size), float(max_value_size) if max_value_size is not None else (6.8 if compact else 8.0))
     size = fit_font_size(value, BOLD, width - 14, preferred, 5.1 if compact else 6)
     c.setFillColor(palette["ink"])
     c.setFont(BOLD, size)
@@ -61,65 +74,67 @@ def draw_product_label(
     dimension_text: str,
 ) -> None:
     _page(c, width, height)
-    outer = 8
+    outer = 6
     c.setFillColor(colors.white)
     c.setStrokeColor(palette["line_strong"])
     c.setLineWidth(1)
-    c.roundRect(outer, outer, width - 2 * outer, height - 2 * outer, 6, stroke=1, fill=1)
+    c.roundRect(outer, outer, width - 2 * outer, height - 2 * outer, 5, stroke=1, fill=1)
     c.setFillColor(palette["primary"])
-    c.rect(outer, height - outer - 3, width - 2 * outer, 3, stroke=0, fill=1)
+    c.rect(outer, height - outer - 2.5, width - 2 * outer, 2.5, stroke=0, fill=1)
 
-    x, body_w = outer + 9, width - 2 * outer - 18
-    header_y, header_h = height - outer - 40, 30
-    draw_logo(c, palette, logo_path, x, header_y + 5, 48, 20, radius=6, padding_x=3, padding_y=2, line_width=0.7)
-    stock_w = 76
+    x, body_w = outer + 5, width - 2 * outer - 10
+    top = height - outer - 5
+    header_h = 24
+    header_y = top - header_h
+    draw_logo(c, palette, logo_path, x, header_y + 3, 44, 18, radius=4, padding_x=2, padding_y=1.5, line_width=0.65)
+    stock_w = 66
     stock_x = x + body_w - stock_w
-    _label_value(c, stock_x, header_y + 4, stock_w, 22, "Stock", quantity_text, palette, value_size=8)
-    title_x = x + 58
-    title_w = stock_x - title_x - 8
+    _label_value(c, stock_x, header_y + 2, stock_w, 20, "Stock", quantity_text, palette, value_size=9.2, max_value_size=9.2, fill=palette["primary_soft"])
+    title_x = x + 50
+    title_w = stock_x - title_x - 6
     title = "Etiqueta de Produto"
-    title_size = fit_font_size(title, BOLD, title_w, 8, 6)
+    title_size = fit_font_size(title, BOLD, title_w, 9.5, 7.2)
     c.setFillColor(palette["ink"])
     c.setFont(BOLD, title_size)
-    c.drawString(title_x, header_y + 17, clip_text(title, title_w, BOLD, title_size))
+    c.drawString(title_x, header_y + 13.5, clip_text(title, title_w, BOLD, title_size))
     c.setFillColor(palette["muted"])
-    c.setFont(REGULAR, 5.8)
-    c.drawString(title_x, header_y + 7, clip_text(_text(product.get("codigo")), title_w, REGULAR, 5.8))
+    c.setFont(BOLD, 6.8)
+    c.drawString(title_x, header_y + 3.5, clip_text(_text(product.get("codigo")), title_w, BOLD, 6.8))
 
-    identity_y, identity_h = header_y - 38, 31
-    _box(c, x, identity_y, body_w, identity_h, palette)
+    identity_h = 33
+    identity_y = header_y - identity_h - 5
+    _box(c, x, identity_y, body_w, identity_h, palette, fill=colors.white, radius=4)
     code = _text(product.get("codigo"))
-    code_size = fit_font_size(code, BOLD, body_w - 16, 8, 6)
+    code_size = fit_font_size(code, BOLD, body_w - 14, 13, 9)
     c.setFillColor(palette["ink"])
     c.setFont(BOLD, code_size)
-    c.drawString(x + 8, identity_y + 16, clip_text(code, body_w - 16, BOLD, code_size))
+    c.drawString(x + 7, identity_y + 17, clip_text(code, body_w - 14, BOLD, code_size))
     description = _text(product.get("descricao"))
-    desc_size = fit_font_size(description, REGULAR, body_w - 16, 6.5, 5.3)
+    desc_size = fit_font_size(description, REGULAR, body_w - 14, 8.2, 6.4)
     c.setFillColor(palette["muted"])
     c.setFont(REGULAR, desc_size)
-    c.drawString(x + 8, identity_y + 7, clip_text(description, body_w - 16, REGULAR, desc_size))
+    c.drawString(x + 7, identity_y + 5.5, clip_text(description, body_w - 14, REGULAR, desc_size))
 
-    meta_y = identity_y - 23
-    meta = " | ".join((_text(product.get("categoria")), _text(product.get("tipo")), _text(dimension_text)))
-    _label_value(c, x, meta_y, body_w, 19, "Categoria / tipo / dimensao", meta, palette, value_size=7.1, fill=palette["surface_alt"])
-    info_y, gap = meta_y - 23, 6
+    info_h, gap = 19, 5
+    info_y = identity_y - info_h - 5
     info_w = (body_w - gap) / 2
-    _label_value(c, x, info_y, info_w, 19, "Preco / unidade", price_text, palette, value_size=7.1)
-    _label_value(c, x + info_w + gap, info_y, info_w, 19, "Atualizado", printed_at[:16], palette, value_size=7.1)
+    meta = " | ".join((_text(product.get("categoria")), _text(product.get("tipo")), _text(dimension_text)))
+    _label_value(c, x, info_y, info_w, info_h, "Categoria / tipo / dimensao", meta, palette, value_size=7.6, max_value_size=7.6, fill=palette["surface_alt"])
+    _label_value(c, x + info_w + gap, info_y, info_w, info_h, "Preco / atualizado", f"{price_text} | {printed_at[:10]}", palette, value_size=7.6, max_value_size=7.6)
 
-    barcode_y = outer + 10
-    barcode_h = info_y - barcode_y - 6
-    _box(c, x, barcode_y, body_w, barcode_h, palette)
+    barcode_y = outer + 4
+    barcode_h = info_y - barcode_y - 5
+    _box(c, x, barcode_y, body_w, barcode_h, palette, fill=colors.white, radius=4)
     c.setFillColor(palette["muted"])
-    c.setFont(REGULAR, 5.5)
-    c.drawString(x + 8, barcode_y + barcode_h - 10, "Codigo para picagem e selecao")
-    bar_x, bar_w = x + 8, body_w - 16
-    bar_h = max(17, min(24, barcode_h - 22))
-    draw_barcode(c, scan_code, bar_x, barcode_y + 10, bar_w, bar_h, min_bar_width=0.5, max_bar_width=1.5)
-    code_size = fit_font_size(scan_code, BOLD, bar_w, 6.2, 5.2)
+    c.setFont(REGULAR, 5.8)
+    c.drawString(x + 6, barcode_y + barcode_h - 7, "Codigo para picagem e selecao")
+    bar_x, bar_w = x + 6, body_w - 12
+    bar_h = max(12, barcode_h - 19)
+    draw_barcode(c, scan_code, bar_x, barcode_y + 7, bar_w, bar_h, min_bar_width=0.5, max_bar_width=1.6)
+    code_size = fit_font_size(scan_code, BOLD, bar_w, 7.5, 6.2)
     c.setFillColor(palette["ink"])
     c.setFont(BOLD, code_size)
-    c.drawCentredString(x + body_w / 2, barcode_y + 3.3, clip_text(scan_code, bar_w, BOLD, code_size))
+    c.drawCentredString(x + body_w / 2, barcode_y + 1.5, clip_text(scan_code, bar_w, BOLD, code_size))
 
 
 def draw_material_label(
@@ -143,72 +158,72 @@ def draw_material_label(
     weight_text: str,
 ) -> None:
     _page(c, width, height)
-    compact = width < 400
-    outer = 8 if compact else 14
+    outer = 6
     c.setFillColor(colors.white)
     c.setStrokeColor(palette["line_strong"])
     c.setLineWidth(1)
-    c.roundRect(outer, outer, width - 2 * outer, height - 2 * outer, 6, stroke=1, fill=1)
+    c.roundRect(outer, outer, width - 2 * outer, height - 2 * outer, 5, stroke=1, fill=1)
     c.setFillColor(palette["primary"])
-    c.rect(outer, height - outer - 3, width - 2 * outer, 3, stroke=0, fill=1)
-    x, body_w = outer + (9 if compact else 14), width - 2 * outer - (18 if compact else 28)
+    c.rect(outer, height - outer - 2.5, width - 2 * outer, 2.5, stroke=0, fill=1)
+    x, body_w = outer + 5, width - 2 * outer - 10
+    top = height - outer - 5
 
-    header_h = 32 if compact else 54
-    header_y = height - outer - header_h - 8
-    logo_w, logo_h = (48, 20) if compact else (86, 36)
-    draw_logo(c, palette, logo_path, x, header_y + (header_h - logo_h) / 2, logo_w, logo_h, radius=6, padding_x=3, padding_y=2, line_width=0.7)
-    stock_w = 76 if compact else 112
-    _label_value(c, x + body_w - stock_w, header_y + 4, stock_w, header_h - 8, "Stock disponivel", available_text, palette, value_size=8, fill=palette["primary_soft"])
-    title_x = x + logo_w + (10 if compact else 16)
-    title_w = body_w - logo_w - stock_w - (20 if compact else 30)
+    header_h = 24
+    header_y = top - header_h
+    draw_logo(c, palette, logo_path, x, header_y + 3, 44, 18, radius=4, padding_x=2, padding_y=1.5, line_width=0.65)
+    stock_w = 66
+    stock_x = x + body_w - stock_w
+    _label_value(c, stock_x, header_y + 2, stock_w, 20, "Stock disponivel", available_text, palette, value_size=9.2, max_value_size=9.2, fill=palette["primary_soft"])
+    title_x = x + 50
+    title_w = stock_x - title_x - 6
+    title = "Etiqueta de Materia-Prima"
+    title_size = fit_font_size(title, BOLD, title_w, 9.5, 7.2)
     c.setFillColor(palette["ink"])
-    title_size = fit_font_size("Etiqueta de Materia-Prima", BOLD, title_w, 8, 6)
     c.setFont(BOLD, title_size)
-    c.drawString(title_x, header_y + header_h * 0.58, clip_text("Etiqueta de Materia-Prima", title_w, BOLD, title_size))
-    identity = f"{_text(record.get('id'))} | {format_text}"
+    c.drawString(title_x, header_y + 13.5, clip_text(title, title_w, BOLD, title_size))
     c.setFillColor(palette["muted"])
-    c.setFont(REGULAR, 6 if compact else 8)
-    c.drawString(title_x, header_y + header_h * 0.28, clip_text(identity, title_w, REGULAR, 6 if compact else 8))
+    c.setFont(BOLD, 6.8)
+    c.drawString(title_x, header_y + 3.5, clip_text(_text(record.get("id")), title_w, BOLD, 6.8))
 
-    hero_h = 31 if compact else 62
-    hero_y = header_y - hero_h - 8
-    _box(c, x, hero_y, body_w, hero_h, palette)
+    hero_h = 33
+    hero_y = header_y - hero_h - 5
+    _box(c, x, hero_y, body_w, hero_h, palette, fill=colors.white, radius=4)
     material = _text(record.get("material"))
     thickness = _text(record.get("espessura"))
     hero = f"{material} | {thickness} mm"
-    hero_size = fit_font_size(hero, BOLD, body_w - 16, 8, 6)
+    hero_size = fit_font_size(hero, BOLD, body_w - 14, 13.5, 9)
     c.setFillColor(palette["ink"])
     c.setFont(BOLD, hero_size)
-    c.drawString(x + 8, hero_y + hero_h * 0.52, clip_text(hero, body_w - 16, BOLD, hero_size))
+    c.drawString(x + 7, hero_y + 17, clip_text(hero, body_w - 14, BOLD, hero_size))
+    identity = f"{kind_text} | {format_text} | {weight_text}"
+    identity_size = fit_font_size(identity, REGULAR, body_w - 14, 8, 6.4)
     c.setFillColor(palette["muted"])
-    c.setFont(REGULAR, 6 if compact else 8)
-    c.drawString(x + 8, hero_y + (7 if compact else 13), clip_text(f"{kind_text} | {format_text}", body_w - 16, REGULAR, 6 if compact else 8))
+    c.setFont(REGULAR, identity_size)
+    c.drawString(x + 7, hero_y + 5.5, clip_text(identity, body_w - 14, REGULAR, identity_size))
 
-    dim_h = 22 if compact else 46
-    dim_y = hero_y - dim_h - 7
-    _label_value(c, x, dim_y, body_w, dim_h, "Dimensao identificada", dimension_text, palette, value_size=8, fill=palette["surface_alt"])
+    meta_h, gap = 21, 5
+    meta_y = hero_y - meta_h - 5
+    dim_w = body_w * 0.50
+    lot_w = body_w * 0.25
+    location_w = body_w - dim_w - lot_w - 2 * gap
+    _label_value(c, x, meta_y, dim_w, meta_h, "Dimensao identificada", dimension_text, palette, value_size=8.4, max_value_size=8.4, fill=palette["surface_alt"])
+    _label_value(c, x + dim_w + gap, meta_y, lot_w, meta_h, "Lote", lot_text, palette, value_size=7.4, max_value_size=7.4)
+    _label_value(c, x + dim_w + lot_w + 2 * gap, meta_y, location_w, meta_h, "Localizacao", location_text, palette, value_size=7.4, max_value_size=7.4)
 
-    meta_h = 19 if compact else 40
-    meta_y = dim_y - meta_h - 7
-    gap = 5 if compact else 8
-    meta_w = (body_w - 3 * gap) / 4
-    metadata = (("Lote", lot_text), ("Peso / un.", weight_text), ("Localizacao", location_text), ("Estado", "Disponivel" if not compact else kind_text))
-    for index, (label, value) in enumerate(metadata):
-        _label_value(c, x + index * (meta_w + gap), meta_y, meta_w, meta_h, label, value, palette, value_size=6.7 if compact else 8)
-
-    barcode_y = outer + 10
-    barcode_h = meta_y - barcode_y - 7
-    _box(c, x, barcode_y, body_w, barcode_h, palette)
+    barcode_y = outer + 4
+    barcode_h = meta_y - barcode_y - 5
+    _box(c, x, barcode_y, body_w, barcode_h, palette, fill=colors.white, radius=4)
     c.setFillColor(palette["muted"])
-    c.setFont(REGULAR, 5.5 if compact else 7)
-    c.drawString(x + 8, barcode_y + barcode_h - (9 if compact else 13), "Codigo para picagem e identificacao")
-    c.drawRightString(x + body_w - 8, barcode_y + barcode_h - (9 if compact else 13), printed_at[:16])
-    bar_h = max(12, min(14 if compact else 34, barcode_h - (18 if compact else 30)))
-    draw_barcode(c, scan_code, x + 10, barcode_y + (7 if compact else 14), body_w - 20, bar_h, min_bar_width=0.5, max_bar_width=1.5)
-    size = fit_font_size(scan_code, BOLD, body_w - 20, 6.5 if compact else 8, 5.2)
+    c.setFont(REGULAR, 5.8)
+    c.drawString(x + 6, barcode_y + barcode_h - 7, "Codigo para picagem e identificacao")
+    c.drawRightString(x + body_w - 6, barcode_y + barcode_h - 7, printed_at[:16])
+    bar_x, bar_w = x + 6, body_w - 12
+    bar_h = max(12, barcode_h - 19)
+    draw_barcode(c, scan_code, bar_x, barcode_y + 7, bar_w, bar_h, min_bar_width=0.5, max_bar_width=1.6)
+    size = fit_font_size(scan_code, BOLD, bar_w, 7.5, 6.2)
     c.setFillColor(palette["ink"])
     c.setFont(BOLD, size)
-    c.drawCentredString(x + body_w / 2, barcode_y + 3.5, clip_text(scan_code, body_w - 20, BOLD, size))
+    c.drawCentredString(x + body_w / 2, barcode_y + 1.5, clip_text(scan_code, bar_w, BOLD, size))
 
 
 def draw_opp_label(

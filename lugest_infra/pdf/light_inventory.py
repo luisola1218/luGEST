@@ -272,8 +272,22 @@ def _render_inventory(
     return target
 
 
-def render_material_stock_pdf(path: str | Path, data: dict[str, Any], branding: dict[str, Any], *, in_stock_only: bool = False) -> Path:
+def render_material_stock_pdf(
+    path: str | Path,
+    data: dict[str, Any],
+    branding: dict[str, Any],
+    *,
+    in_stock_only: bool = False,
+    formats: list[str] | tuple[str, ...] | None = None,
+) -> Path:
     rows = [dict(item) for item in list(data.get("materiais", []) or []) if isinstance(item, dict)]
+    selected_formats = {str(value or "").strip().casefold() for value in list(formats or []) if str(value or "").strip()}
+    if selected_formats:
+        rows = [
+            row
+            for row in rows
+            if str(row.get("formato", "") or "Chapa").strip().casefold() in selected_formats
+        ]
     if in_stock_only:
         rows = [row for row in rows if _number(row.get("quantidade")) - _number(row.get("reservado")) > 0]
     rows.sort(key=lambda row: (str(row.get("formato", "")), str(row.get("material", "")), _number(row.get("espessura")), str(row.get("id", ""))))
@@ -281,7 +295,7 @@ def render_material_stock_pdf(path: str | Path, data: dict[str, Any], branding: 
     reserved = sum(_number(row.get("reservado")) for row in rows)
     available = sum(max(0.0, _number(row.get("quantidade")) - _number(row.get("reservado"))) for row in rows)
     retalhos = sum(1 for row in rows if bool(row.get("is_sobra")) or "retalho" in _location(row).casefold())
-    formats = len({str(row.get("formato", "") or "Chapa").strip() for row in rows})
+    format_count = len({str(row.get("formato", "") or "Chapa").strip() for row in rows})
     columns = [
         ("ID", 76, "left"), ("Formato", 62, "left"), ("Material", 88, "left"),
         ("Dimensao / secao", 196, "left"), ("Esp.", 42, "center"),
@@ -302,10 +316,15 @@ def render_material_stock_pdf(path: str | Path, data: dict[str, Any], branding: 
             return "warning"
         return ""
 
+    format_label = ", ".join(sorted({str(row.get("formato", "") or "Chapa").strip() for row in rows}))
+    subtitle = "Disponibilidade fisica, reserva e rastreabilidade por lote"
+    if formats is not None:
+        requested_label = ", ".join(str(value).strip() for value in formats if str(value).strip())
+        subtitle = f"Formatos selecionados: {requested_label or format_label or '-'}"
     return _render_inventory(
-        path, title="Stock de Materia-Prima", subtitle="Disponibilidade fisica, reserva e rastreabilidade por lote",
+        path, title="Stock de Materia-Prima", subtitle=subtitle,
         rows=rows, columns=columns, values_for=values, status_for=status,
-        metrics=[("Referencias", str(len(rows)), "normal"), ("Stock fisico", _fmt(total), "accent"), ("Disponivel", _fmt(available), "accent"), ("Reservado | Retalhos | Formatos", f"{_fmt(reserved)} | {retalhos} | {formats}", "normal")],
+        metrics=[("Referencias", str(len(rows)), "normal"), ("Stock fisico", _fmt(total), "accent"), ("Disponivel", _fmt(available), "accent"), ("Reservado | Retalhos | Formatos", f"{_fmt(reserved)} | {retalhos} | {format_count}", "normal")],
         branding=branding,
     )
 
@@ -315,13 +334,25 @@ def render_product_stock_pdf(
     data: dict[str, Any],
     branding: dict[str, Any],
     unit_price: Callable[[dict[str, Any]], float],
+    *,
+    categories: list[str] | tuple[str, ...] | None = None,
+    types: list[str] | tuple[str, ...] | None = None,
+    in_stock_only: bool = False,
 ) -> Path:
     rows = [dict(item) for item in list(data.get("produtos", []) or []) if isinstance(item, dict)]
+    selected_categories = {str(value or "").strip().casefold() for value in list(categories or []) if str(value or "").strip()}
+    selected_types = {str(value or "").strip().casefold() for value in list(types or []) if str(value or "").strip()}
+    if selected_categories:
+        rows = [row for row in rows if str(row.get("categoria", "") or "Sem categoria").strip().casefold() in selected_categories]
+    if selected_types:
+        rows = [row for row in rows if str(row.get("tipo", "") or "Sem tipo").strip().casefold() in selected_types]
+    if in_stock_only:
+        rows = [row for row in rows if _number(row.get("qty")) > 0]
     rows.sort(key=lambda row: (str(row.get("categoria", "")), str(row.get("descricao", "")), str(row.get("codigo", ""))))
     total_qty = sum(_number(row.get("qty")) for row in rows)
     total_value = sum(_number(row.get("qty")) * _number(unit_price(row)) for row in rows)
     alerts = sum(1 for row in rows if _number(row.get("qty")) <= 0 or (_number(row.get("alerta")) > 0 and _number(row.get("qty")) <= _number(row.get("alerta"))))
-    categories = len({str(row.get("categoria", "") or "Sem categoria") for row in rows})
+    category_count = len({str(row.get("categoria", "") or "Sem categoria") for row in rows})
     columns = [
         ("Codigo", 78, "left"), ("Descricao", 214, "left"), ("Categoria", 96, "left"),
         ("Tipo / dimensao", 128, "left"), ("Un.", 35, "center"), ("Stock", 48, "right"),
@@ -346,9 +377,15 @@ def render_product_stock_pdf(
         qty, alert = _number(row.get("qty")), _number(row.get("alerta"))
         return "danger" if qty <= 0 else "warning" if alert > 0 and qty <= alert else ""
 
+    subtitle_parts: list[str] = []
+    if categories is not None:
+        subtitle_parts.append("Categorias: " + ", ".join(str(value).strip() for value in categories if str(value).strip()))
+    if types is not None:
+        subtitle_parts.append("Tipos: " + ", ".join(str(value).strip() for value in types if str(value).strip()))
+    subtitle = " | ".join(subtitle_parts) or "Existencias, niveis de reposicao e valorizacao atualizada"
     return _render_inventory(
-        path, title="Stock de Produtos", subtitle="Existencias, niveis de reposicao e valorizacao atualizada",
+        path, title="Stock de Produtos", subtitle=subtitle,
         rows=rows, columns=columns, values_for=values, status_for=status,
-        metrics=[("Referencias", str(len(rows)), "normal"), ("Unidades em stock", _fmt(total_qty), "accent"), ("Reposicao necessaria", str(alerts), "danger" if alerts else "normal"), ("Categorias | Valor global", f"{categories} | {total_value:.2f} EUR", "accent")],
+        metrics=[("Referencias", str(len(rows)), "normal"), ("Unidades em stock", _fmt(total_qty), "accent"), ("Reposicao necessaria", str(alerts), "danger" if alerts else "normal"), ("Categorias | Valor global", f"{category_count} | {total_value:.2f} EUR", "accent")],
         branding=branding,
     )

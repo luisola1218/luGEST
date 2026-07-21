@@ -262,6 +262,9 @@ class ProductsPage(QWidget):
         self.pdf_btn = QPushButton("Ficha PDF")
         self.pdf_btn.setProperty("variant", "secondary")
         self.pdf_btn.clicked.connect(self._open_pdf)
+        self.stock_pdf_btn = QPushButton("Preview stock")
+        self.stock_pdf_btn.setProperty("variant", "secondary")
+        self.stock_pdf_btn.clicked.connect(self._open_stock_pdf)
         self.label_btn = QPushButton("Etiqueta")
         self.label_btn.setProperty("variant", "secondary")
         self.label_btn.clicked.connect(self._open_label_pdf)
@@ -280,6 +283,7 @@ class ProductsPage(QWidget):
             (self.remove_btn, 88),
             (self.consume_btn, 78),
             (self.pdf_btn, 96),
+            (self.stock_pdf_btn, 112),
             (self.label_btn, 82),
             (self.form_mode_btn, 72),
             (self.moves_mode_btn, 72),
@@ -864,7 +868,7 @@ class ProductsPage(QWidget):
         table.verticalHeader().setVisible(False)
         table.verticalHeader().setDefaultSectionSize(28)
         table.setSelectionBehavior(QTableWidget.SelectRows)
-        table.setSelectionMode(QTableWidget.SingleSelection)
+        table.setSelectionMode(QTableWidget.ExtendedSelection)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setWordWrap(False)
         table.setStyleSheet(self.table.styleSheet())
@@ -967,6 +971,50 @@ class ProductsPage(QWidget):
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("Selecionar")
+        delete_btn = QPushButton("Apagar selecionados")
+        delete_btn.setProperty("variant", "danger")
+        delete_btn.setEnabled(False)
+        buttons.addButton(delete_btn, QDialogButtonBox.ActionRole)
+
+        def selected_product_codes() -> list[str]:
+            selection = table.selectionModel()
+            if selection is None:
+                return []
+            result: list[str] = []
+            for index in selection.selectedRows():
+                item = table.item(index.row(), 0)
+                code = item.text().strip() if item is not None else ""
+                if code and code not in result:
+                    result.append(code)
+            return result
+
+        def update_delete_state() -> None:
+            delete_btn.setEnabled(bool(selected_product_codes()))
+
+        def delete_selected_products() -> None:
+            codes = selected_product_codes()
+            if not codes:
+                QMessageBox.warning(dialog, "Apagar produtos", "Seleciona uma ou várias linhas.")
+                return
+            preview = ", ".join(codes[:6])
+            if len(codes) > 6:
+                preview += f" e mais {len(codes) - 6}"
+            message = f"Apagar definitivamente {len(codes)} produto(s)?\n\n{preview}"
+            if QMessageBox.question(dialog, "Apagar produtos", message) != QMessageBox.Yes:
+                return
+            try:
+                removed = self.backend.product_remove_many(codes)
+            except Exception as exc:
+                QMessageBox.critical(dialog, "Apagar produtos", str(exc))
+                return
+            if self.current_code in codes:
+                self._new_product()
+            self.refresh()
+            render_full_grid()
+            QMessageBox.information(dialog, "Produtos", f"{removed} produto(s) apagado(s).")
+
+        table.itemSelectionChanged.connect(update_delete_state)
+        delete_btn.clicked.connect(delete_selected_products)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
@@ -1092,6 +1140,94 @@ class ProductsPage(QWidget):
             self.backend.product_open_sheet_pdf(code)
         except Exception as exc:
             QMessageBox.critical(self, "Produtos", str(exc))
+
+    def _select_stock_pdf_filters(self) -> dict[str, object] | None:
+        options = dict(self.backend.product_stock_filters() or {})
+        categories = list(options.get("categories", []) or [])
+        types = list(options.get("types", []) or [])
+        if not categories and not types:
+            QMessageBox.warning(self, "Preview stock", "Não existem produtos para apresentar.")
+            return None
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Conteúdo do relatório de produtos")
+        dialog.setMinimumWidth(680)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+
+        title = QLabel("Filtros incluídos no relatório")
+        title.setStyleSheet("font-size: 15px; font-weight: 800; color: #10253d;")
+        layout.addWidget(title)
+
+        def add_filter_group(label: str, all_label: str, values: list[str]) -> tuple[QCheckBox, list[QCheckBox]]:
+            heading = QLabel(label)
+            heading.setStyleSheet("font-weight: 800; color: #10253d;")
+            layout.addWidget(heading)
+            all_check = QCheckBox(all_label)
+            all_check.setChecked(True)
+            all_check.setStyleSheet("font-weight: 700;")
+            layout.addWidget(all_check)
+            grid = QGridLayout()
+            grid.setHorizontalSpacing(14)
+            grid.setVerticalSpacing(6)
+            checks: list[QCheckBox] = []
+            for index, value in enumerate(values):
+                check = QCheckBox(value)
+                check.setChecked(True)
+                checks.append(check)
+                grid.addWidget(check, index // 4, index % 4)
+            layout.addLayout(grid)
+
+            def set_all(checked: bool) -> None:
+                for check in checks:
+                    check.setChecked(checked)
+
+            def update_all() -> None:
+                all_check.blockSignals(True)
+                all_check.setChecked(all(check.isChecked() for check in checks))
+                all_check.blockSignals(False)
+
+            all_check.toggled.connect(set_all)
+            for check in checks:
+                check.toggled.connect(update_all)
+            return all_check, checks
+
+        category_all, category_checks = add_filter_group("Categorias", "Todas as categorias", categories)
+        type_all, type_checks = add_filter_group("Tipos", "Todos os tipos", types)
+
+        stock_only_check = QCheckBox("Apenas produtos com stock disponível")
+        stock_only_check.setChecked(self.only_stock_check.isChecked())
+        layout.addWidget(stock_only_check)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Pré-visualizar")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return None
+
+        selected_categories = [value for value, check in zip(categories, category_checks) if check.isChecked()]
+        selected_types = [value for value, check in zip(types, type_checks) if check.isChecked()]
+        if not selected_categories or not selected_types:
+            QMessageBox.warning(self, "Preview stock", "Seleciona pelo menos uma categoria e um tipo.")
+            return None
+        self.only_stock_check.setChecked(stock_only_check.isChecked())
+        return {
+            "categories": None if category_all.isChecked() else selected_categories,
+            "types": None if type_all.isChecked() else selected_types,
+            "in_stock_only": stock_only_check.isChecked(),
+        }
+
+    def _open_stock_pdf(self) -> None:
+        filters = self._select_stock_pdf_filters()
+        if filters is None:
+            return
+        try:
+            self.backend.product_open_stock_pdf(**filters)
+        except Exception as exc:
+            QMessageBox.critical(self, "Preview stock", str(exc))
 
     def _open_label_pdf(self) -> None:
         code = self.code_edit.text().strip() or self.current_code

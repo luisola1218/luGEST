@@ -1,17 +1,30 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import wraps
 from typing import Any, Callable
 
 
 MAX_PDF_FONT_SIZE = 8.0
+_ACTIVE_PDF_FONT_LIMIT: ContextVar[float] = ContextVar("lugest_pdf_font_limit", default=MAX_PDF_FONT_SIZE)
 
 
 def _bounded_size(value: Any) -> Any:
     try:
-        return min(float(value), MAX_PDF_FONT_SIZE)
+        return min(float(value), float(_ACTIVE_PDF_FONT_LIMIT.get()))
     except (TypeError, ValueError):
         return value
+
+
+@contextmanager
+def pdf_font_size_limit(max_size: float):
+    """Temporarily raise or lower the font ceiling for a specific PDF surface."""
+    token = _ACTIVE_PDF_FONT_LIMIT.set(max(1.0, float(max_size)))
+    try:
+        yield
+    finally:
+        _ACTIVE_PDF_FONT_LIMIT.reset(token)
 
 
 def _install_on(cls: type, method_name: str) -> None:

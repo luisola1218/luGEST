@@ -1,6 +1,6 @@
 # Prontidao Comercial LuisGEST
 
-Versao auditada: 2026.07.20.4
+Versao auditada: 2026.07.21.5
 
 ## Estado tecnico
 

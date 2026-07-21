@@ -4629,7 +4629,18 @@ class OppPage(QWidget):
         self.rows: list[dict] = []
         self.current_detail: dict[str, Any] = {}
 
-        root = QVBoxLayout(self)
+        main_root = QVBoxLayout(self)
+        main_root.setContentsMargins(0, 0, 0, 10)
+        main_root.setSpacing(0)
+        self.main_tabs = QTabWidget()
+        self.portfolio_page = QWidget()
+        self.opp_page = QWidget()
+        self.main_tabs.addTab(self.portfolio_page, "Clientes e encomendas")
+        self.main_tabs.addTab(self.opp_page, "Ordens OPP")
+        self.main_tabs.currentChanged.connect(self._opp_main_tab_changed)
+        main_root.addWidget(self.main_tabs, 1)
+
+        root = QVBoxLayout(self.opp_page)
         root.setContentsMargins(0, 0, 0, 10)
         root.setSpacing(14)
 
@@ -4798,9 +4809,397 @@ class OppPage(QWidget):
             self.tabs.addTab(host, title_text)
         tabs_layout.addWidget(self.tabs)
         root.addWidget(tabs_card, 2)
+        self._build_client_portfolio()
         self._sync_buttons()
 
+    def _build_client_portfolio(self) -> None:
+        self.portfolio_clients: list[dict[str, Any]] = []
+        self.portfolio_orders: list[dict[str, Any]] = []
+        layout = QVBoxLayout(self.portfolio_page)
+        layout.setContentsMargins(0, 0, 0, 10)
+        layout.setSpacing(10)
+
+        filters = CardFrame()
+        filters.set_tone("info")
+        filters_layout = QHBoxLayout(filters)
+        filters_layout.setContentsMargins(14, 10, 14, 10)
+        filters_layout.setSpacing(8)
+        filters_layout.addWidget(QLabel("Cliente"))
+        self.portfolio_client_combo = QComboBox()
+        self.portfolio_client_combo.setMinimumWidth(290)
+        self.portfolio_client_combo.currentIndexChanged.connect(self._refresh_portfolio)
+        filters_layout.addWidget(self.portfolio_client_combo)
+        filters_layout.addWidget(QLabel("Ano"))
+        self.portfolio_year_combo = QComboBox()
+        self.portfolio_year_combo.setMinimumWidth(108)
+        self.portfolio_year_combo.currentIndexChanged.connect(self._refresh_portfolio)
+        filters_layout.addWidget(self.portfolio_year_combo)
+        filters_layout.addWidget(QLabel("Pesquisa"))
+        self.portfolio_search_edit = QLineEdit()
+        self.portfolio_search_edit.setPlaceholderText("Encomenda, OF, orçamento, referência ou cliente")
+        self.portfolio_search_edit.textChanged.connect(self._refresh_portfolio)
+        filters_layout.addWidget(self.portfolio_search_edit, 1)
+        portfolio_refresh_btn = QPushButton("Atualizar")
+        portfolio_refresh_btn.setProperty("variant", "secondary")
+        portfolio_refresh_btn.clicked.connect(self._refresh_portfolio)
+        filters_layout.addWidget(portfolio_refresh_btn)
+        layout.addWidget(filters)
+
+        stats_host = QWidget()
+        stats_layout = QGridLayout(stats_host)
+        stats_layout.setContentsMargins(0, 0, 0, 0)
+        stats_layout.setHorizontalSpacing(10)
+        self.portfolio_stats = [
+            StatCard("Carteira"),
+            StatCard("Valor adjudicado"),
+            StatCard("Faturado"),
+            StatCard("Por faturar"),
+        ]
+        for index, tone in enumerate(("info", "default", "success", "warning")):
+            self.portfolio_stats[index].set_tone(tone)
+            stats_layout.addWidget(self.portfolio_stats[index], 0, index)
+        layout.addWidget(stats_host)
+
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+
+        clients_card = CardFrame()
+        clients_layout = QVBoxLayout(clients_card)
+        clients_layout.setContentsMargins(12, 10, 12, 10)
+        clients_header = QHBoxLayout()
+        clients_title = QLabel("Clientes adjudicados")
+        clients_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        self.portfolio_clients_meta = QLabel("0 clientes")
+        self.portfolio_clients_meta.setProperty("role", "muted")
+        clients_header.addWidget(clients_title)
+        clients_header.addStretch(1)
+        clients_header.addWidget(self.portfolio_clients_meta)
+        clients_layout.addLayout(clients_header)
+        self.portfolio_clients_table = QTableWidget(0, 7)
+        self.portfolio_clients_table.setHorizontalHeaderLabels(
+            ["Cliente", "Enc.", "OPP", "Adjudicado", "Faturado", "Por faturar", "Saldo"]
+        )
+        self.portfolio_clients_table.verticalHeader().setVisible(False)
+        self.portfolio_clients_table.verticalHeader().setDefaultSectionSize(30)
+        self.portfolio_clients_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.portfolio_clients_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.portfolio_clients_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        _set_table_columns(
+            self.portfolio_clients_table,
+            [(0, "stretch", 0), (1, "fixed", 50), (2, "fixed", 50), (3, "fixed", 100), (4, "fixed", 100), (5, "fixed", 100), (6, "fixed", 96)],
+        )
+        self.portfolio_clients_table.itemSelectionChanged.connect(self._portfolio_client_selected)
+        clients_layout.addWidget(self.portfolio_clients_table)
+        splitter.addWidget(clients_card)
+
+        orders_host = QWidget()
+        orders_layout = QVBoxLayout(orders_host)
+        orders_layout.setContentsMargins(0, 0, 0, 0)
+        orders_layout.setSpacing(8)
+
+        orders_card = CardFrame()
+        orders_card_layout = QVBoxLayout(orders_card)
+        orders_card_layout.setContentsMargins(12, 10, 12, 10)
+        orders_header = QHBoxLayout()
+        self.portfolio_orders_title = QLabel("Encomendas adjudicadas")
+        self.portfolio_orders_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        self.portfolio_order_btn = QPushButton("Abrir encomenda")
+        self.portfolio_order_btn.clicked.connect(self._open_portfolio_order)
+        self.portfolio_opp_btn = QPushButton("Ver OPP")
+        self.portfolio_opp_btn.setProperty("variant", "secondary")
+        self.portfolio_opp_btn.clicked.connect(self._show_portfolio_order_opps)
+        self.portfolio_billing_btn = QPushButton("Faturação")
+        self.portfolio_billing_btn.setProperty("variant", "secondary")
+        self.portfolio_billing_btn.clicked.connect(self._open_portfolio_billing)
+        orders_header.addWidget(self.portfolio_orders_title, 1)
+        orders_header.addWidget(self.portfolio_order_btn)
+        orders_header.addWidget(self.portfolio_opp_btn)
+        orders_header.addWidget(self.portfolio_billing_btn)
+        orders_card_layout.addLayout(orders_header)
+        self.portfolio_orders_table = QTableWidget(0, 13)
+        self.portfolio_orders_table.setHorizontalHeaderLabels(
+            ["Encomenda", "OF", "Estado", "Entrega", "OPP", "Plan.", "Prod.", "Exp.", "%", "Adjudicado", "Faturado", "Por faturar", "Saldo"]
+        )
+        self.portfolio_orders_table.verticalHeader().setVisible(False)
+        self.portfolio_orders_table.verticalHeader().setDefaultSectionSize(30)
+        self.portfolio_orders_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.portfolio_orders_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.portfolio_orders_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        _set_table_columns(
+            self.portfolio_orders_table,
+            [
+                (0, "fixed", 138), (1, "fixed", 120), (2, "stretch", 0), (3, "fixed", 82),
+                (4, "fixed", 48), (5, "fixed", 56), (6, "fixed", 56), (7, "fixed", 56),
+                (8, "fixed", 52), (9, "fixed", 96), (10, "fixed", 96), (11, "fixed", 96), (12, "fixed", 92),
+            ],
+        )
+        self.portfolio_orders_table.itemSelectionChanged.connect(self._portfolio_order_selected)
+        self.portfolio_orders_table.itemDoubleClicked.connect(lambda *_args: self._open_portfolio_order())
+        orders_card_layout.addWidget(self.portfolio_orders_table)
+        orders_layout.addWidget(orders_card, 1)
+
+        pieces_card = CardFrame()
+        pieces_layout = QVBoxLayout(pieces_card)
+        pieces_layout.setContentsMargins(12, 10, 12, 10)
+        pieces_header = QHBoxLayout()
+        self.portfolio_pieces_title = QLabel("Produção da encomenda")
+        self.portfolio_pieces_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        self.portfolio_pieces_meta = QLabel("Seleciona uma encomenda")
+        self.portfolio_pieces_meta.setProperty("role", "muted")
+        pieces_header.addWidget(self.portfolio_pieces_title)
+        pieces_header.addStretch(1)
+        pieces_header.addWidget(self.portfolio_pieces_meta)
+        pieces_layout.addLayout(pieces_header)
+        self.portfolio_pieces_table = QTableWidget(0, 12)
+        self.portfolio_pieces_table.setHorizontalHeaderLabels(
+            ["OPP", "Ref. Int.", "Ref. Ext.", "Descrição", "Material", "Esp.", "Estado", "Operação atual", "Plan.", "Prod.", "Exp.", "%"]
+        )
+        self.portfolio_pieces_table.verticalHeader().setVisible(False)
+        self.portfolio_pieces_table.verticalHeader().setDefaultSectionSize(28)
+        self.portfolio_pieces_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.portfolio_pieces_table.setSelectionBehavior(QTableWidget.SelectRows)
+        _set_table_columns(
+            self.portfolio_pieces_table,
+            [
+                (0, "fixed", 138), (1, "fixed", 130), (2, "fixed", 140), (3, "stretch", 0),
+                (4, "fixed", 88), (5, "fixed", 46), (6, "fixed", 104), (7, "stretch", 0),
+                (8, "fixed", 52), (9, "fixed", 52), (10, "fixed", 52), (11, "fixed", 50),
+            ],
+        )
+        self.portfolio_pieces_table.itemDoubleClicked.connect(lambda *_args: self._open_portfolio_piece())
+        pieces_layout.addWidget(self.portfolio_pieces_table)
+        orders_layout.addWidget(pieces_card, 1)
+        splitter.addWidget(orders_host)
+        splitter.setSizes([560, 1320])
+        layout.addWidget(splitter, 1)
+
+    def _portfolio_selected_client_code(self) -> str:
+        return str(self.portfolio_client_combo.currentData() or "").strip()
+
+    def _opp_main_tab_changed(self, _index: int) -> None:
+        if self.main_tabs.currentWidget() is self.portfolio_page:
+            self._refresh_portfolio()
+
+    def _refresh_portfolio(self) -> None:
+        if not hasattr(self, "portfolio_client_combo"):
+            return
+        selected_client = self._portfolio_selected_client_code()
+        selected_year = str(self.portfolio_year_combo.currentData() or self.portfolio_year_combo.currentText() or "Todos").strip()
+        selected_order = str((self._selected_portfolio_order() or {}).get("encomenda", "") or "").strip()
+        payload = dict(
+            self.backend.opp_client_portfolio(
+                selected_client or "Todos",
+                selected_year or "Todos",
+                self.portfolio_search_edit.text().strip(),
+            )
+            or {}
+        )
+        self.portfolio_clients = list(payload.get("clients", []) or [])
+        self.portfolio_orders = list(payload.get("orders", []) or [])
+
+        years = ["Todos"] + [str(value) for value in list(payload.get("years", []) or []) if str(value).strip()]
+        self.portfolio_year_combo.blockSignals(True)
+        self.portfolio_year_combo.clear()
+        for value in years:
+            self.portfolio_year_combo.addItem(value, value)
+        self.portfolio_year_combo.setCurrentText(selected_year if selected_year in years else "Todos")
+        self.portfolio_year_combo.blockSignals(False)
+
+        self.portfolio_client_combo.blockSignals(True)
+        self.portfolio_client_combo.clear()
+        self.portfolio_client_combo.addItem("Todos os clientes", "")
+        for row in self.portfolio_clients:
+            self.portfolio_client_combo.addItem(str(row.get("cliente", "") or "Sem cliente"), str(row.get("cliente_codigo", "") or ""))
+        client_index = self.portfolio_client_combo.findData(selected_client)
+        self.portfolio_client_combo.setCurrentIndex(client_index if client_index >= 0 else 0)
+        self.portfolio_client_combo.blockSignals(False)
+
+        self.portfolio_clients_table.blockSignals(True)
+        _fill_table(
+            self.portfolio_clients_table,
+            [
+                [
+                    row.get("cliente", "-"), row.get("encomendas", 0), row.get("opp", 0),
+                    _fmt_eur(row.get("adjudicado", 0)), _fmt_eur(row.get("faturado", 0)),
+                    _fmt_eur(row.get("por_faturar", 0)), _fmt_eur(row.get("saldo_receber", 0)),
+                ]
+                for row in self.portfolio_clients
+            ],
+            align_center_from=1,
+        )
+        for index, row in enumerate(self.portfolio_clients):
+            item = self.portfolio_clients_table.item(index, 0)
+            if item is not None:
+                item.setData(Qt.UserRole, str(row.get("cliente_codigo", "") or ""))
+            if selected_client and str(row.get("cliente_codigo", "") or "") == selected_client:
+                self.portfolio_clients_table.selectRow(index)
+        self.portfolio_clients_table.blockSignals(False)
+        self.portfolio_clients_meta.setText(f"{len(self.portfolio_clients)} clientes")
+
+        self.portfolio_orders_table.blockSignals(True)
+        _fill_table(
+            self.portfolio_orders_table,
+            [
+                [
+                    row.get("encomenda", "-"), row.get("of", "-"), row.get("estado", "-"), row.get("data_entrega", "-"),
+                    row.get("opp_count", 0), self.backend._fmt(row.get("qtd_plan", 0)), self.backend._fmt(row.get("qtd_prod", 0)),
+                    self.backend._fmt(row.get("qtd_exp", 0)), f"{float(row.get('progress', 0) or 0):.1f}%",
+                    _fmt_eur(row.get("adjudicado", 0)), _fmt_eur(row.get("faturado", 0)),
+                    _fmt_eur(row.get("por_faturar", 0)), _fmt_eur(row.get("saldo_receber", 0)),
+                ]
+                for row in self.portfolio_orders
+            ],
+            align_center_from=3,
+        )
+        target_index = 0
+        for index, row in enumerate(self.portfolio_orders):
+            item = self.portfolio_orders_table.item(index, 0)
+            if item is not None:
+                item.setData(Qt.UserRole, str(row.get("encomenda", "") or ""))
+            _paint_table_row(self.portfolio_orders_table, index, str(row.get("estado", "")))
+            if selected_order and str(row.get("encomenda", "") or "") == selected_order:
+                target_index = index
+        self.portfolio_orders_table.blockSignals(False)
+
+        totals = dict(payload.get("totals", {}) or {})
+        self.portfolio_stats[0].set_data(
+            str(int(totals.get("encomendas", 0) or 0)),
+            f"{int(totals.get('opp', 0) or 0)} OPP | {int(totals.get('clientes', 0) or 0)} clientes",
+        )
+        self.portfolio_stats[1].set_data(_fmt_eur(totals.get("adjudicado", 0)), "Valor das encomendas")
+        self.portfolio_stats[2].set_data(_fmt_eur(totals.get("faturado", 0)), f"Recebido {_fmt_eur(totals.get('recebido', 0))}")
+        self.portfolio_stats[3].set_data(_fmt_eur(totals.get("por_faturar", 0)), f"Saldo a receber {_fmt_eur(totals.get('saldo_receber', 0))}")
+
+        selected_label = self.portfolio_client_combo.currentText() or "Todos os clientes"
+        self.portfolio_orders_title.setText(f"Encomendas adjudicadas | {selected_label}")
+        if self.portfolio_orders:
+            self.portfolio_orders_table.selectRow(min(target_index, len(self.portfolio_orders) - 1))
+            self._portfolio_order_selected()
+        else:
+            self.portfolio_pieces_table.setRowCount(0)
+            self.portfolio_pieces_meta.setText("Sem encomendas para o filtro atual")
+            self._sync_portfolio_buttons()
+
+    def _portfolio_client_selected(self) -> None:
+        row_index = _selected_row_index(self.portfolio_clients_table)
+        if row_index < 0:
+            return
+        item = self.portfolio_clients_table.item(row_index, 0)
+        client_code = str(item.data(Qt.UserRole) or "").strip() if item is not None else ""
+        combo_index = self.portfolio_client_combo.findData(client_code)
+        if combo_index >= 0 and combo_index != self.portfolio_client_combo.currentIndex():
+            self.portfolio_client_combo.setCurrentIndex(combo_index)
+
+    def _selected_portfolio_order(self) -> dict[str, Any]:
+        row_index = _selected_row_index(self.portfolio_orders_table)
+        if row_index < 0:
+            return {}
+        item = self.portfolio_orders_table.item(row_index, 0)
+        order_number = str(item.data(Qt.UserRole) or item.text() or "").strip() if item is not None else ""
+        return next((row for row in self.portfolio_orders if str(row.get("encomenda", "") or "").strip() == order_number), {})
+
+    def _portfolio_order_selected(self) -> None:
+        order = self._selected_portfolio_order()
+        pieces = list(order.get("pieces", []) or [])
+        _fill_table(
+            self.portfolio_pieces_table,
+            [
+                [
+                    row.get("opp", "-"), row.get("ref_interna", "-"), row.get("ref_externa", "-"), row.get("descricao", "-"),
+                    row.get("material", "-"), row.get("espessura", "-"), row.get("estado", "-"), row.get("operacao_atual", "-"),
+                    self.backend._fmt(row.get("qtd_plan", 0)), self.backend._fmt(row.get("qtd_prod", 0)),
+                    self.backend._fmt(row.get("qtd_exp", 0)), f"{float(row.get('progress', 0) or 0):.1f}%",
+                ]
+                for row in pieces
+            ],
+            align_center_from=5,
+        )
+        for index, row in enumerate(pieces):
+            item = self.portfolio_pieces_table.item(index, 0)
+            if item is not None:
+                item.setData(Qt.UserRole, str(row.get("opp", "") or ""))
+            _paint_table_row(self.portfolio_pieces_table, index, str(row.get("estado", "")))
+        if order:
+            self.portfolio_pieces_meta.setText(
+                f"{order.get('encomenda', '-')} | {len(pieces)} OPP | "
+                f"Produzido {self.backend._fmt(order.get('qtd_prod', 0))}/{self.backend._fmt(order.get('qtd_plan', 0))} | "
+                f"Expedido {self.backend._fmt(order.get('qtd_exp', 0))}"
+            )
+        else:
+            self.portfolio_pieces_meta.setText("Seleciona uma encomenda")
+        self._sync_portfolio_buttons()
+
+    def _sync_portfolio_buttons(self) -> None:
+        order = self._selected_portfolio_order()
+        enabled = bool(order.get("encomenda"))
+        self.portfolio_order_btn.setEnabled(enabled)
+        self.portfolio_opp_btn.setEnabled(enabled and bool(order.get("pieces")))
+        self.portfolio_billing_btn.setEnabled(enabled)
+
+    def _open_portfolio_order(self) -> None:
+        order_number = str((self._selected_portfolio_order() or {}).get("encomenda", "") or "").strip()
+        if order_number:
+            self._open_order_number(order_number)
+
+    def _open_order_number(self, order_number: str) -> None:
+        main_window = self.window()
+        if not hasattr(main_window, "show_page"):
+            return
+        try:
+            main_window.show_page("orders")
+            page = getattr(main_window, "pages", {}).get("orders")
+            if page is not None and hasattr(page, "open_order_numero"):
+                page.open_order_numero(order_number)
+        except Exception as exc:
+            QMessageBox.critical(self, "Abrir encomenda", str(exc))
+
+    def _show_portfolio_order_opps(self) -> None:
+        order_number = str((self._selected_portfolio_order() or {}).get("encomenda", "") or "").strip()
+        if not order_number:
+            return
+        self.main_tabs.setCurrentWidget(self.opp_page)
+        self.filter_edit.setText(order_number)
+        self.state_combo.setCurrentText("Todas")
+        self.refresh()
+
+    def _open_portfolio_piece(self) -> None:
+        row_index = _selected_row_index(self.portfolio_pieces_table)
+        if row_index < 0:
+            return
+        item = self.portfolio_pieces_table.item(row_index, 0)
+        opp = str(item.data(Qt.UserRole) or item.text() or "").strip() if item is not None else ""
+        if not opp:
+            return
+        self.main_tabs.setCurrentWidget(self.opp_page)
+        self.filter_edit.setText(opp)
+        self.state_combo.setCurrentText("Todas")
+        self.refresh()
+
+    def _open_portfolio_billing(self) -> None:
+        order = self._selected_portfolio_order()
+        order_number = str(order.get("encomenda", "") or "").strip()
+        client_code = str(order.get("cliente_codigo", "") or self._portfolio_selected_client_code()).strip()
+        main_window = self.window()
+        if not hasattr(main_window, "show_page"):
+            return
+        try:
+            main_window.show_page("billing")
+            page = getattr(main_window, "pages", {}).get("billing")
+            filter_widget = getattr(page, "filter_edit", None)
+            filter_value = order_number or client_code
+            if filter_widget is not None and filter_value:
+                if hasattr(filter_widget, "setCurrentText"):
+                    filter_widget.setCurrentText(filter_value)
+                elif hasattr(filter_widget, "setText"):
+                    filter_widget.setText(filter_value)
+            if page is not None and hasattr(page, "refresh"):
+                page.refresh()
+        except Exception as exc:
+            QMessageBox.critical(self, "Faturação", str(exc))
+
     def refresh(self) -> None:
+        if self.main_tabs.currentWidget() is self.portfolio_page:
+            self._refresh_portfolio()
         previous_opp = str(self.current_detail.get("opp", "") or "").strip()
         self.all_rows = list(self.backend.opp_rows("", "Todas", "Todos", "Todas", "Todos"))
         self.rows = list(
@@ -5072,15 +5471,7 @@ class OppPage(QWidget):
         numero = str(self.current_detail.get("encomenda", "") or "").strip()
         if not numero:
             return
-        main_window = self.window()
-        if hasattr(main_window, "show_page"):
-            try:
-                main_window.show_page("orders")
-                page = getattr(main_window, "pages", {}).get("orders")
-                if page is not None and hasattr(page, "open_order_numero"):
-                    page.open_order_numero(numero)
-            except Exception as exc:
-                QMessageBox.critical(self, "Abrir encomenda", str(exc))
+        self._open_order_number(numero)
 
 
 from .avarias_page import AvariasPage

@@ -18,6 +18,10 @@ SCRIPTS = [
     "scripts/verify_pulse_flow.py",
     "scripts/verify_management_reports.py",
     "scripts/verify_opp_dashboard_flow.py",
+    "scripts/verify_opp_client_portfolio.py",
+    "scripts/verify_inventory_bulk_delete.py",
+    "scripts/verify_material_stock_pdf_filter.py",
+    "scripts/verify_product_stock_pdf_filter.py",
 ]
 
 

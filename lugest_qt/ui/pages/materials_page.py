@@ -1,6 +1,5 @@
 ﻿from __future__ import annotations
 
-from datetime import datetime
 import os
 from pathlib import Path
 import re
@@ -1418,9 +1417,6 @@ class MaterialsPage(QWidget):
         self.pdf_btn = QPushButton("Preview PDF")
         self.pdf_btn.setProperty("variant", "secondary")
         self.pdf_btn.clicked.connect(self.preview_pdf)
-        self.pdf_save_btn = QPushButton("PDF")
-        self.pdf_save_btn.setProperty("variant", "secondary")
-        self.pdf_save_btn.clicked.connect(self.save_pdf)
         self.calc_btn = QPushButton("Calc. peso")
         self.calc_btn.setProperty("variant", "secondary")
         self.calc_btn.clicked.connect(self._open_weight_calculator)
@@ -1444,7 +1440,6 @@ class MaterialsPage(QWidget):
             self.label_print_btn,
             self.label_save_btn,
             self.pdf_btn,
-            self.pdf_save_btn,
             self.calc_btn,
             self.refresh_btn,
             self.export_btn,
@@ -2419,7 +2414,7 @@ class MaterialsPage(QWidget):
         table.verticalHeader().setVisible(False)
         table.verticalHeader().setDefaultSectionSize(28)
         table.setSelectionBehavior(QTableWidget.SelectRows)
-        table.setSelectionMode(QTableWidget.SingleSelection)
+        table.setSelectionMode(QTableWidget.ExtendedSelection)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setAlternatingRowColors(False)
         table.setWordWrap(False)
@@ -2558,6 +2553,51 @@ class MaterialsPage(QWidget):
         layout.addWidget(table, 1)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("Selecionar")
+        delete_btn = QPushButton("Apagar selecionados")
+        delete_btn.setProperty("variant", "danger")
+        delete_btn.setEnabled(False)
+        buttons.addButton(delete_btn, QDialogButtonBox.ActionRole)
+
+        def selected_material_ids() -> list[str]:
+            selection = table.selectionModel()
+            if selection is None:
+                return []
+            result: list[str] = []
+            for index in selection.selectedRows():
+                item = table.item(index.row(), 16)
+                material_id = item.text().strip() if item is not None else ""
+                if material_id and material_id not in result:
+                    result.append(material_id)
+            return result
+
+        def update_delete_state() -> None:
+            delete_btn.setEnabled(bool(selected_material_ids()))
+
+        def delete_selected_materials() -> None:
+            material_ids = selected_material_ids()
+            if not material_ids:
+                QMessageBox.warning(dialog, "Apagar materiais", "Seleciona uma ou várias linhas.")
+                return
+            preview = ", ".join(material_ids[:6])
+            if len(material_ids) > 6:
+                preview += f" e mais {len(material_ids) - 6}"
+            message = f"Apagar definitivamente {len(material_ids)} material(is)?\n\n{preview}"
+            if QMessageBox.question(dialog, "Apagar materiais", message) != QMessageBox.Yes:
+                return
+            try:
+                removed = self.backend.remove_materials(material_ids)
+            except Exception as exc:
+                QMessageBox.critical(dialog, "Apagar materiais", str(exc))
+                return
+            if self.current_material_id in material_ids:
+                self.current_material_id = ""
+                self._set_form_defaults()
+            self.refresh()
+            render_full_grid()
+            QMessageBox.information(dialog, "Materiais", f"{removed} material(is) apagado(s).")
+
+        table.itemSelectionChanged.connect(update_delete_state)
+        delete_btn.clicked.connect(delete_selected_materials)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
@@ -2614,23 +2654,83 @@ class MaterialsPage(QWidget):
             return
         QMessageBox.information(self, "CSV", f"Exportado para:\n{target}")
 
-    def preview_pdf(self) -> None:
-        try:
-            self.backend.material_open_stock_pdf(in_stock_only=self.only_stock_check.isChecked())
-        except Exception as exc:
-            QMessageBox.critical(self, "Erro", str(exc))
+    def _select_pdf_formats(self) -> list[str] | None:
+        formats = list(self.backend.material_stock_formats() or [])
+        if not formats:
+            QMessageBox.warning(self, "Preview PDF", "Não existem formatos de matéria-prima para apresentar.")
+            return None
 
-    def save_pdf(self) -> None:
-        default_path = str((Path.cwd() / f"stock_materia_prima_{datetime.now().strftime('%Y%m%d')}.pdf").resolve())
-        path, _ = QFileDialog.getSaveFileName(self, "Guardar PDF", default_path, "PDF (*.pdf)")
-        if not path:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Conteúdo do relatório de stock")
+        dialog.setMinimumWidth(460)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+
+        title = QLabel("Formatos incluídos no relatório")
+        title.setStyleSheet("font-size: 15px; font-weight: 800; color: #10253d;")
+        layout.addWidget(title)
+
+        all_check = QCheckBox("Todos os formatos")
+        all_check.setChecked(True)
+        all_check.setStyleSheet("font-weight: 700;")
+        layout.addWidget(all_check)
+
+        format_grid = QGridLayout()
+        format_grid.setHorizontalSpacing(16)
+        format_grid.setVerticalSpacing(8)
+        checks: list[QCheckBox] = []
+        for index, value in enumerate(formats):
+            check = QCheckBox(value)
+            check.setChecked(True)
+            checks.append(check)
+            format_grid.addWidget(check, index // 3, index % 3)
+        layout.addLayout(format_grid)
+
+        stock_only_check = QCheckBox("Apenas linhas com stock disponível")
+        stock_only_check.setChecked(self.only_stock_check.isChecked())
+        layout.addWidget(stock_only_check)
+
+        def set_all_formats(checked: bool) -> None:
+            for check in checks:
+                check.setChecked(checked)
+
+        def update_all_state() -> None:
+            all_selected = all(check.isChecked() for check in checks)
+            all_check.blockSignals(True)
+            all_check.setChecked(all_selected)
+            all_check.blockSignals(False)
+
+        all_check.toggled.connect(set_all_formats)
+        for check in checks:
+            check.toggled.connect(update_all_state)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Pré-visualizar")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        selected = [value for value, check in zip(formats, checks) if check.isChecked()]
+        if not selected:
+            QMessageBox.warning(self, "Preview PDF", "Seleciona pelo menos um formato.")
+            return None
+        self.only_stock_check.setChecked(stock_only_check.isChecked())
+        return selected
+
+    def preview_pdf(self) -> None:
+        formats = self._select_pdf_formats()
+        if formats is None:
             return
         try:
-            target = self.backend.material_render_stock_pdf(path, in_stock_only=self.only_stock_check.isChecked())
+            self.backend.material_open_stock_pdf(
+                in_stock_only=self.only_stock_check.isChecked(),
+                formats=formats,
+            )
         except Exception as exc:
             QMessageBox.critical(self, "Erro", str(exc))
-            return
-        QMessageBox.information(self, "PDF", f"PDF guardado em:\n{target}")
 
     def _build_material_label(self, output_path: str | None = None):
         record = self._selected_material_record()

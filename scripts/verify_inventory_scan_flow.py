@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -21,6 +22,19 @@ from lugest_qt.ui.pages.products_page import ProductsPage
 
 def _pdf_text(path: Path) -> str:
     return "\n".join(page.extract_text() or "" for page in PdfReader(str(path)).pages)
+
+
+def _assert_label_format(path: Path, *, min_font_size: float) -> None:
+    reader = PdfReader(str(path))
+    assert len(reader.pages) == 1
+    page = reader.pages[0]
+    width_mm = float(page.mediabox.width) * 25.4 / 72
+    height_mm = float(page.mediabox.height) * 25.4 / 72
+    assert abs(width_mm - 110.0) < 0.01, f"Largura inesperada: {width_mm:.3f} mm"
+    assert abs(height_mm - 50.0) < 0.01, f"Altura inesperada: {height_mm:.3f} mm"
+    stream = page.get_contents().get_data().decode("latin1", "ignore")
+    font_sizes = [float(value) for value in re.findall(r"\s([0-9.]+)\s+Tf", stream)]
+    assert font_sizes and max(font_sizes) >= min_font_size
 
 
 def main() -> int:
@@ -44,6 +58,8 @@ def main() -> int:
     output_dir = Path(tempfile.mkdtemp(prefix="lugest_inventory_scan_"))
     material_pdf = backend.material_identification_label_pdf(material["id"], output_dir / "material.pdf")
     product_pdf = backend.product_label_pdf(product["codigo"], output_dir / "product.pdf")
+    _assert_label_format(material_pdf, min_font_size=13.5)
+    _assert_label_format(product_pdf, min_font_size=13.0)
     assert material_code in _pdf_text(material_pdf)
     assert product_code in _pdf_text(product_pdf)
 

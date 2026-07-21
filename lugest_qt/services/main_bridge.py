@@ -31,6 +31,7 @@ from lugest_infra.pdf.light_labels import draw_opp_label as _draw_light_opp_labe
 from lugest_infra.pdf.light_labels import draw_material_label as _draw_light_material_label
 from lugest_infra.pdf.light_labels import draw_pallet_label as _draw_light_pallet_label
 from lugest_infra.pdf.light_labels import draw_product_label as _draw_light_product_label
+from lugest_infra.pdf.font_policy import pdf_font_size_limit
 from lugest_infra.pdf.dossier_reports import render_material_separation as _render_dossier_material_separation
 from lugest_infra.pdf.dossier_reports import render_material_history as _render_dossier_material_history
 from lugest_infra.pdf.dossier_reports import render_quality_dossier as _render_dossier_quality
@@ -3159,18 +3160,36 @@ class LegacyBackend(
         return record
 
     def remove_material(self, material_id: str) -> None:
+        self.remove_materials([material_id])
+
+    def remove_materials(self, material_ids: list[str]) -> int:
         data = self.ensure_data()
-        record = self.material_by_id(material_id)
-        if record is None:
-            raise ValueError("Material não encontrado.")
-        data["materiais"] = [m for m in data.get("materiais", []) if str(m.get("id", "")).strip() != str(material_id).strip()]
-        self.desktop_main.log_stock(
-            data,
-            "REMOVER",
-            f"{record.get('id')} qtd={record.get('quantidade', 0)} reservado={record.get('reservado', 0)}",
-            operador=self._current_user_label(),
-        )
+        requested = {str(value or "").strip() for value in material_ids if str(value or "").strip()}
+        if not requested:
+            raise ValueError("Seleciona pelo menos um material.")
+        rows = list(data.get("materiais", []) or [])
+        removed = [row for row in rows if str(row.get("id", "") or "").strip() in requested]
+        if not removed:
+            raise ValueError("Os materiais selecionados já não existem.")
+        data["materiais"] = [row for row in rows if str(row.get("id", "") or "").strip() not in requested]
+        operator = self._current_user_label()
+        for record in removed:
+            self.desktop_main.log_stock(
+                data,
+                "REMOVER",
+                f"{record.get('id')} qtd={record.get('quantidade', 0)} reservado={record.get('reservado', 0)}",
+                operador=operator,
+            )
         self._save(force=True)
+        try:
+            self.ensure_inventory_scan_codes(persist=True)
+        except Exception:
+            pass
+        try:
+            self.conjunto_refresh_prices()
+        except Exception:
+            pass
+        return len(removed)
 
     def correct_material_stock(self, material_id: str, quantidade: Any, reservado: Any, metros: Any) -> dict[str, Any]:
         data = self.ensure_data()
@@ -3733,18 +3752,32 @@ class LegacyBackend(
                 break
         return rows
 
-    def material_open_stock_pdf(self, in_stock_only: bool = False) -> Path:
+    def material_stock_formats(self) -> list[str]:
+        formats = {
+            str(row.get("formato", "") or self.desktop_main.detect_materia_formato(row) or "Chapa").strip()
+            for row in list(self.ensure_data().get("materiais", []) or [])
+            if isinstance(row, dict)
+        }
+        return sorted((value for value in formats if value), key=str.casefold)
+
+    def material_open_stock_pdf(self, in_stock_only: bool = False, formats: list[str] | None = None) -> Path:
         target = Path(tempfile.gettempdir()) / "lugest_stock.pdf"
-        self.material_render_stock_pdf(target, in_stock_only=in_stock_only)
+        self.material_render_stock_pdf(target, in_stock_only=in_stock_only, formats=formats)
         os.startfile(str(target))
         return target
 
-    def material_render_stock_pdf(self, path: str | Path, in_stock_only: bool = False) -> Path:
+    def material_render_stock_pdf(
+        self,
+        path: str | Path,
+        in_stock_only: bool = False,
+        formats: list[str] | None = None,
+    ) -> Path:
         return _render_light_material_stock_pdf(
             Path(path),
             self.ensure_data(),
             self.branding_settings(),
             in_stock_only=bool(in_stock_only),
+            formats=formats,
         )
 
     def material_open_history_pdf(self) -> Path:
@@ -3896,7 +3929,6 @@ class LegacyBackend(
         return
 
     def material_identification_label_pdf(self, material_id: str, output_path: str | Path | None = None) -> Path:
-        from reportlab.lib.pagesizes import A5, landscape
         from reportlab.lib.units import mm
         from reportlab.pdfgen import canvas as pdf_canvas
 
@@ -3907,17 +3939,18 @@ class LegacyBackend(
         is_retalho = self._material_is_retalho(record)
         target = Path(output_path) if output_path else self._operator_label_tmp_path(material_id, "material_identification")
         target.parent.mkdir(parents=True, exist_ok=True)
-        page_size = ((100 * mm), (70 * mm)) if is_retalho else landscape(A5)
+        page_size = (110 * mm, 50 * mm)
         palette = self._operator_label_palette()
         branding = self.branding_settings()
         logo_txt = str(branding.get("logo_path", "") or "").strip()
         logo_path = Path(logo_txt) if logo_txt and Path(logo_txt).exists() else None
         printed_at = str(self.desktop_main.now_iso() or "").replace("T", " ")[:19]
         canvas_obj = pdf_canvas.Canvas(str(target), pagesize=page_size)
-        if is_retalho:
-            self._draw_material_retalho_label(canvas_obj, page_size[0], page_size[1], record, palette, logo_path, printed_at)
-        else:
-            self._draw_material_stock_label(canvas_obj, page_size[0], page_size[1], record, palette, logo_path, printed_at)
+        with pdf_font_size_limit(14.0):
+            if is_retalho:
+                self._draw_material_retalho_label(canvas_obj, page_size[0], page_size[1], record, palette, logo_path, printed_at)
+            else:
+                self._draw_material_stock_label(canvas_obj, page_size[0], page_size[1], record, palette, logo_path, printed_at)
         canvas_obj.save()
         return target
 
@@ -4557,14 +4590,28 @@ class LegacyBackend(
         return self.product_detail(code)
 
     def product_remove(self, codigo: str) -> None:
-        code = str(codigo or "").strip()
+        self.product_remove_many([codigo])
+
+    def product_remove_many(self, codigos: list[str]) -> int:
+        codes = {str(value or "").strip() for value in codigos if str(value or "").strip()}
+        if not codes:
+            raise ValueError("Seleciona pelo menos um produto.")
         data = self.ensure_data()
         rows = list(data.get("produtos", []) or [])
-        before = len(rows)
-        data["produtos"] = [row for row in rows if str(row.get("codigo", "") or "").strip() != code]
-        if len(data["produtos"]) == before:
-            raise ValueError("Produto não encontrado.")
+        removed = [row for row in rows if str(row.get("codigo", "") or "").strip() in codes]
+        if not removed:
+            raise ValueError("Os produtos selecionados já não existem.")
+        data["produtos"] = [row for row in rows if str(row.get("codigo", "") or "").strip() not in codes]
         self._save(force=True)
+        try:
+            self.ensure_inventory_scan_codes(persist=True)
+        except Exception:
+            pass
+        try:
+            self.conjunto_refresh_prices()
+        except Exception:
+            pass
+        return len(removed)
 
     def product_consume(
         self,
@@ -4620,17 +4667,49 @@ class LegacyBackend(
         self._save(force=True)
         return self.product_detail(code)
 
-    def product_render_stock_pdf(self, path: str | Path) -> Path:
+    def product_stock_filters(self) -> dict[str, list[str]]:
+        rows = [row for row in list(self.ensure_data().get("produtos", []) or []) if isinstance(row, dict)]
+        return {
+            "categories": sorted(
+                {str(row.get("categoria", "") or "Sem categoria").strip() for row in rows},
+                key=str.casefold,
+            ),
+            "types": sorted(
+                {str(row.get("tipo", "") or "Sem tipo").strip() for row in rows},
+                key=str.casefold,
+            ),
+        }
+
+    def product_render_stock_pdf(
+        self,
+        path: str | Path,
+        categories: list[str] | None = None,
+        types: list[str] | None = None,
+        in_stock_only: bool = False,
+    ) -> Path:
         return _render_light_product_stock_pdf(
             Path(path),
             self.ensure_data(),
             self.branding_settings(),
             self.desktop_main.produto_preco_unitario,
+            categories=categories,
+            types=types,
+            in_stock_only=bool(in_stock_only),
         )
 
-    def product_open_stock_pdf(self) -> Path:
+    def product_open_stock_pdf(
+        self,
+        categories: list[str] | None = None,
+        types: list[str] | None = None,
+        in_stock_only: bool = False,
+    ) -> Path:
         target = Path(tempfile.gettempdir()) / "lugest_qt_produtos_stock.pdf"
-        self.product_render_stock_pdf(target)
+        self.product_render_stock_pdf(
+            target,
+            categories=categories,
+            types=types,
+            in_stock_only=in_stock_only,
+        )
         os.startfile(str(target))
         return target
 
@@ -4899,14 +4978,15 @@ class LegacyBackend(
             else self._storage_output_path("products/labels", f"Etiqueta_Produto_{code}.pdf")
         )
         target.parent.mkdir(parents=True, exist_ok=True)
-        page_size = ((100 * mm), (70 * mm))
+        page_size = (110 * mm, 50 * mm)
         palette = self._operator_label_palette()
         branding = self.branding_settings()
         logo_txt = str(branding.get("logo_path", "") or "").strip()
         logo_path = Path(logo_txt) if logo_txt and Path(logo_txt).exists() else None
         printed_at = str(self.desktop_main.now_iso() or "").replace("T", " ")[:19]
         canvas_obj = pdf_canvas.Canvas(str(target), pagesize=page_size)
-        self._draw_product_stock_label(canvas_obj, page_size[0], page_size[1], product, palette, logo_path, printed_at)
+        with pdf_font_size_limit(14.0):
+            self._draw_product_stock_label(canvas_obj, page_size[0], page_size[1], product, palette, logo_path, printed_at)
         canvas_obj.save()
         return target
 
@@ -10310,6 +10390,167 @@ class LegacyBackend(
             if op and op != "-":
                 ops.add(op)
         return sorted(ops)
+
+    def opp_client_portfolio(
+        self,
+        cliente: str = "Todos",
+        ano: str = "Todos",
+        filter_text: str = "",
+    ) -> dict[str, Any]:
+        data = self.ensure_data()
+        query = str(filter_text or "").strip().lower()
+        year_filter = str(ano or "Todos").strip()
+        client_filter = str(cliente or "Todos").strip()
+        client_code_filter = client_filter.split(" - ", 1)[0].strip()
+        if client_filter.lower() in {"", "todos", "todas", "all"}:
+            client_code_filter = ""
+
+        client_names = {
+            str(row.get("codigo", "") or "").strip(): str(row.get("nome", "") or "").strip()
+            for row in list(data.get("clientes", []) or [])
+            if isinstance(row, dict)
+        }
+        opp_rows = list(self._opp_rows_base())
+        opp_by_order: dict[str, list[dict[str, Any]]] = {}
+        for row in opp_rows:
+            order_number = str(row.get("encomenda", "") or "").strip()
+            if order_number:
+                opp_by_order.setdefault(order_number, []).append(dict(row))
+
+        billing_by_order: dict[str, list[dict[str, Any]]] = {}
+        for row in list(self.billing_rows("", "Todas", "Todos") or []):
+            order_number = str(row.get("encomenda_numero", "") or "").strip()
+            if order_number:
+                billing_by_order.setdefault(order_number, []).append(dict(row))
+
+        all_orders: list[dict[str, Any]] = []
+        years: set[str] = set()
+        for order in list(data.get("encomendas", []) or []):
+            if not isinstance(order, dict):
+                continue
+            order_number = str(order.get("numero", "") or "").strip()
+            if not order_number:
+                continue
+            client_code = str(order.get("cliente", "") or "").strip()
+            client_name = client_names.get(client_code, "")
+            client_label = f"{client_code} - {client_name}".strip(" -") or "Sem cliente"
+            try:
+                order_year = str(
+                    self.desktop_main._enc_extract_year(
+                        order.get("data_criacao", ""),
+                        order.get("data_entrega", ""),
+                        order_number,
+                        order.get("ano"),
+                    )
+                    or ""
+                ).strip()
+            except Exception:
+                order_year = ""
+            if not order_year:
+                created = str(order.get("data_criacao", "") or "").strip()
+                order_year = created[:4] if len(created) >= 4 and created[:4].isdigit() else str(datetime.now().year)
+            years.add(order_year)
+            if year_filter.lower() not in {"", "todos", "todas", "all"} and order_year != year_filter:
+                continue
+
+            pieces = [dict(row) for row in opp_by_order.get(order_number, [])]
+            qty_plan = round(sum(self._parse_float(row.get("qtd_plan", 0), 0) for row in pieces), 2)
+            qty_prod = round(sum(self._parse_float(row.get("qtd_prod", 0), 0) for row in pieces), 2)
+            qty_exp = round(sum(self._parse_float(row.get("qtd_exp", 0), 0) for row in pieces), 2)
+            progress = round((qty_prod / qty_plan) * 100.0, 1) if qty_plan > 0 else 0.0
+
+            billing_rows = billing_by_order.get(order_number, [])
+            sold = round(sum(self._parse_float(row.get("vendido", 0), 0) for row in billing_rows), 2)
+            invoiced = round(sum(self._parse_float(row.get("faturado", 0), 0) for row in billing_rows), 2)
+            received = round(sum(self._parse_float(row.get("recebido", 0), 0) for row in billing_rows), 2)
+            if sold <= 0:
+                try:
+                    sold = round(self._parse_float(self._billing_order_source(order).get("total", 0), 0), 2)
+                except Exception:
+                    sold = 0.0
+            pending_invoice = round(max(0.0, sold - invoiced), 2)
+            receivable = round(max(0.0, invoiced - received), 2)
+            production_states = {str(row.get("estado", "") or "").strip() for row in pieces if str(row.get("estado", "") or "").strip()}
+            production_state = str(order.get("estado", "") or "").strip() or (", ".join(sorted(production_states)) if production_states else "Preparacao")
+            order_row = {
+                "encomenda": order_number,
+                "of": next((str(row.get("of", "") or "").strip() for row in pieces if str(row.get("of", "") or "").strip()), ""),
+                "orcamento": str(order.get("numero_orcamento", "") or "").strip(),
+                "cliente_codigo": client_code,
+                "cliente_nome": client_name,
+                "cliente": client_label,
+                "ano": order_year,
+                "estado": production_state,
+                "data_criacao": str(order.get("data_criacao", "") or "").replace("T", " ")[:16],
+                "data_entrega": str(order.get("data_entrega", "") or "").replace("T", " ")[:10],
+                "opp_count": len(pieces),
+                "qtd_plan": qty_plan,
+                "qtd_prod": qty_prod,
+                "qtd_exp": qty_exp,
+                "progress": progress,
+                "adjudicado": sold,
+                "faturado": invoiced,
+                "recebido": received,
+                "por_faturar": pending_invoice,
+                "saldo_receber": receivable,
+                "pieces": pieces,
+            }
+            if query and not any(query in str(value).lower() for key, value in order_row.items() if key != "pieces"):
+                if not any(query in str(value).lower() for piece in pieces for value in piece.values()):
+                    continue
+            all_orders.append(order_row)
+
+        client_groups: dict[str, dict[str, Any]] = {}
+        for row in all_orders:
+            code = str(row.get("cliente_codigo", "") or "").strip()
+            key = code or "SEM_CLIENTE"
+            target = client_groups.setdefault(
+                key,
+                {
+                    "cliente_codigo": code,
+                    "cliente_nome": str(row.get("cliente_nome", "") or "").strip(),
+                    "cliente": str(row.get("cliente", "") or "Sem cliente").strip(),
+                    "encomendas": 0,
+                    "opp": 0,
+                    "adjudicado": 0.0,
+                    "faturado": 0.0,
+                    "recebido": 0.0,
+                    "por_faturar": 0.0,
+                    "saldo_receber": 0.0,
+                },
+            )
+            target["encomendas"] += 1
+            target["opp"] += int(row.get("opp_count", 0) or 0)
+            for field in ("adjudicado", "faturado", "recebido", "por_faturar", "saldo_receber"):
+                target[field] = round(self._parse_float(target.get(field, 0), 0) + self._parse_float(row.get(field, 0), 0), 2)
+
+        clients = sorted(client_groups.values(), key=lambda row: str(row.get("cliente", "") or "").lower())
+        selected_orders = [
+            row
+            for row in all_orders
+            if not client_code_filter or str(row.get("cliente_codigo", "") or "").strip() == client_code_filter
+        ]
+        selected_orders.sort(
+            key=lambda row: (str(row.get("data_criacao", "") or ""), str(row.get("encomenda", "") or "")),
+            reverse=True,
+        )
+        totals = {
+            "clientes": len({str(row.get("cliente_codigo", "") or "") for row in selected_orders}),
+            "encomendas": len(selected_orders),
+            "opp": sum(int(row.get("opp_count", 0) or 0) for row in selected_orders),
+            "adjudicado": round(sum(self._parse_float(row.get("adjudicado", 0), 0) for row in selected_orders), 2),
+            "faturado": round(sum(self._parse_float(row.get("faturado", 0), 0) for row in selected_orders), 2),
+            "recebido": round(sum(self._parse_float(row.get("recebido", 0), 0) for row in selected_orders), 2),
+            "por_faturar": round(sum(self._parse_float(row.get("por_faturar", 0), 0) for row in selected_orders), 2),
+            "saldo_receber": round(sum(self._parse_float(row.get("saldo_receber", 0), 0) for row in selected_orders), 2),
+        }
+        return {
+            "clients": clients,
+            "orders": selected_orders,
+            "totals": totals,
+            "years": sorted(years, reverse=True),
+            "selected_client": client_code_filter,
+        }
 
     def opp_detail(self, opp: str) -> dict[str, Any]:
         enc, piece = self._find_piece_by_opp(opp)
