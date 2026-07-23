@@ -164,9 +164,12 @@ def main() -> int:
         print("shipping-edge-cases-ok", enc_nok, enc_mix, guide_mix)
         return 0
     finally:
+        backend.flush_pending_save(force=True)
+        backend.drain_async_saves(timeout_sec=15.0)
         _cleanup(backend, enc_nok, "")
         _cleanup(backend, enc_mix, guide_mix)
-        backend._save(force=True)
+        backend._save(force=True, audit=False, blocking=True)
+        backend.drain_async_saves(timeout_sec=15.0)
 
 
 if __name__ == "__main__":

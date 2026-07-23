@@ -6,3 +6,4 @@ pypdf>=6.0,<7.0
 Pillow>=12.0,<13.0
 ezdxf>=1.4,<2.0
 cryptography>=46.0,<47.0
+shapely>=2.1,<2.2

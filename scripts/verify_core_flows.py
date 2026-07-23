@@ -11,6 +11,7 @@ SCRIPTS = [
     "scripts/verify_data_integrity.py",
     "scripts/verify_purchase_flow.py",
     "scripts/verify_conjuntos_montagem_flow.py",
+    "scripts/verify_fabrication_order_flow.py",
     "scripts/verify_planning_flow.py",
     "scripts/verify_operator_expedition_flow.py",
     "scripts/verify_shipping_flow.py",
@@ -22,6 +23,8 @@ SCRIPTS = [
     "scripts/verify_inventory_bulk_delete.py",
     "scripts/verify_material_stock_pdf_filter.py",
     "scripts/verify_product_stock_pdf_filter.py",
+    "scripts/verify_laser_nesting_flow.py",
+    "scripts/verify_operator_material_session_flow.py",
 ]
 
 

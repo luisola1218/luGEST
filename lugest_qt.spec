@@ -8,6 +8,10 @@ hiddenimports += collect_submodules('lugest_core')
 hiddenimports += collect_submodules('lugest_infra')
 hiddenimports += collect_submodules('reportlab.graphics.barcode')
 hiddenimports += collect_submodules('pypdf')
+hiddenimports += collect_submodules(
+    'shapely',
+    filter=lambda name: not name.startswith('shapely.tests') and name != 'shapely.conftest',
+)
 
 
 a = Analysis(

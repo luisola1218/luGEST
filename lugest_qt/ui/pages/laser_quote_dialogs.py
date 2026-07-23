@@ -228,6 +228,8 @@ def _cut_rows_summary(rows: list[dict[str, Any]]) -> str:
 class CutTableDialog(QDialog):
     def __init__(self, material_name: str, gas_name: str, rows: list[dict[str, Any]], parent=None) -> None:
         super().__init__(parent)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
+        self.setSizeGripEnabled(True)
         self.material_name = str(material_name or "").strip() or "Material"
         self.gas_name = str(gas_name or "").strip() or "Gas"
         self.setWindowTitle(f"Tabela de corte - {self.material_name} / {self.gas_name}")
@@ -392,6 +394,8 @@ def _settings_material_subtypes(settings: dict[str, Any], material_name: str, ex
 class MaterialSubtypeCatalogDialog(QDialog):
     def __init__(self, material_name: str, family_catalog: dict[str, Any], fallback_price_per_kg: float, fallback_scrap_credit_per_kg: float, parent=None) -> None:
         super().__init__(parent)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
+        self.setSizeGripEnabled(True)
         self.material_name = str(material_name or "").strip() or "Material"
         self.fallback_price_per_kg = float(fallback_price_per_kg or 0.0)
         self.fallback_scrap_credit_per_kg = float(fallback_scrap_credit_per_kg or 0.0)
@@ -618,6 +622,8 @@ class MaterialSubtypeCatalogDialog(QDialog):
 class SeriesPricingDialog(QDialog):
     def __init__(self, tiers: list[dict[str, Any]], parent=None) -> None:
         super().__init__(parent)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
+        self.setSizeGripEnabled(True)
         self.setWindowTitle("Series de quantidade")
         self.resize(860, 520)
 
@@ -759,6 +765,8 @@ class LaserSettingsDialog(QDialog):
         self._series_tiers_cache: list[dict[str, Any]] = []
         self.setWindowFlag(Qt.WindowMinimizeButtonHint, True)
         self.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
+        self.setWindowFlag(Qt.WindowCloseButtonHint, True)
+        self.setSizeGripEnabled(True)
         self.setWindowTitle("Configuracao de Orcamento Laser")
         self.setMinimumSize(920, 620)
         self.resize(1040, 690)
@@ -1455,6 +1463,8 @@ class LaserSettingsDialog(QDialog):
 class LaserQuoteDialog(QDialog):
     def __init__(self, backend, parent=None, *, default_machine: str = "") -> None:
         super().__init__(parent)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
+        self.setSizeGripEnabled(True)
         self.backend = backend
         self.settings = dict(self.backend.laser_quote_settings() or {})
         self.analysis: dict[str, Any] = {}

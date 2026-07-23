@@ -6311,6 +6311,7 @@ class LegacyBackend(
                 {
                     "material_id": str(row.get("material_id", "") or "").strip(),
                     "dimensao": f"{(stock or {}).get('comprimento', '')}x{(stock or {}).get('largura', '')}",
+                    "quantidade": round(qty_res, 4),
                     "disponivel": round(qty_res, 2),
                     "local": self._localizacao(stock) if stock else "-",
                     "lote": str((stock or {}).get("lote_fornecedor", "") or row.get("lote", "") or "").strip(),
@@ -6332,6 +6333,92 @@ class LegacyBackend(
             "candidates": self.order_stock_candidates(enc_num, material, espessura),
             "reserved_sources": reserved_sources,
         }
+
+    def operator_material_session_state(
+        self,
+        enc_num: str,
+        material: str,
+        espessura: str,
+        operator_name: str,
+    ) -> dict[str, Any]:
+        enc = self.get_encomenda_by_numero(enc_num)
+        if enc is None:
+            raise ValueError("Encomenda não encontrada.")
+        esp_obj = self._operator_esp_obj(enc, material, espessura)
+        if not esp_obj:
+            raise ValueError("Grupo material/espessura não encontrado.")
+        operator_norm = self.desktop_main.norm_text(operator_name)
+        status_for_order = getattr(self.operador_actions, "_mysql_ops_status_for_order", None)
+        mysql_rows: dict[str, list[dict[str, Any]]] = {}
+        if callable(status_for_order):
+            try:
+                mysql_rows = dict(status_for_order(enc_num, cache_owner=self, force=True) or {})
+            except Exception:
+                mysql_rows = {}
+
+        active_piece_ids: list[str] = []
+        for piece in list(esp_obj.get("pecas", []) or []):
+            piece_id = str(piece.get("id", "") or "").strip()
+            active = False
+            rows = list(mysql_rows.get(piece_id, []) or [])
+            if rows:
+                active = any(
+                    "produc" in self.desktop_main.norm_text(row.get("estado", ""))
+                    and self.desktop_main.norm_text(row.get("operador", "")) == operator_norm
+                    and self._is_laser_operation(str(row.get("operacao", "") or ""))
+                    for row in rows
+                )
+            else:
+                for operation in list(self.desktop_main.ensure_peca_operacoes(piece) or []):
+                    state_norm = self.desktop_main.norm_text(operation.get("estado", ""))
+                    owner_norm = self.desktop_main.norm_text(operation.get("user", piece.get("operador", "")))
+                    if (
+                        ("produc" in state_norm or "curso" in state_norm)
+                        and owner_norm == operator_norm
+                        and self._is_laser_operation(str(operation.get("nome", "") or ""))
+                    ):
+                        active = True
+                        break
+            if active and piece_id:
+                active_piece_ids.append(piece_id)
+
+        state = self.operator_laser_stock_state(enc_num, material, espessura)
+        state.update(
+            {
+                "operator": str(operator_name or "").strip(),
+                "active_piece_ids": active_piece_ids,
+                "active_count": len(active_piece_ids),
+                "should_prompt": len(active_piece_ids) == 0 and float(state.get("reserved_qty", 0) or 0) > 0,
+            }
+        )
+        return state
+
+    def operator_record_material_session_decision(
+        self,
+        enc_num: str,
+        material: str,
+        espessura: str,
+        operator_name: str,
+        decision: str,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        enc = self.get_encomenda_by_numero(enc_num)
+        if enc is None:
+            raise ValueError("Encomenda não encontrada.")
+        esp_obj = self._operator_esp_obj(enc, material, espessura)
+        if not esp_obj:
+            raise ValueError("Grupo material/espessura não encontrado.")
+        row = {
+            "ts": self.desktop_main.now_iso(),
+            "operador": str(operator_name or "").strip(),
+            "decisao": str(decision or "").strip(),
+            "motivo": str(reason or "").strip(),
+            "material": str(material or "").strip(),
+            "espessura": str(espessura or "").strip(),
+        }
+        esp_obj.setdefault("material_session_history", []).append(row)
+        self._save_operator_state(enc)
+        return row
 
     def operator_reserved_materials(self, enc_num: str, material: str = "", espessura: str = "") -> list[dict[str, Any]]:
         enc = self.get_encomenda_by_numero(enc_num)
@@ -6535,6 +6622,8 @@ class LegacyBackend(
         allow_without_stock: bool = False,
         retalho: dict[str, Any] | None = None,
         source_material_id: str = "",
+        session_close: bool = False,
+        operator_name: str = "",
     ) -> dict[str, Any]:
         enc = self.get_encomenda_by_numero(enc_num)
         if enc is None:
@@ -6542,13 +6631,73 @@ class LegacyBackend(
         esp_obj = self._operator_esp_obj(enc, material, espessura)
         if not esp_obj:
             raise ValueError("Grupo material/espessura não encontrado.")
-        if not self._operator_esp_laser_concluido(esp_obj):
+        laser_complete = self._operator_esp_laser_concluido(esp_obj)
+        if not laser_complete and not session_close:
             return {"resolved": False, "reason": "laser_not_complete"}
-        if self._operator_esp_laser_resolved(esp_obj):
+        if laser_complete and self._operator_esp_laser_resolved(esp_obj):
             state = self.operator_laser_stock_state(enc_num, material, espessura)
             state["resolved"] = True
             return state
         total_qty = self._operator_group_total_output(esp_obj)
+        state_before = self.operator_laser_stock_state(enc_num, material, espessura)
+        if self._parse_float(state_before.get("reserved_qty", 0), 0) > 1e-9:
+            stock_id = str(material_id or "").strip()
+            consume_qty = self._parse_float(quantidade, 0)
+            if not stock_id or consume_qty <= 0:
+                raise ValueError("Seleciona o lote cativado e a quantidade realmente consumida.")
+            partial = self.operator_partial_reserved_material_consumption(
+                enc_num,
+                stock_id,
+                consume_qty,
+                material=material,
+                espessura=espessura,
+                retalho=retalho,
+                source_material_id=source_material_id,
+            )
+            stock = self.material_by_id(stock_id) or {}
+            lote_sel = str(
+                stock.get("lote_interno", "") or stock.get("lote_fornecedor", "") or ""
+            ).strip()
+            if lote_sel:
+                esp_obj["lote_baixa"] = lote_sel
+                for piece in list(esp_obj.get("pecas", []) or []):
+                    piece["lote_baixa"] = lote_sel
+            if laser_complete and not esp_obj.get("laser_concluido"):
+                esp_obj["laser_concluido"] = True
+                esp_obj["laser_concluido_em"] = self.desktop_main.now_iso()
+            if laser_complete:
+                esp_obj["baixa_laser_feita"] = True
+                esp_obj["baixa_laser_confirmada_sem_baixa"] = False
+                esp_obj["baixa_laser_em"] = self.desktop_main.now_iso()
+            if session_close:
+                esp_obj.setdefault("material_session_history", []).append(
+                    {
+                        "ts": self.desktop_main.now_iso(),
+                        "operador": str(operator_name or "").strip(),
+                        "decisao": "dar_baixa",
+                        "material": str(material or "").strip(),
+                        "espessura": str(espessura or "").strip(),
+                        "quantidade": round(consume_qty, 4),
+                        "material_id": stock_id,
+                        "retalho_id": str(partial.get("retalho_id", "") or "").strip(),
+                    }
+                )
+            state_after = self.operator_laser_stock_state(enc_num, material, espessura)
+            self._save_operator_state(enc)
+            return {
+                "resolved": True,
+                "total_qty": total_qty,
+                "reserved_consumed": round(consume_qty, 4),
+                "extra_consumed": 0.0,
+                "consumed_total": round(consume_qty, 4),
+                "remaining_qty": 0.0,
+                "remaining_reserved": float(state_after.get("reserved_qty", 0) or 0),
+                "allow_without_stock": False,
+                "manual_stock_required": False,
+                "lote_baixa": lote_sel,
+                "retalho_id": str(partial.get("retalho_id", "") or "").strip(),
+                "material_id": stock_id,
+            }
         lote_sel = str(esp_obj.get("lote_baixa", "") or "").strip()
         reserved_consumed = 0.0
         keep_reservas: list[dict[str, Any]] = []
@@ -6688,12 +6837,25 @@ class LegacyBackend(
             esp_obj["lote_baixa"] = lote_sel
             for piece in list(esp_obj.get("pecas", []) or []):
                 piece["lote_baixa"] = lote_sel
-        if not esp_obj.get("laser_concluido"):
+        if laser_complete and not esp_obj.get("laser_concluido"):
             esp_obj["laser_concluido"] = True
             esp_obj["laser_concluido_em"] = self.desktop_main.now_iso()
-        esp_obj["baixa_laser_feita"] = bool((reserved_consumed > 0) or (extra_consumed > 0))
-        esp_obj["baixa_laser_confirmada_sem_baixa"] = bool(allow_without_stock and manual_stock_required and extra_consumed <= 0)
-        esp_obj["baixa_laser_em"] = self.desktop_main.now_iso()
+        if laser_complete:
+            esp_obj["baixa_laser_feita"] = bool((reserved_consumed > 0) or (extra_consumed > 0))
+            esp_obj["baixa_laser_confirmada_sem_baixa"] = bool(allow_without_stock and manual_stock_required and extra_consumed <= 0)
+            esp_obj["baixa_laser_em"] = self.desktop_main.now_iso()
+        if session_close:
+            esp_obj.setdefault("material_session_history", []).append(
+                {
+                    "ts": self.desktop_main.now_iso(),
+                    "operador": str(operator_name or "").strip(),
+                    "decisao": "dar_baixa",
+                    "material": str(material or "").strip(),
+                    "espessura": str(espessura or "").strip(),
+                    "quantidade": consumed_total,
+                    "retalho_id": str((created_retalho or {}).get("id", "") or "").strip(),
+                }
+            )
         self._sync_ne_from_materia()
         self._save_operator_state(enc)
         return {
@@ -10186,6 +10348,7 @@ class LegacyBackend(
                     continue
             row = {
                 "numero": str(enc.get("numero", "")).strip(),
+                "of": self._order_of_code(enc),
                 "nota_cliente": str(enc.get("nota_cliente", "") or "").strip(),
                 "cliente": cli_display or cli_code or "-",
                 "cliente_codigo": cli_code,
@@ -10464,17 +10627,22 @@ class LegacyBackend(
             invoiced = round(sum(self._parse_float(row.get("faturado", 0), 0) for row in billing_rows), 2)
             received = round(sum(self._parse_float(row.get("recebido", 0), 0) for row in billing_rows), 2)
             if sold <= 0:
-                try:
-                    sold = round(self._parse_float(self._billing_order_source(order).get("total", 0), 0), 2)
-                except Exception:
-                    sold = 0.0
+                sold = round(self._parse_float(order.get("valor_adjudicado", 0), 0), 2)
+                if sold <= 0:
+                    try:
+                        sold = round(self._parse_float(self._billing_order_source(order).get("total", 0), 0), 2)
+                    except Exception:
+                        sold = 0.0
             pending_invoice = round(max(0.0, sold - invoiced), 2)
             receivable = round(max(0.0, invoiced - received), 2)
             production_states = {str(row.get("estado", "") or "").strip() for row in pieces if str(row.get("estado", "") or "").strip()}
             production_state = str(order.get("estado", "") or "").strip() or (", ".join(sorted(production_states)) if production_states else "Preparacao")
             order_row = {
                 "encomenda": order_number,
-                "of": next((str(row.get("of", "") or "").strip() for row in pieces if str(row.get("of", "") or "").strip()), ""),
+                "of": next(
+                    (str(row.get("of", "") or "").strip() for row in pieces if str(row.get("of", "") or "").strip()),
+                    self._order_of_code(order),
+                ),
                 "orcamento": str(order.get("numero_orcamento", "") or "").strip(),
                 "cliente_codigo": client_code,
                 "cliente_nome": client_name,
@@ -12460,17 +12628,85 @@ class LegacyBackend(
             "notas": str(source_detail.get("notas", "") or "").strip(),
             "ficha_tecnica": dict(source_detail.get("ficha_tecnica", {}) or {}),
             "quantidade_conjuntos": round(self._parse_float(quantity, 1), 2),
+            "total_custo": round(self._parse_float(source_detail.get("total_custo", 0), 0), 2),
+            "total_final": round(self._parse_float(source_detail.get("total_final", 0), 0), 2),
+            "margem_perc": round(self._parse_float(source_detail.get("margem_perc", 0), 0), 2),
         }
         if existing_sheet is None:
             order_sheets.append(snapshot)
         else:
+            snapshot["quantidade_conjuntos"] = round(
+                self._parse_float(existing_sheet.get("quantidade_conjuntos", 0), 0)
+                + self._parse_float(quantity, 1),
+                2,
+            )
             existing_sheet.update(snapshot)
+        enc["valor_adjudicado"] = round(
+            sum(
+                self._parse_float(row.get("total_final", 0), 0)
+                * self._parse_float(row.get("quantidade_conjuntos", 0), 0)
+                for row in order_sheets
+                if isinstance(row, dict)
+            ),
+            2,
+        )
         self._ensure_order_fabrication_order(enc)
         self.desktop_main.update_estado_encomenda_por_espessuras(enc)
         self._save(force=True)
         detail = self.order_detail(numero)
         detail["imported_pieces"] = imported_pieces
         detail["imported_items"] = imported_items
+        return detail
+
+    def order_create_with_models(
+        self,
+        payload: dict[str, Any],
+        imports: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Create an order and seed its manufacturing structure in one workflow."""
+        if str(payload.get("numero", "") or "").strip():
+            raise ValueError("Este fluxo destina-se apenas a novas encomendas.")
+
+        normalized_imports: list[dict[str, Any]] = []
+        for raw in list(imports or []):
+            source = str(raw.get("source", raw.get("origem_tipo", "conjunto")) or "conjunto").strip().lower()
+            source = "conjunto" if source == "conjunto" else "modelo"
+            code = str(raw.get("codigo", "") or "").strip()
+            quantity = round(self._parse_float(raw.get("quantity", raw.get("quantidade", 1)), 0), 2)
+            if not code or quantity <= 0:
+                raise ValueError("Conjunto e quantidade são obrigatórios.")
+            detail_fn = self.conjunto_detail if source == "conjunto" else self.assembly_model_detail
+            expand_fn = self.conjunto_expand if source == "conjunto" else self.assembly_model_expand
+            detail_fn(code)
+            if not list(expand_fn(code, quantity) or []):
+                raise ValueError(f"O conjunto {code} não tem linhas para importar.")
+            normalized_imports.append({"codigo": code, "quantity": quantity, "source": source})
+
+        created = self.order_create_or_update(dict(payload or {}))
+        numero = str(created.get("numero", "") or "").strip()
+        imported_pieces = 0
+        imported_items = 0
+        try:
+            for entry in normalized_imports:
+                result = self.order_import_model(
+                    numero,
+                    entry["codigo"],
+                    entry["quantity"],
+                    entry["source"],
+                )
+                imported_pieces += int(result.get("imported_pieces", 0) or 0)
+                imported_items += int(result.get("imported_items", 0) or 0)
+        except Exception:
+            try:
+                self.order_remove(numero)
+            except Exception:
+                pass
+            raise
+
+        detail = self.order_detail(numero)
+        detail["imported_pieces"] = imported_pieces
+        detail["imported_items"] = imported_items
+        detail["initial_imports"] = [dict(row) for row in normalized_imports]
         return detail
 
     def order_fabrication_pdf(

@@ -7,6 +7,26 @@ from typing import Any
 
 from lugest_core.laser.quote_engine import analyze_dxf_geometry, merge_laser_quote_settings
 
+try:
+    from shapely import STRtree, affinity as shapely_affinity, make_valid as shapely_make_valid
+    from shapely.geometry import GeometryCollection as ShapelyGeometryCollection
+    from shapely.geometry import MultiPolygon as ShapelyMultiPolygon
+    from shapely.geometry import Polygon as ShapelyPolygon
+    from shapely.geometry import box as shapely_box
+    from shapely.ops import unary_union as shapely_unary_union
+
+    SHAPELY_AVAILABLE = True
+except Exception:
+    STRtree = None
+    shapely_affinity = None
+    shapely_make_valid = None
+    ShapelyGeometryCollection = None
+    ShapelyMultiPolygon = None
+    ShapelyPolygon = None
+    shapely_box = None
+    shapely_unary_union = None
+    SHAPELY_AVAILABLE = False
+
 
 DEFAULT_SHEET_PROFILES: list[dict[str, Any]] = [
     {"name": "1000 x 2000", "width_mm": 1000.0, "height_mm": 2000.0},
@@ -461,6 +481,13 @@ def _polygon_edges_overlap(
     right = list(right_polygon or [])
     if len(left) < 2 or len(right) < 2:
         return False
+    left_bbox = _points_bbox(left)
+    right_bbox = _points_bbox(right)
+    if (
+        min(left_bbox["max_x"], right_bbox["max_x"]) < max(left_bbox["min_x"], right_bbox["min_x"]) - tol
+        or min(left_bbox["max_y"], right_bbox["max_y"]) < max(left_bbox["min_y"], right_bbox["min_y"]) - tol
+    ):
+        return False
     for left_index in range(len(left)):
         a1 = left[left_index]
         a2 = left[(left_index + 1) % len(left)]
@@ -566,7 +593,106 @@ def _candidate_shape_conflicts(
     return False
 
 
+def _placement_shapely_geometry(placement: dict[str, Any]) -> Any:
+    raw_outer = tuple(placement.get("shape_outer_polygons", ()) or ())
+    raw_holes = tuple(placement.get("shape_hole_polygons", ()) or ())
+    if raw_outer:
+        raw_points = [point for polygon in raw_outer for point in list(polygon or ())]
+        geometry = _shapely_geometry_from_polygons(raw_outer, raw_holes)
+        if geometry is not None and raw_points:
+            min_x = min(float(point[0]) for point in raw_points)
+            min_y = min(float(point[1]) for point in raw_points)
+            return shapely_affinity.translate(geometry, xoff=min_x, yoff=min_y)
+    x = _as_float(placement.get("x_mm", 0.0), 0.0)
+    y = _as_float(placement.get("y_mm", 0.0), 0.0)
+    width = max(0.0, _as_float(placement.get("width_mm", 0.0), 0.0))
+    height = max(0.0, _as_float(placement.get("height_mm", 0.0), 0.0))
+    if width <= 0.0 or height <= 0.0:
+        return None
+    return shapely_box(x, y, x + width, y + height)
+
+
+def _sheet_overlap_diagnostics_shapely(sheet_row: dict[str, Any]) -> dict[str, Any]:
+    placements = [dict(row or {}) for row in list(sheet_row.get("placements", []) or [])]
+    geometries = [_placement_shapely_geometry(placement) for placement in placements]
+    bbox_overlap_pairs = 0
+    solid_overlap_pairs: list[tuple[str, str]] = []
+    spacing_violation_pairs: list[tuple[str, str]] = []
+    min_part_distance: float | None = None
+    for index, left in enumerate(placements):
+        left_geometry = geometries[index]
+        if left_geometry is None:
+            continue
+        left_bounds = left_geometry.bounds
+        for right_index in range(index + 1, len(placements)):
+            right = placements[right_index]
+            right_geometry = geometries[right_index]
+            if right_geometry is None:
+                continue
+            right_bounds = right_geometry.bounds
+            overlap_x = min(left_bounds[2], right_bounds[2]) - max(left_bounds[0], right_bounds[0])
+            overlap_y = min(left_bounds[3], right_bounds[3]) - max(left_bounds[1], right_bounds[1])
+            if overlap_x > 1e-3 and overlap_y > 1e-3:
+                bbox_overlap_pairs += 1
+            left_label = str(left.get("ref_externa", left.get("file_name", "")) or index + 1)
+            right_label = str(right.get("ref_externa", right.get("file_name", "")) or right_index + 1)
+            intersection_area = float(left_geometry.intersection(right_geometry).area)
+            distance = float(left_geometry.distance(right_geometry))
+            min_part_distance = distance if min_part_distance is None else min(min_part_distance, distance)
+            if intersection_area > 1e-5:
+                solid_overlap_pairs.append((left_label, right_label))
+                continue
+            required_spacing = max(
+                _as_float(left.get("required_spacing_mm", 0.0), 0.0),
+                _as_float(right.get("required_spacing_mm", 0.0), 0.0),
+            )
+            if distance < required_spacing - 1e-3:
+                spacing_violation_pairs.append((left_label, right_label))
+
+    width = max(0.0, _as_float(sheet_row.get("sheet_width_mm", 0.0), 0.0))
+    height = max(0.0, _as_float(sheet_row.get("sheet_height_mm", 0.0), 0.0))
+    edge_violations: list[str] = []
+    min_edge_distance: float | None = None
+    if width > 0.0 and height > 0.0:
+        sheet_outer = tuple(sheet_row.get("sheet_outer_polygons", ()) or ())
+        sheet_holes = tuple(sheet_row.get("sheet_hole_polygons", ()) or ())
+        full_sheet = _shapely_geometry_from_polygons(
+            sheet_outer,
+            sheet_holes,
+            fallback_width=width,
+            fallback_height=height,
+        )
+        if full_sheet is None:
+            full_sheet = shapely_box(0.0, 0.0, width, height)
+        boundary = full_sheet.boundary
+        for index, placement in enumerate(placements):
+            geometry = geometries[index]
+            if geometry is None:
+                continue
+            required_edge = max(0.0, _as_float(placement.get("required_edge_margin_mm", 0.0), 0.0))
+            allowed = full_sheet.buffer(-required_edge, join_style="mitre") if required_edge > 0.0 else full_sheet
+            edge_distance = float(geometry.distance(boundary))
+            min_edge_distance = edge_distance if min_edge_distance is None else min(min_edge_distance, edge_distance)
+            if not allowed.covers(geometry):
+                edge_violations.append(str(placement.get("ref_externa", placement.get("file_name", "")) or index + 1))
+    return {
+        "bbox_overlap_pair_count": bbox_overlap_pairs,
+        "solid_overlap_pair_count": len(solid_overlap_pairs),
+        "solid_overlap_pairs": solid_overlap_pairs,
+        "part_in_part_pair_count": max(0, bbox_overlap_pairs - len(solid_overlap_pairs)),
+        "spacing_violation_pair_count": len(spacing_violation_pairs),
+        "spacing_violation_pairs": spacing_violation_pairs,
+        "edge_violation_count": len(edge_violations),
+        "edge_violation_refs": edge_violations,
+        "min_part_distance_mm": round(min_part_distance, 3) if min_part_distance is not None else None,
+        "min_edge_distance_mm": round(min_edge_distance, 3) if min_edge_distance is not None else None,
+        "validation_engine": "GEOS",
+    }
+
+
 def _sheet_overlap_diagnostics(sheet_row: dict[str, Any]) -> dict[str, Any]:
+    if SHAPELY_AVAILABLE:
+        return _sheet_overlap_diagnostics_shapely(sheet_row)
     placements = [dict(row or {}) for row in list(sheet_row.get("placements", []) or [])]
     bbox_overlap_pairs = 0
     solid_overlap_pairs: list[tuple[str, str]] = []
@@ -1071,7 +1197,27 @@ def _cell_hits_shape(
     grid_mm: float,
     outer_polygons: tuple[tuple[tuple[float, float], ...], ...],
     hole_polygons: tuple[tuple[tuple[float, float], ...], ...],
+    outer_bboxes: tuple[dict[str, float], ...] | None = None,
+    hole_bboxes: tuple[dict[str, float], ...] | None = None,
 ) -> bool:
+    outer_list = tuple(outer_polygons or ())
+    hole_list = tuple(hole_polygons or ())
+    outer_boxes = outer_bboxes or tuple(_points_bbox(list(polygon or ())) for polygon in outer_list)
+    hole_boxes = hole_bboxes or tuple(_points_bbox(list(polygon or ())) for polygon in hole_list)
+
+    def inside_any(
+        point: tuple[float, float],
+        polygons: tuple[tuple[tuple[float, float], ...], ...],
+        bboxes: tuple[dict[str, float], ...],
+    ) -> bool:
+        px, py = point
+        return any(
+            bbox["min_x"] <= px <= bbox["max_x"]
+            and bbox["min_y"] <= py <= bbox["max_y"]
+            and _point_in_polygon(point, polygon)
+            for polygon, bbox in zip(polygons, bboxes)
+        )
+
     sample_points = [
         (cell_x_mm + (grid_mm * 0.50), cell_y_mm + (grid_mm * 0.50)),
         (cell_x_mm + (grid_mm * 0.20), cell_y_mm + (grid_mm * 0.20)),
@@ -1080,14 +1226,12 @@ def _cell_hits_shape(
         (cell_x_mm + (grid_mm * 0.20), cell_y_mm + (grid_mm * 0.80)),
     ]
     for point in sample_points:
-        if any(_point_in_polygon(point, polygon) for polygon in list(outer_polygons or [])) and not any(
-            _point_in_polygon(point, polygon) for polygon in list(hole_polygons or [])
-        ):
+        if inside_any(point, outer_list, outer_boxes) and not inside_any(point, hole_list, hole_boxes):
             return True
-    for polygon in list(outer_polygons or []):
+    for polygon in outer_list:
         for px, py in list(polygon or []):
             if cell_x_mm <= px <= (cell_x_mm + grid_mm) and cell_y_mm <= py <= (cell_y_mm + grid_mm):
-                if not any(_point_in_polygon((px, py), hole) for hole in list(hole_polygons or [])):
+                if not inside_any((px, py), hole_list, hole_boxes):
                     return True
     return False
 
@@ -1128,12 +1272,22 @@ def _shape_mask(
         outer_polygons = (fallback_polygon,) if fallback_polygon else ()
     cols = max(1, int(math.ceil(max(width_mm, 0.0) / max(grid_mm, 1.0))))
     rows = max(1, int(math.ceil(max(height_mm, 0.0) / max(grid_mm, 1.0))))
+    outer_bboxes = tuple(_points_bbox(list(polygon or ())) for polygon in outer_polygons)
+    hole_bboxes = tuple(_points_bbox(list(polygon or ())) for polygon in hole_polygons)
     base_cells: set[tuple[int, int]] = set()
     for row_index in range(rows):
         cell_y_mm = row_index * grid_mm
         for col_index in range(cols):
             cell_x_mm = col_index * grid_mm
-            if _cell_hits_shape(cell_x_mm, cell_y_mm, grid_mm, outer_polygons, hole_polygons):
+            if _cell_hits_shape(
+                cell_x_mm,
+                cell_y_mm,
+                grid_mm,
+                outer_polygons,
+                hole_polygons,
+                outer_bboxes,
+                hole_bboxes,
+            ):
                 base_cells.add((col_index, row_index))
     if not base_cells:
         base_cells = {(col_index, row_index) for row_index in range(rows) for col_index in range(cols)}
@@ -1272,12 +1426,22 @@ def _sheet_allowed_cells(profile: dict[str, Any], *, edge_margin_mm: float, grid
     hole_polygons = tuple(profile.get("hole_polygons", ()) or ())
     if not outer_polygons:
         return None, [], []
+    outer_bboxes = tuple(_points_bbox(list(polygon or ())) for polygon in outer_polygons)
+    hole_bboxes = tuple(_points_bbox(list(polygon or ())) for polygon in hole_polygons)
     allowed_indices: set[int] = set()
     for row_index in range(height_cells):
         cell_y_mm = edge_margin_mm + (row_index * grid_mm)
         for col_index in range(width_cells):
             cell_x_mm = edge_margin_mm + (col_index * grid_mm)
-            if _cell_hits_shape(cell_x_mm, cell_y_mm, grid_mm, outer_polygons, hole_polygons):
+            if _cell_hits_shape(
+                cell_x_mm,
+                cell_y_mm,
+                grid_mm,
+                outer_polygons,
+                hole_polygons,
+                outer_bboxes,
+                hole_bboxes,
+            ):
                 allowed_indices.add((row_index * width_cells) + col_index)
     if not allowed_indices:
         return None, _translate_polygons(outer_polygons, 0.0, 0.0), _translate_polygons(hole_polygons, 0.0, 0.0)
@@ -1497,6 +1661,27 @@ def _profile_usable_dimensions(profile: dict[str, Any], edge_margin_mm: float) -
     return usable_width, usable_height
 
 
+def _profile_can_fit_all_items(
+    profile: dict[str, Any],
+    items: list[NestItem],
+    *,
+    edge_margin_mm: float,
+    allow_rotate: bool,
+) -> bool:
+    try:
+        usable_width, usable_height = _profile_usable_dimensions(profile, edge_margin_mm)
+    except Exception:
+        return False
+    for item in list(items or []):
+        if not any(
+            float(orientation.get("width", 0.0) or 0.0) <= usable_width + 1e-6
+            and float(orientation.get("height", 0.0) or 0.0) <= usable_height + 1e-6
+            for orientation in _candidate_orientations(item, allow_rotate, allow_mirror=False, free_angles=False)
+        ):
+            return False
+    return True
+
+
 def _try_place_on_sheet(
     sheet: dict[str, Any],
     item: NestItem,
@@ -1534,7 +1719,7 @@ def _try_place_on_sheet(
             if best is None or _placement_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm) < _placement_score(best, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm):
                 best = candidate
         cursor_y = _as_float(sheet.get("cursor_y", 0.0), 0.0)
-        if cursor_y + place_h <= usable_height + 1e-6:
+        if place_w <= usable_width + 1e-6 and cursor_y + place_h <= usable_height + 1e-6:
             candidate = {
                 "shelf_index": len(list(sheet.get("shelves", []) or [])),
                 "new_shelf": True,
@@ -1629,7 +1814,9 @@ def _apply_placement(
             "bbox_area_mm2": round(item.bbox_width_mm * item.bbox_height_mm, 2),
             "layout_area_mm2": layout_area_mm2,
             "copy_index": int(row.get("copy_index", 0) or 0),
-            "shape_mode": "grid" if "mask_cells" in placement else "bbox",
+            "shape_mode": str(placement.get("shape_mode", "grid" if "mask_cells" in placement else "bbox") or "bbox"),
+            "required_spacing_mm": round(max(0.0, float(part_spacing_mm or 0.0)), 3),
+            "required_edge_margin_mm": round(max(0.0, float(edge_margin_mm or 0.0)), 3),
             "shape_outer_polygons": _translate_polygons(tuple(placement.get("shape_outer_polygons", ()) or ()), draw_x, draw_y),
             "shape_hole_polygons": _translate_polygons(tuple(placement.get("shape_hole_polygons", ()) or ()), draw_x, draw_y),
             "preview_paths": _translate_paths(
@@ -1956,7 +2143,15 @@ def _build_sheet_row(sheet: dict[str, Any], index: int) -> dict[str, Any]:
         "remaining_bbox_area_mm2": round(remaining_bbox_area, 2),
         "largest_edge_remnant_area_mm2": round(max(0.0, largest_edge_remnant_area), 2),
         "fragmented_remainder_area_mm2": round(max(0.0, remaining_bbox_area - largest_edge_remnant_area), 2),
-        "geometry_validation": _sheet_overlap_diagnostics({"placements": placements}),
+        "geometry_validation": _sheet_overlap_diagnostics(
+            {
+                "placements": placements,
+                "sheet_width_mm": width_mm,
+                "sheet_height_mm": height_mm,
+                "sheet_outer_polygons": list(sheet.get("sheet_outer_polygons", []) or []),
+                "sheet_hole_polygons": list(sheet.get("sheet_hole_polygons", []) or []),
+            }
+        ),
     }
 
 
@@ -2031,6 +2226,8 @@ def _finalize_result(
         geometry_validation = dict(row.get("geometry_validation", {}) or {})
         solid_overlap_pair_count = int(geometry_validation.get("solid_overlap_pair_count", 0) or 0)
         part_in_part_pair_count = int(geometry_validation.get("part_in_part_pair_count", 0) or 0)
+        spacing_violation_count = int(geometry_validation.get("spacing_violation_pair_count", 0) or 0)
+        edge_violation_count = int(geometry_validation.get("edge_violation_count", 0) or 0)
         if solid_overlap_pair_count > 0:
             pair_labels = ", ".join(f"{left}/{right}" for left, right in list(geometry_validation.get("solid_overlap_pairs", []) or [])[:6])
             warnings.append(
@@ -2040,6 +2237,10 @@ def _finalize_result(
             warnings.append(
                 f"Chapa {index + 1}: foram detetados {part_in_part_pair_count} encaixes internos por contorno (part-in-part), sem sobreposicao real de geometria."
             )
+        if spacing_violation_count > 0:
+            warnings.append(f"Chapa {index + 1}: foram detetadas {spacing_violation_count} violacoes da distancia minima entre pecas.")
+        if edge_violation_count > 0:
+            warnings.append(f"Chapa {index + 1}: foram detetadas {edge_violation_count} pecas fora da margem minima da chapa.")
         sheet_rows.append(row)
         summary["sheet_count"] += 1
         summary["part_count_placed"] += int(row.get("part_count", 0) or 0)
@@ -2050,6 +2251,22 @@ def _finalize_result(
         summary["fragmented_remainder_area_mm2"] += _as_float(row.get("fragmented_remainder_area_mm2", 0.0), 0.0)
         summary["geometry_solid_overlap_pair_count"] = int(summary.get("geometry_solid_overlap_pair_count", 0) or 0) + solid_overlap_pair_count
         summary["geometry_part_in_part_pair_count"] = int(summary.get("geometry_part_in_part_pair_count", 0) or 0) + part_in_part_pair_count
+        summary["geometry_spacing_violation_pair_count"] = int(summary.get("geometry_spacing_violation_pair_count", 0) or 0) + spacing_violation_count
+        summary["geometry_edge_violation_count"] = int(summary.get("geometry_edge_violation_count", 0) or 0) + edge_violation_count
+        sheet_min_part_distance = geometry_validation.get("min_part_distance_mm")
+        if sheet_min_part_distance is not None:
+            current_min = summary.get("geometry_min_part_distance_mm")
+            summary["geometry_min_part_distance_mm"] = round(
+                float(sheet_min_part_distance) if current_min is None else min(float(current_min), float(sheet_min_part_distance)),
+                3,
+            )
+        sheet_min_edge_distance = geometry_validation.get("min_edge_distance_mm")
+        if sheet_min_edge_distance is not None:
+            current_min = summary.get("geometry_min_edge_distance_mm")
+            summary["geometry_min_edge_distance_mm"] = round(
+                float(sheet_min_edge_distance) if current_min is None else min(float(current_min), float(sheet_min_edge_distance)),
+                3,
+            )
         area_mm2 = _as_float(row.get("sheet_area_mm2", 0.0), 0.0)
         summary["total_sheet_area_mm2"] += area_mm2
         source_kind = str(row.get("source_kind", "") or "").strip().lower()
@@ -2216,6 +2433,11 @@ def _shape_engine_feasible(
     candidates = list(profiles or []) + list(stock_candidates or [])
     if not candidates:
         return False, "Sem formatos de chapa para avaliar."
+    part_count = sum(max(1, int(item.qty or 0)) for item in list(items or []))
+    if SHAPELY_AVAILABLE:
+        if part_count > 1_000:
+            return False, "Quantidade de pecas acima do limite de calculo poligonal interativo."
+        return True, ""
     max_cells = 0
     for profile in candidates:
         try:
@@ -2226,8 +2448,27 @@ def _shape_engine_feasible(
         max_cells = max(max_cells, cells)
     if max_cells > 360_000:
         return False, f"Grelha de {safe_grid:g} mm demasiado fina para a chapa configurada."
-    if sum(max(1, int(item.qty or 0)) for item in list(items or [])) > 400:
+    if part_count > 400:
         return False, "Quantidade de pecas demasiado elevada para o modo por contorno nesta fase."
+    geometry_rows = []
+    for item in list(items or []):
+        point_count = sum(len(polygon) for polygon in list(item.outer_polygons or ()))
+        point_count += sum(len(polygon) for polygon in list(item.hole_polygons or ()))
+        geometry_rows.append(
+            {
+                "points": point_count,
+                "holes": len(list(item.hole_polygons or ())),
+                "qty": max(1, int(item.qty or 0)),
+            }
+        )
+    max_item_points = max((int(row["points"]) for row in geometry_rows), default=0)
+    hole_count = sum(int(row["holes"]) for row in geometry_rows)
+    weighted_points = sum(int(row["points"]) * min(int(row["qty"]), 20) for row in geometry_rows)
+    if part_count > 24 and (max_item_points > 1_500 or hole_count > 48 or weighted_points > 30_000):
+        return False, (
+            "Geometria detalhada e repetitiva acima do limite de calculo interativo; "
+            "sera usado o modo retangular conservador."
+        )
     return True, ""
 
 
@@ -2316,6 +2557,394 @@ def _effective_free_angle_rotation(items: list[NestItem], expanded: list[dict[st
     return True, ""
 
 
+def _shapely_polygon_parts(geometry: Any) -> list[Any]:
+    if geometry is None or bool(getattr(geometry, "is_empty", True)):
+        return []
+    geom_type = str(getattr(geometry, "geom_type", "") or "")
+    if geom_type == "Polygon":
+        return [geometry]
+    if geom_type in {"MultiPolygon", "GeometryCollection"}:
+        return [part for child in list(getattr(geometry, "geoms", ()) or ()) for part in _shapely_polygon_parts(child)]
+    return []
+
+
+def _shapely_normalize_geometry(geometry: Any) -> Any:
+    if geometry is None or bool(getattr(geometry, "is_empty", True)):
+        return geometry
+    min_x, min_y, _, _ = geometry.bounds
+    return shapely_affinity.translate(geometry, xoff=-float(min_x), yoff=-float(min_y))
+
+
+def _shapely_geometry_from_polygons(
+    outer_polygons: Any,
+    hole_polygons: Any,
+    *,
+    fallback_width: float = 0.0,
+    fallback_height: float = 0.0,
+) -> Any:
+    if not SHAPELY_AVAILABLE:
+        return None
+    holes = [tuple((float(x), float(y)) for x, y in list(raw or ())) for raw in list(hole_polygons or ()) if len(list(raw or ())) >= 3]
+    parts: list[Any] = []
+    for raw_outer in list(outer_polygons or ()):
+        shell = tuple((float(x), float(y)) for x, y in list(raw_outer or ()))
+        if len(shell) < 3:
+            continue
+        shell_only = ShapelyPolygon(shell)
+        assigned_holes = []
+        for hole in holes:
+            try:
+                if shell_only.covers(ShapelyPolygon(hole).representative_point()):
+                    assigned_holes.append(hole)
+            except Exception:
+                continue
+        polygon = ShapelyPolygon(shell, assigned_holes)
+        if not polygon.is_valid:
+            polygon = shapely_make_valid(polygon)
+        parts.extend(_shapely_polygon_parts(polygon))
+    if not parts and fallback_width > 0.0 and fallback_height > 0.0:
+        parts = [shapely_box(0.0, 0.0, float(fallback_width), float(fallback_height))]
+    if not parts:
+        return None
+    geometry = shapely_unary_union(parts)
+    if not geometry.is_valid:
+        geometry = shapely_make_valid(geometry)
+    polygon_parts = _shapely_polygon_parts(geometry)
+    if not polygon_parts:
+        return None
+    return _shapely_normalize_geometry(shapely_unary_union(polygon_parts))
+
+
+def _shapely_item_geometry(item: NestItem) -> Any:
+    return _shapely_geometry_from_polygons(
+        item.outer_polygons,
+        item.hole_polygons,
+        fallback_width=item.bbox_width_mm,
+        fallback_height=item.bbox_height_mm,
+    )
+
+
+def _shapely_geometry_payload(geometry: Any) -> tuple[tuple[tuple[tuple[float, float], ...], ...], tuple[tuple[tuple[float, float], ...], ...]]:
+    outer: list[tuple[tuple[float, float], ...]] = []
+    holes: list[tuple[tuple[float, float], ...]] = []
+    for polygon in _shapely_polygon_parts(geometry):
+        shell = tuple((round(float(x), 3), round(float(y), 3)) for x, y in list(polygon.exterior.coords)[:-1])
+        if len(shell) >= 3:
+            outer.append(shell)
+        for ring in list(polygon.interiors or ()):
+            hole = tuple((round(float(x), 3), round(float(y), 3)) for x, y in list(ring.coords)[:-1])
+            if len(hole) >= 3:
+                holes.append(hole)
+    return tuple(outer), tuple(holes)
+
+
+def _shapely_orientation_variants(
+    item: NestItem,
+    *,
+    allow_rotate: bool,
+    allow_mirror: bool,
+    free_angles: bool,
+    base_cache: dict[str, Any],
+    variant_cache: dict[tuple, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    cache_key = str(item.shape_cache_key or item.path or id(item))
+    key = (cache_key, bool(allow_rotate), bool(allow_mirror), bool(free_angles), str(item.rotation_policy or "auto"))
+    cached = variant_cache.get(key)
+    if cached is not None:
+        return cached
+    geometry = base_cache.get(cache_key)
+    if geometry is None:
+        geometry = _shapely_item_geometry(item)
+        base_cache[cache_key] = geometry
+    if geometry is None:
+        variant_cache[key] = []
+        return []
+    variants: list[dict[str, Any]] = []
+    seen: set[tuple[float, float, float, bool]] = set()
+    for orientation in _candidate_orientations(item, allow_rotate, allow_mirror=allow_mirror, free_angles=free_angles):
+        angle = float(orientation.get("angle_deg", 90.0 if bool(orientation.get("rotated")) else 0.0) or 0.0)
+        mirrored = bool(orientation.get("mirrored"))
+        transformed = geometry
+        if mirrored:
+            transformed = shapely_affinity.scale(transformed, xfact=-1.0, yfact=1.0, origin=(0.0, 0.0))
+        if abs(angle) > 1e-9:
+            transformed = shapely_affinity.rotate(transformed, angle, origin=(0.0, 0.0), use_radians=False)
+        transformed = _shapely_normalize_geometry(transformed)
+        min_x, min_y, max_x, max_y = transformed.bounds
+        width = max(0.0, float(max_x) - float(min_x))
+        height = max(0.0, float(max_y) - float(min_y))
+        signature = (round(width, 3), round(height, 3), round(angle % 180.0, 3), mirrored)
+        if signature in seen:
+            continue
+        if any(bool(transformed.equals_exact(existing["geometry"], tolerance=1e-4)) for existing in variants):
+            continue
+        seen.add(signature)
+        outer, holes = _shapely_geometry_payload(transformed)
+        variants.append(
+            {
+                "geometry": transformed,
+                "width": width,
+                "height": height,
+                "rotated": bool(orientation.get("rotated")),
+                "mirrored": mirrored,
+                "rotation_deg": angle,
+                "shape_outer_polygons": outer,
+                "shape_hole_polygons": holes,
+            }
+        )
+    variant_cache[key] = variants
+    return variants
+
+
+def _shapely_sheet_allowed_geometry(profile: dict[str, Any], edge_margin_mm: float) -> Any:
+    width = max(0.0, _as_float(profile.get("width_mm", 0.0), 0.0))
+    height = max(0.0, _as_float(profile.get("height_mm", 0.0), 0.0))
+    outer = tuple(profile.get("outer_polygons", ()) or ())
+    holes = tuple(profile.get("hole_polygons", ()) or ())
+    if outer:
+        geometry = _shapely_geometry_from_polygons(outer, holes, fallback_width=width, fallback_height=height)
+        if geometry is not None and edge_margin_mm > 0.0:
+            geometry = geometry.buffer(-float(edge_margin_mm), join_style="mitre")
+        return geometry
+    if width <= 2.0 * edge_margin_mm or height <= 2.0 * edge_margin_mm:
+        return None
+    return shapely_box(edge_margin_mm, edge_margin_mm, width - edge_margin_mm, height - edge_margin_mm)
+
+
+def _new_shapely_sheet(profile: dict[str, Any], edge_margin_mm: float) -> dict[str, Any]:
+    sheet = _new_sheet(profile)
+    sheet["_shapely_allowed"] = _shapely_sheet_allowed_geometry(profile, edge_margin_mm)
+    sheet["_shapely_actual"] = []
+    return sheet
+
+
+def _shapely_candidate_positions(sheet: dict[str, Any], variant: dict[str, Any], part_spacing_mm: float) -> list[tuple[float, float]]:
+    allowed = sheet.get("_shapely_allowed")
+    if allowed is None or bool(getattr(allowed, "is_empty", True)):
+        return []
+    min_x, min_y, max_x, max_y = allowed.bounds
+    width = float(variant.get("width", 0.0) or 0.0)
+    height = float(variant.get("height", 0.0) or 0.0)
+    spacing = max(0.0, float(part_spacing_mm or 0.0))
+    xs: set[float] = {round(float(min_x), 4), round(float(max_x) - width, 4)}
+    ys: set[float] = {round(float(min_y), 4), round(float(max_y) - height, 4)}
+    for geometry in list(sheet.get("_shapely_actual", []) or []):
+        left, bottom, right, top = geometry.bounds
+        xs.update((round(float(right) + spacing, 4), round(float(left) - spacing - width, 4)))
+        ys.update((round(float(top) + spacing, 4), round(float(bottom) - spacing - height, 4)))
+        for polygon in _shapely_polygon_parts(geometry):
+            for ring in list(polygon.interiors or ()):
+                hole_left, hole_bottom, hole_right, hole_top = ring.bounds
+                if (
+                    float(hole_right) - float(hole_left) < width + (2.0 * spacing) - 1e-6
+                    or float(hole_top) - float(hole_bottom) < height + (2.0 * spacing) - 1e-6
+                ):
+                    continue
+                xs.update(
+                    (
+                        round(float(hole_left) + spacing, 4),
+                        round(float(hole_right) - spacing - width, 4),
+                        round(((float(hole_left) + float(hole_right) - width) / 2.0), 4),
+                    )
+                )
+                ys.update(
+                    (
+                        round(float(hole_bottom) + spacing, 4),
+                        round(float(hole_top) - spacing - height, 4),
+                        round(((float(hole_bottom) + float(hole_top) - height) / 2.0), 4),
+                    )
+                )
+    valid_x = sorted(value for value in xs if value >= min_x - 1e-6 and value + width <= max_x + 1e-6)
+    valid_y = sorted(value for value in ys if value >= min_y - 1e-6 and value + height <= max_y + 1e-6)
+    return [(x, y) for y in valid_y for x in valid_x]
+
+
+def _try_place_on_shapely_sheet(
+    sheet: dict[str, Any],
+    item: NestItem,
+    *,
+    allow_rotate: bool,
+    allow_mirror: bool,
+    free_angles: bool,
+    part_spacing_mm: float,
+    edge_margin_mm: float,
+    strategy_name: str,
+    base_cache: dict[str, Any],
+    variant_cache: dict[tuple, list[dict[str, Any]]],
+) -> dict[str, Any] | None:
+    allowed = sheet.get("_shapely_allowed")
+    if allowed is None or bool(getattr(allowed, "is_empty", True)):
+        return None
+    actual_geometries = list(sheet.get("_shapely_actual", []) or [])
+    tree = STRtree(actual_geometries) if actual_geometries else None
+    spacing = max(0.0, float(part_spacing_mm or 0.0))
+    placed_max_x = max((float(geometry.bounds[2]) for geometry in actual_geometries), default=float(allowed.bounds[0]))
+    placed_max_y = max((float(geometry.bounds[3]) for geometry in actual_geometries), default=float(allowed.bounds[1]))
+    best: dict[str, Any] | None = None
+    normalized_strategy = str(strategy_name or "").lower()
+    for variant in _shapely_orientation_variants(
+        item,
+        allow_rotate=allow_rotate,
+        allow_mirror=allow_mirror,
+        free_angles=free_angles,
+        base_cache=base_cache,
+        variant_cache=variant_cache,
+    ):
+        positions = _shapely_candidate_positions(sheet, variant, spacing)
+        if "width" in normalized_strategy:
+            positions.sort(key=lambda point: (point[0], point[1]))
+        for x, y in positions:
+            candidate = shapely_affinity.translate(variant["geometry"], xoff=x, yoff=y)
+            if not allowed.covers(candidate):
+                continue
+            probe = candidate.buffer(spacing + 1e-6, quad_segs=2, join_style="mitre") if spacing > 0.0 else candidate
+            nearby = list(tree.query(probe)) if tree is not None else []
+            collision = False
+            for raw_index in nearby:
+                other = actual_geometries[int(raw_index)]
+                if candidate.intersection(other).area > 1e-5 or candidate.distance(other) < spacing - 1e-4:
+                    collision = True
+                    break
+            if collision:
+                continue
+            projected_max_x = max(placed_max_x, x + float(variant["width"]))
+            projected_max_y = max(placed_max_y, y + float(variant["height"]))
+            score = (
+                projected_max_x if "width" in normalized_strategy else projected_max_y,
+                projected_max_y if "width" in normalized_strategy else projected_max_x,
+                y,
+                x,
+                1.0 if bool(variant.get("mirrored")) else 0.0,
+                abs(float(variant.get("rotation_deg", 0.0) or 0.0)),
+            )
+            placement = {
+                **{key: value for key, value in variant.items() if key != "geometry"},
+                "x": round(x - float(edge_margin_mm), 4),
+                "y": round(y - float(edge_margin_mm), 4),
+                "place_w": float(variant["width"]),
+                "place_h": float(variant["height"]),
+                "shape_mode": "geos",
+                "occupied_area_mm2": round(float(candidate.area), 2),
+                "_actual_geometry": candidate,
+                "score": score,
+            }
+            if best is None or score < best["score"]:
+                best = placement
+            if "compact" not in normalized_strategy:
+                break
+    return best
+
+
+def _pack_profile_shapely(
+    items: list[NestItem],
+    expanded: list[dict[str, Any]],
+    *,
+    profile: dict[str, Any],
+    part_spacing_mm: float,
+    edge_margin_mm: float,
+    allow_rotate: bool,
+    allow_mirror: bool,
+    free_angles: bool,
+    settings: dict[str, Any],
+    base_warnings: list[str],
+    selection_mode: str,
+) -> dict[str, Any] | None:
+    if not SHAPELY_AVAILABLE:
+        return None
+    normalized_profile = _normalize_sheet_profile(profile, 0)
+    if normalized_profile is None:
+        raise ValueError("Seleciona um formato de chapa valido.")
+    best_result: dict[str, Any] | None = None
+    base_cache: dict[str, Any] = {}
+    variant_cache: dict[tuple, list[dict[str, Any]]] = {}
+    strategies = ("shape-geos-area", "shape-geos-height") if len(expanded) <= 16 else ("shape-geos-area",)
+    for strategy_name in strategies:
+        ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key("area" if strategy_name.endswith("area") else "height-first"), reverse=True)
+        sheets: list[dict[str, Any]] = []
+        unplaced: list[dict[str, Any]] = []
+        warnings = list(base_warnings or [])
+        for row in ordered_rows:
+            item: NestItem = row["item"]
+            best_candidate: dict[str, Any] | None = None
+            target_sheet: dict[str, Any] | None = None
+            for sheet_index, sheet in enumerate(sheets):
+                candidate = _try_place_on_shapely_sheet(
+                    sheet,
+                    item,
+                    allow_rotate=allow_rotate,
+                    allow_mirror=allow_mirror,
+                    free_angles=free_angles,
+                    part_spacing_mm=part_spacing_mm,
+                    edge_margin_mm=edge_margin_mm,
+                    strategy_name=strategy_name,
+                    base_cache=base_cache,
+                    variant_cache=variant_cache,
+                )
+                if candidate is None:
+                    continue
+                score = (0.0, *tuple(candidate.get("score", ())), float(sheet_index))
+                if best_candidate is None or score < best_candidate["global_score"]:
+                    best_candidate = {**candidate, "global_score": score}
+                    target_sheet = sheet
+            if best_candidate is None:
+                candidate_sheet = _new_shapely_sheet(normalized_profile, edge_margin_mm)
+                candidate = _try_place_on_shapely_sheet(
+                    candidate_sheet,
+                    item,
+                    allow_rotate=allow_rotate,
+                    allow_mirror=allow_mirror,
+                    free_angles=free_angles,
+                    part_spacing_mm=part_spacing_mm,
+                    edge_margin_mm=edge_margin_mm,
+                    strategy_name=strategy_name,
+                    base_cache=base_cache,
+                    variant_cache=variant_cache,
+                )
+                if candidate is None:
+                    unplaced.append(
+                        {
+                            "ref_externa": item.ref_externa,
+                            "description": item.description,
+                            "file_name": item.file_name,
+                            "copy_index": int(row.get("copy_index", 0) or 0),
+                        }
+                    )
+                    continue
+                target_sheet = candidate_sheet
+                sheets.append(candidate_sheet)
+                best_candidate = candidate
+            if target_sheet is not None and best_candidate is not None:
+                actual_geometry = best_candidate.pop("_actual_geometry")
+                best_candidate.pop("score", None)
+                best_candidate.pop("global_score", None)
+                _apply_placement(
+                    target_sheet,
+                    best_candidate,
+                    row,
+                    edge_margin_mm=edge_margin_mm,
+                    part_spacing_mm=part_spacing_mm,
+                )
+                target_sheet.setdefault("_shapely_actual", []).append(actual_geometry)
+        warnings.append(
+            "Plano calculado por geometria poligonal GEOS, com validacao real de contornos, furos, margens e distancia entre pecas."
+        )
+        result = _finalize_result(
+            items,
+            expanded,
+            sheets,
+            unplaced,
+            settings=settings,
+            warnings=warnings,
+            selected_profile=normalized_profile,
+            selection_mode=selection_mode,
+            strategy_name=strategy_name,
+            shape_grid_mm=0.0,
+        )
+        if best_result is None or _result_score(result) < _result_score(best_result):
+            best_result = result
+    return best_result
+
+
 def _pack_profile_shape(
     items: list[NestItem],
     expanded: list[dict[str, Any]],
@@ -2331,6 +2960,21 @@ def _pack_profile_shape(
     selection_mode: str,
     grid_mm: float,
 ) -> dict[str, Any]:
+    geos_result = _pack_profile_shapely(
+        items,
+        expanded,
+        profile=profile,
+        part_spacing_mm=part_spacing_mm,
+        edge_margin_mm=edge_margin_mm,
+        allow_rotate=allow_rotate,
+        allow_mirror=allow_mirror,
+        free_angles=free_angles,
+        settings=settings,
+        base_warnings=base_warnings,
+        selection_mode=selection_mode,
+    )
+    if geos_result is not None:
+        return geos_result
     normalized_profile = _normalize_sheet_profile(profile, 0)
     if normalized_profile is None:
         raise ValueError("Seleciona um formato de chapa valido.")
@@ -2634,6 +3278,124 @@ def _pack_with_stock(
     )
 
 
+def _pack_with_stock_shapely(
+    items: list[NestItem],
+    expanded: list[dict[str, Any]],
+    *,
+    stock_candidates: list[dict[str, Any]],
+    purchase_profile: dict[str, Any] | None,
+    part_spacing_mm: float,
+    edge_margin_mm: float,
+    allow_rotate: bool,
+    allow_mirror: bool,
+    free_angles: bool,
+    allow_purchase_fallback: bool,
+    settings: dict[str, Any],
+    base_warnings: list[str],
+    selection_mode: str,
+) -> dict[str, Any] | None:
+    if not SHAPELY_AVAILABLE:
+        return None
+    normalized_purchase = _normalize_sheet_profile(purchase_profile or {}, 0) if purchase_profile else None
+    normalized_stock = [
+        profile
+        for index, row in enumerate(list(stock_candidates or []))
+        if (profile := _normalize_stock_sheet_candidate(row, index)) is not None
+    ]
+    selected_profile = normalized_purchase or {
+        "name": "Apenas stock",
+        "width_mm": 0.0,
+        "height_mm": 0.0,
+        "area_mm2": 0.0,
+        "source_kind": "stock",
+        "source_label": "Apenas stock",
+    }
+    sheets = [_new_shapely_sheet(profile, edge_margin_mm) for profile in _expand_stock_units(normalized_stock)]
+    ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key("area"), reverse=True)
+    unplaced: list[dict[str, Any]] = []
+    base_cache: dict[str, Any] = {}
+    variant_cache: dict[tuple, list[dict[str, Any]]] = {}
+    strategy_name = "shape-geos-stock"
+    for row in ordered_rows:
+        item: NestItem = row["item"]
+        best_candidate: dict[str, Any] | None = None
+        target_sheet: dict[str, Any] | None = None
+        for sheet_index, sheet in enumerate(sheets):
+            candidate = _try_place_on_shapely_sheet(
+                sheet,
+                item,
+                allow_rotate=allow_rotate,
+                allow_mirror=allow_mirror,
+                free_angles=free_angles,
+                part_spacing_mm=part_spacing_mm,
+                edge_margin_mm=edge_margin_mm,
+                strategy_name=strategy_name,
+                base_cache=base_cache,
+                variant_cache=variant_cache,
+            )
+            if candidate is None:
+                continue
+            source_kind = str(dict(sheet.get("profile", {}) or {}).get("source_kind", "purchase") or "purchase").lower()
+            source_rank = 0.0 if source_kind in {"stock", "retalho"} else 1.0
+            score = (source_rank, *tuple(candidate.get("score", ())), float(sheet_index))
+            if best_candidate is None or score < best_candidate["global_score"]:
+                best_candidate = {**candidate, "global_score": score}
+                target_sheet = sheet
+        if best_candidate is None and normalized_purchase is not None and allow_purchase_fallback:
+            candidate_sheet = _new_shapely_sheet(normalized_purchase, edge_margin_mm)
+            candidate = _try_place_on_shapely_sheet(
+                candidate_sheet,
+                item,
+                allow_rotate=allow_rotate,
+                allow_mirror=allow_mirror,
+                free_angles=free_angles,
+                part_spacing_mm=part_spacing_mm,
+                edge_margin_mm=edge_margin_mm,
+                strategy_name=strategy_name,
+                base_cache=base_cache,
+                variant_cache=variant_cache,
+            )
+            if candidate is not None:
+                target_sheet = candidate_sheet
+                sheets.append(candidate_sheet)
+                best_candidate = candidate
+        if best_candidate is None:
+            unplaced.append(
+                {
+                    "ref_externa": item.ref_externa,
+                    "description": item.description,
+                    "file_name": item.file_name,
+                    "copy_index": int(row.get("copy_index", 0) or 0),
+                }
+            )
+            continue
+        actual_geometry = best_candidate.pop("_actual_geometry")
+        best_candidate.pop("score", None)
+        best_candidate.pop("global_score", None)
+        _apply_placement(
+            target_sheet,
+            best_candidate,
+            row,
+            edge_margin_mm=edge_margin_mm,
+            part_spacing_mm=part_spacing_mm,
+        )
+        target_sheet.setdefault("_shapely_actual", []).append(actual_geometry)
+    warnings = list(base_warnings or [])
+    warnings.append("Stock e retalhos validados pelo motor poligonal GEOS antes de qualquer complemento de compra.")
+    return _finalize_result(
+        items,
+        expanded,
+        sheets,
+        unplaced,
+        settings=settings,
+        warnings=warnings,
+        selected_profile=selected_profile,
+        selection_mode=selection_mode,
+        strategy_name=strategy_name,
+        shape_grid_mm=0.0,
+    )
+
+
 def _pack_with_stock_shape(
     items: list[NestItem],
     expanded: list[dict[str, Any]],
@@ -2651,6 +3413,23 @@ def _pack_with_stock_shape(
     selection_mode: str,
     grid_mm: float,
 ) -> dict[str, Any]:
+    geos_result = _pack_with_stock_shapely(
+        items,
+        expanded,
+        stock_candidates=stock_candidates,
+        purchase_profile=purchase_profile,
+        part_spacing_mm=part_spacing_mm,
+        edge_margin_mm=edge_margin_mm,
+        allow_rotate=allow_rotate,
+        allow_mirror=allow_mirror,
+        free_angles=free_angles,
+        allow_purchase_fallback=allow_purchase_fallback,
+        settings=settings,
+        base_warnings=base_warnings,
+        selection_mode=selection_mode,
+    )
+    if geos_result is not None:
+        return geos_result
     normalized_purchase = _normalize_sheet_profile(purchase_profile or {}, 0) if purchase_profile else None
     normalized_stock = [profile for index, row in enumerate(list(stock_candidates or [])) if (profile := _normalize_stock_sheet_candidate(row, index)) is not None]
     selected_profile = normalized_purchase or {
@@ -3032,7 +3811,13 @@ def nest_parts(
                 else:
                     bbox_result = None
                     shape_result = None
-                    if shape_active and requested_engine == "shape":
+                    profile_supports_all = _profile_can_fit_all_items(
+                        profile,
+                        items,
+                        edge_margin_mm=edge_margin_mm,
+                        allow_rotate=allow_rotate,
+                    )
+                    if shape_active and requested_engine == "shape" and (profile_supports_all or strict_shape_only or len(expanded) <= 2):
                         shape_result = _pack_profile_shape(
                             items,
                             expanded,

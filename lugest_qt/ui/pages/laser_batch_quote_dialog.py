@@ -42,6 +42,8 @@ from .laser_quote_dialogs import (
 class LaserBatchQuoteDialog(QDialog):
     def __init__(self, backend, parent=None, *, default_machine: str = "") -> None:
         super().__init__(parent)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
+        self.setSizeGripEnabled(True)
         self.backend = backend
         self.settings = dict(self.backend.laser_quote_settings() or {})
         self.line_payloads: list[dict[str, Any]] = []

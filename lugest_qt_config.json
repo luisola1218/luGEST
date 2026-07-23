@@ -72,7 +72,13 @@
     }
   },
   "material_assistant_feedback": {},
-  "material_assistant_checks": {},
+  "material_assistant_checks": {
+    "ASSIST-VERIFY-0001|ASSIST-RETALHO|5|ASSIST-LOT-Z|principal": {
+      "sep": false,
+      "conf": false,
+      "updated_at": "2026-07-23T14:46:31"
+    }
+  },
   "pulse_plan_delay_reasons": {},
   "laser_quote": {
     "active_machine": "TRUMPF TruLaser 5030 12kW",
@@ -98,8 +104,8 @@
       ]
     },
     "nesting": {
-      "default_part_spacing_mm": 2.0,
-      "default_edge_margin_mm": 2.0,
+      "default_part_spacing_mm": 7.0,
+      "default_edge_margin_mm": 7.0,
       "allow_rotate": true,
       "auto_select_sheet": false,
       "use_stock_first": false,

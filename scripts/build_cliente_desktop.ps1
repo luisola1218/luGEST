@@ -21,6 +21,7 @@ required = [
     "pypdf",
     "pymysql",
     "reportlab",
+    "shapely",
 ]
 missing = []
 for name in required:

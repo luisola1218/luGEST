@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from lugest_qt.services.legacy_backend import LegacyBackend
+from lugest_qt.ui.pages.home_page import HomePage
 from lugest_qt.ui.pages.opp_page import OppPage
 from PySide6.QtWidgets import QApplication
 
@@ -161,9 +162,31 @@ def main() -> int:
         raise RuntimeError("Nao foi possivel guardar a captura de validacao da carteira OPP.")
     page.close()
 
+    home = HomePage(backend)
+    home.resize(1600, 900)
+    home.show()
+    home.refresh()
+    client_index = home.sales_client_combo.findData("CLPORT")
+    if client_index < 0:
+        raise RuntimeError("Cliente de teste nao apareceu no Resumo comercial.")
+    home.sales_client_combo.setCurrentIndex(client_index)
+    home.sales_year_combo.setCurrentText("2026")
+    home.tabs.setCurrentWidget(home.sales_page)
+    app.processEvents()
+    if home.sales_table.rowCount() != 1:
+        raise RuntimeError("Resumo comercial nao apresentou a OF de teste.")
+    if home.sales_pieces_table.rowCount() != 1:
+        raise RuntimeError("Resumo comercial nao apresentou a producao da OF.")
+    if "615" not in str(home.sales_table.item(0, 6).text() or ""):
+        raise RuntimeError("Valor faturado nao foi apresentado no Resumo comercial.")
+    home_screenshot_path = Path(tempfile.gettempdir()) / "lugest_sales_orders_summary.png"
+    if not home.grab().save(str(home_screenshot_path)):
+        raise RuntimeError("Nao foi possivel guardar a captura do Resumo comercial.")
+    home.close()
+
     restore_live_data()
     atexit.unregister(restore_live_data)
-    print("opp-client-portfolio-ok", order_number, totals, screenshot_path)
+    print("opp-client-portfolio-ok", order_number, totals, screenshot_path, home_screenshot_path)
     return 0
 
 

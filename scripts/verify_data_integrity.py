@@ -217,6 +217,10 @@ def audit(fix_safe: bool = False) -> dict[str, Any]:
         target = material if fix_safe else deepcopy(material)
         backend.materia_actions._hydrate_retalho_record(data, target)
         lote = str(target.get("origem_lote", "") or target.get("lote_fornecedor", "") or "").strip()
+        if not lote and fix_safe and str(target.get("lote_interno", "") or "").strip():
+            lote = "LEGADO-SEM-ORIGEM"
+            target["origem_lote"] = lote
+            target["origem_lotes_baixa"] = [lote]
         if lote and not str(target.get("origem_lote", "") or "").strip():
             target["origem_lote"] = lote
         if lote and not list(target.get("origem_lotes_baixa", []) or []):
@@ -321,7 +325,7 @@ def audit(fix_safe: bool = False) -> dict[str, Any]:
             "plano": len(list(data.get("plano", []) or [])),
         },
         "safe_fixes": {
-            "retalhos_rehidratados": retalho_fixed,
+            "retalhos_rehidratados": retalho_fixed if fix_safe else 0,
             "notas_total_recalculado": notes_fixed,
             "blocos_orfaos_removidos": len(orphan_plan_ids) if fix_safe else 0,
         },

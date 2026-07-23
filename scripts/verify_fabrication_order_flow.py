@@ -48,7 +48,7 @@ def main() -> int:
     client_code, created_client = _client_code(backend, token)
 
     try:
-        backend.assembly_model_save(
+        backend.conjunto_save(
             {
                 "codigo": model_code,
                 "descricao": f"Conjunto MES {token}",
@@ -84,14 +84,15 @@ def main() -> int:
             }
         )
 
-        detail = backend.order_create_or_update(
+        detail = backend.order_create_with_models(
             {
                 "cliente": client_code,
                 "tipo_encomenda": "Interna (produção)",
                 "data_entrega": "2026-05-30",
                 "tempo_estimado": 0,
                 "nota_cliente": f"VERIFY_MES_{token}",
-            }
+            },
+            [{"codigo": model_code, "source": "conjunto", "quantity": 1}],
         )
         order_num = str(detail.get("numero", "") or "").strip()
         _assert(order_num, "Encomenda nao foi criada.")
@@ -103,11 +104,15 @@ def main() -> int:
             f"OF nao segue a numeracao da encomenda: encomenda={order_num} of={detail.get('of_codigo')}",
         )
 
-        detail = backend.order_import_model(order_num, model_code, 1)
         _assert(int(detail.get("imported_pieces", 0) or 0) == 1, f"Pecas importadas inesperadas: {detail}")
         _assert(int(detail.get("imported_items", 0) or 0) == 1, f"Itens de montagem inesperados: {detail}")
+        _assert(
+            str(list(detail.get("produto_fichas", []) or [])[0].get("codigo", "") or "") == model_code,
+            f"Ficha do conjunto nao ficou ligada a OF: {detail.get('produto_fichas')}",
+        )
         enc = backend.get_encomenda_by_numero(order_num)
         _assert(enc is not None, "Encomenda nao encontrada apos importar modelo.")
+        _assert(float(enc.get("valor_adjudicado", 0) or 0) > 0, f"Valor comercial do conjunto nao chegou a OF: {enc}")
         enc.setdefault("montagem_itens", []).append(
             {
                 "linha_ordem": 99,
@@ -186,7 +191,7 @@ def main() -> int:
         except Exception as exc:
             cleanup_errors.append(str(exc))
         try:
-            backend.assembly_model_remove(model_code)
+            backend.conjunto_remove(model_code)
         except Exception as exc:
             cleanup_errors.append(str(exc))
         data["produtos"] = [

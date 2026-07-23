@@ -3,7 +3,6 @@ from __future__ import annotations
 import html
 import os
 import re
-import subprocess
 import tempfile
 from datetime import date
 from pathlib import Path
@@ -30,6 +29,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -48,6 +48,7 @@ from .runtime_common import (
     fill_table as _fill_table,
     fmt_eur as _fmt_eur,
     paint_table_row as _paint_table_row,
+    run_process_async as _run_process_async,
     selected_row_index as _selected_row_index,
     set_panel_tone as _set_panel_tone,
     set_table_columns as _set_table_columns,
@@ -75,9 +76,59 @@ class PurchaseNotesPage(QWidget):
         root.setSpacing(14)
 
         filters = CardFrame()
-        filters_layout = QHBoxLayout(filters)
-        filters_layout.setContentsMargins(16, 14, 16, 14)
-        filters_layout.setSpacing(10)
+        filters.set_tone("info")
+        filters.setObjectName("PurchasePortfolio")
+        filters.setStyleSheet(
+            "QFrame#PurchaseMetric { background: #ffffff; border: 1px solid #c6d5e5; }"
+            "QFrame#PurchaseActiveMetric { background: #fff7e6; border: 1px solid #efd29b; }"
+            "QFrame#PurchaseValueMetric { background: #e8f6f4; border: 1px solid #9fd8d3; }"
+            "QLabel#PurchaseMetricLabel { color: #5b7088; font-size: 8px; font-weight: 700; border: none; background: transparent; }"
+            "QLabel#PurchaseMetricValue { color: #10253d; font-size: 13px; font-weight: 800; border: none; background: transparent; }"
+            "QLabel#PurchaseActiveValue { color: #9a5b00; font-size: 13px; font-weight: 800; border: none; background: transparent; }"
+            "QLabel#PurchaseValueValue { color: #087f83; font-size: 13px; font-weight: 800; border: none; background: transparent; }"
+        )
+        filters_layout = QGridLayout(filters)
+        filters_layout.setContentsMargins(14, 10, 14, 10)
+        filters_layout.setHorizontalSpacing(8)
+        filters_layout.setVerticalSpacing(5)
+        portfolio_title = QLabel("Carteira de Aprovisionamento")
+        portfolio_title.setStyleSheet("font-family: 'Segoe UI'; font-size: 17px; font-weight: 800; color: #0f172a;")
+        portfolio_hint = QLabel("Pedidos de cotação, adjudicações e receções numa única carteira.")
+        portfolio_hint.setProperty("role", "muted")
+        portfolio_hint.setWordWrap(True)
+        portfolio_hint.setMinimumWidth(0)
+        portfolio_hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        portfolio_heading = QVBoxLayout()
+        portfolio_heading.setContentsMargins(0, 0, 0, 0)
+        portfolio_heading.setSpacing(1)
+        portfolio_heading.addWidget(portfolio_title)
+        portfolio_heading.addWidget(portfolio_hint)
+        filters_layout.addLayout(portfolio_heading, 0, 0, 1, 2)
+        def _portfolio_metric(label_text: str, object_name: str, value_name: str) -> tuple[QFrame, QLabel]:
+            frame = QFrame()
+            frame.setObjectName(object_name)
+            frame.setFixedSize(142, 52)
+            layout = QVBoxLayout(frame)
+            layout.setContentsMargins(10, 6, 10, 6)
+            layout.setSpacing(0)
+            label = QLabel(label_text.upper())
+            label.setObjectName("PurchaseMetricLabel")
+            value = QLabel("0")
+            value.setObjectName(value_name)
+            layout.addWidget(label)
+            layout.addWidget(value)
+            return frame, value
+
+        count_metric, self.note_count_label = _portfolio_metric("Documentos", "PurchaseMetric", "PurchaseMetricValue")
+        active_metric, self.note_pending_label = _portfolio_metric("Ativos", "PurchaseActiveMetric", "PurchaseActiveValue")
+        value_metric, self.note_value_label = _portfolio_metric("Valor da carteira", "PurchaseValueMetric", "PurchaseValueValue")
+        metric_row = QHBoxLayout()
+        metric_row.setContentsMargins(0, 0, 0, 0)
+        metric_row.setSpacing(6)
+        metric_row.addWidget(count_metric)
+        metric_row.addWidget(active_metric)
+        metric_row.addWidget(value_metric)
+        filters_layout.addLayout(metric_row, 0, 2, 1, 2, Qt.AlignRight | Qt.AlignVCenter)
         self.filter_edit = QComboBox()
         self.filter_edit.setEditable(True)
         self.filter_edit.setInsertPolicy(QComboBox.NoInsert)
@@ -86,24 +137,40 @@ class PurchaseNotesPage(QWidget):
         self.state_combo = QComboBox()
         self.state_combo.addItems(["Ativas", "Em edicao", "Aprovada", "Enviada", "Parcial", "Entregue", "Convertidas", "Todas"])
         self.state_combo.currentTextChanged.connect(self.refresh)
-        filters_layout.addWidget(QLabel("Pesquisa"))
-        filters_layout.addWidget(self.filter_edit, 1)
-        filters_layout.addWidget(QLabel("Estado"))
-        filters_layout.addWidget(self.state_combo)
+        filters_layout.addWidget(QLabel("Pesquisa"), 1, 0)
+        filters_layout.addWidget(self.filter_edit, 1, 1)
+        filters_layout.addWidget(QLabel("Estado"), 1, 2)
+        filters_layout.addWidget(self.state_combo, 1, 3)
+        filters_layout.setColumnStretch(1, 1)
+        filters_layout.setColumnStretch(3, 0)
+        filters.setMaximumHeight(116)
         root.addWidget(filters)
 
         notes_card = CardFrame()
         notes_card.set_tone("default")
         notes_layout = QVBoxLayout(notes_card)
         notes_layout.setContentsMargins(16, 14, 16, 14)
-        notes_title = QLabel("Pedidos / NEs")
-        notes_title.setStyleSheet("font-size: 18px; font-weight: 800; color: #0f172a;")
+        notes_title = QLabel("Pedidos e notas de encomenda")
+        notes_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
         self.notes_table = QTableWidget(0, 6)
         self.notes_table.setHorizontalHeaderLabels(["Número", "Fornecedor", "Entrega", "Estado", "Total", "Linhas"])
         self.notes_table.verticalHeader().setVisible(False)
         self.notes_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.notes_table.setSelectionBehavior(QTableWidget.SelectRows)
-        _configure_table(self.notes_table, stretch=(1,), contents=(0, 2, 3, 4, 5))
+        _configure_table(self.notes_table, stretch=(1,), contents=())
+        _set_table_columns(
+            self.notes_table,
+            [
+                (0, "fixed", 176),
+                (1, "stretch", 0),
+                (2, "fixed", 118),
+                (3, "fixed", 126),
+                (4, "fixed", 118),
+                (5, "fixed", 68),
+            ],
+        )
+        self.notes_table.horizontalHeader().setFixedHeight(34)
+        self.notes_table.verticalHeader().setDefaultSectionSize(31)
         self.notes_table.itemSelectionChanged.connect(self._load_selected_note)
         notes_layout.addWidget(notes_title)
         notes_layout.addWidget(self.notes_table)
@@ -115,7 +182,7 @@ class PurchaseNotesPage(QWidget):
         form_layout.setSpacing(6)
 
         actions_row = QHBoxLayout()
-        actions_row.setSpacing(8)
+        actions_row.setSpacing(5)
         self.new_btn = QPushButton("Novo pedido")
         self.new_btn.clicked.connect(self._create_new_note)
         self.save_btn = QPushButton("Guardar")
@@ -127,10 +194,10 @@ class PurchaseNotesPage(QWidget):
         self.remove_btn = QPushButton("Apagar")
         self.remove_btn.setProperty("variant", "danger")
         self.remove_btn.clicked.connect(self._remove_note)
-        self.pdf_btn = QPushButton("Pre-visualizar NE")
+        self.pdf_btn = QPushButton("Preview NE")
         self.pdf_btn.setProperty("variant", "secondary")
         self.pdf_btn.clicked.connect(lambda: self._open_pdf(False))
-        self.send_order_btn = QPushButton("Enviar encomenda")
+        self.send_order_btn = QPushButton("Enviar NE")
         self.send_order_btn.setProperty("variant", "secondary")
         self.send_order_btn.clicked.connect(self._send_order_email)
         self.quote_btn = QPushButton("Pedir orçamento")
@@ -144,40 +211,56 @@ class PurchaseNotesPage(QWidget):
         self.suppliers_btn = QPushButton("Fornecedores")
         self.suppliers_btn.setProperty("variant", "secondary")
         self.suppliers_btn.clicked.connect(self._manage_suppliers)
-        self.delivery_btn = QPushButton("Entregar encomenda")
+        self.delivery_btn = QPushButton("Receção")
         self.delivery_btn.setProperty("variant", "secondary")
         self.delivery_btn.clicked.connect(self._register_delivery)
-        self.attach_doc_btn = QPushButton("Associar Docs")
+        self.attach_doc_btn = QPushButton("Associar docs")
         self.attach_doc_btn.setProperty("variant", "secondary")
         self.attach_doc_btn.clicked.connect(self._attach_document)
-        self.documents_btn = QPushButton("Registo Docs")
+        self.documents_btn = QPushButton("Registo docs")
         self.documents_btn.setProperty("variant", "secondary")
         self.documents_btn.clicked.connect(self._show_documents)
-        for button in (
-            self.new_btn,
-            self.save_btn,
-            self.approve_btn,
-            self.generate_btn,
-            self.remove_btn,
-            self.pdf_btn,
-            self.send_order_btn,
-            self.suppliers_btn,
-            self.delivery_btn,
-            self.attach_doc_btn,
-            self.documents_btn,
-        ):
+        action_widths = (
+            (self.new_btn, 86),
+            (self.save_btn, 76),
+            (self.approve_btn, 72),
+            (self.generate_btn, 78),
+            (self.quote_btn, 98),
+            (self.pdf_btn, 90),
+            (self.send_order_btn, 82),
+            (self.delivery_btn, 72),
+            (self.attach_doc_btn, 94),
+            (self.documents_btn, 90),
+            (self.suppliers_btn, 92),
+            (self.remove_btn, 70),
+        )
+        for button, width in action_widths:
+            button.setProperty("compact", "true")
+            button.setFixedWidth(width)
+            button.setMinimumHeight(29)
+            button.setMaximumHeight(31)
+            button.setStyleSheet("font-family: 'Segoe UI'; font-size: 9px; font-weight: 700;")
             actions_row.addWidget(button)
         actions_row.addStretch(1)
-        actions_row.addWidget(self.quote_btn)
         form_layout.addLayout(actions_row)
 
         header = QHBoxLayout()
+        document_heading = QVBoxLayout()
+        document_heading.setContentsMargins(0, 0, 0, 0)
+        document_heading.setSpacing(1)
+        document_eyebrow = QLabel("DOCUMENTO DE COMPRA")
+        document_eyebrow.setStyleSheet("color: #5b7088; font-size: 8px; font-weight: 700;")
         self.number_label = QLabel("Novo pedido")
         self.number_label.setStyleSheet("font-size: 17px; font-weight: 800; color: #0f172a;")
+        self.document_context_label = QLabel("Pedido em preparação")
+        self.document_context_label.setProperty("role", "muted")
+        document_heading.addWidget(document_eyebrow)
+        document_heading.addWidget(self.number_label)
+        document_heading.addWidget(self.document_context_label)
         self.state_chip = QLabel("-")
         _apply_state_chip(self.state_chip, "-")
-        header.addWidget(self.number_label, 1)
-        header.addWidget(self.state_chip)
+        header.addLayout(document_heading, 1)
+        header.addWidget(self.state_chip, 0, Qt.AlignTop)
         form_layout.addLayout(header)
 
         meta_row = QHBoxLayout()
@@ -189,8 +272,11 @@ class PurchaseNotesPage(QWidget):
         supplier_layout.setSpacing(6)
         self.supplier_combo = QComboBox()
         self._configure_supplier_selector(self.supplier_combo)
+        if self.supplier_combo.lineEdit() is not None:
+            self.supplier_combo.lineEdit().setPlaceholderText("Selecionar fornecedor")
         self.supplier_combo.currentTextChanged.connect(self._sync_supplier_contact)
         self.contact_edit = QLineEdit()
+        self.contact_edit.setPlaceholderText("Contacto ou email")
         self.delivery_edit = QDateEdit()
         self.delivery_edit.setCalendarPopup(True)
         self.delivery_edit.setDisplayFormat("yyyy-MM-dd")
@@ -202,9 +288,14 @@ class PurchaseNotesPage(QWidget):
         self.transport_edit.setEditable(True)
         self.transport_edit.addItems(["", "Nosso Cargo", "Vosso Cargo"])
         self.location_edit.addItems(["", "Vossas Instalações", "Nossas Instalações"])
+        if self.transport_edit.lineEdit() is not None:
+            self.transport_edit.lineEdit().setPlaceholderText("Responsabilidade do transporte")
+        if self.location_edit.lineEdit() is not None:
+            self.location_edit.lineEdit().setPlaceholderText("Local de descarga")
         note_field_css = "font-size: 12px; padding: 4px 8px;"
         for field in (self.supplier_combo, self.contact_edit, self.delivery_edit, self.transport_edit, self.location_edit):
-            field.setMinimumHeight(38)
+            field.setMinimumHeight(34)
+            field.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
             field.setStyleSheet(note_field_css)
         for combo in (self.supplier_combo, self.transport_edit, self.location_edit):
             try:
@@ -212,11 +303,11 @@ class PurchaseNotesPage(QWidget):
             except Exception:
                 pass
         for widget, width, minimum in (
-            (self.supplier_combo, 760, 700),
-            (self.contact_edit, 290, 250),
-            (self.delivery_edit, 164, 164),
-            (self.transport_edit, 240, 230),
-            (self.location_edit, 470, 420),
+            (self.supplier_combo, 760, 160),
+            (self.contact_edit, 290, 120),
+            (self.delivery_edit, 164, 130),
+            (self.transport_edit, 240, 120),
+            (self.location_edit, 470, 160),
         ):
             _cap_width(widget, width)
             widget.setMinimumWidth(minimum)
@@ -250,7 +341,7 @@ class PurchaseNotesPage(QWidget):
         supplier_grid.setColumnStretch(2, 2)
         supplier_layout.addLayout(supplier_grid)
         supplier_card.setFixedHeight(170)
-        supplier_card.setMinimumWidth(1320)
+        supplier_card.setMinimumWidth(0)
         supplier_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         summary_card = CardFrame()
@@ -265,7 +356,7 @@ class PurchaseNotesPage(QWidget):
         self.summary_hint.setProperty("role", "muted")
         self.summary_hint.setMaximumHeight(24)
         self.total_label = QLabel("0.00 EUR")
-        self.total_label.setStyleSheet("font-size: 16px; font-weight: 900; color: #0f172a;")
+        self.total_label.setStyleSheet("font-size: 17px; font-weight: 900; color: #087f83;")
         self.total_label.setMinimumHeight(24)
         self.total_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.total_materials_label = QLabel("0,00 EUR")
@@ -301,8 +392,8 @@ class PurchaseNotesPage(QWidget):
         total_row.addStretch(1)
         total_row.addWidget(self.total_label)
         summary_layout.addLayout(total_row)
-        summary_card.setMinimumWidth(350)
-        summary_card.setMaximumWidth(390)
+        summary_card.setMinimumWidth(290)
+        summary_card.setMaximumWidth(330)
         summary_card.setFixedHeight(170)
         summary_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
@@ -336,8 +427,11 @@ class PurchaseNotesPage(QWidget):
         line_header = QHBoxLayout()
         lines_title = QLabel("Linhas da nota")
         lines_title.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
+        self.lines_count_label = QLabel("0 linhas")
+        self.lines_count_label.setProperty("role", "muted")
         line_header.addWidget(lines_title)
         line_header.addStretch(1)
+        line_header.addWidget(self.lines_count_label)
         lines_layout.addLayout(line_header)
 
         line_actions = QHBoxLayout()
@@ -362,15 +456,20 @@ class PurchaseNotesPage(QWidget):
         self.remove_line_btn = QPushButton("Remover Linha")
         self.remove_line_btn.setProperty("variant", "danger")
         self.remove_line_btn.clicked.connect(self._remove_line)
-        for button in (
-            self.add_material_btn,
-            self.add_product_btn,
-            self.add_manual_btn,
-            self.edit_line_btn,
-            self.quick_supplier_btn,
-            self.apply_advice_btn,
-            self.remove_line_btn,
+        for button, width in (
+            (self.add_material_btn, 142),
+            (self.add_product_btn, 112),
+            (self.add_manual_btn, 118),
+            (self.edit_line_btn, 92),
+            (self.quick_supplier_btn, 118),
+            (self.apply_advice_btn, 118),
+            (self.remove_line_btn, 104),
         ):
+            button.setProperty("compact", "true")
+            button.setFixedWidth(width)
+            button.setMinimumHeight(28)
+            button.setMaximumHeight(30)
+            button.setStyleSheet("font-family: 'Segoe UI'; font-size: 9px; font-weight: 700;")
             line_actions.addWidget(button)
         line_actions.addStretch(1)
         lines_layout.addLayout(line_actions)
@@ -434,21 +533,175 @@ class PurchaseNotesPage(QWidget):
         self.lines_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.lines_table.setMinimumHeight(320)
         self.lines_table.setMaximumHeight(380)
-        lines_layout.addWidget(self.lines_table)
+        self.lines_table.itemSelectionChanged.connect(self._sync_line_inspector)
+
+        self.line_workspace = QSplitter(Qt.Horizontal)
+        self.line_workspace.setChildrenCollapsible(False)
+        self.line_workspace.addWidget(self.lines_table)
+
+        self.line_inspector = QFrame()
+        self.line_inspector.setObjectName("PurchaseLineInspector")
+        self.line_inspector.setMinimumWidth(292)
+        self.line_inspector.setMaximumWidth(360)
+        self.line_inspector.setStyleSheet(
+            "QFrame#PurchaseLineInspector {"
+            " background: #f7fafc;"
+            " border-left: 1px solid #c6d5e5;"
+            "}"
+            "QLabel#PurchaseLineEyebrow {"
+            " color: #5b7088; font-size: 8px; font-weight: 800;"
+            "}"
+            "QLabel#PurchaseLineCode {"
+            " color: #10253d; font-size: 14px; font-weight: 800;"
+            "}"
+            "QLabel#PurchaseLineDescription {"
+            " color: #49627d; font-size: 10px;"
+            "}"
+            "QFrame#PurchaseLineMetrics {"
+            " background: #ffffff; border: 1px solid #d3deea;"
+            "}"
+            "QLabel#PurchaseLineMetricLabel {"
+            " color: #60758d; font-size: 8px; font-weight: 700;"
+            "}"
+            "QLabel#PurchaseLineMetricValue {"
+            " color: #10253d; font-size: 11px; font-weight: 800;"
+            "}"
+            "QLabel#PurchaseLineSection {"
+            " color: #087f83; font-size: 9px; font-weight: 800;"
+            "}"
+        )
+        inspector_layout = QVBoxLayout(self.line_inspector)
+        inspector_layout.setContentsMargins(12, 10, 12, 10)
+        inspector_layout.setSpacing(6)
+
+        inspector_top = QHBoxLayout()
+        inspector_identity = QVBoxLayout()
+        inspector_identity.setSpacing(1)
+        inspector_eyebrow = QLabel("LINHA SELECIONADA")
+        inspector_eyebrow.setObjectName("PurchaseLineEyebrow")
+        self.line_inspector_code = QLabel("Nenhuma linha")
+        self.line_inspector_code.setObjectName("PurchaseLineCode")
+        inspector_identity.addWidget(inspector_eyebrow)
+        inspector_identity.addWidget(self.line_inspector_code)
+        inspector_top.addLayout(inspector_identity, 1)
+        self.line_inspector_state = QLabel("Pendente")
+        inspector_top.addWidget(self.line_inspector_state)
+        inspector_layout.addLayout(inspector_top)
+
+        self.line_inspector_description = QLabel("Selecione uma linha para consultar o detalhe da compra.")
+        self.line_inspector_description.setObjectName("PurchaseLineDescription")
+        self.line_inspector_description.setWordWrap(True)
+        self.line_inspector_description.setMinimumHeight(32)
+        inspector_layout.addWidget(self.line_inspector_description)
+        self.line_inspector_meta = QLabel("-")
+        self.line_inspector_meta.setObjectName("PurchaseLineDescription")
+        self.line_inspector_meta.setWordWrap(True)
+        inspector_layout.addWidget(self.line_inspector_meta)
+
+        metrics_frame = QFrame()
+        metrics_frame.setObjectName("PurchaseLineMetrics")
+        metrics_layout = QGridLayout(metrics_frame)
+        metrics_layout.setContentsMargins(8, 6, 8, 6)
+        metrics_layout.setHorizontalSpacing(8)
+        metrics_layout.setVerticalSpacing(2)
+
+        def _line_metric(column: int, label_text: str) -> QLabel:
+            label = QLabel(label_text.upper())
+            label.setObjectName("PurchaseLineMetricLabel")
+            value = QLabel("-")
+            value.setObjectName("PurchaseLineMetricValue")
+            metrics_layout.addWidget(label, 0, column)
+            metrics_layout.addWidget(value, 1, column)
+            return value
+
+        self.line_inspector_qty = _line_metric(0, "Quantidade")
+        self.line_inspector_unit_price = _line_metric(1, "Preço unit.")
+        self.line_inspector_total = _line_metric(2, "Total")
+        metrics_layout.setColumnStretch(0, 1)
+        metrics_layout.setColumnStretch(1, 1)
+        metrics_layout.setColumnStretch(2, 1)
+        inspector_layout.addWidget(metrics_frame)
+
+        advice_title = QLabel("APOIO A COMPRA")
+        advice_title.setObjectName("PurchaseLineSection")
+        inspector_layout.addWidget(advice_title)
+        self.line_inspector_supplier = QLabel("Fornecedor: -")
+        self.line_inspector_supplier.setObjectName("PurchaseLineDescription")
+        self.line_inspector_supplier.setWordWrap(True)
+        inspector_layout.addWidget(self.line_inspector_supplier)
+        self.line_inspector_advice = QLabel("Sem histórico de compra para esta linha.")
+        self.line_inspector_advice.setObjectName("PurchaseLineDescription")
+        self.line_inspector_advice.setWordWrap(True)
+        self.line_inspector_advice.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        inspector_layout.addWidget(self.line_inspector_advice)
+        inspector_layout.addStretch(1)
+
+        self.line_workspace.addWidget(self.line_inspector)
+        self.line_workspace.setStretchFactor(0, 1)
+        self.line_workspace.setStretchFactor(1, 0)
+        self.line_workspace.setSizes([1320, 330])
+        lines_layout.addWidget(self.line_workspace)
         lines_card.setMinimumHeight(390)
         lines_card.setMaximumHeight(450)
         form_layout.addWidget(lines_card, 1)
         self.note_form_card.set_tone("default")
         root.addWidget(self.note_form_card, 1)
         self.current_documents: list[dict] = []
+        self._line_view_mode = ""
+        self._line_advice_cache: list[dict] = []
+        self._apply_line_column_visibility()
 
         self._new_note()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_line_column_visibility()
+
+    def _apply_line_column_visibility(self) -> None:
+        if not hasattr(self, "lines_table"):
+            return
+        width = self.width()
+        mode = "compact" if width < 1450 else "standard" if width < 2200 else "wide"
+        if getattr(self, "_line_view_mode", "") == mode:
+            return
+        self._line_view_mode = mode
+        hidden_by_mode = {
+            "compact": (4, 5, 6, 7, 8, 11, 12, 14, 15),
+            "standard": (4, 7, 8, 11, 12, 14),
+            "wide": (11, 12),
+        }
+        hidden = set(hidden_by_mode[mode])
+        for column in range(self.lines_table.columnCount()):
+            self.lines_table.setColumnHidden(column, column in hidden)
+        widths_by_mode = {
+            "compact": ((0, 102), (2, 48), (9, 50), (10, 44), (13, 70), (16, 76), (17, 82)),
+            "standard": ((0, 112), (2, 52), (9, 52), (10, 46), (13, 76), (15, 48), (16, 82), (17, 88)),
+            "wide": ((0, 120), (2, 56), (4, 92), (7, 58), (8, 92), (9, 54), (10, 48), (13, 80), (14, 54), (15, 48), (16, 88), (17, 92)),
+        }
+        widths = widths_by_mode[mode]
+        header = self.lines_table.horizontalHeader()
+        for column, width in widths:
+            header.resizeSection(column, width)
+
+    def _refresh_note_metrics(self) -> None:
+        rows = list(self.rows or [])
+        total_value = sum(float(row.get("total", 0) or 0) for row in rows)
+        active_count = sum(
+            1
+            for row in rows
+            if str(row.get("estado", "") or "").strip().casefold()
+            not in {"entregue", "convertida", "convertido", "cancelada", "cancelado"}
+        )
+        self.note_count_label.setText(str(len(rows)))
+        self.note_pending_label.setText(str(active_count))
+        self.note_value_label.setText(_fmt_eur(total_value))
 
     def refresh(self) -> None:
         previous = self.current_number
         self.supplier_rows = self.backend.ne_suppliers()
         self._set_supplier_items()
         self.rows = self.backend.ne_rows(self.filter_edit.currentText().strip(), self.state_combo.currentText())
+        self._refresh_note_metrics()
         _fill_table(
             self.notes_table,
             [[r.get("numero", "-"), r.get("fornecedor", "-"), r.get("data_entrega", "-"), r.get("estado", "-"), _fmt_eur(r.get("total", 0)), r.get("linhas", 0)] for r in self.rows],
@@ -528,6 +781,65 @@ class PurchaseNotesPage(QWidget):
             return -1
         return current.row() if current.row() < len(self.line_rows) else -1
 
+    def _sync_line_inspector(self) -> None:
+        if not hasattr(self, "line_inspector_code"):
+            return
+        row_index = self._selected_line_index()
+        if row_index < 0 or row_index >= len(self.line_rows):
+            self.line_inspector_code.setText("Nenhuma linha")
+            self.line_inspector_description.setText("Selecione uma linha para consultar o detalhe da compra.")
+            self.line_inspector_meta.setText("-")
+            self.line_inspector_qty.setText("-")
+            self.line_inspector_unit_price.setText("-")
+            self.line_inspector_total.setText("-")
+            self.line_inspector_supplier.setText("Fornecedor: -")
+            self.line_inspector_advice.setText("Sem histórico de compra para esta linha.")
+            _apply_state_chip(self.line_inspector_state, "Pendente")
+            return
+
+        row = self.line_rows[row_index]
+        code = str(row.get("ref", "") or "").strip()
+        if not code:
+            code = "ID pendente" if self.backend.desktop_main.origem_is_materia(row.get("origem", "")) else "Manual"
+        material = str(row.get("material", "") or "").strip()
+        espessura = str(row.get("espessura", "") or "").strip()
+        origem = str(row.get("origem", "") or "").strip() or "-"
+        unit = str(row.get("unid", "") or "").strip() or "-"
+        quantity = float(row.get("qtd", 0) or 0)
+        unit_price = float(row.get("preco", 0) or 0)
+        total = float(row.get("total", 0) or 0)
+        supplier = str(row.get("fornecedor_linha", "") or "").strip() or "Por definir"
+
+        advice_cache = list(getattr(self, "_line_advice_cache", []) or [])
+        advice = advice_cache[row_index] if row_index < len(advice_cache) else dict(row.get("purchase_advice", {}) or {})
+        self.line_inspector_code.setText(code)
+        self.line_inspector_description.setText(str(row.get("descricao", "") or "").strip() or "Sem descrição.")
+        material_bits = [value for value in (material, f"Esp. {espessura}" if espessura else "", origem) if value]
+        self.line_inspector_meta.setText(" | ".join(material_bits) or "-")
+        self.line_inspector_qty.setText(f"{quantity:g} {unit}")
+        self.line_inspector_unit_price.setText(_fmt_eur(unit_price))
+        self.line_inspector_total.setText(_fmt_eur(total))
+        self.line_inspector_supplier.setText(f"Fornecedor: {supplier}")
+        _apply_state_chip(self.line_inspector_state, str(row.get("entrega", "") or "Pendente"))
+
+        habitual = str(advice.get("supplier_label", "") or advice.get("habitual_supplier", "") or "").strip()
+        last_purchase = str(advice.get("last_purchase", "") or "").strip()
+        lead_days = float(advice.get("lead_days", 0) or 0)
+        average_price = float(advice.get("avg_price", 0) or 0)
+        alternative = str(advice.get("stock_alternative_txt", "") or "").strip()
+        advice_lines = []
+        if habitual:
+            advice_lines.append(f"Habitual: {habitual}")
+        if last_purchase:
+            advice_lines.append(f"Última compra: {last_purchase}")
+        if average_price > 0:
+            advice_lines.append(f"Preço médio: {_fmt_eur(average_price)}")
+        if lead_days > 0:
+            advice_lines.append(f"Prazo medio: {lead_days:g} dias")
+        if alternative:
+            advice_lines.append(f"Alternativa em stock: {alternative}")
+        self.line_inspector_advice.setText("\n".join(advice_lines) or "Sem histórico de compra para esta linha.")
+
     def _supplier_lookup(self, text: str) -> dict:
         raw = str(text or "").strip()
         if not raw:
@@ -561,9 +873,11 @@ class PurchaseNotesPage(QWidget):
         return f"{value:.3f}" if value > 0 else ""
 
     def _render_lines(self) -> None:
+        selected_index = self._selected_line_index()
         total = 0.0
         materials_total = 0.0
         products_total = 0.0
+        advice_cache: dict[int, dict] = {}
         def _line_code(row: dict[str, Any]) -> str:
             ref = str(row.get("ref", "") or "").strip()
             if ref:
@@ -588,11 +902,14 @@ class PurchaseNotesPage(QWidget):
             esp_txt = str(row.get("espessura", "") or "").strip()
             return esp_txt or "-"
         def _advice(row: dict[str, Any]) -> dict[str, Any]:
-            payload = dict(row.get("purchase_advice", {}) or {})
-            if payload:
-                return payload
-            getter = getattr(self.backend, "purchase_advice_for_line", None)
-            return dict(getter(row) or {}) if callable(getter) else {}
+            cache_key = id(row)
+            if cache_key not in advice_cache:
+                payload = dict(row.get("purchase_advice", {}) or {})
+                if not payload:
+                    getter = getattr(self.backend, "purchase_advice_for_line", None)
+                    payload = dict(getter(row) or {}) if callable(getter) else {}
+                advice_cache[cache_key] = payload
+            return advice_cache[cache_key]
         def _advice_supplier(row: dict[str, Any]) -> str:
             advice = _advice(row)
             return str(advice.get("supplier_label", "") or advice.get("habitual_supplier", "") or "").strip()
@@ -685,10 +1002,27 @@ class PurchaseNotesPage(QWidget):
         self.total_label.setText(_fmt_eur(total))
         self.total_materials_label.setText(_fmt_eur(materials_total))
         self.total_products_label.setText(_fmt_eur(products_total))
+        supplier_count = len(
+            {
+                str(row.get("fornecedor_linha", "") or "").strip()
+                for row in self.line_rows
+                if str(row.get("fornecedor_linha", "") or "").strip()
+            }
+        )
+        suffix = f" · {supplier_count} fornecedor" if supplier_count == 1 else f" · {supplier_count} fornecedores"
+        self.lines_count_label.setText(f"{len(self.line_rows)} linhas{suffix}")
+        self._line_advice_cache = [_advice(row) for row in self.line_rows]
+        if self.line_rows:
+            target_index = min(max(selected_index, 0), len(self.line_rows) - 1)
+            self.lines_table.selectRow(target_index)
+        else:
+            self._sync_line_inspector()
 
     def _set_header(self, numero: str, estado: str) -> None:
         self.current_number = str(numero or "").strip()
         self.number_label.setText(self.current_number or "Novo pedido")
+        state_text = str(estado or "Em edição").strip() or "Em edição"
+        self.document_context_label.setText(f"Fluxo de aprovisionamento · {state_text}")
         _apply_state_chip(self.state_chip, estado)
         _set_panel_tone(self.note_form_card, _state_tone(estado))
 
@@ -1609,7 +1943,7 @@ class PurchaseNotesPage(QWidget):
         self.current_documents = []
         self.line_rows = []
         self._set_header(self.current_number, "Em edicao")
-        self.summary_hint.setText("Pedido")
+        self.summary_hint.setText("Pedido em preparação")
         self.generate_btn.setEnabled(True)
         self.delivery_btn.setEnabled(False)
         self.attach_doc_btn.setEnabled(False)
@@ -3567,45 +3901,44 @@ class PurchaseNotesPage(QWidget):
             "$mail.HTMLBody = $env:LUGEST_MAIL_BODY; "
             "if ($env:LUGEST_MAIL_SEND_NOW -eq '1') { $mail.Send() } else { $mail.Display() }"
         )
-        try:
-            subprocess.run(
-                [
-                    "powershell",
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-Command",
-                    powershell_script,
-                ],
-                check=True,
-                env=env,
-                timeout=30,
-            )
-        except Exception:
-            mailto = (
-                f"mailto:{quote(str(mail_payload.get('to', '') or '').strip())}"
-                f"?cc={quote(str(mail_payload.get('cc', '') or '').strip())}"
-                f"&bcc={quote(str(mail_payload.get('bcc', '') or '').strip())}"
-                f"&subject={quote(subject)}"
-                f"&body={quote(body_plain)}"
-            )
-            os.startfile(mailto)
-            fallback_message = "Outlook indisponível. Foi aberto o cliente de email por defeito."
+        def on_email_ready(ok: bool, _error: str) -> None:
+            if not ok:
+                mailto = (
+                    f"mailto:{quote(str(mail_payload.get('to', '') or '').strip())}"
+                    f"?cc={quote(str(mail_payload.get('cc', '') or '').strip())}"
+                    f"&bcc={quote(str(mail_payload.get('bcc', '') or '').strip())}"
+                    f"&subject={quote(subject)}"
+                    f"&body={quote(body_plain)}"
+                )
+                try:
+                    os.startfile(mailto)
+                except Exception as exc:
+                    QMessageBox.warning(self, "Pedido de cotação", f"Não foi possível abrir o cliente de email:\n{exc}")
+                    return
+                fallback_message = "Outlook indisponível. Foi aberto o cliente de email por defeito."
+                if attachment_issue:
+                    fallback_message += f"\n\nTambém não foi possível gerar o PDF em anexo:\n{attachment_issue}"
+                else:
+                    fallback_message += "\n\nNota: o anexo PDF terá de ser adicionado manualmente neste modo."
+                QMessageBox.information(self, "Pedido de cotação", fallback_message)
+                return
             if attachment_issue:
-                fallback_message += f"\n\nTambém não foi possível gerar o PDF em anexo:\n{attachment_issue}"
-            else:
-                fallback_message += "\n\nNota: o anexo PDF terá de ser adicionado manualmente neste modo."
-            QMessageBox.information(self, "Pedido de cotação", fallback_message)
-            return
+                QMessageBox.information(
+                    self,
+                    "Pedido de cotação",
+                    f"O email foi preparado no Outlook, mas o PDF não foi anexado automaticamente:\n{attachment_issue}",
+                )
+            elif send_now:
+                QMessageBox.information(self, "Pedido de cotação", "Email enviado com sucesso pelo Outlook.")
 
-        if attachment_issue:
-            QMessageBox.information(
-                self,
-                "Pedido de cotação",
-                f"O email foi preparado no Outlook, mas o PDF não foi anexado automaticamente:\n{attachment_issue}",
-            )
-        elif send_now:
-            QMessageBox.information(self, "Pedido de cotação", "Email enviado com sucesso pelo Outlook.")
+        _run_process_async(
+            self,
+            "powershell",
+            ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", powershell_script],
+            environment=env,
+            timeout_ms=30000,
+            finished=on_email_ready,
+        )
 
     def _note_order_supplier(self, detail: dict[str, object] | None = None) -> dict[str, str]:
         payload = dict(detail or {})
@@ -3830,45 +4163,44 @@ class PurchaseNotesPage(QWidget):
             "$mail.HTMLBody = $env:LUGEST_MAIL_BODY; "
             "if ($env:LUGEST_MAIL_SEND_NOW -eq '1') { $mail.Send() } else { $mail.Display() }"
         )
-        try:
-            subprocess.run(
-                [
-                    "powershell",
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-Command",
-                    powershell_script,
-                ],
-                check=True,
-                env=env,
-                timeout=30,
-            )
-        except Exception:
-            mailto = (
-                f"mailto:{quote(str(mail_payload.get('to', '') or '').strip())}"
-                f"?cc={quote(str(mail_payload.get('cc', '') or '').strip())}"
-                f"&bcc={quote(str(mail_payload.get('bcc', '') or '').strip())}"
-                f"&subject={quote(subject)}"
-                f"&body={quote(body_plain)}"
-            )
-            os.startfile(mailto)
-            fallback_message = "Outlook indisponível. Foi aberto o cliente de email por defeito."
+        def on_email_ready(ok: bool, _error: str) -> None:
+            if not ok:
+                mailto = (
+                    f"mailto:{quote(str(mail_payload.get('to', '') or '').strip())}"
+                    f"?cc={quote(str(mail_payload.get('cc', '') or '').strip())}"
+                    f"&bcc={quote(str(mail_payload.get('bcc', '') or '').strip())}"
+                    f"&subject={quote(subject)}"
+                    f"&body={quote(body_plain)}"
+                )
+                try:
+                    os.startfile(mailto)
+                except Exception as exc:
+                    QMessageBox.warning(self, "Enviar encomenda", f"Não foi possível abrir o cliente de email:\n{exc}")
+                    return
+                fallback_message = "Outlook indisponível. Foi aberto o cliente de email por defeito."
+                if attachment_issue:
+                    fallback_message += f"\n\nTambém não foi possível gerar o PDF em anexo:\n{attachment_issue}"
+                else:
+                    fallback_message += "\n\nNota: o anexo PDF terá de ser adicionado manualmente neste modo."
+                QMessageBox.information(self, "Enviar encomenda", fallback_message)
+                return
             if attachment_issue:
-                fallback_message += f"\n\nTambém não foi possível gerar o PDF em anexo:\n{attachment_issue}"
-            else:
-                fallback_message += "\n\nNota: o anexo PDF terá de ser adicionado manualmente neste modo."
-            QMessageBox.information(self, "Enviar encomenda", fallback_message)
-            return
+                QMessageBox.information(
+                    self,
+                    "Enviar encomenda",
+                    f"O email foi preparado no Outlook, mas o PDF não foi anexado automaticamente:\n{attachment_issue}",
+                )
+            elif send_now:
+                QMessageBox.information(self, "Enviar encomenda", "Encomenda enviada com sucesso pelo Outlook.")
 
-        if attachment_issue:
-            QMessageBox.information(
-                self,
-                "Enviar encomenda",
-                f"O email foi preparado no Outlook, mas o PDF não foi anexado automaticamente:\n{attachment_issue}",
-            )
-        elif send_now:
-            QMessageBox.information(self, "Enviar encomenda", "Encomenda enviada com sucesso pelo Outlook.")
+        _run_process_async(
+            self,
+            "powershell",
+            ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", powershell_script],
+            environment=env,
+            timeout_ms=30000,
+            finished=on_email_ready,
+        )
 
     def _request_quote_email(self) -> None:
         if not self.current_number:

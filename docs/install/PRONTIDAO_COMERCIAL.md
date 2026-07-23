@@ -1,6 +1,6 @@
 # Prontidao Comercial LuisGEST
 
-Versao auditada: 2026.07.21.5
+Versao auditada: 2026.07.23.13
 
 ## Estado tecnico
 
@@ -8,6 +8,10 @@ Versao auditada: 2026.07.21.5
 - Instalacao e atualizacao preservam configuracao, licenca, branding, PDFs gerados e backups locais.
 - Atualizacoes usam manifesto publico com checksum, sem tokens privados na configuracao distribuida.
 - Auditoria de seguranca sem ocorrencias altas ou medias.
+- Matéria-Prima, Produtos e Notas de Encomenda usam o mesmo padrão de carteira,
+  catálogo e inspetor, validado a partir de 1180 x 760 sem scroll horizontal.
+- Matriz automatizada de fluxos, integridade, MySQL, PDFs e desempenho concluída
+  sem falhas na versão indicada.
 
 ## Utilizacao recomendada nesta fase
 

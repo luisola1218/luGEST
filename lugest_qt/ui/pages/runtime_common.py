@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QDate, Qt
+from PySide6.QtCore import QDate, QProcess, QProcessEnvironment, QTimer, Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -191,6 +191,64 @@ def table_visible_height(table: QTableWidget, rows: int, extra: int = 10) -> int
     header_height = table.horizontalHeader().height() or 26
     frame = table.frameWidth() * 2
     return header_height + frame + (max(0, int(rows)) * row_height) + extra
+
+
+def run_process_async(
+    owner: QWidget,
+    program: str,
+    arguments: list[str],
+    *,
+    environment: dict[str, str] | None = None,
+    timeout_ms: int = 30000,
+    finished=None,
+) -> QProcess:
+    """Run an external helper without blocking the Qt event loop."""
+    process = QProcess(owner)
+    process.setProgram(str(program or ""))
+    process.setArguments([str(value) for value in list(arguments or [])])
+    if environment is not None:
+        process_environment = QProcessEnvironment.systemEnvironment()
+        for key, value in environment.items():
+            process_environment.insert(str(key), str(value))
+        process.setProcessEnvironment(process_environment)
+
+    active_processes = getattr(owner, "_external_processes", None)
+    if active_processes is None:
+        active_processes = set()
+        setattr(owner, "_external_processes", active_processes)
+    active_processes.add(process)
+    timer = QTimer(process)
+    timer.setSingleShot(True)
+    completed = {"done": False}
+
+    def complete(ok: bool, message: str = "") -> None:
+        if completed["done"]:
+            return
+        completed["done"] = True
+        timer.stop()
+        active_processes.discard(process)
+        if callable(finished):
+            finished(bool(ok), str(message or ""))
+        process.deleteLater()
+
+    def on_finished(exit_code: int, _exit_status) -> None:
+        error_text = bytes(process.readAllStandardError()).decode("utf-8", "replace").strip()
+        complete(exit_code == 0, error_text or ("" if exit_code == 0 else f"Codigo de saida {exit_code}"))
+
+    def on_error(_error) -> None:
+        complete(False, process.errorString())
+
+    def on_timeout() -> None:
+        if process.state() != QProcess.NotRunning:
+            process.kill()
+        complete(False, "Tempo limite excedido ao iniciar o processo externo.")
+
+    process.finished.connect(on_finished)
+    process.errorOccurred.connect(on_error)
+    timer.timeout.connect(on_timeout)
+    process.start()
+    timer.start(max(1000, int(timeout_ms)))
+    return process
 
 
 def apply_progress_style(bar: QProgressBar, *, compact: bool = False) -> None:

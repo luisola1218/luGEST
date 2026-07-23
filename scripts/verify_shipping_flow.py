@@ -120,6 +120,8 @@ def main() -> int:
         print("shipping-flow-ok", created_number, guide_number)
         return 0
     finally:
+        backend.flush_pending_save(force=True)
+        backend.drain_async_saves(timeout_sec=15.0)
         data = backend.ensure_data()
         if guide_number:
             data["expedicoes"] = [
@@ -131,7 +133,8 @@ def main() -> int:
                 backend.order_remove(created_number)
             except Exception:
                 pass
-        backend._save(force=True)
+        backend._save(force=True, audit=False, blocking=True)
+        backend.drain_async_saves(timeout_sec=15.0)
 
 
 if __name__ == "__main__":

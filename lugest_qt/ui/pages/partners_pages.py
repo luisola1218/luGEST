@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSplitter,
     QTableWidget,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -126,9 +127,54 @@ def _metric_chip(title: str, value: str = "-", tone: str = "default") -> QLabel:
     label = QLabel(f"{title}: {value}")
     label.setStyleSheet(
         f"background: {bg}; color: {fg}; border: 1px solid rgba(107, 143, 179, 0.35); "
-        "border-radius: 12px; padding: 6px 10px; font-weight: 800;"
+        "border-radius: 6px; padding: 4px 8px; font-size: 9px; font-weight: 800;"
     )
     return label
+
+
+def _partner_detail_tabs(entries: tuple[tuple[str, CardFrame], ...]) -> QTabWidget:
+    tabs = QTabWidget()
+    tabs.setDocumentMode(True)
+    tabs.setStyleSheet(
+        """
+        QTabWidget::pane {
+            border: 1px solid #cbd8e5;
+            border-radius: 7px;
+            background: #ffffff;
+            top: -1px;
+        }
+        QTabBar::tab {
+            min-width: 0;
+            min-height: 29px;
+            padding: 5px 5px;
+            margin: 0;
+            border: 1px solid #cbd8e5;
+            background: #edf3f7;
+            color: #475467;
+            font-size: 9px;
+            font-weight: 800;
+        }
+        QTabBar::tab:selected {
+            background: #ffffff;
+            color: #0b6868;
+            border-top: 2px solid #0aa6a6;
+            border-bottom-color: #ffffff;
+        }
+        """
+    )
+    tabs.tabBar().setExpanding(True)
+    tabs.tabBar().setUsesScrollButtons(False)
+    tabs.tabBar().setElideMode(Qt.ElideNone)
+    for title, card in entries:
+        card.setObjectName("PartnerTabSection")
+        card.setStyleSheet("QFrame#PartnerTabSection { background: transparent; border: 0; border-radius: 0; }")
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.addWidget(card)
+        layout.addStretch(1)
+        tabs.addTab(page, title)
+    return tabs
 
 
 class ClientsPage(QWidget):
@@ -148,15 +194,18 @@ class ClientsPage(QWidget):
         top = CardFrame()
         top.set_tone("info")
         top_layout = QVBoxLayout(top)
-        top_layout.setContentsMargins(16, 14, 16, 14)
-        top_layout.setSpacing(10)
+        top_layout.setContentsMargins(12, 9, 12, 9)
+        top_layout.setSpacing(7)
         hero_row = QHBoxLayout()
         hero_text = QVBoxLayout()
         hero_text.setSpacing(2)
         hero_title = QLabel("Carteira de clientes")
-        hero_title.setStyleSheet("font-size: 20px; font-weight: 950; color: #0f172a;")
+        hero_title.setStyleSheet("font-family: 'Segoe UI'; font-size: 15px; font-weight: 800; color: #0f172a;")
         hero_subtitle = QLabel("Pesquisa, cria e atualiza contactos comerciais sem sair do painel.")
         hero_subtitle.setProperty("role", "muted")
+        hero_subtitle.setWordWrap(True)
+        hero_subtitle.setMinimumWidth(0)
+        hero_subtitle.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         hero_text.addWidget(hero_title)
         hero_text.addWidget(hero_subtitle)
         self._filter_timer = QTimer(self)
@@ -188,9 +237,14 @@ class ClientsPage(QWidget):
         metrics_row.addWidget(self.client_contact_chip)
         metrics_row.addWidget(self.client_terms_chip)
         metrics_row.addStretch(1)
+        command_row = QHBoxLayout()
+        command_row.setContentsMargins(0, 0, 0, 0)
+        command_row.setSpacing(7)
+        command_row.addWidget(_search_box(self.filter_edit, "ClientSearchBox"), 1)
+        command_row.addLayout(metrics_row)
         top_layout.addLayout(hero_row)
-        top_layout.addWidget(_search_box(self.filter_edit, "ClientSearchBox"))
-        top_layout.addLayout(metrics_row)
+        top_layout.addLayout(command_row)
+        top.setMaximumHeight(108)
         root.addWidget(top)
 
         split = QSplitter(Qt.Horizontal)
@@ -201,9 +255,11 @@ class ClientsPage(QWidget):
         table_layout.setContentsMargins(14, 12, 14, 12)
         table_layout.setSpacing(8)
         table_title = QLabel("Base de clientes")
-        table_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
+        table_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
         table_subtitle = QLabel("Pesquisa rapida e selecao direta da ficha comercial.")
         table_subtitle.setProperty("role", "muted")
+        table_subtitle.setWordWrap(True)
+        table_subtitle.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Codigo", "Nome", "NIF", "Contacto", "Email"])
         self.table.verticalHeader().setVisible(False)
@@ -229,13 +285,17 @@ class ClientsPage(QWidget):
 
         form_card = CardFrame()
         form_card.set_tone("info")
+        form_card.setMinimumWidth(390)
+        form_card.setMaximumWidth(520)
         form_layout = QVBoxLayout(form_card)
         form_layout.setContentsMargins(14, 12, 14, 12)
         form_layout.setSpacing(8)
         form_title = QLabel("Ficha do cliente")
-        form_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
+        form_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
         form_subtitle = QLabel("Dados comerciais, contactos e condicoes para documentos.")
         form_subtitle.setProperty("role", "muted")
+        form_subtitle.setWordWrap(True)
+        form_subtitle.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.client_code_edit = QLineEdit()
         self.client_name_edit = QLineEdit()
         self.client_nif_edit = QLineEdit()
@@ -288,15 +348,17 @@ class ClientsPage(QWidget):
             ("Observacoes", self.client_notes_edit),
         ):
             terms_form.addRow(label, widget)
-        form_grid.addWidget(ident_card, 0, 0)
-        form_grid.addWidget(contact_card, 1, 0)
-        form_grid.addWidget(terms_card, 2, 0)
-        form_grid.setRowStretch(3, 1)
         form_layout.addWidget(form_title)
         form_layout.addWidget(form_subtitle)
-        form_layout.addWidget(_scrollable_form_area(form_grid), 1)
+        self.client_detail_tabs = _partner_detail_tabs(
+            (("Identificação", ident_card), ("Contacto", contact_card), ("Comercial", terms_card))
+        )
+        form_layout.addWidget(self.client_detail_tabs, 1)
         split.addWidget(form_card)
-        split.setSizes([760, 760])
+        split.setHandleWidth(7)
+        split.setSizes([980, 460])
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 0)
         root.addWidget(split, 1)
         self._new_client()
 
@@ -415,15 +477,18 @@ class SuppliersPage(QWidget):
         top = CardFrame()
         top.set_tone("info")
         top_layout = QVBoxLayout(top)
-        top_layout.setContentsMargins(16, 14, 16, 14)
-        top_layout.setSpacing(10)
+        top_layout.setContentsMargins(12, 9, 12, 9)
+        top_layout.setSpacing(7)
         hero_row = QHBoxLayout()
         hero_text = QVBoxLayout()
         hero_text.setSpacing(2)
         hero_title = QLabel("Rede de fornecedores")
-        hero_title.setStyleSheet("font-size: 20px; font-weight: 950; color: #0f172a;")
+        hero_title.setStyleSheet("font-family: 'Segoe UI'; font-size: 15px; font-weight: 800; color: #0f172a;")
         hero_subtitle = QLabel("Controla contactos, prazos e condicoes de compra com leitura rapida.")
         hero_subtitle.setProperty("role", "muted")
+        hero_subtitle.setWordWrap(True)
+        hero_subtitle.setMinimumWidth(0)
+        hero_subtitle.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         hero_text.addWidget(hero_title)
         hero_text.addWidget(hero_subtitle)
         self._filter_timer = QTimer(self)
@@ -455,9 +520,14 @@ class SuppliersPage(QWidget):
         metrics_row.addWidget(self.supplier_contact_chip)
         metrics_row.addWidget(self.supplier_terms_chip)
         metrics_row.addStretch(1)
+        command_row = QHBoxLayout()
+        command_row.setContentsMargins(0, 0, 0, 0)
+        command_row.setSpacing(7)
+        command_row.addWidget(_search_box(self.filter_edit, "SupplierSearchBox"), 1)
+        command_row.addLayout(metrics_row)
         top_layout.addLayout(hero_row)
-        top_layout.addWidget(_search_box(self.filter_edit, "SupplierSearchBox"))
-        top_layout.addLayout(metrics_row)
+        top_layout.addLayout(command_row)
+        top.setMaximumHeight(108)
         root.addWidget(top)
 
         split = QSplitter(Qt.Horizontal)
@@ -468,9 +538,11 @@ class SuppliersPage(QWidget):
         table_layout.setContentsMargins(14, 12, 14, 12)
         table_layout.setSpacing(8)
         table_title = QLabel("Fornecedores")
-        table_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
+        table_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
         table_subtitle = QLabel("Base de compras, contactos e condicoes de fornecimento.")
         table_subtitle.setProperty("role", "muted")
+        table_subtitle.setWordWrap(True)
+        table_subtitle.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["ID", "Nome", "NIF", "Contacto", "Email"])
         self.table.verticalHeader().setVisible(False)
@@ -496,13 +568,17 @@ class SuppliersPage(QWidget):
 
         form_card = CardFrame()
         form_card.set_tone("info")
+        form_card.setMinimumWidth(390)
+        form_card.setMaximumWidth(520)
         form_layout = QVBoxLayout(form_card)
         form_layout.setContentsMargins(14, 12, 14, 12)
         form_layout.setSpacing(8)
         form_title = QLabel("Ficha do fornecedor")
-        form_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
+        form_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
         form_subtitle = QLabel("Informacao comercial usada nas compras e notas de encomenda.")
         form_subtitle.setProperty("role", "muted")
+        form_subtitle.setWordWrap(True)
+        form_subtitle.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.supplier_id_edit = QLineEdit()
         self.supplier_name_edit = QLineEdit()
         self.supplier_nif_edit = QLineEdit()
@@ -558,15 +634,17 @@ class SuppliersPage(QWidget):
             ("Observacoes", self.supplier_notes_edit),
         ):
             terms_form.addRow(label, widget)
-        form_grid.addWidget(ident_card, 0, 0)
-        form_grid.addWidget(contact_card, 1, 0)
-        form_grid.addWidget(terms_card, 2, 0)
-        form_grid.setRowStretch(3, 1)
         form_layout.addWidget(form_title)
         form_layout.addWidget(form_subtitle)
-        form_layout.addWidget(_scrollable_form_area(form_grid), 1)
+        self.supplier_detail_tabs = _partner_detail_tabs(
+            (("Identificação", ident_card), ("Contacto", contact_card), ("Compras", terms_card))
+        )
+        form_layout.addWidget(self.supplier_detail_tabs, 1)
         split.addWidget(form_card)
-        split.setSizes([760, 760])
+        split.setHandleWidth(7)
+        split.setSizes([980, 460])
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 0)
         root.addWidget(split, 1)
         self._new_supplier()
 

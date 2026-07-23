@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 from datetime import date, timedelta
 import json
 import sys
@@ -64,13 +65,68 @@ def _find_piece_id(backend: LegacyBackend, enc_num: str) -> tuple[str, dict]:
 
 def main() -> int:
     backend = LegacyBackend()
+    created = {
+        "quote": "",
+        "order": "",
+        "billing": "",
+        "guide": "",
+        "files": [],
+    }
+
+    def cleanup() -> None:
+        for raw_path in list(created["files"]):
+            try:
+                path = Path(str(raw_path))
+                if path.exists():
+                    path.unlink()
+            except Exception:
+                pass
+        data = backend.ensure_data()
+        order_num = str(created["order"] or "").strip()
+        if order_num:
+            data["plano"] = [
+                row
+                for row in list(data.get("plano", []) or [])
+                if str((row or {}).get("encomenda", "") or "").strip() != order_num
+            ]
+        guide_num = str(created["guide"] or "").strip()
+        if guide_num:
+            data["expedicoes"] = [
+                row
+                for row in list(data.get("expedicoes", []) or [])
+                if str((row or {}).get("numero", "") or "").strip() != guide_num
+            ]
+        record_num = str(created["billing"] or "").strip()
+        if record_num:
+            for key in ("faturacao", "faturacao_registos"):
+                data[key] = [
+                    row
+                    for row in list(data.get(key, []) or [])
+                    if str((row or {}).get("numero", "") or "").strip() != record_num
+                ]
+            backend._save(force=True, audit=False, blocking=True)
+        if order_num:
+            try:
+                backend.order_remove(order_num)
+            except Exception:
+                pass
+        quote_num = str(created["quote"] or "").strip()
+        if quote_num:
+            try:
+                backend.orc_remove(quote_num)
+            except Exception:
+                pass
+        backend._save(force=True, audit=False, blocking=True)
+        backend.drain_async_saves(timeout_sec=20.0)
+
+    atexit.register(cleanup)
     data = backend.ensure_data()
     clients = list(data.get("clientes", []) or [])
     materials = list(data.get("materiais", []) or [])
     products = list(data.get("produtos", []) or [])
     refs_count = len(dict(data.get("orc_refs", {}) or {}))
-    if len(clients) < 5:
-        raise RuntimeError(f"Esperados pelo menos 5 clientes na base de teste, obtidos {len(clients)}.")
+    if not clients:
+        raise RuntimeError("É necessário pelo menos um cliente para executar o ciclo interno.")
     if len(materials) < 10:
         raise RuntimeError(f"Esperados pelo menos 10 materiais na base de teste, obtidos {len(materials)}.")
     if len(products) < 10:
@@ -87,7 +143,17 @@ def main() -> int:
     today_iso = str(backend.desktop_main.now_iso())[:10]
     due_iso = (date.fromisoformat(today_iso) + timedelta(days=30)).isoformat()
     client = dict(clients[0])
-    material = dict(materials[0])
+    material = dict(
+        next(
+            (
+                row
+                for row in materials
+                if str(row.get("formato", "") or "").strip().casefold() == "chapa"
+                and float(row.get("quantidade", 0) or 0) > 0
+            ),
+            materials[0],
+        )
+    )
 
     quote = backend.orc_save(
         {
@@ -96,11 +162,16 @@ def main() -> int:
             "linhas": [
                 {
                     "tipo_item": "Peca",
-                    "ref_externa": f"E2E-{client['codigo']}-001",
-                    "descricao": "Fluxo interno completo faturação",
+                    "ref_externa": f"VERIFY-E2E-{client['codigo']}-001",
+                    "descricao": "VERIFY fluxo interno completo faturação",
                     "material": str(material.get("material", "") or ""),
                     "espessura": str(material.get("espessura", "") or ""),
                     "operacao": "Corte Laser + Embalamento",
+                    "operacoes_lista": ["Corte Laser", "Embalamento"],
+                    "laser_base_active": True,
+                    "tempos_operacao": {"Corte Laser": 2.0, "Embalamento": 1.0},
+                    "custos_operacao": {"Corte Laser": 18.0, "Embalamento": 6.8},
+                    "dimensao": "100 x 100 mm",
                     "qtd": 12,
                     "preco_unit": 24.80,
                     "tempo_peca_min": 3,
@@ -108,14 +179,16 @@ def main() -> int:
             ],
             "iva_perc": 23,
             "preco_transporte": 0.0,
-            "nota_cliente": "Exercício Orçamento -> Faturação",
+            "nota_cliente": "VERIFY ciclo Orçamento -> Faturação",
             "executado_por": "admin",
         }
     )
     quote_num = str(quote.get("numero", "") or "").strip()
+    created["quote"] = quote_num
     backend.orc_set_state(quote_num, "Aprovado")
     converted = backend.orc_convert_to_order(quote_num, "Fluxo completo interno")
     order_num = str((converted.get("encomenda") or {}).get("numero", "") or "").strip()
+    created["order"] = order_num
     if not order_num:
         raise RuntimeError(f"Falha ao converter orçamento em encomenda: {converted}")
 
@@ -146,6 +219,7 @@ def main() -> int:
     line["unid"] = "UN"
     guide = backend.expedicao_emit_off(order_num, [line], backend.expedicao_defaults_for_order(order_num))
     guide_num = str(guide.get("numero", "") or "").strip()
+    created["guide"] = guide_num
     if not guide_num:
         raise RuntimeError(f"Guia não foi emitida: {guide}")
     if not any(str(row.get("numero", "") or "").strip() == guide_num for row in backend.expedicao_rows(order_num)):
@@ -153,6 +227,7 @@ def main() -> int:
 
     record = backend.billing_open_record(source_type="quote", source_number=quote_num)
     record_num = str(record.get("numero", "") or "").strip()
+    created["billing"] = record_num
     if not record_num:
         raise RuntimeError(f"Registo de faturação inválido: {record}")
     invoice_payload = backend.billing_invoice_defaults(record_num)
@@ -170,6 +245,7 @@ def main() -> int:
         raise RuntimeError(f"PDF de fatura não ficou disponível: {invoice}")
     if pdf_path.stat().st_size < 2500:
         raise RuntimeError(f"PDF de fatura demasiado pequeno, provável render incompleta: {pdf_path}")
+    created["files"].append(str(pdf_path))
     pdf_text = pdf_path.read_text(encoding="latin-1", errors="ignore")
     for token in (invoice_num, guide_num, str(client.get("nome", "") or "").split()[0], "Fatura", "Base tributavel"):
         if token and token not in pdf_text:
@@ -189,6 +265,7 @@ def main() -> int:
         ),
         encoding="utf-8",
     )
+    created["files"].append(str(proof_path))
     detail = backend.billing_add_payment(
         record_num,
         {
@@ -240,6 +317,8 @@ def main() -> int:
             ensure_ascii=False,
         )
     )
+    cleanup()
+    atexit.unregister(cleanup)
     return 0
 
 

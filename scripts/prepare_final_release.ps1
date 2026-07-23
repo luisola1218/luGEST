@@ -27,6 +27,7 @@ $securityPlan = Join-Path $repoRoot 'docs\plans\SECURITY_TEST_PLAN.md'
 $localGuide = Join-Path $repoRoot 'docs\install\GUIA_ARRANQUE_QT_LOCAL.md'
 $updateGuide = Join-Path $repoRoot 'docs\install\UPDATE_FLOW_CLIENTE.md'
 $readinessGuide = Join-Path $repoRoot 'docs\install\PRONTIDAO_COMERCIAL.md'
+$fluidityAudit = Join-Path $repoRoot 'docs\plans\AUDITORIA_FLUIDEZ_2026-07-23.md'
 $preservedConfigRoot = Join-Path $env:TEMP ("lugest_release_config_" + [guid]::NewGuid().ToString('N'))
 $preservedEnv = Join-Path $preservedConfigRoot 'lugest.env'
 $preservedTrial = Join-Path $preservedConfigRoot 'lugest_trial.json'
@@ -83,7 +84,8 @@ foreach ($requiredPath in @(
     $securityPlan,
     $localGuide,
     $updateGuide,
-    $readinessGuide
+    $readinessGuide,
+    $fluidityAudit
 )) {
     if (-not (Test-Path $requiredPath)) {
         throw "Falta ficheiro/pasta obrigatoria para a release: $requiredPath"
@@ -278,6 +280,7 @@ Copy-Item $securityPlan (Join-Path $docsDir 'CHECKLIST - Seguranca e Testes.md')
 Copy-Item $localGuide (Join-Path $docsDir 'GUIA - Arranque Desktop Local.md') -Force
 Copy-Item $updateGuide (Join-Path $docsDir 'GUIA - Atualizacao Cliente.md') -Force
 Copy-Item $readinessGuide (Join-Path $docsDir 'PRONTIDAO COMERCIAL.md') -Force
+Copy-Item $fluidityAudit (Join-Path $docsDir 'AUDITORIA - Fluidez e Robustez.md') -Force
 
 $readme = @"
 # LuisGEST Desktop

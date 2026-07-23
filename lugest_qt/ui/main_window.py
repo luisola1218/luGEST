@@ -129,6 +129,7 @@ class MainWindow(QMainWindow):
         self.nav_buttons: dict[str, QToolButton] = {}
         self._trial_block_dialog_open = False
         self._save_warning_open = False
+        self._refresh_error_open = False
         self._closing = False
         self._screen_fitted = False
         self._alerts_cache: dict | None = None
@@ -391,15 +392,15 @@ class MainWindow(QMainWindow):
         worker.finished.connect(self._handle_auto_update_result)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
-        worker.failed.connect(lambda _message: self._clear_auto_update_worker())
+        worker.failed.connect(self._handle_auto_update_error)
         worker.failed.connect(thread.quit)
         worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(self._clear_auto_update_worker)
         thread.finished.connect(thread.deleteLater)
         thread.start()
 
     @Slot(dict)
     def _handle_auto_update_result(self, result: dict) -> None:
-        self._clear_auto_update_worker()
         if not bool(result.get("update_available", False)):
             return
         self.status_label.setText(f"Atualização disponível: {result.get('latest_version', '-')}")
@@ -410,6 +411,11 @@ class MainWindow(QMainWindow):
         ) == QMessageBox.Yes:
             self._open_updates_dialog()
 
+    @Slot(str)
+    def _handle_auto_update_error(self, _message: str) -> None:
+        self.status_label.setText("Atualizado agora")
+
+    @Slot()
     def _clear_auto_update_worker(self) -> None:
         self._update_check_thread = None
         self._update_check_worker = None
@@ -439,7 +445,12 @@ class MainWindow(QMainWindow):
             if not fallback:
                 return
             key = fallback
-        page = self._ensure_page(key)
+        try:
+            page = self._ensure_page(key)
+        except Exception as exc:
+            self.status_label.setText("Erro ao abrir menu")
+            QMessageBox.critical(self, "Abrir menu", f"Nao foi possivel abrir este menu:\n{exc}")
+            return
         self.stack.setCurrentWidget(page)
         for nav_key, button in self.nav_buttons.items():
             button.setChecked(nav_key == key)
@@ -472,28 +483,38 @@ class MainWindow(QMainWindow):
         current = self.stack.currentWidget()
         if current is None:
             return
-        if force:
-            invalidator = getattr(self.runtime_service, "invalidate_cache", None)
-            if callable(invalidator):
-                invalidator()
-        if background and not bool(getattr(current, "allow_auto_timer_refresh", False)):
-            return
-        can_auto_refresh = getattr(current, "can_auto_refresh", None)
-        if background and callable(can_auto_refresh) and not bool(can_auto_refresh()):
-            self.status_label.setText("Edicao ativa")
-            return
-        if bool(getattr(current, "uses_backend_reload", False)):
-            if not self._prepare_backend_reload(force=force):
-                if force:
-                    return
-            else:
-                self.backend.reload(force=force)
-        refresh = getattr(current, "refresh", None)
-        if callable(refresh):
-            refresh()
-        self._refresh_global_alerts(force=force)
-        self._poll_save_runtime_state()
-        self.status_label.setText("Atualizado agora")
+        try:
+            if force:
+                invalidator = getattr(self.runtime_service, "invalidate_cache", None)
+                if callable(invalidator):
+                    invalidator()
+            if background and not bool(getattr(current, "allow_auto_timer_refresh", False)):
+                return
+            can_auto_refresh = getattr(current, "can_auto_refresh", None)
+            if background and callable(can_auto_refresh) and not bool(can_auto_refresh()):
+                self.status_label.setText("Edicao ativa")
+                return
+            if bool(getattr(current, "uses_backend_reload", False)):
+                if not self._prepare_backend_reload(force=force):
+                    if force:
+                        return
+                else:
+                    self.backend.reload(force=force)
+            refresh = getattr(current, "refresh", None)
+            if callable(refresh):
+                refresh()
+            self._refresh_global_alerts(force=force)
+            self._poll_save_runtime_state()
+            self.status_label.setText("Atualizado agora")
+        except Exception as exc:
+            self.status_label.setText("Erro ao atualizar")
+            if background or self._refresh_error_open:
+                return
+            self._refresh_error_open = True
+            try:
+                QMessageBox.warning(self, "Atualizar menu", f"Nao foi possivel atualizar este menu:\n{exc}")
+            finally:
+                self._refresh_error_open = False
 
     def _save_runtime_state(self) -> dict:
         getter = getattr(self.backend, "save_runtime_state", None)
