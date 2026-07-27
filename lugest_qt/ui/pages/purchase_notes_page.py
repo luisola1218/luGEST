@@ -8,7 +8,7 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import quote
 
-from PySide6.QtCore import QDate, Qt
+from PySide6.QtCore import QDate, QSize, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSplitter,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -184,12 +185,16 @@ class PurchaseNotesPage(QWidget):
         actions_row = QHBoxLayout()
         actions_row.setSpacing(5)
         self.new_btn = QPushButton("Novo pedido")
+        self.new_btn.setProperty("variant", "secondary")
         self.new_btn.clicked.connect(self._create_new_note)
         self.save_btn = QPushButton("Guardar")
+        self.save_btn.setProperty("variant", "warning")
         self.save_btn.clicked.connect(self._save_note)
         self.approve_btn = QPushButton("Aprovar")
+        self.approve_btn.setProperty("variant", "success")
         self.approve_btn.clicked.connect(self._approve_note)
         self.generate_btn = QPushButton("Gerar NEs")
+        self.generate_btn.setProperty("variant", "secondary")
         self.generate_btn.clicked.connect(self._generate_supplier_orders)
         self.remove_btn = QPushButton("Apagar")
         self.remove_btn.setProperty("variant", "danger")
@@ -198,16 +203,11 @@ class PurchaseNotesPage(QWidget):
         self.pdf_btn.setProperty("variant", "secondary")
         self.pdf_btn.clicked.connect(lambda: self._open_pdf(False))
         self.send_order_btn = QPushButton("Enviar NE")
-        self.send_order_btn.setProperty("variant", "secondary")
+        self.send_order_btn.setText("➤  Enviar NE")
         self.send_order_btn.clicked.connect(self._send_order_email)
         self.quote_btn = QPushButton("Pedir orçamento")
+        self.quote_btn.setProperty("variant", "warning")
         self.quote_btn.clicked.connect(self._request_quote_email)
-        self.quote_btn.setStyleSheet(
-            "QPushButton {background: #f4c542; color: #0f172a; border: 1px solid #caa12b; "
-            "border-radius: 10px; padding: 8px 14px; font-weight: 800;}"
-            "QPushButton:hover {background: #ffd65a;}"
-            "QPushButton:disabled {background: #f5e9b4; color: #7c6a2b;}"
-        )
         self.suppliers_btn = QPushButton("Fornecedores")
         self.suppliers_btn.setProperty("variant", "secondary")
         self.suppliers_btn.clicked.connect(self._manage_suppliers)
@@ -220,6 +220,8 @@ class PurchaseNotesPage(QWidget):
         self.documents_btn = QPushButton("Registo docs")
         self.documents_btn.setProperty("variant", "secondary")
         self.documents_btn.clicked.connect(self._show_documents)
+        trash_icon = self.style().standardIcon(QStyle.SP_TrashIcon)
+        self.remove_btn.setIcon(trash_icon)
         action_widths = (
             (self.new_btn, 86),
             (self.save_btn, 76),
@@ -235,13 +237,33 @@ class PurchaseNotesPage(QWidget):
             (self.remove_btn, 70),
         )
         for button, width in action_widths:
+            if button is self.send_order_btn:
+                width += 12
             button.setProperty("compact", "true")
             button.setFixedWidth(width)
+            button.setIconSize(QSize(14, 14))
             button.setMinimumHeight(29)
             button.setMaximumHeight(31)
             button.setStyleSheet("font-family: 'Segoe UI'; font-size: 9px; font-weight: 700;")
+        for button in (
+            self.new_btn,
+            self.save_btn,
+            self.approve_btn,
+            self.generate_btn,
+            self.pdf_btn,
+            self.send_order_btn,
+            self.remove_btn,
+        ):
             actions_row.addWidget(button)
         actions_row.addStretch(1)
+        for button in (
+            self.delivery_btn,
+            self.attach_doc_btn,
+            self.documents_btn,
+            self.suppliers_btn,
+            self.quote_btn,
+        ):
+            actions_row.addWidget(button)
         form_layout.addLayout(actions_row)
 
         header = QHBoxLayout()
@@ -268,8 +290,8 @@ class PurchaseNotesPage(QWidget):
         supplier_card = CardFrame()
         supplier_card.set_tone("default")
         supplier_layout = QVBoxLayout(supplier_card)
-        supplier_layout.setContentsMargins(12, 10, 12, 10)
-        supplier_layout.setSpacing(6)
+        supplier_layout.setContentsMargins(10, 7, 10, 7)
+        supplier_layout.setSpacing(4)
         self.supplier_combo = QComboBox()
         self._configure_supplier_selector(self.supplier_combo)
         if self.supplier_combo.lineEdit() is not None:
@@ -292,9 +314,10 @@ class PurchaseNotesPage(QWidget):
             self.transport_edit.lineEdit().setPlaceholderText("Responsabilidade do transporte")
         if self.location_edit.lineEdit() is not None:
             self.location_edit.lineEdit().setPlaceholderText("Local de descarga")
-        note_field_css = "font-size: 12px; padding: 4px 8px;"
+        note_field_css = "font-size: 10px; padding: 2px 7px;"
         for field in (self.supplier_combo, self.contact_edit, self.delivery_edit, self.transport_edit, self.location_edit):
-            field.setMinimumHeight(34)
+            field.setMinimumHeight(28)
+            field.setMaximumHeight(30)
             field.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
             field.setStyleSheet(note_field_css)
         for combo in (self.supplier_combo, self.transport_edit, self.location_edit):
@@ -312,7 +335,7 @@ class PurchaseNotesPage(QWidget):
             _cap_width(widget, width)
             widget.setMinimumWidth(minimum)
         supplier_title = QLabel("Dados do documento")
-        supplier_title.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
+        supplier_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
         supplier_layout.addWidget(supplier_title)
 
         def _field_block(label_text: str, widget: QWidget) -> QWidget:
@@ -322,7 +345,7 @@ class PurchaseNotesPage(QWidget):
             block.setSpacing(1)
             label = QLabel(label_text)
             label.setProperty("role", "muted")
-            label.setStyleSheet("font-size: 11px; font-weight: 700; color: #415a77;")
+            label.setStyleSheet("font-size: 9px; font-weight: 700; color: #415a77;")
             block.addWidget(label)
             block.addWidget(widget)
             return host
@@ -340,39 +363,39 @@ class PurchaseNotesPage(QWidget):
         supplier_grid.setColumnStretch(1, 3)
         supplier_grid.setColumnStretch(2, 2)
         supplier_layout.addLayout(supplier_grid)
-        supplier_card.setFixedHeight(170)
+        supplier_card.setFixedHeight(132)
         supplier_card.setMinimumWidth(0)
         supplier_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         summary_card = CardFrame()
         summary_card.set_tone("info")
         summary_layout = QVBoxLayout(summary_card)
-        summary_layout.setContentsMargins(16, 12, 16, 12)
-        summary_layout.setSpacing(5)
+        summary_layout.setContentsMargins(12, 8, 12, 8)
+        summary_layout.setSpacing(3)
         summary_title = QLabel("Resumo")
-        summary_title.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
+        summary_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
         self.summary_hint = QLabel("Pedido")
         self.summary_hint.setWordWrap(True)
         self.summary_hint.setProperty("role", "muted")
-        self.summary_hint.setMaximumHeight(24)
+        self.summary_hint.setMaximumHeight(18)
         self.total_label = QLabel("0.00 EUR")
-        self.total_label.setStyleSheet("font-size: 17px; font-weight: 900; color: #087f83;")
-        self.total_label.setMinimumHeight(24)
+        self.total_label.setStyleSheet("font-size: 15px; font-weight: 900; color: #087f83;")
+        self.total_label.setMinimumHeight(18)
         self.total_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.total_materials_label = QLabel("0,00 EUR")
         self.total_materials_label.setStyleSheet("font-size: 12px; font-weight: 800; color: #7c4a03;")
         self.total_materials_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.total_materials_label.setMinimumHeight(18)
+        self.total_materials_label.setMinimumHeight(15)
         self.total_products_label = QLabel("0,00 EUR")
         self.total_products_label.setStyleSheet("font-size: 12px; font-weight: 800; color: #166534;")
         self.total_products_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.total_products_label.setMinimumHeight(18)
+        self.total_products_label.setMinimumHeight(15)
         summary_layout.addWidget(summary_title)
         summary_layout.addWidget(self.summary_hint)
         summary_grid = QGridLayout()
         summary_grid.setContentsMargins(0, 0, 0, 0)
         summary_grid.setHorizontalSpacing(10)
-        summary_grid.setVerticalSpacing(4)
+        summary_grid.setVerticalSpacing(2)
         mp_caption = QLabel("Matéria-Prima")
         mp_caption.setProperty("role", "muted")
         products_caption = QLabel("Produtos")
@@ -394,7 +417,7 @@ class PurchaseNotesPage(QWidget):
         summary_layout.addLayout(total_row)
         summary_card.setMinimumWidth(290)
         summary_card.setMaximumWidth(330)
-        summary_card.setFixedHeight(170)
+        summary_card.setFixedHeight(132)
         summary_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         meta_row.addWidget(supplier_card, 10, Qt.AlignTop)
@@ -404,35 +427,47 @@ class PurchaseNotesPage(QWidget):
         obs_card = CardFrame()
         obs_card.set_tone("default")
         obs_layout = QVBoxLayout(obs_card)
-        obs_layout.setContentsMargins(10, 8, 10, 8)
-        obs_layout.setSpacing(4)
+        obs_layout.setContentsMargins(10, 5, 10, 5)
+        obs_layout.setSpacing(2)
         obs_title = QLabel("Observações")
-        obs_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        obs_title.setStyleSheet("font-size: 12px; font-weight: 800; color: #0f172a;")
         self.obs_edit = QTextEdit()
         self.obs_edit.setPlaceholderText("Observações do documento")
-        self.obs_edit.setMinimumHeight(38)
-        self.obs_edit.setMaximumHeight(52)
+        self.obs_edit.setMinimumHeight(32)
+        self.obs_edit.setMaximumHeight(38)
         self.obs_edit.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.obs_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         obs_layout.addWidget(obs_title)
         obs_layout.addWidget(self.obs_edit)
-        obs_card.setMaximumHeight(82)
+        obs_card.setMaximumHeight(64)
         form_layout.addWidget(obs_card)
 
         lines_card = CardFrame()
         lines_card.set_tone("default")
         lines_layout = QVBoxLayout(lines_card)
-        lines_layout.setContentsMargins(12, 10, 12, 12)
-        lines_layout.setSpacing(6)
+        lines_layout.setContentsMargins(0, 0, 0, 0)
+        lines_layout.setSpacing(0)
+        lines_toolbar = QFrame()
+        lines_toolbar.setObjectName("PurchaseLinesToolbar")
+        lines_toolbar.setStyleSheet(
+            "QFrame#PurchaseLinesToolbar {"
+            " background: #f3f6fa; border: 0; border-bottom: 1px solid #c8d4e2;"
+            " border-top-left-radius: 9px; border-top-right-radius: 9px;"
+            "}"
+        )
+        lines_toolbar_layout = QVBoxLayout(lines_toolbar)
+        lines_toolbar_layout.setContentsMargins(12, 9, 12, 9)
+        lines_toolbar_layout.setSpacing(7)
         line_header = QHBoxLayout()
         lines_title = QLabel("Linhas da nota")
-        lines_title.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
+        lines_title.setStyleSheet("font-size: 14px; font-weight: 900; color: #10253d;")
         self.lines_count_label = QLabel("0 linhas")
         self.lines_count_label.setProperty("role", "muted")
+        self.lines_count_label.setStyleSheet("font-size: 10px; font-weight: 700;")
         line_header.addWidget(lines_title)
         line_header.addStretch(1)
         line_header.addWidget(self.lines_count_label)
-        lines_layout.addLayout(line_header)
+        lines_toolbar_layout.addLayout(line_header)
 
         line_actions = QHBoxLayout()
         self.add_material_btn = QPushButton("Adicionar Stock MP")
@@ -455,6 +490,7 @@ class PurchaseNotesPage(QWidget):
         self.apply_advice_btn.clicked.connect(self._apply_purchase_advice)
         self.remove_line_btn = QPushButton("Remover Linha")
         self.remove_line_btn.setProperty("variant", "danger")
+        self.remove_line_btn.setIcon(trash_icon)
         self.remove_line_btn.clicked.connect(self._remove_line)
         for button, width in (
             (self.add_material_btn, 142),
@@ -469,10 +505,12 @@ class PurchaseNotesPage(QWidget):
             button.setFixedWidth(width)
             button.setMinimumHeight(28)
             button.setMaximumHeight(30)
+            button.setIconSize(QSize(14, 14))
             button.setStyleSheet("font-family: 'Segoe UI'; font-size: 9px; font-weight: 700;")
             line_actions.addWidget(button)
         line_actions.addStretch(1)
-        lines_layout.addLayout(line_actions)
+        lines_toolbar_layout.addLayout(line_actions)
+        lines_layout.addWidget(lines_toolbar)
 
         self.lines_table = QTableWidget(0, 18)
         self.lines_table.setHorizontalHeaderLabels(
@@ -524,28 +562,26 @@ class PurchaseNotesPage(QWidget):
                 (17, "fixed", 118),
             ],
         )
-        self.lines_table.setStyleSheet(
-            "QTableWidget { font-size: 12px; }"
-            " QHeaderView::section { font-size: 11px; padding: 6px 8px; font-weight: 800; }"
-        )
-        self.lines_table.verticalHeader().setDefaultSectionSize(28)
+        self.lines_table.setStyleSheet("QTableWidget { font-size: 10px; border-radius: 0; border-left: 0; border-right: 0; }")
+        self.lines_table.verticalHeader().setDefaultSectionSize(30)
         self.lines_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.lines_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.lines_table.setMinimumHeight(320)
-        self.lines_table.setMaximumHeight(380)
+        self.lines_table.setMinimumHeight(360)
+        self.lines_table.setMaximumHeight(16777215)
         self.lines_table.itemSelectionChanged.connect(self._sync_line_inspector)
 
         self.line_workspace = QSplitter(Qt.Horizontal)
         self.line_workspace.setChildrenCollapsible(False)
+        self.line_workspace.setHandleWidth(5)
         self.line_workspace.addWidget(self.lines_table)
 
         self.line_inspector = QFrame()
         self.line_inspector.setObjectName("PurchaseLineInspector")
-        self.line_inspector.setMinimumWidth(292)
-        self.line_inspector.setMaximumWidth(360)
+        self.line_inspector.setMinimumWidth(270)
+        self.line_inspector.setMaximumWidth(320)
         self.line_inspector.setStyleSheet(
             "QFrame#PurchaseLineInspector {"
-            " background: #f7fafc;"
+            " background: #f4f7fb;"
             " border-left: 1px solid #c6d5e5;"
             "}"
             "QLabel#PurchaseLineEyebrow {"
@@ -639,10 +675,10 @@ class PurchaseNotesPage(QWidget):
         self.line_workspace.addWidget(self.line_inspector)
         self.line_workspace.setStretchFactor(0, 1)
         self.line_workspace.setStretchFactor(1, 0)
-        self.line_workspace.setSizes([1320, 330])
-        lines_layout.addWidget(self.line_workspace)
-        lines_card.setMinimumHeight(390)
-        lines_card.setMaximumHeight(450)
+        self.line_workspace.setSizes([1420, 300])
+        lines_layout.addWidget(self.line_workspace, 1)
+        lines_card.setMinimumHeight(430)
+        lines_card.setMaximumHeight(16777215)
         form_layout.addWidget(lines_card, 1)
         self.note_form_card.set_tone("default")
         root.addWidget(self.note_form_card, 1)
@@ -1050,10 +1086,10 @@ class PurchaseNotesPage(QWidget):
 
         type_combo = QComboBox()
         for label, value in (
-            ("Guia", "GUIA"),
-            ("Fatura", "FATURA"),
-            ("Guia + Fatura", "GUIA_FATURA"),
-            ("Documento", "DOCUMENTO"),
+            ("Guia de remessa / transporte", "GUIA"),
+            ("Fatura de fornecedor", "FATURA"),
+            ("Guia e fatura no mesmo registo", "GUIA_FATURA"),
+            ("Outro documento", "DOCUMENTO"),
         ):
             type_combo.addItem(label, value)
         initial_type = str(initial.get("tipo", "") or "").strip().upper() or "FATURA"
@@ -1077,6 +1113,31 @@ class PurchaseNotesPage(QWidget):
         apply_lines_chk = QCheckBox("Aplicar aos registos de linhas já entregues")
         apply_lines_chk.setChecked(bool(initial.get("apply_to_lines", True)))
         apply_lines_chk.setVisible(allow_line_apply)
+        type_hint = QLabel()
+        type_hint.setProperty("role", "muted")
+        type_hint.setWordWrap(True)
+
+        def sync_document_type() -> None:
+            doc_type = str(type_combo.currentData() or "DOCUMENTO")
+            needs_guide = doc_type in {"GUIA", "GUIA_FATURA"}
+            needs_invoice = doc_type in {"FATURA", "GUIA_FATURA"}
+            guia_edit.setEnabled(needs_guide or doc_type == "FATURA")
+            fatura_edit.setEnabled(needs_invoice)
+            guia_edit.setPlaceholderText("Obrigatório" if needs_guide else ("Guia associada (opcional)" if doc_type == "FATURA" else "Não aplicável"))
+            fatura_edit.setPlaceholderText("Obrigatório" if needs_invoice else "Não aplicável")
+            if doc_type == "GUIA":
+                fatura_edit.clear()
+                type_hint.setText("A guia comprova a circulação/entrega. Não é uma fatura nem cria uma referência de faturação.")
+            elif doc_type == "FATURA":
+                type_hint.setText("A fatura é o documento comercial. Podes indicar a guia que lhe deu origem.")
+            elif doc_type == "GUIA_FATURA":
+                type_hint.setText("Usa esta opção apenas quando estás a registar simultaneamente os dois documentos.")
+            else:
+                guia_edit.clear()
+                fatura_edit.clear()
+                type_hint.setText("Para certificados, notas de crédito ou outros anexos sem número de guia/fatura.")
+
+        type_combo.currentIndexChanged.connect(sync_document_type)
 
         def pick_path() -> None:
             path, _ = QFileDialog.getOpenFileName(
@@ -1110,12 +1171,40 @@ class PurchaseNotesPage(QWidget):
         form.addWidget(QLabel("Obs."), 4, 0)
         form.addWidget(obs_edit, 4, 1, 1, 3)
         layout.addLayout(form)
+        layout.addWidget(type_hint)
         if allow_line_apply:
             layout.addWidget(apply_lines_chk)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(dialog.accept)
+        ok_button = buttons.button(QDialogButtonBox.Ok)
+        if ok_button is not None:
+            ok_button.setText("Registar documento")
+
+        def accept_document() -> None:
+            doc_type = str(type_combo.currentData() or "DOCUMENTO")
+            guia = guia_edit.text().strip()
+            fatura = fatura_edit.text().strip()
+            if doc_type == "GUIA" and not guia:
+                QMessageBox.warning(dialog, "Documento", "Indica o número da guia.")
+                guia_edit.setFocus()
+                return
+            if doc_type == "FATURA" and not fatura:
+                QMessageBox.warning(dialog, "Documento", "Indica o número da fatura.")
+                fatura_edit.setFocus()
+                return
+            if doc_type == "GUIA_FATURA" and (not guia or not fatura):
+                QMessageBox.warning(dialog, "Documento", "Indica os números da guia e da fatura.")
+                (guia_edit if not guia else fatura_edit).setFocus()
+                return
+            if doc_type == "DOCUMENTO" and not title_edit.text().strip() and not path_edit.text().strip():
+                QMessageBox.warning(dialog, "Documento", "Indica o título ou seleciona um ficheiro.")
+                title_edit.setFocus()
+                return
+            dialog.accept()
+
+        buttons.accepted.connect(accept_document)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
+        sync_document_type()
         if dialog.exec() != QDialog.Accepted:
             return None
         payload = {
@@ -1658,6 +1747,10 @@ class PurchaseNotesPage(QWidget):
         doc_edit.setDisplayFormat("yyyy-MM-dd")
         doc_edit.setDate(QDate.currentDate())
         title_edit = QLineEdit()
+        type_combo = QComboBox()
+        type_combo.addItem("Guia de remessa / transporte", "GUIA")
+        type_combo.addItem("Fatura de fornecedor", "FATURA")
+        type_combo.addItem("Guia + fatura", "GUIA_FATURA")
         guia_edit = QLineEdit()
         fatura_edit = QLineEdit()
         path_edit = QLineEdit()
@@ -1698,7 +1791,8 @@ class PurchaseNotesPage(QWidget):
         meta_title = QLabel("Documento de entrega")
         meta_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
         meta_hint = QLabel(
-            "Preenche apenas o essencial. O lote da entrada e a localização são opcionais nas linhas abaixo."
+            "Escolhe primeiro o documento que acompanha a mercadoria. A guia comprova a entrega; "
+            "a fatura é o documento comercial. O sistema impede combinações incoerentes."
         )
         meta_hint.setProperty("role", "muted")
         meta_hint.setWordWrap(True)
@@ -1710,6 +1804,10 @@ class PurchaseNotesPage(QWidget):
         path_row_layout.addWidget(browse_btn, 0)
         meta_layout.addWidget(meta_title, 0, 0, 1, 4)
         meta_layout.addWidget(meta_hint, 1, 0, 1, 4)
+        document_rule = QLabel()
+        document_rule.setWordWrap(True)
+        document_rule.setProperty("role", "muted")
+        label_tipo = QLabel("Tipo de documento")
         label_entrega = QLabel("Data entrega")
         label_doc = QLabel("Data documento")
         label_titulo = QLabel("Título")
@@ -1717,24 +1815,46 @@ class PurchaseNotesPage(QWidget):
         label_fatura = QLabel("Fatura")
         label_path = QLabel("Documento")
         label_obs = QLabel("Obs.")
-        for label in (label_entrega, label_doc, label_titulo, label_guia, label_fatura, label_path, label_obs):
+        for label in (label_tipo, label_entrega, label_doc, label_titulo, label_guia, label_fatura, label_path, label_obs):
             label.setProperty("role", "muted")
-        meta_layout.addWidget(label_entrega, 2, 0)
-        meta_layout.addWidget(label_doc, 2, 2)
-        meta_layout.addWidget(entrega_edit, 3, 0, 1, 2)
-        meta_layout.addWidget(doc_edit, 3, 2, 1, 2)
-        meta_layout.addWidget(label_titulo, 4, 0)
-        meta_layout.addWidget(label_guia, 4, 2)
-        meta_layout.addWidget(title_edit, 5, 0, 1, 2)
-        meta_layout.addWidget(guia_edit, 5, 2, 1, 2)
-        meta_layout.addWidget(label_fatura, 6, 0)
-        meta_layout.addWidget(label_path, 6, 2)
-        meta_layout.addWidget(fatura_edit, 7, 0, 1, 2)
-        meta_layout.addWidget(path_row, 7, 2, 1, 2)
-        meta_layout.addWidget(label_obs, 8, 0)
-        meta_layout.addWidget(obs_edit, 9, 0, 1, 4)
+        meta_layout.addWidget(label_tipo, 2, 0)
+        meta_layout.addWidget(type_combo, 3, 0, 1, 2)
+        meta_layout.addWidget(document_rule, 3, 2, 1, 2)
+        meta_layout.addWidget(label_entrega, 4, 0)
+        meta_layout.addWidget(label_doc, 4, 2)
+        meta_layout.addWidget(entrega_edit, 5, 0, 1, 2)
+        meta_layout.addWidget(doc_edit, 5, 2, 1, 2)
+        meta_layout.addWidget(label_titulo, 6, 0)
+        meta_layout.addWidget(label_guia, 6, 2)
+        meta_layout.addWidget(title_edit, 7, 0, 1, 2)
+        meta_layout.addWidget(guia_edit, 7, 2, 1, 2)
+        meta_layout.addWidget(label_fatura, 8, 0)
+        meta_layout.addWidget(label_path, 8, 2)
+        meta_layout.addWidget(fatura_edit, 9, 0, 1, 2)
+        meta_layout.addWidget(path_row, 9, 2, 1, 2)
+        meta_layout.addWidget(label_obs, 10, 0)
+        meta_layout.addWidget(obs_edit, 11, 0, 1, 4)
         for col in range(4):
             meta_layout.setColumnStretch(col, 1)
+
+        def sync_delivery_document_type() -> None:
+            doc_type = str(type_combo.currentData() or "GUIA")
+            needs_guide = doc_type in {"GUIA", "GUIA_FATURA"}
+            needs_invoice = doc_type in {"FATURA", "GUIA_FATURA"}
+            guia_edit.setEnabled(needs_guide or doc_type == "FATURA")
+            fatura_edit.setEnabled(needs_invoice)
+            guia_edit.setPlaceholderText("Obrigatório" if needs_guide else "Guia associada (opcional)")
+            fatura_edit.setPlaceholderText("Obrigatório" if needs_invoice else "Não aplicável")
+            if doc_type == "GUIA":
+                fatura_edit.clear()
+                document_rule.setText("GUIA · regista a entrega física; a fatura poderá ser associada posteriormente.")
+            elif doc_type == "FATURA":
+                document_rule.setText("FATURA · regista o documento comercial; indica a guia associada se existir.")
+            else:
+                document_rule.setText("GUIA + FATURA · os dois números são obrigatórios neste registo.")
+
+        type_combo.currentIndexChanged.connect(sync_delivery_document_type)
+        sync_delivery_document_type()
         layout.addWidget(meta_card)
 
         table = QTableWidget(len(self.line_rows), 10)
@@ -1894,7 +2014,28 @@ class PurchaseNotesPage(QWidget):
             ok_btn.setText("Guardar")
         if cancel_btn is not None:
             cancel_btn.setText("Fechar")
-        buttons.accepted.connect(dialog.accept)
+        def accept_delivery() -> None:
+            doc_type = str(type_combo.currentData() or "GUIA")
+            guia = guia_edit.text().strip()
+            fatura = fatura_edit.text().strip()
+            if doc_type == "GUIA" and not guia:
+                QMessageBox.warning(dialog, "Receção", "Indica o número da guia que acompanha a entrega.")
+                guia_edit.setFocus()
+                return
+            if doc_type == "FATURA" and not fatura:
+                QMessageBox.warning(dialog, "Receção", "Indica o número da fatura.")
+                fatura_edit.setFocus()
+                return
+            if doc_type == "GUIA_FATURA" and (not guia or not fatura):
+                QMessageBox.warning(dialog, "Receção", "Indica os números da guia e da fatura.")
+                (guia_edit if not guia else fatura_edit).setFocus()
+                return
+            if not any(spin.value() > 0 for spin in qty_inputs):
+                QMessageBox.warning(dialog, "Receção", "Indica pelo menos uma quantidade a receber.")
+                return
+            dialog.accept()
+
+        buttons.accepted.connect(accept_delivery)
         buttons.rejected.connect(dialog.reject)
         dialog_layout.addWidget(buttons)
         if dialog.exec() != QDialog.Accepted:
@@ -1914,6 +2055,7 @@ class PurchaseNotesPage(QWidget):
                     }
                 )
         return {
+            "tipo": str(type_combo.currentData() or "GUIA"),
             "data_entrega": entrega_edit.date().toString("yyyy-MM-dd"),
             "data_documento": doc_edit.date().toString("yyyy-MM-dd"),
             "titulo": title_edit.text().strip(),
@@ -1984,12 +2126,13 @@ class PurchaseNotesPage(QWidget):
         can_send_order = kind != "rfq" and ("aprov" in estado_txt or "enviad" in estado_txt)
         generated = list(detail.get("ne_geradas", []) or [])
         doc_count = int(detail.get("document_count", len(self.current_documents)) or 0)
+        document_status = str(detail.get("document_status", "") or "").strip()
         if kind == "rfq":
             text = "Cotação"
             if generated:
                 text = f"{text} | NEs {len(generated)}"
             if doc_count:
-                text = f"{text} | Docs {doc_count}"
+                text = f"{text} | {document_status or f'Docs {doc_count}'}"
             self.summary_hint.setText(text)
             self.generate_btn.setEnabled(True)
             self.delivery_btn.setEnabled(False)
@@ -2002,7 +2145,7 @@ class PurchaseNotesPage(QWidget):
         elif kind == "supplier_order":
             summary = "NE gerada"
             if doc_count:
-                summary = f"{summary} | Docs {doc_count}"
+                summary = f"{summary} | {document_status or f'Docs {doc_count}'}"
             self.summary_hint.setText(summary)
             self.generate_btn.setEnabled(False)
             self.delivery_btn.setEnabled(True)
@@ -2015,7 +2158,7 @@ class PurchaseNotesPage(QWidget):
         else:
             summary = "Compra direta / cotação simples"
             if doc_count:
-                summary = f"{summary} | Docs {doc_count}"
+                summary = f"{summary} | {document_status or f'Docs {doc_count}'}"
             self.summary_hint.setText(summary)
             self.generate_btn.setEnabled(False)
             self.delivery_btn.setEnabled(True)

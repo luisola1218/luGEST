@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QProgressBar,
@@ -8702,17 +8703,17 @@ class TransportsPage(QWidget):
         actions_layout = QVBoxLayout(actions)
         actions_layout.setContentsMargins(14, 10, 14, 10)
         actions_layout.setSpacing(8)
-        self.new_trip_btn = QPushButton("Nova viagem")
+        self.new_trip_btn = QPushButton("＋ Nova viagem")
         self.new_trip_btn.clicked.connect(self._new_trip)
-        self.assign_btn = QPushButton("Agendar seleção")
+        self.assign_btn = QPushButton("→ Adicionar à viagem")
         self.assign_btn.clicked.connect(self._assign_selected_orders)
         self.edit_trip_btn = QPushButton("Editar viagem")
         self.edit_trip_btn.setProperty("variant", "secondary")
         self.edit_trip_btn.clicked.connect(self._edit_trip)
-        self.remove_trip_btn = QPushButton("Apagar viagem")
+        self.remove_trip_btn = QPushButton("🗑 Apagar viagem")
         self.remove_trip_btn.setProperty("variant", "danger")
         self.remove_trip_btn.clicked.connect(self._remove_trip)
-        self.request_btn = QPushButton("Requisitar transporte")
+        self.request_btn = QPushButton("Requisitar / confirmar")
         self.request_btn.setProperty("variant", "secondary")
         self.request_btn.clicked.connect(self._request_transport)
         self.tariff_btn = QPushButton("Tarifário")
@@ -8723,15 +8724,15 @@ class TransportsPage(QWidget):
         self.apply_cost_btn.clicked.connect(self._apply_suggested_costs)
         self.trip_status_combo = QComboBox()
         self.trip_status_combo.addItems(["Planeado", "Em carga", "Em trânsito", "Concluído", "Incidente", "Anulado"])
-        self.trip_status_btn = QPushButton("Estado viagem")
+        self.trip_status_btn = QPushButton("Aplicar à viagem")
         self.trip_status_btn.setProperty("variant", "secondary")
         self.trip_status_btn.clicked.connect(self._apply_trip_status)
         self.stop_status_combo = QComboBox()
         self.stop_status_combo.addItems(["Planeada", "Carregada", "Entregue", "Incidente"])
-        self.stop_status_btn = QPushButton("Estado paragem")
+        self.stop_status_btn = QPushButton("Aplicar à paragem")
         self.stop_status_btn.setProperty("variant", "secondary")
         self.stop_status_btn.clicked.connect(self._apply_stop_status)
-        self.edit_stop_btn = QPushButton("Editar paragem / guia")
+        self.edit_stop_btn = QPushButton("Editar destino / guia")
         self.edit_stop_btn.setProperty("variant", "secondary")
         self.edit_stop_btn.clicked.connect(self._edit_stop)
         self.stop_up_btn = QPushButton("Subir")
@@ -8743,7 +8744,7 @@ class TransportsPage(QWidget):
         self.remove_stop_btn = QPushButton("Remover paragem")
         self.remove_stop_btn.setProperty("variant", "secondary")
         self.remove_stop_btn.clicked.connect(self._remove_stop)
-        self.pdf_btn = QPushButton("Folha de rota PDF")
+        self.pdf_btn = QPushButton("▤ Folha de rota")
         self.pdf_btn.setProperty("variant", "secondary")
         self.pdf_btn.clicked.connect(self._open_trip_pdf)
         self.refresh_btn = QPushButton("Atualizar")
@@ -8766,21 +8767,30 @@ class TransportsPage(QWidget):
             self.pdf_btn,
             self.refresh_btn,
         ):
-            button.setMinimumWidth(146)
+            button.setMinimumWidth(126)
         self.trip_status_combo.setMinimumWidth(136)
         self.stop_status_combo.setMinimumWidth(136)
 
-        actions_hint = QLabel("Organiza as viagens em 3 passos: criar, gerir estado da viagem e afinar as paragens.")
+        actions_hint = QLabel(
+            "Fluxo recomendado: cria a viagem, seleciona encomendas em «Por agendar» e adiciona-as; "
+            "depois confirma carga, documentos e entrega em cada destino."
+        )
         actions_hint.setProperty("role", "muted")
         actions_layout.addWidget(actions_hint)
+        self.active_trip_label = QLabel("VIAGEM ATIVA · nenhuma selecionada")
+        self.active_trip_label.setStyleSheet(
+            "padding: 6px 10px; border-radius: 5px; background: #eaf2fb; "
+            "color: #174a7c; font-size: 11px; font-weight: 800;"
+        )
+        actions_layout.addWidget(self.active_trip_label)
 
         action_grid = QGridLayout()
         action_grid.setHorizontalSpacing(8)
         action_grid.setVerticalSpacing(8)
         action_grid.setColumnMinimumWidth(0, 96)
-        action_grid.setColumnStretch(8, 1)
+        action_grid.setColumnStretch(7, 1)
 
-        planning_label = QLabel("Planeamento")
+        planning_label = QLabel("VIAGEM")
         planning_label.setStyleSheet("font-size: 11px; font-weight: 800; color: #475569; text-transform: uppercase;")
         action_grid.addWidget(planning_label, 0, 0)
         for col, widget in enumerate(
@@ -8788,34 +8798,34 @@ class TransportsPage(QWidget):
                 self.new_trip_btn,
                 self.assign_btn,
                 self.edit_trip_btn,
-                self.remove_trip_btn,
                 self.request_btn,
-                self.tariff_btn,
-                self.apply_cost_btn,
-                self.refresh_btn,
+                self.pdf_btn,
             ),
             start=1,
         ):
             action_grid.addWidget(widget, 0, col)
+        action_grid.addWidget(self.tariff_btn, 0, 8)
+        action_grid.addWidget(self.refresh_btn, 0, 9)
 
-        trip_label = QLabel("Viagem")
+        trip_label = QLabel("ESTADOS")
         trip_label.setStyleSheet("font-size: 11px; font-weight: 800; color: #475569; text-transform: uppercase;")
         action_grid.addWidget(trip_label, 1, 0)
-        action_grid.addWidget(self.trip_status_btn, 1, 1)
-        action_grid.addWidget(self.trip_status_combo, 1, 2)
+        action_grid.addWidget(self.trip_status_combo, 1, 1)
+        action_grid.addWidget(self.trip_status_btn, 1, 2)
+        action_grid.addWidget(self.stop_status_combo, 1, 3)
+        action_grid.addWidget(self.stop_status_btn, 1, 4)
+        action_grid.addWidget(self.apply_cost_btn, 1, 5)
+        action_grid.addWidget(self.remove_trip_btn, 1, 9)
 
-        stop_label = QLabel("Paragens")
+        stop_label = QLabel("DESTINO")
         stop_label.setStyleSheet("font-size: 11px; font-weight: 800; color: #475569; text-transform: uppercase;")
         action_grid.addWidget(stop_label, 2, 0)
         for col, widget in enumerate(
             (
-                self.stop_status_btn,
-                self.stop_status_combo,
                 self.edit_stop_btn,
                 self.stop_up_btn,
                 self.stop_down_btn,
                 self.remove_stop_btn,
-                self.pdf_btn,
             ),
             start=1,
         ):
@@ -8864,6 +8874,8 @@ class TransportsPage(QWidget):
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
         root.addWidget(splitter, 1)
+        self.transport_tabs = QTabWidget()
+        self.transport_tabs.setDocumentMode(True)
 
         pending_card = CardFrame()
         pending_card.set_tone("warning")
@@ -8906,7 +8918,7 @@ class TransportsPage(QWidget):
         pending_layout.addWidget(pending_hint)
         pending_layout.addWidget(self.pending_table)
         pending_layout.addWidget(self.pending_empty)
-        splitter.addWidget(pending_card)
+        self.transport_tabs.addTab(pending_card, "Por agendar")
 
         trips_card = CardFrame()
         trips_card.set_tone("default")
@@ -8948,7 +8960,8 @@ class TransportsPage(QWidget):
         trips_layout.addWidget(trips_hint)
         trips_layout.addWidget(self.trip_table)
         trips_layout.addWidget(self.trip_empty)
-        splitter.addWidget(trips_card)
+        self.transport_tabs.addTab(trips_card, "Viagens")
+        splitter.addWidget(self.transport_tabs)
 
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
@@ -9006,7 +9019,9 @@ class TransportsPage(QWidget):
         right_layout.addWidget(self.detail_card, 1)
 
         splitter.addWidget(right_panel)
-        splitter.setSizes([520, 420, 880])
+        splitter.setStretchFactor(0, 5)
+        splitter.setStretchFactor(1, 7)
+        splitter.setSizes([720, 1040])
         self._clear_trip_detail()
         self._sync_actions()
 
@@ -9077,6 +9092,8 @@ class TransportsPage(QWidget):
         for card, (value, subtitle) in zip(self.transport_stats, stat_values):
             card.set_data(value, subtitle)
         self.trip_empty.setVisible(self.trip_table.rowCount() == 0)
+        self.transport_tabs.setTabText(0, f"Por agendar ({len(self.pending_rows)})")
+        self.transport_tabs.setTabText(1, f"Viagens ({len(self.trip_rows)})")
         self._restore_trip_selection(previous_trip)
         if self.trip_table.rowCount() == 0:
             self._clear_trip_detail()
@@ -9142,6 +9159,7 @@ class TransportsPage(QWidget):
 
     def _clear_trip_detail(self) -> None:
         self.current_detail = {}
+        self.active_trip_label.setText("VIAGEM ATIVA · nenhuma selecionada")
         self.detail_title.setText("Seleciona uma viagem")
         self.detail_meta.setText("Cria uma viagem e afeta encomendas a nosso cargo.")
         self.detail_note.setText("-")
@@ -9161,6 +9179,7 @@ class TransportsPage(QWidget):
             QMessageBox.critical(self, "Transportes", str(exc))
             return
         self.current_detail = detail
+        self.active_trip_label.setText(f"VIAGEM ATIVA · {detail.get('numero', '-')} · {detail.get('estado', '-')}")
         self.detail_title.setText(f"Viagem {detail.get('numero', '-')}")
         _apply_state_chip(self.detail_state_chip, str(detail.get("estado", "") or "-"))
         self.trip_status_combo.setCurrentText(str(detail.get("estado", "Planeado") or "Planeado"))
@@ -9878,6 +9897,7 @@ class TransportsPage(QWidget):
         self.refresh()
         self._restore_trip_selection(str(detail.get("numero", "") or "").strip())
         self._show_trip_detail()
+        self.transport_tabs.setCurrentIndex(0)
 
     def _edit_trip(self) -> None:
         current = self._current_trip_row()
@@ -9997,6 +10017,7 @@ class TransportsPage(QWidget):
         self.refresh()
         self._restore_trip_selection(numero)
         self._show_trip_detail()
+        self.transport_tabs.setCurrentIndex(1)
 
     def _apply_trip_status(self) -> None:
         current = self._current_trip_row()
@@ -12659,7 +12680,7 @@ class LegacyOrdersPage(OrdersPage):
         pieces_item = sections[4] if len(sections) > 4 else None
         montagem_item = sections[5] if len(sections) > 5 else None
         if pieces_item is not None and pieces_item.widget() is not None:
-            pieces_item.widget().setMinimumHeight(260)
+            pieces_item.widget().setMinimumHeight(300)
             self._rebuild_order_section_toolbar(
                 pieces_item.widget(),
                 "Peças da ordem",
@@ -12674,7 +12695,7 @@ class LegacyOrdersPage(OrdersPage):
                 "pieces",
             )
         if montagem_item is not None and montagem_item.widget() is not None:
-            montagem_item.widget().setMinimumHeight(150)
+            montagem_item.widget().setMinimumHeight(210)
             self._rebuild_order_section_toolbar(
                 montagem_item.widget(),
                 "Montagem e componentes",
@@ -12783,8 +12804,9 @@ class LegacyOrdersPage(OrdersPage):
         detail_actions = CardFrame()
         detail_actions.set_tone("default")
         detail_actions_layout = QHBoxLayout(detail_actions)
-        detail_actions_layout.setContentsMargins(14, 10, 14, 10)
+        detail_actions_layout.setContentsMargins(12, 6, 12, 6)
         detail_actions_layout.setSpacing(8)
+        detail_actions.setMaximumHeight(52)
         back_btn = QPushButton("Voltar às ordens")
         back_btn.setProperty("variant", "secondary")
         back_btn.clicked.connect(self._show_order_list)
@@ -12811,53 +12833,141 @@ class LegacyOrdersPage(OrdersPage):
         detail_actions_layout.addLayout(context_layout, 1)
         detail_actions_layout.addWidget(edit_btn)
         detail_actions_layout.addWidget(refresh_btn)
+        self.import_model_btn.setProperty("variant", "secondary")
+        self.import_model_btn.setMinimumWidth(126)
+        self.import_model_btn.setMaximumWidth(144)
+        self.print_of_btn.setProperty("variant", "warning")
+        self.print_of_btn.setMinimumWidth(128)
+        self.print_of_btn.setMaximumWidth(146)
+        detail_actions_layout.addWidget(self.import_model_btn)
+        detail_actions_layout.addWidget(self.print_of_btn)
         detail_actions_layout.addStretch(1)
         detail_actions_layout.addWidget(remove_btn)
         detail_layout.addWidget(detail_actions)
 
-        content_split = QSplitter(Qt.Vertical)
-        content_split.setChildrenCollapsible(False)
-        top_host = QWidget()
-        top_layout = QVBoxLayout(top_host)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(10)
-        _adopt_layout_item(top_layout, info_item)
-        bottom_split = QSplitter(Qt.Horizontal)
-        bottom_split.setChildrenCollapsible(False)
-        left_host = QWidget()
-        left_layout = QVBoxLayout(left_host)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(0)
+        self.order_detail_stack = QStackedWidget()
+
+        overview_page = QWidget()
+        overview_layout = QVBoxLayout(overview_page)
+        overview_layout.setContentsMargins(0, 0, 0, 0)
+        overview_layout.setSpacing(10)
+        _adopt_layout_item(overview_layout, info_item)
+
+        selection_strip = CardFrame()
+        selection_strip.set_tone("info")
+        selection_layout = QHBoxLayout(selection_strip)
+        selection_layout.setContentsMargins(14, 7, 14, 7)
+        selection_layout.setSpacing(10)
+        selection_text = QVBoxLayout()
+        selection_text.setSpacing(0)
+        selection_title = QLabel("Selecionar material e espessura")
+        selection_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #10253d;")
+        selection_hint = QLabel("Escolha o grupo de fabrico e avance para trabalhar apenas nas peças correspondentes.")
+        selection_hint.setProperty("role", "muted")
+        selection_text.addWidget(selection_title)
+        selection_text.addWidget(selection_hint)
+        self.open_order_group_btn = QPushButton("Abrir peças selecionadas")
+        self.open_order_group_btn.clicked.connect(self._show_order_production)
+        self.open_order_group_btn.setMinimumWidth(180)
+        self.open_order_assembly_btn = QPushButton("Montagem e componentes")
+        self.open_order_assembly_btn.setProperty("variant", "secondary")
+        self.open_order_assembly_btn.clicked.connect(self._show_order_assembly)
+        self.open_order_assembly_btn.setMinimumWidth(190)
+        selection_layout.addLayout(selection_text, 1)
+        selection_layout.addWidget(self.open_order_assembly_btn)
+        selection_layout.addWidget(self.open_order_group_btn)
+        selection_strip.setMaximumHeight(62)
+        overview_layout.addWidget(selection_strip)
+
         hierarchy_split = mid_item.widget() if mid_item is not None else None
         if isinstance(hierarchy_split, QSplitter):
-            hierarchy_split.setOrientation(Qt.Vertical)
-            hierarchy_split.setSizes([280, 360])
+            hierarchy_split.setOrientation(Qt.Horizontal)
+            hierarchy_split.setHandleWidth(6)
+            hierarchy_split.setSizes([760, 1140])
             for index in range(hierarchy_split.count()):
                 hierarchy_split.widget(index).setMinimumWidth(320)
-        _adopt_layout_item(left_layout, mid_item, 1)
-        right_split = QSplitter(Qt.Vertical)
-        right_split.setChildrenCollapsible(False)
+        _adopt_layout_item(overview_layout, mid_item, 1)
+
+        production_page = QWidget()
+        production_layout = QVBoxLayout(production_page)
+        production_layout.setContentsMargins(0, 0, 0, 0)
+        production_layout.setSpacing(10)
+        production_nav = CardFrame()
+        production_nav.set_tone("info")
+        production_nav_layout = QHBoxLayout(production_nav)
+        production_nav_layout.setContentsMargins(12, 7, 12, 7)
+        production_nav_layout.setSpacing(10)
+        back_to_selection_btn = QPushButton("Voltar à seleção")
+        back_to_selection_btn.setProperty("variant", "secondary")
+        back_to_selection_btn.clicked.connect(self._show_order_overview)
+        back_to_selection_btn.setMinimumWidth(126)
+        production_context = QVBoxLayout()
+        production_context.setSpacing(0)
+        self.production_context_title = QLabel("Peças da ordem")
+        self.production_context_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #10253d;")
+        self.production_context_meta = QLabel("Material e espessura selecionados")
+        self.production_context_meta.setProperty("role", "muted")
+        production_context.addWidget(self.production_context_title)
+        production_context.addWidget(self.production_context_meta)
+        production_nav_layout.addWidget(back_to_selection_btn)
+        production_nav_layout.addLayout(production_context, 1)
+        production_nav.setMaximumHeight(58)
+        production_layout.addWidget(production_nav)
+
         pieces_host = QWidget()
         pieces_layout = QVBoxLayout(pieces_host)
         pieces_layout.setContentsMargins(0, 0, 0, 0)
         pieces_layout.setSpacing(0)
         _adopt_layout_item(pieces_layout, pieces_item, 1)
-        right_split.addWidget(pieces_host)
+        production_layout.addWidget(pieces_host, 1)
+
+        assembly_page = QWidget()
+        assembly_page_layout = QVBoxLayout(assembly_page)
+        assembly_page_layout.setContentsMargins(0, 0, 0, 0)
+        assembly_page_layout.setSpacing(10)
+        assembly_nav = CardFrame()
+        assembly_nav.set_tone("warning")
+        assembly_nav_layout = QHBoxLayout(assembly_nav)
+        assembly_nav_layout.setContentsMargins(12, 7, 12, 7)
+        assembly_nav_layout.setSpacing(10)
+        back_from_assembly_btn = QPushButton("Voltar à seleção")
+        back_from_assembly_btn.setProperty("variant", "secondary")
+        back_from_assembly_btn.clicked.connect(self._show_order_overview)
+        back_from_assembly_btn.setMinimumWidth(126)
+        assembly_context = QVBoxLayout()
+        assembly_context.setSpacing(0)
+        assembly_title = QLabel("Montagem e componentes da ordem")
+        assembly_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #10253d;")
+        assembly_hint = QLabel("Necessidades globais da ordem, independentes do material e da espessura selecionados.")
+        assembly_hint.setProperty("role", "muted")
+        assembly_context.addWidget(assembly_title)
+        assembly_context.addWidget(assembly_hint)
+        assembly_nav_layout.addWidget(back_from_assembly_btn)
+        assembly_nav_layout.addLayout(assembly_context, 1)
+        assembly_nav.setMaximumHeight(58)
+        assembly_page_layout.addWidget(assembly_nav)
         if montagem_item is not None:
             montagem_host = QWidget()
             montagem_layout = QVBoxLayout(montagem_host)
             montagem_layout.setContentsMargins(0, 0, 0, 0)
             montagem_layout.setSpacing(0)
             _adopt_layout_item(montagem_layout, montagem_item, 1)
-            right_split.addWidget(montagem_host)
-            right_split.setSizes([520, 240])
-        bottom_split.addWidget(left_host)
-        bottom_split.addWidget(right_split)
-        bottom_split.setSizes([430, 1470])
-        content_split.addWidget(top_host)
-        content_split.addWidget(bottom_split)
-        content_split.setSizes([245, 595])
-        detail_layout.addWidget(content_split, 1)
+            assembly_page_layout.addWidget(montagem_host, 1)
+
+        self.order_detail_stack.addWidget(overview_page)
+        self.order_detail_stack.addWidget(production_page)
+        self.order_detail_stack.addWidget(assembly_page)
+        detail_layout.addWidget(self.order_detail_stack, 1)
+
+        compact_table_style = (
+            "QTableWidget { font-size: 10px; }"
+            "QTableWidget::item { padding: 2px 5px; }"
+            "QHeaderView::section { font-size: 9px; font-weight: 800; padding: 4px 6px; }"
+        )
+        self.pieces_table.setStyleSheet(compact_table_style)
+        self.montagem_table.setStyleSheet(compact_table_style)
+        self.pieces_table.verticalHeader().setDefaultSectionSize(26)
+        self.montagem_table.verticalHeader().setDefaultSectionSize(25)
 
         self.view_stack.addWidget(self.list_page)
         self.view_stack.addWidget(self.detail_page)
@@ -12868,6 +12978,9 @@ class LegacyOrdersPage(OrdersPage):
         self.table.itemSelectionChanged.connect(self._sync_order_overview)
         self.materials_table.itemSelectionChanged.connect(self._sync_order_section_context)
         self.esp_table.itemSelectionChanged.connect(self._sync_order_section_context)
+        self.materials_table.cellDoubleClicked.connect(lambda _row, _column: self._show_order_production())
+        self.esp_table.cellDoubleClicked.connect(lambda _row, _column: self._show_order_production())
+        self._show_order_overview()
         self._show_order_list()
         self._sync_list_open_button()
 
@@ -12946,21 +13059,21 @@ class LegacyOrdersPage(OrdersPage):
             if widget is not None and widget not in preserved:
                 widget.deleteLater()
 
-        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setContentsMargins(12, 7, 12, 7)
         layout.setHorizontalSpacing(0)
         layout.setVerticalSpacing(0)
         host = QWidget()
         host_layout = QVBoxLayout(host)
         host_layout.setContentsMargins(0, 0, 0, 0)
-        host_layout.setSpacing(7)
+        host_layout.setSpacing(4)
 
         identity_row = QHBoxLayout()
-        identity_row.setSpacing(14)
+        identity_row.setSpacing(12)
         identity = QVBoxLayout()
         identity.setSpacing(0)
         eyebrow = QLabel("ORDEM DE FABRICO")
         eyebrow.setStyleSheet("font-size: 8px; font-weight: 800; color: #087f83;")
-        self.info_of.setStyleSheet("font-size: 18px; font-weight: 900; color: #10253d;")
+        self.info_of.setStyleSheet("font-size: 16px; font-weight: 900; color: #10253d;")
         order_number_row = QHBoxLayout()
         order_number_row.setContentsMargins(0, 0, 0, 0)
         order_number_row.setSpacing(5)
@@ -12979,8 +13092,8 @@ class LegacyOrdersPage(OrdersPage):
         client_block.setSpacing(1)
         client_label = QLabel("CLIENTE / REFERÊNCIA")
         client_label.setStyleSheet("font-size: 8px; font-weight: 800; color: #60758d;")
-        self.info_cliente.setStyleSheet("font-size: 12px; font-weight: 800; color: #10253d;")
-        self.info_nota.setStyleSheet("font-size: 10px; color: #516981;")
+        self.info_cliente.setStyleSheet("font-size: 11px; font-weight: 800; color: #10253d;")
+        self.info_nota.setStyleSheet("font-size: 9px; color: #516981;")
         client_block.addWidget(client_label)
         client_block.addWidget(self.info_cliente)
         client_block.addWidget(self.info_nota)
@@ -12996,7 +13109,7 @@ class LegacyOrdersPage(OrdersPage):
             "QLabel#OrderMetricValue { color: #10253d; font-size: 12px; font-weight: 900; }"
         )
         metrics_layout = QHBoxLayout(metrics_frame)
-        metrics_layout.setContentsMargins(10, 5, 10, 5)
+        metrics_layout.setContentsMargins(10, 3, 10, 3)
         metrics_layout.setSpacing(16)
 
         def add_metric(label_text: str, value_widget: QLabel) -> None:
@@ -13022,7 +13135,7 @@ class LegacyOrdersPage(OrdersPage):
         self.order_progress_bar.setRange(0, 100)
         self.order_progress_bar.setValue(0)
         self.order_progress_bar.setTextVisible(False)
-        self.order_progress_bar.setFixedSize(150, 12)
+        self.order_progress_bar.setFixedSize(150, 10)
         self.order_progress_bar.setStyleSheet(
             "QProgressBar { background: #e6edf5; border: 0; border-radius: 5px; }"
             "QProgressBar::chunk { background: #0aa6a6; border-radius: 5px; }"
@@ -13059,7 +13172,7 @@ class LegacyOrdersPage(OrdersPage):
             "QFrame#OrderReservationStrip { background: #f2f8fb; border: 1px solid #c8d9e7; }"
         )
         reservation_layout = QHBoxLayout(reservation_frame)
-        reservation_layout.setContentsMargins(10, 5, 8, 5)
+        reservation_layout.setContentsMargins(10, 3, 8, 3)
         reservation_layout.setSpacing(8)
         reservation_text = QVBoxLayout()
         reservation_text.setSpacing(0)
@@ -13080,8 +13193,8 @@ class LegacyOrdersPage(OrdersPage):
         host_layout.addWidget(reservation_frame)
 
         layout.addWidget(host, 0, 0, 1, 6)
-        self.info_card.setMinimumHeight(235)
-        self.info_card.setMaximumHeight(255)
+        self.info_card.setMinimumHeight(175)
+        self.info_card.setMaximumHeight(190)
         self._sync_order_overview()
 
     def _sync_order_overview(self) -> None:
@@ -13114,9 +13227,9 @@ class LegacyOrdersPage(OrdersPage):
         self._sync_order_section_context()
 
     def _sync_order_section_context(self) -> None:
+        material = str(self._selected_material_row().get("material", "") or "").strip()
+        thickness = str(self._selected_esp_row().get("espessura", "") or "").strip()
         if hasattr(self, "pieces_context_label"):
-            material = str(self._selected_material_row().get("material", "") or "").strip()
-            thickness = str(self._selected_esp_row().get("espessura", "") or "").strip()
             bits = [f"{len(self.detail_pieces)} peça(s)"]
             if material:
                 bits.append(material)
@@ -13131,6 +13244,16 @@ class LegacyOrdersPage(OrdersPage):
                 self.assembly_context_label.setText(f"{len(self.detail_montagem)} componentes | {shortages} em falta")
             else:
                 self.assembly_context_label.setText(f"{len(self.detail_montagem)} componentes | Stock disponível")
+        if hasattr(self, "open_order_group_btn"):
+            self.open_order_group_btn.setEnabled(bool(material and thickness))
+        if hasattr(self, "production_context_title"):
+            group_label = " · ".join(value for value in (material, f"{thickness} mm" if thickness else "") if value)
+            self.production_context_title.setText(group_label or "Peças da ordem")
+            self.production_context_meta.setText(
+                f"{len(self.detail_pieces)} peça(s) neste grupo · consulte e edite as operações abaixo."
+                if group_label
+                else "Volte à seleção e escolha um material e uma espessura."
+            )
 
     def _sync_order_portfolio_metrics(self) -> None:
         if not hasattr(self, "orders_total_metric"):
@@ -13153,6 +13276,7 @@ class LegacyOrdersPage(OrdersPage):
 
     def refresh(self) -> None:
         keep_detail = self.view_stack.currentWidget() is self.detail_page and bool(self.current_detail.get("numero"))
+        keep_detail_section = self.order_detail_stack.currentIndex() if keep_detail and hasattr(self, "order_detail_stack") else 0
         OrdersPage.refresh(self)
         self._sync_order_overview()
         self._sync_order_portfolio_metrics()
@@ -13160,16 +13284,43 @@ class LegacyOrdersPage(OrdersPage):
             self._show_order_list()
         elif keep_detail:
             self._show_order_detail()
+            if keep_detail_section == 1:
+                self._show_order_production()
+            elif keep_detail_section == 2:
+                self._show_order_assembly()
         else:
             self._show_order_list()
         self._sync_list_open_button()
 
     def _show_order_list(self) -> None:
         self.view_stack.setCurrentWidget(self.list_page)
+        self._show_order_overview()
         self._sync_list_open_button()
 
     def _show_order_detail(self) -> None:
         self.view_stack.setCurrentWidget(self.detail_page)
+
+    def _show_order_overview(self) -> None:
+        if hasattr(self, "order_detail_stack"):
+            self.order_detail_stack.setCurrentIndex(0)
+
+    def _show_order_production(self) -> None:
+        material = str(self._selected_material_row().get("material", "") or "").strip()
+        thickness = str(self._selected_esp_row().get("espessura", "") or "").strip()
+        if not material or not thickness:
+            if self.view_stack.currentWidget() is self.detail_page:
+                QMessageBox.information(
+                    self,
+                    "Peças da ordem",
+                    "Seleciona primeiro um material e uma espessura.",
+                )
+            return
+        self._sync_order_section_context()
+        self.order_detail_stack.setCurrentIndex(1)
+
+    def _show_order_assembly(self) -> None:
+        if hasattr(self, "order_detail_stack"):
+            self.order_detail_stack.setCurrentIndex(2)
 
     def can_auto_refresh(self) -> bool:
         return self.view_stack.currentWidget() is self.list_page
@@ -13191,11 +13342,16 @@ class LegacyOrdersPage(OrdersPage):
             QMessageBox.warning(self, "Encomendas", "Seleciona uma encomenda.")
             return
         OrdersPage._select_order(self, numero)
+        self._show_order_overview()
         self._show_order_detail()
 
     def _select_order(self, numero: str, piece_ref: str = "", material: str = "", espessura: str = "") -> None:
         OrdersPage._select_order(self, numero, piece_ref=piece_ref, material=material, espessura=espessura)
         self._show_order_detail()
+        if piece_ref or (material and espessura):
+            self._show_order_production()
+        else:
+            self._show_order_overview()
 
     def _remove_order(self) -> None:
         OrdersPage._remove_order(self)
@@ -14536,6 +14692,7 @@ class QuotesPage(QWidget):
         back_btn.setProperty("variant", "secondary")
         back_btn.clicked.connect(self._show_list)
         save_btn = QPushButton("Guardar")
+        save_btn.setProperty("variant", "warning")
         save_btn.clicked.connect(self._save_quote)
         self.quote_save_btn = save_btn
         edit_btn = QPushButton("Em edicao")
@@ -14549,33 +14706,30 @@ class QuotesPage(QWidget):
         approve_btn.clicked.connect(lambda: self._set_quote_state("Aprovado"))
         reject_btn = QPushButton("Rejeitado")
         reject_btn.setProperty("variant", "danger")
+        reject_btn.setText("✕  Rejeitado")
         reject_btn.clicked.connect(lambda: self._set_quote_state("Rejeitado"))
         convert_btn = QPushButton("Criar encomenda")
         convert_btn.clicked.connect(self._convert_quote)
         purchase_note_btn = QPushButton("Nota encomenda")
         purchase_note_btn.setProperty("variant", "secondary")
         purchase_note_btn.clicked.connect(self._create_quote_purchase_note)
-        preview_btn = QPushButton("Previsualizar PDF")
-        preview_btn.setProperty("variant", "secondary")
-        preview_btn.clicked.connect(self._preview_quote)
-        pdf_btn = QPushButton("Guardar PDF")
-        pdf_btn.setProperty("variant", "secondary")
-        pdf_btn.clicked.connect(self._save_quote_pdf)
-        print_btn = QPushButton("Imprimir PDF")
-        print_btn.setProperty("variant", "secondary")
-        print_btn.clicked.connect(self._print_quote_pdf)
+        pdf_actions_btn = QPushButton("PDF  ▾")
+        pdf_actions_btn.setProperty("variant", "secondary")
+        pdf_menu = QMenu(pdf_actions_btn)
+        pdf_menu.addAction("Pré-visualizar PDF", self._preview_quote)
+        pdf_menu.addAction("Guardar cópia PDF", self._save_quote_pdf)
+        pdf_menu.addAction("Imprimir PDF", self._print_quote_pdf)
+        pdf_actions_btn.setMenu(pdf_menu)
         action_widths = (
             (back_btn, 86),
             (save_btn, 82),
             (edit_btn, 86),
             (sent_btn, 70),
-            (approve_btn, 82),
-            (reject_btn, 84),
             (convert_btn, 128),
+            (pdf_actions_btn, 86),
             (purchase_note_btn, 120),
-            (preview_btn, 104),
-            (pdf_btn, 104),
-            (print_btn, 100),
+            (approve_btn, 82),
+            (reject_btn, 96),
         )
         for button, width in action_widths:
             button.setProperty("compact", "true")
@@ -14583,8 +14737,11 @@ class QuotesPage(QWidget):
             button.setMinimumHeight(29)
             button.setMaximumHeight(31)
             button.setStyleSheet("font-family: 'Segoe UI'; font-size: 9px; font-weight: 700;")
+        for button in (back_btn, save_btn, edit_btn, sent_btn, convert_btn, pdf_actions_btn):
             detail_actions_layout.addWidget(button)
         detail_actions_layout.addStretch(1)
+        for button in (purchase_note_btn, approve_btn, reject_btn):
+            detail_actions_layout.addWidget(button)
         detail_actions.setMaximumHeight(48)
         detail_layout.addWidget(detail_actions)
 
@@ -15839,12 +15996,36 @@ class QuotesPage(QWidget):
         inspector_tabs.addTab(conditions_inspector_page, "Condições")
         inspector_tabs.addTab(finance_inspector_page, "Financeiro")
 
-        lines_card.setMinimumHeight(540)
+        inspector_host = QWidget()
+        inspector_host.setMinimumWidth(350)
+        inspector_host.setMaximumWidth(470)
+        inspector_host_layout = QVBoxLayout(inspector_host)
+        inspector_host_layout.setContentsMargins(0, 0, 0, 0)
+        inspector_host_layout.setSpacing(6)
+        inspector_command_row = QHBoxLayout()
+        inspector_command_row.setContentsMargins(2, 0, 2, 0)
+        inspector_command_row.setSpacing(8)
+        inspector_caption = QLabel("Dados da proposta")
+        inspector_caption.setStyleSheet("font-size: 10px; font-weight: 800; color: #475467;")
+        self.quote_inspector_save_btn = QPushButton("Guardar")
+        self.quote_inspector_save_btn.setProperty("variant", "warning")
+        self.quote_inspector_save_btn.setProperty("compact", "true")
+        self.quote_inspector_save_btn.setMinimumWidth(92)
+        self.quote_inspector_save_btn.setMaximumWidth(108)
+        self.quote_inspector_save_btn.clicked.connect(self._save_quote)
+        inspector_command_row.addWidget(inspector_caption)
+        inspector_command_row.addStretch(1)
+        inspector_command_row.addWidget(self.quote_inspector_save_btn)
+        inspector_host_layout.addLayout(inspector_command_row)
+        inspector_host_layout.addWidget(inspector_tabs, 1)
+
+        lines_card.setMinimumHeight(620)
+        lines_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         workspace_split = QSplitter(Qt.Horizontal)
         workspace_split.setChildrenCollapsible(False)
         workspace_split.setHandleWidth(7)
         workspace_split.addWidget(lines_card)
-        workspace_split.addWidget(inspector_tabs)
+        workspace_split.addWidget(inspector_host)
         workspace_split.setSizes([1320, 450])
         workspace_split.setStretchFactor(0, 1)
         workspace_split.setStretchFactor(1, 0)
@@ -15858,8 +16039,8 @@ class QuotesPage(QWidget):
         self.quote_inspector_btn.setMaximumHeight(26)
         self.quote_inspector_btn.clicked.connect(self._toggle_quote_inspector)
         line_title_row.insertWidget(max(0, line_title_row.count() - 1), self.quote_inspector_btn)
+        workspace_split.setMinimumHeight(620)
         detail_layout.addWidget(workspace_split, 1)
-        detail_layout.addStretch(1)
 
         self.view_stack.addWidget(self.list_page)
         self.view_stack.addWidget(self.detail_page)
@@ -20840,27 +21021,35 @@ class QuotesPage(QWidget):
                 pass
 
     def _set_quote_save_button_state(self, state: str = "idle") -> None:
-        button = getattr(self, "quote_save_btn", None)
-        if not isinstance(button, QPushButton):
+        buttons = [
+            button
+            for button in (
+                getattr(self, "quote_save_btn", None),
+                getattr(self, "quote_inspector_save_btn", None),
+            )
+            if isinstance(button, QPushButton)
+        ]
+        if not buttons:
             return
         current_state = str(state or "idle").strip().lower()
-        if current_state == "saving":
-            button.setText("A guardar...")
-            button.setEnabled(False)
-            button.setProperty("variant", "secondary")
-        elif current_state == "saved":
-            button.setText("Guardado")
-            button.setEnabled(True)
-            button.setProperty("variant", "success")
-        elif current_state == "error":
-            button.setText("Falhou ao guardar")
-            button.setEnabled(True)
-            button.setProperty("variant", "danger")
-        else:
-            button.setText("Guardar")
-            button.setEnabled(True)
-            button.setProperty("variant", "")
-        _repolish(button)
+        for button in buttons:
+            if current_state == "saving":
+                button.setText("A guardar...")
+                button.setEnabled(False)
+                button.setProperty("variant", "secondary")
+            elif current_state == "saved":
+                button.setText("Guardado")
+                button.setEnabled(True)
+                button.setProperty("variant", "success")
+            elif current_state == "error":
+                button.setText("Falhou")
+                button.setEnabled(True)
+                button.setProperty("variant", "danger")
+            else:
+                button.setText("Guardar")
+                button.setEnabled(True)
+                button.setProperty("variant", "warning")
+            _repolish(button)
 
     def _reset_quote_save_button(self) -> None:
         self._set_quote_save_button_state("idle")

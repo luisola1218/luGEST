@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from urllib.parse import quote_plus
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QUrl, Qt, QTimer
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -16,6 +18,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QScrollArea,
     QSplitter,
+    QStyle,
     QTableWidget,
     QTabWidget,
     QTextEdit,
@@ -33,6 +36,16 @@ from .runtime_common import (
 
 
 PAYMENT_TERMS_OPTIONS = ["", "Pronto Pagamento", "30 dias", "60 dias", "90 dias", "180 dias"]
+
+
+def _open_google_maps(parent: QWidget, address: str, latitude: str = "", longitude: str = "") -> None:
+    lat = str(latitude or "").strip().replace(",", ".")
+    lon = str(longitude or "").strip().replace(",", ".")
+    query = f"{lat},{lon}" if lat and lon else str(address or "").strip()
+    if not query:
+        QMessageBox.information(parent, "Localização", "Preenche a morada ou as coordenadas.")
+        return
+    QDesktopServices.openUrl(QUrl(f"https://www.google.com/maps/search/?api=1&query={quote_plus(query)}"))
 
 
 def _section_card(title: str, subtitle: str = "", tone: str = "default", minimum_height: int = 0) -> tuple[CardFrame, QFormLayout]:
@@ -218,9 +231,11 @@ class ClientsPage(QWidget):
         self.new_btn = QPushButton("Novo cliente")
         self.new_btn.clicked.connect(self._new_client)
         self.save_btn = QPushButton("Guardar")
+        self.save_btn.setProperty("variant", "warning")
         self.save_btn.clicked.connect(self._save_client)
         self.remove_btn = QPushButton("Remover")
         self.remove_btn.setProperty("variant", "danger")
+        self.remove_btn.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
         self.remove_btn.clicked.connect(self._remove_client)
         for button in (self.new_btn, self.save_btn, self.remove_btn):
             button.setProperty("compact", "true")
@@ -305,6 +320,21 @@ class ClientsPage(QWidget):
         self.client_address_edit.setMinimumHeight(70)
         self.client_address_edit.setMaximumHeight(92)
         self.client_terms_edit = QComboBox()
+        self.client_latitude_edit = QLineEdit()
+        self.client_latitude_edit.setPlaceholderText("ex.: 41.1579")
+        self.client_longitude_edit = QLineEdit()
+        self.client_longitude_edit.setPlaceholderText("ex.: -8.6291")
+        self.client_map_btn = QPushButton("Abrir no Google Maps")
+        self.client_map_btn.setProperty("variant", "secondary")
+        self.client_map_btn.setProperty("compact", "true")
+        self.client_map_btn.clicked.connect(
+            lambda: _open_google_maps(
+                self,
+                self.client_address_edit.toPlainText(),
+                self.client_latitude_edit.text(),
+                self.client_longitude_edit.text(),
+            )
+        )
         self.client_terms_edit.setEditable(True)
         self.client_terms_edit.setInsertPolicy(QComboBox.NoInsert)
         self.client_terms_edit.addItems(PAYMENT_TERMS_OPTIONS)
@@ -319,6 +349,8 @@ class ClientsPage(QWidget):
             self.client_contact_edit,
             self.client_email_edit,
             self.client_address_edit,
+            self.client_latitude_edit,
+            self.client_longitude_edit,
             self.client_terms_edit,
             self.client_lead_edit,
             self.client_notes_edit,
@@ -328,7 +360,7 @@ class ClientsPage(QWidget):
         form_grid.setHorizontalSpacing(10)
         form_grid.setVerticalSpacing(10)
         ident_card, ident_form = _section_card("Identificacao", "Codigo interno e dados fiscais.", "default", 148)
-        contact_card, contact_form = _section_card("Contacto", "Morada e meios de contacto.", "default", 206)
+        contact_card, contact_form = _section_card("Contacto e localização", "Morada, coordenadas e acesso direto ao mapa.", "default", 300)
         terms_card, terms_form = _section_card("Condicoes comerciais", "Prazos e notas usadas nos documentos.", "warning", 220)
         for label, widget in (
             ("Codigo", self.client_code_edit),
@@ -340,8 +372,11 @@ class ClientsPage(QWidget):
             ("Contacto", self.client_contact_edit),
             ("Email", self.client_email_edit),
             ("Morada", self.client_address_edit),
+            ("Latitude", self.client_latitude_edit),
+            ("Longitude", self.client_longitude_edit),
         ):
             contact_form.addRow(label, widget)
+        contact_form.addRow("", self.client_map_btn)
         for label, widget in (
             ("Prazo entrega", self.client_lead_edit),
             ("Cond. pagamento", self.client_terms_edit),
@@ -405,6 +440,8 @@ class ClientsPage(QWidget):
         self.client_contact_edit.clear()
         self.client_email_edit.clear()
         self.client_address_edit.clear()
+        self.client_latitude_edit.clear()
+        self.client_longitude_edit.clear()
         self.client_terms_edit.setCurrentText("")
         self.client_lead_edit.clear()
         self.client_notes_edit.clear()
@@ -420,6 +457,8 @@ class ClientsPage(QWidget):
         self.client_contact_edit.setText(str(row.get("contacto", "") or "").strip())
         self.client_email_edit.setText(str(row.get("email", "") or "").strip())
         self.client_address_edit.setPlainText(str(row.get("morada", "") or "").strip())
+        self.client_latitude_edit.setText(str(row.get("latitude", "") or "").strip())
+        self.client_longitude_edit.setText(str(row.get("longitude", "") or "").strip())
         self.client_lead_edit.setText(str(row.get("prazo_entrega", "") or "").strip())
         self.client_terms_edit.setCurrentText(str(row.get("cond_pagamento", "") or "").strip())
         self.client_notes_edit.setPlainText(str(row.get("observacoes", "") or "").strip())
@@ -434,6 +473,8 @@ class ClientsPage(QWidget):
                     "contacto": self.client_contact_edit.text().strip(),
                     "email": self.client_email_edit.text().strip(),
                     "morada": self.client_address_edit.toPlainText().strip(),
+                    "latitude": self.client_latitude_edit.text().strip(),
+                    "longitude": self.client_longitude_edit.text().strip(),
                     "prazo_entrega": self.client_lead_edit.text().strip(),
                     "cond_pagamento": self.client_terms_edit.currentText().strip(),
                     "observacoes": self.client_notes_edit.toPlainText().strip(),
@@ -501,9 +542,11 @@ class SuppliersPage(QWidget):
         self.new_btn = QPushButton("Novo fornecedor")
         self.new_btn.clicked.connect(self._new_supplier)
         self.save_btn = QPushButton("Guardar")
+        self.save_btn.setProperty("variant", "warning")
         self.save_btn.clicked.connect(self._save_supplier)
         self.remove_btn = QPushButton("Remover")
         self.remove_btn.setProperty("variant", "danger")
+        self.remove_btn.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
         self.remove_btn.clicked.connect(self._remove_supplier)
         for button in (self.new_btn, self.save_btn, self.remove_btn):
             button.setProperty("compact", "true")
@@ -588,6 +631,21 @@ class SuppliersPage(QWidget):
         self.supplier_address_edit.setMinimumHeight(62)
         self.supplier_address_edit.setMaximumHeight(84)
         self.supplier_terms_edit = QComboBox()
+        self.supplier_latitude_edit = QLineEdit()
+        self.supplier_latitude_edit.setPlaceholderText("ex.: 41.1579")
+        self.supplier_longitude_edit = QLineEdit()
+        self.supplier_longitude_edit.setPlaceholderText("ex.: -8.6291")
+        self.supplier_map_btn = QPushButton("Abrir no Google Maps")
+        self.supplier_map_btn.setProperty("variant", "secondary")
+        self.supplier_map_btn.setProperty("compact", "true")
+        self.supplier_map_btn.clicked.connect(
+            lambda: _open_google_maps(
+                self,
+                self.supplier_address_edit.toPlainText(),
+                self.supplier_latitude_edit.text(),
+                self.supplier_longitude_edit.text(),
+            )
+        )
         self.supplier_terms_edit.setEditable(True)
         self.supplier_terms_edit.setInsertPolicy(QComboBox.NoInsert)
         self.supplier_terms_edit.addItems(PAYMENT_TERMS_OPTIONS)
@@ -603,6 +661,8 @@ class SuppliersPage(QWidget):
             self.supplier_contact_edit,
             self.supplier_email_edit,
             self.supplier_address_edit,
+            self.supplier_latitude_edit,
+            self.supplier_longitude_edit,
             self.supplier_terms_edit,
             self.supplier_lead_days_edit,
             self.supplier_website_edit,
@@ -613,7 +673,7 @@ class SuppliersPage(QWidget):
         form_grid.setHorizontalSpacing(10)
         form_grid.setVerticalSpacing(10)
         ident_card, ident_form = _section_card("Identificacao", "Referencia interna e dados fiscais.", "default", 148)
-        contact_card, contact_form = _section_card("Contacto", "Morada, email e website.", "default", 232)
+        contact_card, contact_form = _section_card("Contacto e localização", "Morada, coordenadas, email e website.", "default", 330)
         terms_card, terms_form = _section_card("Condicoes de compra", "Prazos, pagamento e observacoes.", "warning", 210)
         for label, widget in (
             ("ID", self.supplier_id_edit),
@@ -625,9 +685,12 @@ class SuppliersPage(QWidget):
             ("Contacto", self.supplier_contact_edit),
             ("Email", self.supplier_email_edit),
             ("Morada", self.supplier_address_edit),
+            ("Latitude", self.supplier_latitude_edit),
+            ("Longitude", self.supplier_longitude_edit),
             ("Website", self.supplier_website_edit),
         ):
             contact_form.addRow(label, widget)
+        contact_form.addRow("", self.supplier_map_btn)
         for label, widget in (
             ("Cond. pagamento", self.supplier_terms_edit),
             ("Prazo entrega (dias)", self.supplier_lead_days_edit),
@@ -697,6 +760,8 @@ class SuppliersPage(QWidget):
         self.supplier_contact_edit.clear()
         self.supplier_email_edit.clear()
         self.supplier_address_edit.clear()
+        self.supplier_latitude_edit.clear()
+        self.supplier_longitude_edit.clear()
         self.supplier_terms_edit.setCurrentText("")
         self.supplier_lead_days_edit.clear()
         self.supplier_website_edit.clear()
@@ -713,6 +778,8 @@ class SuppliersPage(QWidget):
         self.supplier_contact_edit.setText(str(row.get("contacto", "") or "").strip())
         self.supplier_email_edit.setText(str(row.get("email", "") or "").strip())
         self.supplier_address_edit.setPlainText(str(row.get("morada", "") or "").strip())
+        self.supplier_latitude_edit.setText(str(row.get("latitude", "") or "").strip())
+        self.supplier_longitude_edit.setText(str(row.get("longitude", "") or "").strip())
         self.supplier_terms_edit.setCurrentText(str(row.get("cond_pagamento", "") or "").strip())
         self.supplier_lead_days_edit.setText(str(row.get("prazo_entrega_dias", "") or "").strip())
         self.supplier_website_edit.setText(str(row.get("website", "") or "").strip())
@@ -728,6 +795,8 @@ class SuppliersPage(QWidget):
                     "contacto": self.supplier_contact_edit.text().strip(),
                     "email": self.supplier_email_edit.text().strip(),
                     "morada": self.supplier_address_edit.toPlainText().strip(),
+                    "latitude": self.supplier_latitude_edit.text().strip(),
+                    "longitude": self.supplier_longitude_edit.text().strip(),
                     "cond_pagamento": self.supplier_terms_edit.currentText().strip(),
                     "prazo_entrega_dias": self.supplier_lead_days_edit.text().strip(),
                     "website": self.supplier_website_edit.text().strip(),

@@ -106,13 +106,17 @@ def configure_table(
     contents: tuple[int, ...] = (),
     center_from: int | None = None,
 ) -> None:
+    table.setProperty("workspaceTable", "true")
     table.setAlternatingRowColors(True)
     table.setWordWrap(False)
+    table.setShowGrid(False)
     table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
     table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
     table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
     table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
     header = table.horizontalHeader()
+    header.setHighlightSections(False)
+    header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
     header.setStretchLastSection(False)
     for col in range(table.columnCount()):
         if col in stretch:

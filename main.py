@@ -2320,6 +2320,8 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "clientes", "prazo_entrega", "VARCHAR(120) NULL")
         _mysql_ensure_column(cur, "clientes", "cond_pagamento", "VARCHAR(120) NULL")
         _mysql_ensure_column(cur, "clientes", "obs_tecnicas", "TEXT NULL")
+        _mysql_ensure_column(cur, "clientes", "latitude", "VARCHAR(32) NULL")
+        _mysql_ensure_column(cur, "clientes", "longitude", "VARCHAR(32) NULL")
     if "fornecedores" in tables:
         _mysql_ensure_column(cur, "fornecedores", "nome", "VARCHAR(150) NULL")
         _mysql_ensure_column(cur, "fornecedores", "nif", "VARCHAR(20) NULL")
@@ -2333,6 +2335,8 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "fornecedores", "prazo_entrega_dias", "INT NULL")
         _mysql_ensure_column(cur, "fornecedores", "website", "VARCHAR(255) NULL")
         _mysql_ensure_column(cur, "fornecedores", "obs", "TEXT NULL")
+        _mysql_ensure_column(cur, "fornecedores", "latitude", "VARCHAR(32) NULL")
+        _mysql_ensure_column(cur, "fornecedores", "longitude", "VARCHAR(32) NULL")
     if "materiais" in tables:
         _mysql_ensure_column(cur, "materiais", "lote_interno", "VARCHAR(100) NULL")
         _mysql_ensure_column(cur, "materiais", "preco_unid", "DECIMAL(12,4) NULL")
@@ -3214,9 +3218,9 @@ def _mysql_sync_relational_schema(cur, data):
                 """
                 INSERT INTO clientes (
                     codigo, nome, nif, morada, contacto, email,
-                    observacoes, prazo_entrega, cond_pagamento, obs_tecnicas
+                    observacoes, prazo_entrega, cond_pagamento, obs_tecnicas, latitude, longitude
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     codigo,
@@ -3229,6 +3233,8 @@ def _mysql_sync_relational_schema(cur, data):
                     _clip(c.get("prazo_entrega"), 120),
                     _clip(c.get("cond_pagamento"), 120),
                     c.get("obs_tecnicas"),
+                    _clip(c.get("latitude"), 32),
+                    _clip(c.get("longitude"), 32),
                 ),
             )
 
@@ -3241,9 +3247,10 @@ def _mysql_sync_relational_schema(cur, data):
                 """
                 INSERT INTO fornecedores (
                     id, nome, nif, morada, contacto, email,
-                    codigo_postal, localidade, pais, cond_pagamento, prazo_entrega_dias, website, obs
+                    codigo_postal, localidade, pais, cond_pagamento, prazo_entrega_dias, website, obs,
+                    latitude, longitude
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     fid,
@@ -3259,6 +3266,8 @@ def _mysql_sync_relational_schema(cur, data):
                     int(parse_float(f.get("prazo_entrega_dias", 0), 0) or 0),
                     _clip(f.get("website"), 255),
                     f.get("obs"),
+                    _clip(f.get("latitude"), 32),
+                    _clip(f.get("longitude"), 32),
                 ),
             )
 
@@ -4923,6 +4932,8 @@ def _mysql_load_relational_data():
                         "nome": str(r.get("nome", "") or ""),
                         "nif": str(r.get("nif", "") or ""),
                         "morada": str(r.get("morada", "") or ""),
+                        "latitude": str(r.get("latitude", "") or ""),
+                        "longitude": str(r.get("longitude", "") or ""),
                         "contacto": str(r.get("contacto", "") or ""),
                         "email": str(r.get("email", "") or ""),
                         "observacoes": str(r.get("observacoes", "") or ""),
@@ -4939,6 +4950,8 @@ def _mysql_load_relational_data():
                         "nome": str(r.get("nome", "") or ""),
                         "nif": str(r.get("nif", "") or ""),
                         "morada": str(r.get("morada", "") or ""),
+                        "latitude": str(r.get("latitude", "") or ""),
+                        "longitude": str(r.get("longitude", "") or ""),
                         "contacto": str(r.get("contacto", "") or ""),
                         "email": str(r.get("email", "") or ""),
                         "codigo_postal": str(r.get("codigo_postal", "") or ""),
@@ -6395,6 +6408,8 @@ def mysql_upsert_cliente(row):
         "prazo_entrega": _clip((row or {}).get("prazo_entrega"), 120),
         "cond_pagamento": _clip((row or {}).get("cond_pagamento"), 120),
         "obs_tecnicas": str((row or {}).get("obs_tecnicas", "") or ""),
+        "latitude": _clip((row or {}).get("latitude"), 32),
+        "longitude": _clip((row or {}).get("longitude"), 32),
     }
     if not clean["codigo"]:
         raise ValueError("Codigo de cliente invalido.")
@@ -6413,7 +6428,9 @@ def mysql_upsert_cliente(row):
                     observacoes TEXT NULL,
                     prazo_entrega VARCHAR(120) NULL,
                     cond_pagamento VARCHAR(120) NULL,
-                    obs_tecnicas TEXT NULL
+                    obs_tecnicas TEXT NULL,
+                    latitude VARCHAR(32) NULL,
+                    longitude VARCHAR(32) NULL
                 )
                 """
             )
@@ -6421,13 +6438,15 @@ def mysql_upsert_cliente(row):
             _mysql_ensure_column(cur, "clientes", "prazo_entrega", "VARCHAR(120) NULL")
             _mysql_ensure_column(cur, "clientes", "cond_pagamento", "VARCHAR(120) NULL")
             _mysql_ensure_column(cur, "clientes", "obs_tecnicas", "TEXT NULL")
+            _mysql_ensure_column(cur, "clientes", "latitude", "VARCHAR(32) NULL")
+            _mysql_ensure_column(cur, "clientes", "longitude", "VARCHAR(32) NULL")
             cur.execute(
                 """
                 INSERT INTO clientes (
                     codigo, nome, nif, morada, contacto, email,
-                    observacoes, prazo_entrega, cond_pagamento, obs_tecnicas
+                    observacoes, prazo_entrega, cond_pagamento, obs_tecnicas, latitude, longitude
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     nome=VALUES(nome),
                     nif=VALUES(nif),
@@ -6438,6 +6457,8 @@ def mysql_upsert_cliente(row):
                     prazo_entrega=VALUES(prazo_entrega),
                     cond_pagamento=VALUES(cond_pagamento),
                     obs_tecnicas=VALUES(obs_tecnicas)
+                    ,latitude=VALUES(latitude)
+                    ,longitude=VALUES(longitude)
                 """,
                 (
                     clean["codigo"],
@@ -6450,6 +6471,8 @@ def mysql_upsert_cliente(row):
                     clean["prazo_entrega"],
                     clean["cond_pagamento"],
                     clean["obs_tecnicas"],
+                    clean["latitude"],
+                    clean["longitude"],
                 ),
             )
         conn.commit()

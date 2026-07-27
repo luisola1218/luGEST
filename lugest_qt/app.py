@@ -9,8 +9,9 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+from PySide6.QtCore import QEvent, QObject
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QLineEdit, QMessageBox
 
 from .services.legacy_backend import LegacyBackend
 from .services.runtime_service import RuntimeService
@@ -21,6 +22,26 @@ from .ui.theme import apply_theme
 
 _DIAGNOSTIC_HANDLE = None
 _DIAGNOSTIC_PATH: Path | None = None
+
+
+class _FullSurfaceComboFilter(QObject):
+    """Open selectors from the whole control, including editable combo text areas."""
+
+    def eventFilter(self, watched, event):  # type: ignore[override]
+        if event.type() != QEvent.MouseButtonPress:
+            return False
+        if isinstance(watched, QComboBox):
+            if watched.isEnabled():
+                watched.setFocus()
+                watched.showPopup()
+                return True
+            return False
+        if isinstance(watched, QLineEdit):
+            combo = watched.parentWidget()
+            if isinstance(combo, QComboBox) and combo.isEnabled():
+                combo.showPopup()
+                return bool(watched.isReadOnly())
+        return False
 
 
 def _diagnostic_log_path() -> Path:
@@ -205,6 +226,9 @@ def main(argv: list[str] | None = None) -> int:
     if cli.smoke_test:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication([args[0], *qt_args])
+    combo_click_filter = _FullSurfaceComboFilter(app)
+    app.installEventFilter(combo_click_filter)
+    app._full_surface_combo_filter = combo_click_filter
     _write_diagnostic_event("QAPPLICATION_READY")
     try:
         backend = LegacyBackend()

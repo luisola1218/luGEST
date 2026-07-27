@@ -17,11 +17,13 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QSplitter,
+    QStyle,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -209,10 +211,14 @@ class _AssembliesCatalogDialog(QDialog):
         refresh_btn = QPushButton("Atualizar preços")
         refresh_btn.setProperty("variant", "secondary")
         refresh_btn.clicked.connect(self._refresh_prices)
+        create_btn = QPushButton("Criar Parametrização")
+        create_btn.setProperty("variant", "secondary")
+        create_btn.clicked.connect(self._create_parameterization)
         self.pdf_btn = QPushButton("Ficha técnica PDF")
         self.pdf_btn.setProperty("variant", "secondary")
         self.pdf_btn.clicked.connect(self._open_pdf)
         toolbar.addWidget(self.search_edit, 1)
+        toolbar.addWidget(create_btn)
         toolbar.addWidget(refresh_btn)
         toolbar.addWidget(self.pdf_btn)
         root.addLayout(toolbar)
@@ -250,8 +256,8 @@ class _AssembliesCatalogDialog(QDialog):
 
         detail_card = CardFrame()
         detail_card.set_tone("default")
-        detail_card.setMinimumWidth(430)
-        detail_card.setMaximumWidth(560)
+        detail_card.setMinimumWidth(560)
+        detail_card.setMaximumWidth(16777215)
         detail_layout = QVBoxLayout(detail_card)
         detail_layout.setContentsMargins(10, 9, 10, 10)
         detail_layout.setSpacing(7)
@@ -360,9 +366,9 @@ class _AssembliesCatalogDialog(QDialog):
         self.detail_tabs.addTab(technical_page, "Ficha técnica")
         detail_layout.addWidget(self.detail_tabs, 1)
         splitter.addWidget(detail_card)
-        splitter.setSizes([900, 480])
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 0)
+        splitter.setSizes([720, 660])
+        splitter.setStretchFactor(0, 5)
+        splitter.setStretchFactor(1, 5)
         root.addWidget(splitter, 1)
 
         close_buttons = QDialogButtonBox(QDialogButtonBox.Close)
@@ -500,6 +506,32 @@ class _AssembliesCatalogDialog(QDialog):
         except Exception as exc:
             QMessageBox.warning(self, "Conjuntos", str(exc))
             return
+        self.refresh()
+
+    def _create_parameterization(self) -> None:
+        owner = self.parent()
+        main_window = owner.window() if isinstance(owner, QWidget) else None
+        quote_page = getattr(main_window, "pages", {}).get("quotes") if main_window is not None else None
+        if quote_page is None and main_window is not None:
+            ensure_page = getattr(main_window, "_ensure_page", None)
+            if callable(ensure_page):
+                try:
+                    quote_page = ensure_page("quotes")
+                except Exception as exc:
+                    QMessageBox.warning(self, "Criar Parametrização", str(exc))
+                    return
+        builder = getattr(quote_page, "_calculated_assembly_builder_dialog", None)
+        if not callable(builder):
+            QMessageBox.warning(
+                self,
+                "Criar Parametrização",
+                "O editor completo de parametrizações não está disponível nesta sessão.",
+            )
+            return
+        payload = builder()
+        if not payload:
+            return
+        self.current_code = str(payload.get("assembly_code", "") or payload.get("codigo", "") or "").strip()
         self.refresh()
 
     def _open_pdf(self) -> None:
@@ -642,29 +674,37 @@ class ProductsPage(QWidget):
         self.new_btn = QPushButton("Novo")
         self.new_btn.clicked.connect(self._new_product)
         self.save_btn = QPushButton("Guardar")
+        self.save_btn.setProperty("variant", "warning")
         self.save_btn.clicked.connect(self._save_product)
         self.remove_btn = QPushButton("Remover")
         self.remove_btn.setProperty("variant", "danger")
+        self.remove_btn.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
         self.remove_btn.clicked.connect(self._remove_product)
         self.consume_btn = QPushButton("Baixa")
         self.consume_btn.setProperty("variant", "secondary")
         self.consume_btn.clicked.connect(self._consume_product)
-        self.pdf_btn = QPushButton("Ficha PDF")
+        self.pdf_btn = QPushButton("Documentos  ▾")
         self.pdf_btn.setProperty("variant", "secondary")
-        self.pdf_btn.clicked.connect(self._open_pdf)
         self.stock_pdf_btn = QPushButton("Preview stock")
         self.stock_pdf_btn.setProperty("variant", "secondary")
         self.stock_pdf_btn.clicked.connect(self._open_stock_pdf)
         self.label_btn = QPushButton("Etiqueta")
         self.label_btn.setProperty("variant", "secondary")
         self.label_btn.clicked.connect(self._open_label_pdf)
+        documents_menu = QMenu(self.pdf_btn)
+        documents_menu.addAction("Ficha técnica PDF", self._open_pdf)
+        documents_menu.addAction("Mapa de stock PDF", self._open_stock_pdf)
+        documents_menu.addAction("Etiqueta do produto", self._open_label_pdf)
+        self.pdf_btn.setMenu(documents_menu)
+        self.stock_pdf_btn.hide()
+        self.label_btn.hide()
         self.form_mode_btn = QPushButton("Ficha")
         self.form_mode_btn.setProperty("variant", "secondary")
         self.form_mode_btn.clicked.connect(self._show_form_page)
         self.moves_mode_btn = QPushButton("Movs.")
         self.moves_mode_btn.setProperty("variant", "secondary")
         self.moves_mode_btn.clicked.connect(self._show_moves_page)
-        self.full_grid_btn = QPushButton("Grelha")
+        self.full_grid_btn = QPushButton("▦  Grelha")
         self.full_grid_btn.setProperty("variant", "secondary")
         self.full_grid_btn.clicked.connect(self.open_full_grid)
         self.assemblies_btn = QPushButton("Conjuntos")
@@ -684,10 +724,19 @@ class ProductsPage(QWidget):
         ):
             button.setStyleSheet("font-size: 10px; font-weight: 700;")
             button.setFixedWidth(width)
+        for button in (
+            self.new_btn,
+            self.consume_btn,
+            self.pdf_btn,
+            self.assemblies_btn,
+        ):
             actions.addWidget(button)
         self.form_mode_btn.hide()
         self.moves_mode_btn.hide()
         actions.addStretch(1)
+        actions.addWidget(self.full_grid_btn)
+        actions.addWidget(self.save_btn)
+        actions.addWidget(self.remove_btn)
         root.addWidget(actions_card)
 
         table_card = CardFrame()

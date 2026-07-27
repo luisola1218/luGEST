@@ -209,6 +209,8 @@ class PurchasingBridgeMixin:
                 "contacto": str(raw.get("contacto", "") or "").strip(),
                 "nif": str(raw.get("nif", "") or "").strip(),
                 "morada": str(raw.get("morada", "") or "").strip(),
+                "latitude": str(raw.get("latitude", "") or "").strip(),
+                "longitude": str(raw.get("longitude", "") or "").strip(),
                 "email": str(raw.get("email", "") or "").strip(),
                 "codigo_postal": str(raw.get("codigo_postal", "") or "").strip(),
                 "localidade": str(raw.get("localidade", "") or "").strip(),
@@ -302,6 +304,8 @@ class PurchasingBridgeMixin:
             "nome": nome,
             "nif": str(payload.get("nif", "") or "").strip(),
             "morada": str(payload.get("morada", "") or "").strip(),
+            "latitude": str(payload.get("latitude", "") or "").strip(),
+            "longitude": str(payload.get("longitude", "") or "").strip(),
             "contacto": str(payload.get("contacto", "") or "").strip(),
             "email": str(payload.get("email", "") or "").strip(),
             "codigo_postal": str(payload.get("codigo_postal", "") or "").strip(),
@@ -560,6 +564,8 @@ class PurchasingBridgeMixin:
         if note is None:
             raise ValueError("Nota de Encomenda não encontrada.")
         documents = self._ne_document_rows(note)
+        guide_count = sum(1 for row in documents if str(row.get("tipo", "") or "").upper() in {"GUIA", "GUIA_FATURA"})
+        invoice_count = sum(1 for row in documents if str(row.get("tipo", "") or "").upper() in {"FATURA", "GUIA_FATURA"})
         lines = []
         for line in list(note.get("linhas", []) or []):
             if self.desktop_main.origem_is_materia(line.get("origem", "")):
@@ -660,6 +666,13 @@ class PurchasingBridgeMixin:
             "data_ultima_entrega": str(note.get("data_ultima_entrega", "") or "").strip(),
             "documents": documents,
             "document_count": len(documents),
+            "guide_count": guide_count,
+            "invoice_count": invoice_count,
+            "document_status": (
+                f"{guide_count} guia(s) · {invoice_count} fatura(s)"
+                if documents
+                else "Sem documentação de fornecedor"
+            ),
             "lines": lines,
         }
 
@@ -1451,9 +1464,7 @@ class PurchasingBridgeMixin:
         note = next((row for row in self.ensure_data().get("notas_encomenda", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if note is None:
             raise ValueError("Nota de Encomenda não encontrada.")
-        raw = dict(payload or {})
-        if not any(str(raw.get(key, "") or "").strip() for key in ("titulo", "guia", "fatura", "caminho", "obs")):
-            raise ValueError("Indica pelo menos titulo, guia, fatura, caminho ou observacao.")
+        raw = self._ne_validate_document_payload(payload)
         apply_to_lines = bool(raw.get("apply_to_lines"))
         register_history = bool(raw.get("register_history", True))
         doc = self._ne_normalize_document(
@@ -1469,6 +1480,7 @@ class PurchasingBridgeMixin:
                 "obs": raw.get("obs", ""),
             }
         )
+        self._ne_assert_document_unique(note, doc)
         stored_doc = {
             key: doc.get(key, "")
             for key in ("data_registo", "tipo", "titulo", "caminho", "guia", "fatura", "data_entrega", "data_documento", "obs")
@@ -1524,6 +1536,13 @@ class PurchasingBridgeMixin:
         note = next((row for row in self.ensure_data().get("notas_encomenda", []) if str(row.get("numero", "") or "").strip() == str(numero or "").strip()), None)
         if note is None:
             raise ValueError("Nota de Encomenda não encontrada.")
+        validated_document = self._ne_validate_document_payload(payload, allow_delivery=True)
+        payload = dict(payload or {}) | {
+            "tipo": validated_document.get("tipo", ""),
+            "guia": validated_document.get("guia", ""),
+            "fatura": validated_document.get("fatura", ""),
+        }
+        self._ne_assert_document_unique(note, self._ne_normalize_document(validated_document))
         note_lines = list(note.get("linhas", []) or [])
         line_updates_by_index: dict[int, dict[str, Any]] = {}
         unresolved_legacy_items: list[dict[str, Any]] = []
@@ -1766,7 +1785,7 @@ class PurchasingBridgeMixin:
             note.setdefault("documentos", []).append(
                 {
                     "data_registo": registo_ts,
-                    "tipo": "ENTREGA",
+                    "tipo": str(payload.get("tipo", "") or "ENTREGA").strip(),
                     "titulo": self._ne_document_title(
                         {
                             "titulo": titulo,

@@ -396,6 +396,38 @@ def apply_theme(app: QApplication, branding: dict) -> None:
             color: {selection_text};
             border: 1px solid {selection_border};
         }}
+        QTableWidget[workspaceTable="true"] {{
+            background: #ffffff;
+            alternate-background-color: #f7f9fc;
+            border: 1px solid #b8c7d8;
+            border-radius: 8px;
+            gridline-color: transparent;
+            outline: 0;
+        }}
+        QTableWidget[workspaceTable="true"]::item {{
+            padding: 5px 7px;
+            border: 0;
+            border-bottom: 1px solid #e4eaf1;
+        }}
+        QTableWidget[workspaceTable="true"]::item:hover {{
+            background: #eef5fb;
+        }}
+        QTableWidget[workspaceTable="true"]::item:selected {{
+            background: {selection_fill_soft};
+            color: {selection_text};
+            border: 0;
+            border-left: 3px solid {selection_border};
+            border-bottom: 1px solid #ddd1b5;
+        }}
+        QTableWidget[workspaceTable="true"] QHeaderView::section {{
+            background: #34415f;
+            color: #ffffff;
+            border: 0;
+            border-right: 1px solid #4b5874;
+            padding: 7px 8px;
+            font-size: 10px;
+            font-weight: 800;
+        }}
         QTableWidget#QualityTable {{
             alternate-background-color: #f4f8fc;
             gridline-color: #d0dce8;

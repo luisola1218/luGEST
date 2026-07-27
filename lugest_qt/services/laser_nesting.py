@@ -2857,9 +2857,29 @@ def _pack_profile_shapely(
     best_result: dict[str, Any] | None = None
     base_cache: dict[str, Any] = {}
     variant_cache: dict[tuple, list[dict[str, Any]]] = {}
-    strategies = ("shape-geos-area", "shape-geos-height") if len(expanded) <= 16 else ("shape-geos-area",)
+    part_count = len(expanded)
+    if part_count <= 16:
+        strategies = ("shape-geos-area", "shape-geos-height", "shape-geos-width")
+    else:
+        # GEOS is the expensive exact validator. Large batches get a fast
+        # multi-strategy bounding-box companion below, so one exact pass keeps
+        # the interactive calculation responsive.
+        strategies = ("shape-geos-area",)
+    usable_width, usable_height = _profile_usable_dimensions(normalized_profile, edge_margin_mm)
+    usable_area = max(1.0, usable_width * usable_height)
+    theoretical_sheet_floor = max(
+        1,
+        int(math.ceil(sum(max(0.0, row["item"].net_area_mm2) for row in list(expanded or [])) / usable_area)),
+    )
     for strategy_name in strategies:
-        ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key("area" if strategy_name.endswith("area") else "height-first"), reverse=True)
+        order_name = (
+            "area"
+            if strategy_name.endswith("area")
+            else "width-first"
+            if strategy_name.endswith("width")
+            else "height-first"
+        )
+        ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(order_name), reverse=True)
         sheets: list[dict[str, Any]] = []
         unplaced: list[dict[str, Any]] = []
         warnings = list(base_warnings or [])
@@ -2942,6 +2962,8 @@ def _pack_profile_shapely(
         )
         if best_result is None or _result_score(result) < _result_score(best_result):
             best_result = result
+        if _as_int(dict(result.get("summary", {}) or {}).get("sheet_count", 0), 0) <= theoretical_sheet_floor:
+            break
     return best_result
 
 
@@ -3651,6 +3673,24 @@ def nest_parts(
     def _choose_engine_variant(*, bbox_result: dict[str, Any] | None, shape_result: dict[str, Any] | None) -> dict[str, Any]:
         if requested_engine == "shape":
             if shape_result is not None:
+                if bbox_result is not None and _result_score(bbox_result) < _result_score(shape_result):
+                    chosen = dict(bbox_result or {})
+                    chosen_summary = dict(chosen.get("summary", {}) or {})
+                    chosen_summary["engine_requested"] = "shape"
+                    # A non-overlapping bounding-box plan is also geometrically
+                    # valid for the enclosed real contours; retain shape mode
+                    # while recording which conservative optimizer won.
+                    chosen_summary["engine_used"] = "shape"
+                    chosen_summary["shape_optimizer"] = "bbox-conservative"
+                    chosen_summary["engine_modes_tested"] = ["shape", "bbox"]
+                    chosen["summary"] = chosen_summary
+                    chosen["warnings"] = _unique_texts(
+                        [
+                            "O otimizador híbrido escolheu o plano conservador por caixas porque usa menos chapa ou deixa um remanescente mais útil."
+                        ]
+                        + list(chosen.get("warnings", []) or [])
+                    )
+                    return chosen
                 chosen = dict(shape_result or {})
                 chosen_summary = dict(chosen.get("summary", {}) or {})
                 chosen_summary["engine_requested"] = "shape"
@@ -3832,7 +3872,7 @@ def nest_parts(
                             selection_mode="auto",
                             grid_mm=grid_mm,
                         )
-                        if shape_result is None and not strict_shape_only:
+                        if not strict_shape_only and (shape_result is None or len(expanded) > 16):
                             bbox_result = _pack_profile(
                                 items,
                                 expanded,
@@ -3959,7 +3999,7 @@ def nest_parts(
             selection_mode="manual",
             grid_mm=grid_mm,
         )
-        if shape_result is None and not strict_shape_only:
+        if not strict_shape_only and (shape_result is None or len(expanded) > 16):
             bbox_result = _pack_profile(
                 items,
                 expanded,

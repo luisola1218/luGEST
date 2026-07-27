@@ -1082,14 +1082,35 @@ class TransportBridgeMixin:
         state_txt = str(estado or "").strip()
         if not state_txt:
             raise ValueError("Estado obrigatorio.")
+        state_norm = self.desktop_main.norm_text(state_txt)
+        stops = [row for row in list(trip.get("paragens", []) or []) if isinstance(row, dict)]
+        if any(token in state_norm for token in ("carga", "transito", "conclu")) and not stops:
+            raise ValueError("Adiciona pelo menos uma encomenda à viagem antes de avançar o estado.")
+        if "transito" in state_norm:
+            incomplete = [
+                str(stop.get("encomenda_numero", "") or "").strip()
+                for stop in stops
+                if self._transport_stop_checklist_state(stop) != "OK"
+                or not str(stop.get("expedicao_numero", "") or "").strip()
+            ]
+            if incomplete:
+                raise ValueError(
+                    "Antes de iniciar o transporte confirma carga, documentos, paletes e guia em: "
+                    + ", ".join(incomplete)
+                )
+        if "conclu" in state_norm:
+            incomplete = [
+                str(stop.get("encomenda_numero", "") or "").strip()
+                for stop in stops
+                if "entreg" not in self.desktop_main.norm_text(str(stop.get("estado", "") or ""))
+                or "recebid" not in self.desktop_main.norm_text(str(stop.get("pod_estado", "") or ""))
+            ]
+            if incomplete:
+                raise ValueError(
+                    "Só podes concluir a viagem depois de marcar cada destino como Entregue e registar o POD: "
+                    + ", ".join(incomplete)
+                )
         trip["estado"] = state_txt
-        if "conclu" in self.desktop_main.norm_text(state_txt):
-            for stop in list(trip.get("paragens", []) or []):
-                if not isinstance(stop, dict):
-                    continue
-                if "inciden" in self.desktop_main.norm_text(str(stop.get("estado", "") or "")):
-                    continue
-                stop["estado"] = "Entregue"
         trip["updated_at"] = self.desktop_main.now_iso()
         self._transport_sync_order_links()
         self._save(force=True)
@@ -1110,7 +1131,18 @@ class TransportBridgeMixin:
         )
         if target is None:
             raise ValueError("Paragem nao encontrada.")
-        target["estado"] = str(estado or "").strip() or "Planeada"
+        next_state = str(estado or "").strip() or "Planeada"
+        if "entreg" in self.desktop_main.norm_text(next_state):
+            missing: list[str] = []
+            if not str(target.get("expedicao_numero", "") or "").strip():
+                missing.append("guia")
+            if self._transport_stop_checklist_state(target) != "OK":
+                missing.append("checklist")
+            if "recebid" not in self.desktop_main.norm_text(str(target.get("pod_estado", "") or "")):
+                missing.append("POD")
+            if missing:
+                raise ValueError("Antes de concluir o destino preenche: " + ", ".join(missing) + ".")
+        target["estado"] = next_state
         if str(observacoes or "").strip():
             target["observacoes"] = str(observacoes or "").strip()
         trip["updated_at"] = self.desktop_main.now_iso()

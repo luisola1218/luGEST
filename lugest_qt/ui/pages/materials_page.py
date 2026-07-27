@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSplitter,
+    QStyle,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -1424,6 +1425,7 @@ class MaterialsPage(QWidget):
         self.edit_btn.clicked.connect(self.edit_material)
         self.remove_btn = QPushButton("Remover")
         self.remove_btn.setProperty("variant", "danger")
+        self.remove_btn.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
         self.remove_btn.clicked.connect(self.remove_material)
         self.baixa_btn = QPushButton("Dar baixa")
         self.baixa_btn.setProperty("variant", "secondary")
@@ -1486,8 +1488,25 @@ class MaterialsPage(QWidget):
             button.setMinimumHeight(30)
             button.setFixedWidth(width)
             button.setStyleSheet("font-size: 10px; font-weight: 700;")
+        for button in (
+            self.add_btn,
+            self.edit_btn,
+            self.baixa_btn,
+            self.correct_btn,
+            self.calc_btn,
+            self.export_btn,
+        ):
             actions_primary.addWidget(button)
         actions_primary.addStretch(1)
+        for button in (
+            self.history_btn,
+            self.pdf_btn,
+            self.label_btn,
+            self.full_grid_btn,
+            self.refresh_btn,
+            self.remove_btn,
+        ):
+            actions_primary.addWidget(button)
         root.addWidget(form_card)
         root.addWidget(actions_card)
 

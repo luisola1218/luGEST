@@ -2204,6 +2204,64 @@ class LegacyBackend(
         normalized["has_path"] = bool(normalized["caminho"])
         return normalized
 
+    def _ne_validate_document_payload(
+        self,
+        payload: dict[str, Any] | None,
+        *,
+        allow_delivery: bool = False,
+    ) -> dict[str, Any]:
+        """Validate a new purchasing document without rewriting legacy records."""
+        raw = dict(payload or {})
+        doc_type = self._ne_document_type(raw, fallback="ENTREGA" if allow_delivery else "DOCUMENTO")
+        guia = str(raw.get("guia", "") or "").strip()
+        fatura = str(raw.get("fatura", "") or "").strip()
+        title = str(raw.get("titulo", "") or "").strip()
+        path = str(raw.get("caminho", "") or "").strip()
+        obs = str(raw.get("obs", "") or "").strip()
+
+        if doc_type == "GUIA":
+            if not guia:
+                raise ValueError("Indica o número da guia.")
+            if fatura:
+                raise ValueError("O tipo Guia não pode guardar um número de fatura. Seleciona 'Guia + Fatura'.")
+        elif doc_type == "FATURA":
+            if not fatura:
+                raise ValueError("Indica o número da fatura.")
+        elif doc_type == "GUIA_FATURA":
+            if not guia or not fatura:
+                raise ValueError("Indica os números da guia e da fatura.")
+        elif doc_type == "ENTREGA":
+            if not allow_delivery:
+                raise ValueError("O tipo Entrega só pode ser criado durante uma receção.")
+            if not guia and not fatura:
+                raise ValueError("A receção tem de ficar associada a uma guia ou a uma fatura.")
+            doc_type = "GUIA_FATURA" if guia and fatura else ("FATURA" if fatura else "GUIA")
+        elif doc_type == "DOCUMENTO":
+            if not title and not path:
+                raise ValueError("Num documento geral indica o título ou seleciona um ficheiro.")
+            if guia or fatura:
+                raise ValueError("Para registar números de guia ou fatura seleciona o tipo documental correto.")
+
+        if not any((title, guia, fatura, path, obs)):
+            raise ValueError("Indica os dados ou o ficheiro do documento.")
+        raw["tipo"] = doc_type
+        raw["guia"] = guia
+        raw["fatura"] = fatura
+        return raw
+
+    def _ne_assert_document_unique(self, note: dict[str, Any], document: dict[str, Any]) -> None:
+        doc_type = str(document.get("tipo", "") or "").strip().upper()
+        guia = str(document.get("guia", "") or "").strip().casefold()
+        fatura = str(document.get("fatura", "") or "").strip().casefold()
+        for existing in self._ne_document_rows(note):
+            existing_type = str(existing.get("tipo", "") or "").strip().upper()
+            existing_guia = str(existing.get("guia", "") or "").strip().casefold()
+            existing_fatura = str(existing.get("fatura", "") or "").strip().casefold()
+            if fatura and existing_fatura == fatura:
+                raise ValueError(f"A fatura {document.get('fatura')} já está registada nesta nota.")
+            if doc_type in {"GUIA", "GUIA_FATURA"} and guia and existing_guia == guia and existing_type in {"GUIA", "GUIA_FATURA"}:
+                raise ValueError(f"A guia {document.get('guia')} já está registada nesta nota.")
+
     def _ne_document_rows(self, note: dict[str, Any]) -> list[dict[str, Any]]:
         docs: list[dict[str, Any]] = []
         seen: set[tuple[str, str, str, str, str, str, str]] = set()
@@ -10891,6 +10949,8 @@ class LegacyBackend(
                 "nome": str(raw.get("nome", "") or "").strip(),
                 "nif": str(raw.get("nif", "") or "").strip(),
                 "morada": str(raw.get("morada", "") or "").strip(),
+                "latitude": str(raw.get("latitude", "") or "").strip(),
+                "longitude": str(raw.get("longitude", "") or "").strip(),
                 "contacto": str(raw.get("contacto", "") or "").strip(),
                 "email": str(raw.get("email", "") or "").strip(),
                 "observacoes": str(raw.get("observacoes", "") or "").strip(),
@@ -10919,6 +10979,8 @@ class LegacyBackend(
             "nome": nome,
             "nif": str(payload.get("nif", "") or "").strip(),
             "morada": str(payload.get("morada", "") or "").strip(),
+            "latitude": str(payload.get("latitude", "") or "").strip(),
+            "longitude": str(payload.get("longitude", "") or "").strip(),
             "contacto": str(payload.get("contacto", "") or "").strip(),
             "email": str(payload.get("email", "") or "").strip(),
             "observacoes": str(payload.get("observacoes", "") or "").strip(),
