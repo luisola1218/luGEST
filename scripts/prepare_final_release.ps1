@@ -126,6 +126,23 @@ else {
     Copy-Item $desktopExe (Join-Path $releaseRoot 'lugest_qt.exe') -Force
 }
 
+if ($Commercial) {
+    # A valid smoke test can create mutable runtime data beside the executable.
+    # Never transfer drawings, generated documents, backups or workstation state
+    # from the build machine into a clean commercial package.
+    foreach ($relativePath in @(
+        'generated',
+        'backups',
+        'lugest_runtime_state.json',
+        'lugest_supplier_seq.json'
+    )) {
+        $runtimeArtifact = Join-Path $releaseRoot $relativePath
+        if (Test-Path -LiteralPath $runtimeArtifact) {
+            Remove-Item -LiteralPath $runtimeArtifact -Recurse -Force
+        }
+    }
+}
+
 $releasedExe = Join-Path $releaseRoot 'lugest_qt.exe'
 if (Test-Path $releasedExe) {
     Rename-Item -LiteralPath $releasedExe -NewName 'LuisGEST.exe' -Force
@@ -284,10 +301,23 @@ if (-not `$NoPause) { Pause }
 "@
 Write-Utf8NoBomFile -Path (Join-Path $releaseRoot 'INSTALAR_LUISGEST.ps1') -Content $installer
 
+$canonicalSchema = Join-Path $databaseSource 'lugest.sql'
+$releaseSchema = Join-Path $mysqlDir 'IMPORTAR_NO_HEIDI.sql'
 if (Test-Path $venvPython) {
-    & $venvPython (Join-Path $databaseSource 'export_current_schema_sql.py') --with-starter-users --output (Join-Path $databaseSource 'lugest.sql') | Out-Null
+    $temporarySchema = Join-Path $env:TEMP ("lugest_release_schema_" + [guid]::NewGuid().ToString('N') + '.sql')
+    try {
+        & $venvPython (Join-Path $databaseSource 'export_current_schema_sql.py') --with-starter-users --output $temporarySchema | Out-Null
+        Copy-Item $temporarySchema $releaseSchema -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporarySchema) {
+            Remove-Item -LiteralPath $temporarySchema -Force
+        }
+    }
 }
-Copy-Item (Join-Path $databaseSource 'lugest.sql') (Join-Path $mysqlDir 'IMPORTAR_NO_HEIDI.sql') -Force
+else {
+    Copy-Item $canonicalSchema $releaseSchema -Force
+}
 $dbReadme = @"
 # Base de Dados LuisGEST
 
