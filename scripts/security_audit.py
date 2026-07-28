@@ -289,14 +289,15 @@ def _audit_source_defaults(findings: list[Finding]) -> None:
                 ROOT / "main.py",
             )
         )
-    mysql_script = (ROOT / "scripts" / "apply_mysql_update.py").read_text(encoding="utf-8", errors="ignore")
-    if "280874" in mysql_script:
+    mysql_installer = ROOT / "mysql" / "install_lugest_mysql.py"
+    mysql_script = mysql_installer.read_text(encoding="utf-8", errors="ignore") if mysql_installer.exists() else ""
+    if re.search(r"(?i)(password|passwd)\s*=\s*['\"][^'\"]{4,}['\"]", mysql_script):
         findings.append(
             Finding(
                 "MEDIUM",
                 "Scripts",
-                "O script de atualizacao MySQL ainda contem uma password hardcoded.",
-                ROOT / "scripts" / "apply_mysql_update.py",
+                "O instalador MySQL ainda contem uma password hardcoded.",
+                mysql_installer,
             )
         )
 

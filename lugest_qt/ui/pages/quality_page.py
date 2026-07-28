@@ -198,7 +198,7 @@ class QualityPage(QWidget):
         approve_many_btn.setProperty("variant", "success")
         approve_many_btn.clicked.connect(self._approve_selected_receptions)
         reject_btn = QPushButton("Rejeitar / NC")
-        reject_btn.setProperty("variant", "danger")
+        reject_btn.setProperty("variant", "rejected")
         reject_btn.clicked.connect(lambda: self._evaluate_selected_reception(default_status="REJEITADO"))
         for button in (select_visible_btn, evaluate_btn, approve_btn, approve_many_btn, reject_btn):
             button.setProperty("compact", "true")

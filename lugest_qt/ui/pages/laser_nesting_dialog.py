@@ -483,11 +483,11 @@ class LaserNestingDialog(QDialog):
         self.window_toggle_btn.clicked.connect(self._toggle_window_mode)
         self.window_toggle_btn.setStyleSheet(
             "QToolButton {"
-            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #e8eef5);"
-            "color: #24384f; border: 1px solid #b8c7d8; border-bottom: 3px solid #9fb0c3;"
+            "background:#ffffff;"
+            "color:#24384f; border:1px solid #b8c7d8;"
             "border-radius: 18px; padding: 6px 14px; font-size: 12px; font-weight: 800;"
             "}"
-            "QToolButton:hover {background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #dde7f0);}"
+            "QToolButton:hover {background:#edf3f9; border-color:#90a8c1;}"
         )
         header_layout.addWidget(self.window_toggle_btn, 0, Qt.AlignTop)
         root.addWidget(header_card)
@@ -870,12 +870,15 @@ class LaserNestingDialog(QDialog):
 
         recommendation_card = CardFrame()
         recommendation_card.set_tone("info")
+        self.result_summary_banner = recommendation_card
         recommendation_layout = QVBoxLayout(recommendation_card)
         recommendation_layout.setContentsMargins(12, 10, 12, 10)
         recommendation_layout.setSpacing(6)
-        recommendation_title = QLabel("Recomendação do motor")
+        recommendation_title = QLabel("Resultado do nesting")
+        self.result_summary_title = recommendation_title
         recommendation_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
         recommendation_hint = QLabel("Resumo industrial do cenário mais interessante, com foco em compactação, compra adicional e aproveitamento real.")
+        self.result_summary_hint = recommendation_hint
         recommendation_hint.setProperty("role", "muted")
         recommendation_hint.setWordWrap(True)
         recommendation_metrics = QHBoxLayout()
@@ -1143,17 +1146,34 @@ class LaserNestingDialog(QDialog):
         results_top_split.addWidget(summary_card)
         results_top_split.addWidget(candidates_card)
         results_top_split.setSizes([380, 780])
+        self.results_top_split = results_top_split
         summary_tab_layout.addWidget(results_top_split, 1)
 
         sheets_tab = QWidget()
         sheets_tab_layout = QVBoxLayout(sheets_tab)
         sheets_tab_layout.setContentsMargins(0, 0, 0, 0)
         sheets_tab_layout.setSpacing(10)
+        self.layout_result_banner = CardFrame()
+        layout_result_layout = QHBoxLayout(self.layout_result_banner)
+        layout_result_layout.setContentsMargins(22, 16, 22, 16)
+        layout_result_layout.setSpacing(18)
+        self.layout_result_sheets = QLabel("0 chapas\n0 layouts")
+        self.layout_result_efficiency = QLabel("0,00% eficiência")
+        self.layout_result_parts = QLabel("0 peças arranjadas")
+        for metric_label in (
+            self.layout_result_sheets,
+            self.layout_result_efficiency,
+            self.layout_result_parts,
+        ):
+            metric_label.setAlignment(Qt.AlignCenter)
+            layout_result_layout.addWidget(metric_label, 1)
         sheets_split = QSplitter(Qt.Horizontal)
         sheets_split.setChildrenCollapsible(False)
         sheets_split.addWidget(sheet_plan_card)
         sheets_split.addWidget(preview_card)
         sheets_split.setSizes([540, 760])
+        self.sheets_split = sheets_split
+        sheets_tab_layout.addWidget(self.layout_result_banner)
         sheets_tab_layout.addWidget(layouts_card)
         sheets_tab_layout.addWidget(sheets_split, 1)
 
@@ -1166,6 +1186,7 @@ class LaserNestingDialog(QDialog):
         diagnostics_split.addWidget(unplaced_card)
         diagnostics_split.addWidget(warnings_card)
         diagnostics_split.setSizes([640, 640])
+        self.diagnostics_split = diagnostics_split
         diagnostics_tab_layout.addWidget(diagnostics_split, 1)
 
         cost_card = CardFrame()
@@ -1247,6 +1268,7 @@ class LaserNestingDialog(QDialog):
         costs_top_split.addWidget(cost_card)
         costs_top_split.addWidget(decision_card)
         costs_top_split.setSizes([780, 500])
+        self.costs_top_split = costs_top_split
         costs_tab_layout.addWidget(costs_top_split)
         costs_tab_layout.addWidget(process_card, 1)
 
@@ -1318,7 +1340,10 @@ class LaserNestingDialog(QDialog):
         self.wizard_path_label.setStyleSheet("font-size: 11px; font-weight: 700; color: #365b7c;")
         self.body_layout.addWidget(self.wizard_path_label)
 
-        actions = QHBoxLayout()
+        self.footer_frame = QFrame()
+        self.footer_frame.setObjectName("NestingFooter")
+        actions = QHBoxLayout(self.footer_frame)
+        actions.setContentsMargins(14, 8, 14, 8)
         actions.setSpacing(8)
         self.prev_section_btn = QPushButton("Anterior")
         self.prev_section_btn.setProperty("variant", "secondary")
@@ -1359,14 +1384,15 @@ class LaserNestingDialog(QDialog):
         self.pdf_btn.setProperty("variant", "secondary")
         self.pdf_btn.clicked.connect(self._open_study_pdf)
         actions.addWidget(self.pdf_btn)
-        root.addLayout(actions)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Close)
         buttons.accepted.connect(self._accept_dialog)
         buttons.rejected.connect(self.reject)
         buttons.button(QDialogButtonBox.Ok).setText("Aplicar ao orçamento")
         buttons.button(QDialogButtonBox.Close).setText("Fechar")
-        root.addWidget(buttons)
+        buttons.layout().setContentsMargins(0, 0, 0, 0)
+        actions.addWidget(buttons)
+        root.addWidget(self.footer_frame)
         self.dialog_buttons = buttons
         self._nesting_thread: QThread | None = None
         self._nesting_worker: NestingWorker | None = None
@@ -1492,6 +1518,41 @@ class LaserNestingDialog(QDialog):
             QTimer.singleShot(0, self._fit_to_available_screen)
             QTimer.singleShot(80, self._fit_to_available_screen)
         self._sync_window_toggle_label()
+        QTimer.singleShot(0, self._sync_responsive_layout)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._sync_responsive_layout)
+
+    def _sync_responsive_layout(self) -> None:
+        if not hasattr(self, "sheets_split"):
+            return
+        viewport_width = max(0, int(self.body_scroll.viewport().width()))
+        compact_results = viewport_width < 1420
+        compact_config = viewport_width < 1040
+        result_orientation = Qt.Vertical if compact_results else Qt.Horizontal
+        for splitter in (
+            self.results_top_split,
+            self.sheets_split,
+            self.diagnostics_split,
+            self.costs_top_split,
+        ):
+            if splitter.orientation() != result_orientation:
+                splitter.setOrientation(result_orientation)
+        if compact_results:
+            self.results_top_split.setSizes([330, 420])
+            self.sheets_split.setSizes([270, 440])
+            self.diagnostics_split.setSizes([320, 320])
+            self.costs_top_split.setSizes([340, 300])
+        else:
+            self.results_top_split.setSizes([380, 780])
+            self.sheets_split.setSizes([540, 760])
+            self.diagnostics_split.setSizes([640, 640])
+            self.costs_top_split.setSizes([780, 500])
+        config_orientation = Qt.Vertical if compact_config else Qt.Horizontal
+        if self.config_splitter.orientation() != config_orientation:
+            self.config_splitter.setOrientation(config_orientation)
+        self.config_splitter.setSizes([520, 430] if compact_config else [900, 520])
 
     def changeEvent(self, event) -> None:  # type: ignore[override]
         super().changeEvent(event)
@@ -1697,6 +1758,38 @@ class LaserNestingDialog(QDialog):
         self.stepper_card.setStyleSheet(
             "QFrame {background: #ffffff; border: none; border-bottom: 1px solid #d4d6d3; border-radius: 0;}"
         )
+        result_banner_style = (
+            "CardFrame {background:#7ed321; border:1px solid #6fbe1c; border-radius:2px;}"
+        )
+        self.result_summary_banner.setStyleSheet(result_banner_style)
+        self.layout_result_banner.setStyleSheet(result_banner_style)
+        self.result_summary_title.setStyleSheet(
+            "font-size:15px; font-weight:900; color:#ffffff; background:transparent; border:none;"
+        )
+        self.result_summary_hint.hide()
+        for metric_label in (
+            self.recommendation_primary,
+            self.recommendation_secondary,
+            self.recommendation_delta,
+            self.layout_result_sheets,
+            self.layout_result_efficiency,
+            self.layout_result_parts,
+        ):
+            metric_label.setAlignment(Qt.AlignCenter)
+            metric_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            metric_label.setMinimumHeight(48)
+            metric_label.setStyleSheet(
+                "padding:8px 14px; background:transparent; color:#ffffff; border:none; "
+                "font-size:17px; font-weight:900;"
+            )
+        self.recommendation_note.setStyleSheet(
+            "font-size:11px; color:#efffe1; background:transparent; border:none;"
+        )
+        self.footer_frame.setMinimumHeight(60)
+        self.footer_frame.setMaximumHeight(68)
+        self.footer_frame.setStyleSheet(
+            "QFrame#NestingFooter {background:#444744; border:none; border-top:1px solid #363936;}"
+        )
         self.header_card.layout().setContentsMargins(22, 11, 22, 9)
         self.stepper_card.layout().setContentsMargins(22, 7, 22, 7)
         self.header_title_label.setStyleSheet("font-size: 21px; font-weight: 900; color: #30343b;")
@@ -1847,6 +1940,7 @@ class LaserNestingDialog(QDialog):
             "color:#355716; font-weight:800; text-align:center; height:22px;}"
             "QProgressBar::chunk {border-radius:8px; background:#7ed321;}"
         )
+        self.nesting_progress.setMaximumWidth(360)
 
     def quote_bridge_payload(self) -> dict[str, Any]:
         if not self.result_data:
@@ -1877,7 +1971,7 @@ class LaserNestingDialog(QDialog):
             "muted": ("#eef4ff", "#365b7c", "#bfd2ea"),
             "success": ("#edf4fb", "#1f3b57", "#bfd0e1"),
             "warning": ("#fff8eb", "#b54708", "#f1d39a"),
-            "danger": ("#fff1f2", "#b42318", "#f0c1bc"),
+            "danger": ("#fff8eb", "#b45f06", "#e4c37f"),
         }
         bg, fg, border = palette.get(str(tone or "muted"), palette["muted"])
         self.study_status_label.setText(str(text or "").strip())
@@ -2600,8 +2694,8 @@ class LaserNestingDialog(QDialog):
                 progress_item.setBackground(QBrush(QColor("#fef3c7")))
                 progress_item.setForeground(QBrush(QColor("#92400e")))
             else:
-                progress_item.setBackground(QBrush(QColor("#fee2e2")))
-                progress_item.setForeground(QBrush(QColor("#b42318")))
+                progress_item.setBackground(QBrush(QColor("#fff8eb")))
+                progress_item.setForeground(QBrush(QColor("#b45f06")))
             preview_widget = self.parts_table.cellWidget(row_index, 0)
             if isinstance(preview_widget, QLabel):
                 path = str(row.get("desenho", "") or "").strip()
@@ -2944,6 +3038,12 @@ class LaserNestingDialog(QDialog):
         self.result_data = {}
         for label in self.summary_labels.values():
             label.setText("-")
+        self.recommendation_primary.setText("0 chapas\n0 layouts")
+        self.recommendation_secondary.setText("0,00% eficiência")
+        self.recommendation_delta.setText("0 peças arranjadas")
+        self.layout_result_sheets.setText("0 chapas\n0 layouts")
+        self.layout_result_efficiency.setText("0,00% eficiência")
+        self.layout_result_parts.setText("0 peças arranjadas")
         self.warning_edit.clear()
         self.candidate_table.setRowCount(0)
         self.sheet_plan_table.setRowCount(0)
@@ -3087,6 +3187,8 @@ class LaserNestingDialog(QDialog):
             self.dialog_buttons.setEnabled(not busy)
         self.nesting_progress.setVisible(busy)
         if busy:
+            self.next_section_btn.hide()
+            self.analyze_btn.show()
             quality = dict(self.optimization_level_combo.currentData() or {})
             self._nesting_started_at = time.monotonic()
             self._nesting_time_limit_s = max(1.0, float(quality.get("seconds", 30.0) or 30.0))
@@ -3102,6 +3204,7 @@ class LaserNestingDialog(QDialog):
             self._nesting_progress_timer.stop()
             self.nesting_progress.setValue(0)
             self.analyze_btn.setEnabled(True)
+            self.next_section_btn.show()
             self._sync_wizard_controls()
 
     def _tick_nesting_progress(self) -> None:
@@ -3767,24 +3870,26 @@ class LaserNestingDialog(QDialog):
         self.summary_labels["mass"].setText(f"{_fmt_num(summary.get('gross_sheet_mass_kg', 0), 3)} kg")
         self.summary_labels["material_cost"].setText(_fmt_eur(summary.get("material_net_cost_eur", 0)))
 
+        sheet_count = int(summary.get("sheet_count", 0) or 0)
+        utilization = float(summary.get("utilization_net_pct", 0) or 0)
+        result_sheet_text = f"{sheet_count} chapa(s)\n{sheet_count} layout(s)"
+        result_efficiency_text = f"{_fmt_num(utilization, 2)}% eficiência"
+        result_parts_text = f"{placed} peça(s) arranjada(s)"
+        self.recommendation_primary.setText(result_sheet_text)
+        self.recommendation_secondary.setText(result_efficiency_text)
+        self.recommendation_delta.setText(result_parts_text)
+        self.layout_result_sheets.setText(result_sheet_text)
+        self.layout_result_efficiency.setText(result_efficiency_text)
+        self.layout_result_parts.setText(result_parts_text)
+
         candidates = [dict(row or {}) for row in list(self.result_data.get("sheet_candidates", []) or []) if isinstance(row, dict)]
         if candidates:
-            best_compact = max(candidates, key=lambda row: float(row.get("layout_compactness_pct", 0) or 0))
-            best_purchase = min(candidates, key=lambda row: float(row.get("purchase_sheet_area_mm2", 0) or 0))
             selected_name_txt = str(summary.get("selected_candidate_name", "") or candidates[0].get("name", "") or "-").strip() or "-"
-            compact_txt = f"{_fmt_num(best_compact.get('layout_compactness_pct', 0), 1)}%"
-            purchase_txt = f"{_fmt_num((best_purchase.get('purchase_sheet_area_mm2', 0) or 0) / 1_000_000.0, 4)} m2"
-            self.recommendation_primary.setText(f"Selecionado: {selected_name_txt}")
-            self.recommendation_secondary.setText(f"Melhor compactação: {compact_txt}")
-            self.recommendation_delta.setText(f"Menor compra: {purchase_txt}")
             self.recommendation_note.setText(
-                f"O motor comparou {len(candidates)} cenário(s). O cenário ativo favorece "
-                f"{self._analysis_method_label(summary).lower()}, com {_fmt_num(summary.get('utilization_net_pct', 0), 1)}% de aproveitamento real."
+                f"Cenário selecionado: {selected_name_txt} · {len(candidates)} cenário(s) comparado(s) · "
+                f"{self._analysis_method_label(summary)}."
             )
         else:
-            self.recommendation_primary.setText("Sem cenários")
-            self.recommendation_secondary.setText("Compactação: -")
-            self.recommendation_delta.setText("Compra: -")
             self.recommendation_note.setText("Corre a otimização para receber uma recomendação automática do estudo.")
 
         warnings = list(self.result_data.get("warnings", []) or [])
@@ -4132,6 +4237,8 @@ def _laser_nesting_sync_wizard_controls_v2(self: LaserNestingDialog) -> None:
     }
     self.next_section_btn.setText(next_labels.get(step_index, "Concluir"))
     self.analyze_btn.setText("Atualizar nesting" if step_index >= 2 else "Iniciar otimização")
+    if self._nesting_thread is None:
+        self.analyze_btn.setVisible(step_index >= 2)
     if self.section_stack.currentIndex() == 1 and self.nest_tabs.currentIndex() == 1 and self.result_data:
         QTimer.singleShot(0, self._render_sheet_preview)
 

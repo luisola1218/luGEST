@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from functools import partial
 import os
+from pathlib import Path
 import sys
 import time
 
 from PySide6.QtCore import QObject, QPoint, QRect, QRectF, QSize, QProcess, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -58,7 +59,7 @@ from .pages.quotes_page import QuotesPage
 from .pages.shipping_page import ExpeditionPage
 from .pages.stock_dashboard_page import StockDashboardPage
 from .pages.transports_page import TransportsPage
-from .theme import apply_theme
+from .theme import apply_theme, polish_widget_tree
 
 
 class _UpdateCheckWorker(QObject):
@@ -82,41 +83,106 @@ class _UpdateCheckWorker(QObject):
 
 
 class _BrandMark(QWidget):
-    """Header mark drawn from the approved symbol shape."""
+    """Wordmark oficial, aparado automaticamente para remover margens brancas."""
 
-    def __init__(self, logo_path=None, parent=None) -> None:
+    _pixmap_cache: dict[str, QPixmap] = {}
+
+    def __init__(self, logo_path=None, parent=None, *, width: int = 286, height: int = 48) -> None:
         super().__init__(parent)
-        self.setFixedSize(72, 52)
+        self._logo = self._load_trimmed_logo(logo_path)
+        self.setFixedSize(width, height)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+    @classmethod
+    def _load_trimmed_logo(cls, logo_path) -> QPixmap:
+        candidates = [
+            Path(__file__).resolve().parents[2] / "Logos" / "lg.png",
+            Path(str(logo_path or "")).expanduser() if logo_path else None,
+        ]
+        path = next((item.resolve() for item in candidates if item and item.is_file()), None)
+        if path is None:
+            return QPixmap()
+        cache_key = str(path)
+        cached = cls._pixmap_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        original = QPixmap(cache_key)
+        if original.isNull():
+            return QPixmap()
+        preview = original.scaled(760, 430, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        image = preview.toImage()
+        left, top = image.width(), image.height()
+        right = bottom = -1
+        # Ignora o fundo branco e a compressao muito ligeira em redor do logotipo.
+        for y in range(image.height()):
+            for x in range(image.width()):
+                color = image.pixelColor(x, y)
+                if color.alpha() > 20 and min(color.red(), color.green(), color.blue()) < 242:
+                    left = min(left, x)
+                    right = max(right, x)
+                    top = min(top, y)
+                    bottom = max(bottom, y)
+        if right < left or bottom < top:
+            trimmed = preview
+        else:
+            padding = 6
+            crop = QRect(
+                max(0, left - padding),
+                max(0, top - padding),
+                min(image.width() - max(0, left - padding), (right - left + 1) + (padding * 2)),
+                min(image.height() - max(0, top - padding), (bottom - top + 1) + (padding * 2)),
+            )
+            trimmed = preview.copy(crop)
+        cls._pixmap_cache[cache_key] = trimmed
+        return trimmed
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        if not self._logo.isNull():
+            target = self._logo.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            x = (self.width() - target.width()) // 2
+            y = (self.height() - target.height()) // 2
+            painter.drawPixmap(x, y, target)
+            return
+
+        # Fallback limpo para instalações onde o recurso externo não exista.
         painter.setPen(Qt.NoPen)
-        w = float(self.width())
-        h = float(self.height())
-        scale = min(w / 156.0, h / 156.0)
-        draw_w = 156.0 * scale
-        draw_h = 156.0 * scale
-        offset_x = (w - draw_w) / 2.0
-        offset_y = (h - draw_h) / 2.0
+        painter.setPen(QColor("#2d3846"))
+        font = self.font()
+        font.setFamily("Arial Black")
+        font.setPointSize(22)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(self.rect().adjusted(0, 0, 0, -8), Qt.AlignCenter, "LUGEST")
+        painter.setPen(QColor("#f47a18"))
+        font.setFamily("Segoe UI")
+        font.setPointSize(7)
+        font.setLetterSpacing(font.AbsoluteSpacing, 2.2)
+        painter.setFont(font)
+        painter.drawText(self.rect().adjusted(0, 28, 0, 0), Qt.AlignHCenter | Qt.AlignTop, "SOFTWARE ERP INDUSTRIAL")
 
-        def rr(x: float, y: float, rw: float, rh: float, radius: float, color: str) -> None:
-            painter.setBrush(QColor(color))
-            painter.drawRoundedRect(
-                QRectF(offset_x + (x * scale), offset_y + (y * scale), rw * scale, rh * scale),
-                radius * scale,
-                radius * scale,
-            )
 
-        dark = "#2D3846"
-        orange = "#FF7A14"
-
-        rr(4, 4, 78, 144, 7, dark)
-        rr(4, 95, 104, 53, 7, dark)
-        rr(82, 4, 70, 70, 7, orange)
-        rr(121, 4, 31, 102, 7, orange)
+def _header_icon(kind: str) -> QIcon:
+    """Ícones monocromáticos consistentes com o cabeçalho plano."""
+    pixmap = QPixmap(24, 24)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    pen = QPen(QColor("#3f4542"), 2.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+    painter.setPen(pen)
+    if kind == "close":
+        painter.drawLine(7, 7, 17, 17)
+        painter.drawLine(17, 7, 7, 17)
+    else:
+        painter.drawArc(QRectF(5, 5, 14, 14), 35 * 16, 285 * 16)
+        painter.drawLine(17, 5, 19, 9)
+        painter.drawLine(17, 5, 13, 6)
+    painter.end()
+    return QIcon(pixmap)
 
 
 class MainWindow(QMainWindow):
@@ -184,30 +250,17 @@ class MainWindow(QMainWindow):
 
         brand_frame = QFrame()
         brand_frame.setObjectName("AppBrandPlate")
-        brand_frame.setMinimumWidth(188)
+        brand_frame.setFixedWidth(292)
         brand_frame.setFixedHeight(54)
         brand_layout = QHBoxLayout(brand_frame)
         brand_layout.setContentsMargins(0, 0, 0, 0)
-        brand_layout.setSpacing(8)
+        brand_layout.setSpacing(0)
 
         brand_mark = _BrandMark(getattr(self.backend, "logo_path", None))
-        brand_layout.addWidget(brand_mark, 0, Qt.AlignTop)
-
-        brand_text_col = QVBoxLayout()
-        brand_text_col.setContentsMargins(0, 0, 0, 0)
-        brand_text_col.setSpacing(0)
-        brand_label = QLabel("LUGEST")
-        brand_label.setStyleSheet("font-size: 21px; font-weight: 950; color: #24313c;")
-        brand_sub = QLabel("ERP industrial")
-        brand_sub.setProperty("role", "muted")
-        brand_sub.setStyleSheet("font-size: 10px; color: #f47a18; font-weight: 800;")
-        brand_text_col.addWidget(brand_label)
-        brand_text_col.addWidget(brand_sub)
-        brand_text_col.addStretch(1)
-        brand_layout.addLayout(brand_text_col)
+        brand_layout.addWidget(brand_mark, 0, Qt.AlignVCenter)
         shell_layout.addWidget(brand_frame, 0, Qt.AlignVCenter)
 
-        shell_layout.addSpacing(8)
+        shell_layout.addSpacing(4)
 
         page_col = QVBoxLayout()
         page_col.setContentsMargins(0, 0, 0, 0)
@@ -242,23 +295,30 @@ class MainWindow(QMainWindow):
             extras_btn.setFixedWidth(42)
             extras_btn.clicked.connect(self._open_admin_extras)
             right_col.addWidget(extras_btn)
-        refresh_btn = QPushButton("Atualizar")
+        refresh_btn = QPushButton("")
         refresh_btn.setProperty("toolbarAction", "true")
+        refresh_btn.setProperty("variant", "secondary")
+        refresh_btn.setProperty("headerControl", "refresh")
         refresh_btn.setMinimumHeight(38)
-        refresh_btn.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        refresh_btn.setIcon(_header_icon("refresh"))
+        refresh_btn.setIconSize(QSize(20, 20))
         refresh_btn.setToolTip("Recarregar os dados do menu atual")
-        refresh_btn.setText("")
+        refresh_btn.setAccessibleName("Atualizar menu")
         refresh_btn.setFixedWidth(42)
+        refresh_btn.setStyleSheet("padding: 0;")
         refresh_btn.clicked.connect(lambda: self.refresh_current_page(force=True, background=False))
         right_col.addWidget(refresh_btn)
-        logout_btn = QPushButton("Sair")
-        logout_btn.setProperty("variant", "logout")
+        logout_btn = QPushButton("")
+        logout_btn.setProperty("variant", "secondary")
+        logout_btn.setProperty("headerControl", "close")
         logout_btn.setProperty("toolbarAction", "true")
         logout_btn.setMinimumHeight(38)
-        logout_btn.setIcon(self.style().standardIcon(QStyle.SP_DialogCloseButton))
+        logout_btn.setIcon(_header_icon("close"))
+        logout_btn.setIconSize(QSize(20, 20))
         logout_btn.setToolTip("Terminar a sessão atual")
-        logout_btn.setText("")
+        logout_btn.setAccessibleName("Terminar sessão")
         logout_btn.setFixedWidth(42)
+        logout_btn.setStyleSheet("padding: 0;")
         logout_btn.clicked.connect(self._logout)
         right_col.addWidget(logout_btn)
         shell_layout.addLayout(right_col)
@@ -437,6 +497,7 @@ class MainWindow(QMainWindow):
         page = self.page_factories[key]()
         self.pages[key] = page
         self.stack.addWidget(page)
+        polish_widget_tree(page)
         return page
 
     def show_page(self, key: str) -> None:
@@ -1260,7 +1321,7 @@ class MainWindow(QMainWindow):
                 color = QColor(value)
                 valid = bool(color.isValid() and len(value) == 7 and value.startswith("#"))
                 fill = color.name() if valid else "#FFFFFF"
-                border = "#8A9AAA" if valid else "#B42318"
+                border = "#8A9AAA" if valid else "#b45f06"
                 primary_swatch.setStyleSheet(f"background: {fill}; border: 1px solid {border}; border-radius: 4px;")
 
             def choose_primary_color() -> None:
@@ -1338,17 +1399,8 @@ class MainWindow(QMainWindow):
             header_layout = QHBoxLayout(header)
             header_layout.setContentsMargins(18, 14, 18, 14)
             header_layout.setSpacing(12)
-            header_layout.addWidget(_BrandMark(), 0, Qt.AlignVCenter)
-            title_col = QVBoxLayout()
-            title_col.setContentsMargins(0, 0, 0, 0)
-            title_col.setSpacing(2)
-            title = QLabel("LuGEST")
-            title.setStyleSheet("font-size: 26px; font-weight: 950; color: #24313c; letter-spacing: 0.8px;")
-            subtitle = QLabel("Software ERP Industrial")
-            subtitle.setStyleSheet("font-size: 12px; font-weight: 800; color: #f47a18; letter-spacing: 0.8px;")
-            title_col.addWidget(title)
-            title_col.addWidget(subtitle)
-            header_layout.addLayout(title_col, 1)
+            header_layout.addWidget(_BrandMark(width=340, height=58), 0, Qt.AlignVCenter)
+            header_layout.addStretch(1)
             info_layout.addWidget(header)
 
             legal_text = QTextEdit()
@@ -1553,8 +1605,8 @@ class MainWindow(QMainWindow):
                     }
                     """
                     % (
-                        "#fff1f2" if blocking else "#eef5fc",
-                        "#fecaca" if blocking else "#cdd9ea",
+                        "#fff8eb" if blocking else "#f1f2f0",
+                        "#e4c37f" if blocking else "#c9cdca",
                         "#9f1239" if blocking else "#36506d",
                     )
                 )

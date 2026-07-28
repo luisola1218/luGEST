@@ -672,12 +672,13 @@ class ProductsPage(QWidget):
         actions.setContentsMargins(10, 6, 10, 6)
         actions.setSpacing(6)
         self.new_btn = QPushButton("Novo")
+        self.new_btn.setProperty("variant", "success")
         self.new_btn.clicked.connect(self._new_product)
         self.save_btn = QPushButton("Guardar")
-        self.save_btn.setProperty("variant", "warning")
+        self.save_btn.setProperty("variant", "success")
         self.save_btn.clicked.connect(self._save_product)
         self.remove_btn = QPushButton("Remover")
-        self.remove_btn.setProperty("variant", "danger")
+        self.remove_btn.setProperty("variant", "destructive")
         self.remove_btn.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
         self.remove_btn.clicked.connect(self._remove_product)
         self.consume_btn = QPushButton("Baixa")
@@ -755,12 +756,12 @@ class ProductsPage(QWidget):
         self.table = QTableWidget(0, 11)
         self.table.setObjectName("StockTable")
         self.table.setStyleSheet(
-            "QTableWidget { gridline-color: #d7e1ec; selection-background-color: #dff5f3; selection-color: #0f172a; }"
+            "QTableWidget { gridline-color: #d7e1ec; selection-background-color: #eaf7da; selection-color: #26331d; }"
             "QTableWidget::item:selected {"
-            " background: #dff5f3;"
-            " color: #0f172a;"
-            " border-top: 1px solid #08a6a6;"
-            " border-bottom: 1px solid #08a6a6;"
+            " background: #eaf7da;"
+            " color: #26331d;"
+            " border-left: 3px solid #7ed321;"
+            " border-bottom: 1px solid #d8e6c9;"
             "}"
         )
         self.table.setHorizontalHeaderLabels(
@@ -1097,8 +1098,10 @@ class ProductsPage(QWidget):
         background = "#e8f6f4"
         foreground = "#087f83"
         border = "#9fd8d3"
-        if "sem stock" in normalized or "rejeit" in normalized or "bloque" in normalized:
+        if "rejeit" in normalized:
             background, foreground, border = "#fff0f0", "#b42318", "#f1b6b2"
+        elif "sem stock" in normalized or "bloque" in normalized:
+            background, foreground, border = "#fff8eb", "#b45f06", "#e4c37f"
         elif "baixo" in normalized or "pend" in normalized or "inspec" in normalized:
             background, foreground, border = "#fff7e6", "#9a5b00", "#efd29b"
         elif normalized in {"novo", "-"}:

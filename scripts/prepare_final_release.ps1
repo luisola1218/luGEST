@@ -285,9 +285,9 @@ if (-not `$NoPause) { Pause }
 Write-Utf8NoBomFile -Path (Join-Path $releaseRoot 'INSTALAR_LUISGEST.ps1') -Content $installer
 
 if (Test-Path $venvPython) {
-    & $venvPython (Join-Path $databaseSource 'export_current_schema_sql.py') --with-starter-users --output (Join-Path $databaseSource 'lugest_instalacao_unica.sql') | Out-Null
+    & $venvPython (Join-Path $databaseSource 'export_current_schema_sql.py') --with-starter-users --output (Join-Path $databaseSource 'lugest.sql') | Out-Null
 }
-Copy-Item (Join-Path $databaseSource 'lugest_instalacao_unica.sql') (Join-Path $mysqlDir 'IMPORTAR_NO_HEIDI.sql') -Force
+Copy-Item (Join-Path $databaseSource 'lugest.sql') (Join-Path $mysqlDir 'IMPORTAR_NO_HEIDI.sql') -Force
 $dbReadme = @"
 # Base de Dados LuisGEST
 

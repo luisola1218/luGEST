@@ -12,8 +12,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
-from PySide6.QtCore import Qt, QDate, QEvent, QMimeData, QTime, QTimer
-from PySide6.QtGui import QColor, QBrush, QDrag, QFont, QPixmap
+from PySide6.QtCore import Qt, QDate, QEvent, QMimeData, QTime, QTimer, QUrl
+from PySide6.QtGui import QColor, QBrush, QDesktopServices, QDrag, QFont, QPixmap
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QAbstractItemView,
@@ -1343,6 +1343,7 @@ class OperatorPage(QWidget):
         actions_row_bottom = QHBoxLayout()
         actions_row_bottom.setSpacing(8)
         self.start_btn = QPushButton("Iniciar")
+        self.start_btn.setProperty("variant", "success")
         self.start_btn.clicked.connect(self._start_piece)
         self.finish_btn = QPushButton("Finalizar")
         self.finish_btn.clicked.connect(self._finish_piece)
@@ -1352,7 +1353,7 @@ class OperatorPage(QWidget):
         self.pause_btn.setProperty("variant", "secondary")
         self.pause_btn.clicked.connect(self._pause_piece)
         self.avaria_btn = QPushButton("Registar Avaria")
-        self.avaria_btn.setProperty("variant", "danger")
+        self.avaria_btn.setProperty("variant", "destructive")
         self.avaria_btn.clicked.connect(self._register_avaria)
         self.close_avaria_btn = QPushButton("Fim Avaria")
         self.close_avaria_btn.setProperty("variant", "secondary")
@@ -2468,7 +2469,7 @@ class OperatorPage(QWidget):
         self.feedback_label.setText(_elide_middle(raw, 110))
         self.feedback_label.setToolTip(raw if len(raw) > 110 else "")
         if error:
-            self.feedback_label.setStyleSheet("color: #b42318; font-weight: 700;")
+            self.feedback_label.setStyleSheet("color: #b45f06; font-weight: 700;")
             _set_panel_tone(self.control_card, "danger")
         else:
             self.feedback_label.setStyleSheet("color: #475467;")
@@ -2750,7 +2751,7 @@ class OperatorPage(QWidget):
         )
         self.issue_label.setText(issue_text)
         self.issue_label.setVisible(bool(issue_text))
-        self.issue_label.setStyleSheet("font-size: 8.4px; color: #b42318; font-weight: 700;" if ctx.get("has_open_avaria") else "font-size: 8.3px; color: #475467;")
+        self.issue_label.setStyleSheet("font-size: 8.4px; color: #b45f06; font-weight: 700;" if ctx.get("has_open_avaria") else "font-size: 8.3px; color: #475467;")
         pend_txt = ", ".join(pending[:3]) if pending else "-"
         done_txt = ", ".join(done[:3]) if done else "-"
         if len(pending) > 3:
@@ -2819,7 +2820,7 @@ class OperatorPage(QWidget):
             issue = f"Stock insuficiente neste componente: faltam {falta:.1f}."
         self.issue_label.setText(issue)
         self.issue_label.setVisible(bool(issue))
-        self.issue_label.setStyleSheet("font-size: 8.4px; color: #b42318; font-weight: 700;")
+        self.issue_label.setStyleSheet("font-size: 8.4px; color: #b45f06; font-weight: 700;")
         self.pending_label.setText("Este grupo não inicia OPP. Usa Consumir comp. para dar baixa aos produtos e matéria-prima pendentes.")
         _clear_layout_widgets(self.operation_strip_layout)
         chip = QLabel()
@@ -2934,11 +2935,11 @@ class OperatorPage(QWidget):
             QDialogButtonBox QPushButton {
                 min-width: 92px;
                 min-height: 34px;
-                border-radius: 10px;
+                border-radius: 18px;
                 border: 1px solid #020348;
                 color: white;
                 font-weight: 900;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #101a64, stop:1 #020348);
+                background: #101a64;
             }
             QDialogButtonBox QPushButton:hover { background: #142174; }
             """
@@ -3020,11 +3021,11 @@ class OperatorPage(QWidget):
             QDialogButtonBox QPushButton {
                 min-width: 92px;
                 min-height: 34px;
-                border-radius: 10px;
+                border-radius: 18px;
                 border: 1px solid #020348;
                 color: white;
                 font-weight: 900;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #101a64, stop:1 #020348);
+                background: #101a64;
             }
             QDialogButtonBox QPushButton:hover { background: #142174; }
             """
@@ -3599,7 +3600,7 @@ class OperatorPage(QWidget):
             "QLabel#physicalHint { color: #31547d; font-size: 12px; }"
             "QLabel#physicalCardTitle { font-size: 13px; font-weight: 950; color: #071b3a; }"
             "QLabel[role='pill'] { border: 1px solid #b8cbea; border-radius: 4px; padding: 4px 8px; background: #f7fbff; color: #12345f; font-weight: 800; }"
-            "QTableWidget { background: #ffffff; border: 1px solid #b8cbea; gridline-color: #d7e2f1; selection-background-color: #fff2b8; selection-color: #06152f; }"
+            "QTableWidget { background: #ffffff; border: 1px solid #b8cbea; gridline-color: #d7e2f1; selection-background-color: #eaf7da; selection-color: #26331d; }"
             "QHeaderView::section { background: #050348; color: white; font-weight: 900; padding: 7px 8px; border: none; }"
             "QDoubleSpinBox { min-height: 26px; border: 1px solid #a9bedc; border-radius: 4px; background: #ffffff; padding: 2px 6px; }"
             "QComboBox { min-height: 28px; border: 1px solid #a9bedc; border-radius: 4px; background: #ffffff; padding: 2px 8px; }"
@@ -4882,7 +4883,7 @@ class OppPage(QWidget):
         self.pdf_btn = QPushButton("Etiqueta OPP")
         self.pdf_btn.clicked.connect(self._open_label_pdf)
         self.order_btn = QPushButton("Abrir encomenda")
-        self.order_btn.setProperty("variant", "secondary")
+        self.order_btn.setProperty("variant", "success")
         self.order_btn.clicked.connect(self._open_order)
         self.drawing_btn = QPushButton("Ver desenho")
         self.drawing_btn.setProperty("variant", "secondary")
@@ -5115,6 +5116,7 @@ class OppPage(QWidget):
         self.portfolio_orders_title = QLabel("Encomendas adjudicadas")
         self.portfolio_orders_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
         self.portfolio_order_btn = QPushButton("Abrir encomenda")
+        self.portfolio_order_btn.setProperty("variant", "success")
         self.portfolio_order_btn.clicked.connect(self._open_portfolio_order)
         self.portfolio_opp_btn = QPushButton("Ver OPP")
         self.portfolio_opp_btn.setProperty("variant", "secondary")
@@ -5723,17 +5725,17 @@ class PlanningPage(QWidget):
         if selected:
             return (
                 "QPushButton {"
-                f"background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {accent}, stop:1 #0f172a);"
-                "color:#ffffff; border:1px solid rgba(15,23,42,0.28); border-bottom:4px solid #0f172a;"
+                f"background:{accent};"
+                "color:#ffffff; border:1px solid rgba(15,23,42,0.28);"
                 "border-radius:22px; padding:18px 24px; font-size:18px; font-weight:900;}"
-                f"QPushButton:hover {{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 {accent}, stop:1 #111827);}}"
+                f"QPushButton:hover {{background:{accent}; border-color:#0f172a;}}"
             )
         return (
             "QPushButton {"
-            "background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #ffffff, stop:0.55 #f8fbff, stop:1 #e6eef9);"
-            f"border:1px solid {accent}; border-bottom:4px solid {accent};"
+            "background:#ffffff;"
+            f"border:1px solid {accent};"
             "color:#0f172a; border-radius:22px; padding:18px 24px; font-size:18px; font-weight:850;}"
-            f"QPushButton:hover {{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #ffffff, stop:1 {accent}22);}}"
+            f"QPushButton:hover {{background:#f7fafc; border-color:{accent};}}"
         )
 
     def _planning_operation_options(self) -> list[str]:
@@ -8763,6 +8765,10 @@ class TransportsPage(QWidget):
         self.pending_rows: list[dict] = []
         self.trip_rows: list[dict] = []
         self.current_detail: dict[str, Any] = {}
+        self._filter_refresh_timer = QTimer(self)
+        self._filter_refresh_timer.setSingleShot(True)
+        self._filter_refresh_timer.setInterval(180)
+        self._filter_refresh_timer.timeout.connect(self.refresh)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -8774,6 +8780,7 @@ class TransportsPage(QWidget):
         actions_layout.setContentsMargins(14, 10, 14, 10)
         actions_layout.setSpacing(8)
         self.new_trip_btn = QPushButton("＋ Nova viagem")
+        self.new_trip_btn.setProperty("variant", "success")
         self.new_trip_btn.clicked.connect(self._new_trip)
         self.assign_btn = QPushButton("→ Adicionar à viagem")
         self.assign_btn.clicked.connect(self._assign_selected_orders)
@@ -8781,7 +8788,7 @@ class TransportsPage(QWidget):
         self.edit_trip_btn.setProperty("variant", "secondary")
         self.edit_trip_btn.clicked.connect(self._edit_trip)
         self.remove_trip_btn = QPushButton("🗑 Apagar viagem")
-        self.remove_trip_btn.setProperty("variant", "danger")
+        self.remove_trip_btn.setProperty("variant", "destructive")
         self.remove_trip_btn.clicked.connect(self._remove_trip)
         self.request_btn = QPushButton("Requisitar / confirmar")
         self.request_btn.setProperty("variant", "secondary")
@@ -8805,6 +8812,9 @@ class TransportsPage(QWidget):
         self.edit_stop_btn = QPushButton("Editar destino / guia")
         self.edit_stop_btn.setProperty("variant", "secondary")
         self.edit_stop_btn.clicked.connect(self._edit_stop)
+        self.stop_map_btn = QPushButton("Ver destino no mapa")
+        self.stop_map_btn.setProperty("variant", "secondary")
+        self.stop_map_btn.clicked.connect(self._open_selected_stop_map)
         self.stop_up_btn = QPushButton("Subir")
         self.stop_up_btn.setProperty("variant", "secondary")
         self.stop_up_btn.clicked.connect(lambda: self._move_stop(-1))
@@ -8812,9 +8822,12 @@ class TransportsPage(QWidget):
         self.stop_down_btn.setProperty("variant", "secondary")
         self.stop_down_btn.clicked.connect(lambda: self._move_stop(1))
         self.remove_stop_btn = QPushButton("Remover paragem")
-        self.remove_stop_btn.setProperty("variant", "secondary")
+        self.remove_stop_btn.setProperty("variant", "destructive")
         self.remove_stop_btn.clicked.connect(self._remove_stop)
-        self.pdf_btn = QPushButton("▤ Folha de rota")
+        self.map_route_btn = QPushButton("Abrir itinerário")
+        self.map_route_btn.setProperty("variant", "success")
+        self.map_route_btn.clicked.connect(self._open_trip_route)
+        self.pdf_btn = QPushButton("Documento da viagem")
         self.pdf_btn.setProperty("variant", "secondary")
         self.pdf_btn.clicked.connect(self._open_trip_pdf)
         self.refresh_btn = QPushButton("Atualizar")
@@ -8831,9 +8844,11 @@ class TransportsPage(QWidget):
             self.trip_status_btn,
             self.stop_status_btn,
             self.edit_stop_btn,
+            self.stop_map_btn,
             self.stop_up_btn,
             self.stop_down_btn,
             self.remove_stop_btn,
+            self.map_route_btn,
             self.pdf_btn,
             self.refresh_btn,
         ):
@@ -8869,6 +8884,7 @@ class TransportsPage(QWidget):
                 self.assign_btn,
                 self.edit_trip_btn,
                 self.request_btn,
+                self.map_route_btn,
                 self.pdf_btn,
             ),
             start=1,
@@ -8893,6 +8909,7 @@ class TransportsPage(QWidget):
         for col, widget in enumerate(
             (
                 self.edit_stop_btn,
+                self.stop_map_btn,
                 self.stop_up_btn,
                 self.stop_down_btn,
                 self.remove_stop_btn,
@@ -8952,13 +8969,13 @@ class TransportsPage(QWidget):
         pending_layout = QVBoxLayout(pending_card)
         pending_layout.setContentsMargins(14, 12, 14, 12)
         pending_layout.setSpacing(8)
-        pending_title = QLabel("Encomendas prontas para transporte ou subcontrato")
+        pending_title = QLabel("Destinos por planear")
         pending_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
-        pending_hint = QLabel("Seleciona aqui as encomendas disponíveis para criar ou completar uma viagem.")
+        pending_hint = QLabel("Encomendas prontas, com destino, carga e responsabilidade de transporte identificados.")
         pending_hint.setProperty("role", "muted")
         pending_hint.setWordWrap(True)
-        self.pending_table = QTableWidget(0, 10)
-        self.pending_table.setHorizontalHeaderLabels(["Encomenda", "Cliente", "Entrega", "Zona", "Tipo", "Pal", "Peso kg", "Descarga", "Guia", "Disponível"])
+        self.pending_table = QTableWidget(0, 11)
+        self.pending_table.setHorizontalHeaderLabels(["Encomenda", "Cliente", "Entrega", "Zona", "Tipo", "Pal", "Peso kg", "Descarga", "GPS", "Guia", "Disponível"])
         self.pending_table.verticalHeader().setVisible(False)
         self.pending_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.pending_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -8975,8 +8992,9 @@ class TransportsPage(QWidget):
                 (5, "interactive", 64),
                 (6, "interactive", 80),
                 (7, "stretch", 220),
-                (8, "interactive", 112),
-                (9, "interactive", 86),
+                (8, "interactive", 92),
+                (9, "interactive", 112),
+                (10, "interactive", 86),
             ],
         )
         self.pending_table.verticalHeader().setDefaultSectionSize(30)
@@ -8995,9 +9013,9 @@ class TransportsPage(QWidget):
         trips_layout = QVBoxLayout(trips_card)
         trips_layout.setContentsMargins(14, 12, 14, 12)
         trips_layout.setSpacing(8)
-        trips_title = QLabel("Viagens agendadas")
+        trips_title = QLabel("Plano de transportes")
         trips_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
-        trips_hint = QLabel("Abre, revê e atualiza o estado das viagens já criadas.")
+        trips_hint = QLabel("Viagens próprias e serviços de transportadora, acompanhados até à prova de entrega.")
         trips_hint.setProperty("role", "muted")
         trips_hint.setWordWrap(True)
         self.trip_table = QTableWidget(0, 9)
@@ -9058,8 +9076,8 @@ class TransportsPage(QWidget):
         self.detail_note = QLabel("-")
         self.detail_note.setWordWrap(True)
         detail_layout.addWidget(self.detail_note)
-        self.stops_table = QTableWidget(0, 13)
-        self.stops_table.setHorizontalHeaderLabels(["Ord", "Encomenda", "Cliente", "Zona", "Pal", "Peso", "Vol", "Descarga", "Planeado", "Guia", "Checklist", "POD", "Estado"])
+        self.stops_table = QTableWidget(0, 14)
+        self.stops_table.setHorizontalHeaderLabels(["Ord", "Encomenda", "Cliente", "Zona", "Pal", "Peso", "Vol", "Descarga", "GPS", "Planeado", "Guia", "Checklist", "POD", "Estado"])
         self.stops_table.verticalHeader().setVisible(False)
         self.stops_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.stops_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -9075,11 +9093,12 @@ class TransportsPage(QWidget):
                 (5, "interactive", 78),
                 (6, "interactive", 70),
                 (7, "stretch", 220),
-                (8, "interactive", 126),
-                (9, "interactive", 96),
-                (10, "interactive", 86),
-                (11, "interactive", 96),
-                (12, "interactive", 104),
+                (8, "interactive", 88),
+                (9, "interactive", 126),
+                (10, "interactive", 96),
+                (11, "interactive", 86),
+                (12, "interactive", 96),
+                (13, "interactive", 104),
             ],
         )
         self.stops_table.verticalHeader().setDefaultSectionSize(30)
@@ -9113,6 +9132,7 @@ class TransportsPage(QWidget):
                     f"{float(row.get('paletes', 0) or 0):.2f}",
                     f"{float(row.get('peso_bruto_kg', 0) or 0):.1f}",
                     row.get("local_descarga", "-"),
+                    "Definido" if str(row.get("latitude", "") or "").strip() and str(row.get("longitude", "") or "").strip() else "Morada",
                     row.get("guia_numero", "-"),
                     f"{float(row.get('disponivel', 0) or 0):.1f}",
                 ]
@@ -9303,6 +9323,7 @@ class TransportsPage(QWidget):
                     f"{float(stop.get('peso_bruto_kg', 0) or 0):.1f}",
                     f"{float(stop.get('volume_m3', 0) or 0):.3f}",
                     stop.get("local_descarga", "-"),
+                    "Definido" if str(stop.get("latitude", "") or "").strip() and str(stop.get("longitude", "") or "").strip() else "Morada",
                     stop.get("data_planeada", "-"),
                     stop.get("guia_numero", "-"),
                     stop.get("checklist_estado", "-"),
@@ -9332,10 +9353,12 @@ class TransportsPage(QWidget):
         self.stop_status_combo.setEnabled(has_stop)
         self.stop_status_btn.setEnabled(has_stop)
         self.edit_stop_btn.setEnabled(has_stop)
+        self.stop_map_btn.setEnabled(has_stop)
         self.stop_up_btn.setEnabled(has_stop)
         self.stop_down_btn.setEnabled(has_stop)
         self.remove_stop_btn.setEnabled(has_stop)
         self.pdf_btn.setEnabled(has_trip)
+        self.map_route_btn.setEnabled(has_trip and bool(list(self.current_detail.get("paragens", []) or [])))
 
     def _supplier_options(self, initial: dict | None = None) -> list[str]:
         options = [str(value or "").strip() for value in list((initial or {}).get("supplier_options", []) or []) if str(value or "").strip()]
@@ -9405,6 +9428,10 @@ class TransportsPage(QWidget):
         motorista_combo.setCurrentText(str(initial.get("motorista", "") or "").strip())
         telefone_edit = QLineEdit(str(initial.get("telefone_motorista", "") or "").strip())
         origem_edit = QLineEdit(str(initial.get("origem", "") or "").strip())
+        origem_latitude_edit = QLineEdit(str(initial.get("origem_latitude", "") or "").strip())
+        origem_latitude_edit.setPlaceholderText("ex.: 41.1579")
+        origem_longitude_edit = QLineEdit(str(initial.get("origem_longitude", "") or "").strip())
+        origem_longitude_edit.setPlaceholderText("ex.: -8.6291")
         carrier_combo = QComboBox()
         carrier_combo.setEditable(True)
         carrier_combo.addItem("")
@@ -9422,6 +9449,22 @@ class TransportsPage(QWidget):
                 ]
             ).strip(" -")
         )
+
+        def _sync_transport_mode() -> None:
+            outsourced = "subcontrat" in tipo_combo.currentText().strip().lower()
+            carrier_combo.setEnabled(outsourced)
+            ref_edit.setEnabled(outsourced)
+            viatura_combo.setEnabled(not outsourced)
+            matricula_edit.setEnabled(not outsourced)
+            motorista_combo.setEnabled(not outsourced)
+            telefone_edit.setEnabled(not outsourced)
+            carrier_combo.setToolTip(
+                "Transportadora responsável pelo serviço externo."
+                if outsourced
+                else "Disponível quando o transporte é subcontratado."
+            )
+
+        tipo_combo.currentTextChanged.connect(lambda _text: _sync_transport_mode())
         ref_edit = QLineEdit(str(initial.get("referencia_transporte", "") or "").strip())
         cost_spin = QDoubleSpinBox()
         cost_spin.setRange(0.0, 1000000.0)
@@ -9431,6 +9474,7 @@ class TransportsPage(QWidget):
         obs_edit = QTextEdit()
         obs_edit.setFixedHeight(96)
         obs_edit.setPlainText(str(initial.get("observacoes", "") or "").strip())
+        _sync_transport_mode()
         fields = [
             ("Número", numero_label, 0, 0),
             ("Data", data_edit, 0, 2),
@@ -9443,6 +9487,8 @@ class TransportsPage(QWidget):
             ("Motorista", motorista_combo, 2, 4),
             ("Telefone", telefone_edit, 3, 0),
             ("Origem", origem_edit, 3, 2),
+            ("Latitude origem", origem_latitude_edit, 3, 4),
+            ("Longitude origem", origem_longitude_edit, 4, 4),
             ("Ref. externa", ref_edit, 4, 0),
             ("Custo previsto", cost_spin, 4, 2),
         ]
@@ -9456,7 +9502,7 @@ class TransportsPage(QWidget):
         buttons_row = QHBoxLayout()
         if str(initial.get("numero", "") or "").strip():
             remove_btn = QPushButton("Apagar viagem")
-            remove_btn.setProperty("variant", "danger")
+            remove_btn.setProperty("variant", "destructive")
 
             def _confirm_remove() -> None:
                 if (
@@ -9495,6 +9541,8 @@ class TransportsPage(QWidget):
             "motorista": motorista_combo.currentText().strip(),
             "telefone_motorista": telefone_edit.text().strip(),
             "origem": origem_edit.text().strip(),
+            "origem_latitude": origem_latitude_edit.text().strip(),
+            "origem_longitude": origem_longitude_edit.text().strip(),
             "transportadora_nome": carrier_combo.currentText().strip(),
             "referencia_transporte": ref_edit.text().strip(),
             "custo_previsto": cost_spin.value(),
@@ -9604,6 +9652,10 @@ class TransportsPage(QWidget):
                 break
         guide_combo.setCurrentIndex(current_index)
         local_edit = QLineEdit(str(initial.get("local_descarga", "") or "").strip())
+        latitude_edit = QLineEdit(str(initial.get("latitude", "") or "").strip())
+        latitude_edit.setPlaceholderText("ex.: 41.1579")
+        longitude_edit = QLineEdit(str(initial.get("longitude", "") or "").strip())
+        longitude_edit.setPlaceholderText("ex.: -8.6291")
         zone_combo = QComboBox()
         zone_combo.setEditable(True)
         zone_combo.addItem("")
@@ -9662,6 +9714,8 @@ class TransportsPage(QWidget):
         pod_obs_edit.setPlainText(str(initial.get("pod_obs", "") or "").strip())
         form.addRow("Guia associada", guide_combo)
         form.addRow("Local descarga", local_edit)
+        form.addRow("Latitude", latitude_edit)
+        form.addRow("Longitude", longitude_edit)
         form.addRow("Zona", zone_combo)
         form.addRow("Contacto", contacto_edit)
         form.addRow("Telefone", telefone_edit)
@@ -9687,6 +9741,8 @@ class TransportsPage(QWidget):
         return {
             "expedicao_numero": selected_guide,
             "local_descarga": local_edit.text().strip(),
+            "latitude": latitude_edit.text().strip(),
+            "longitude": longitude_edit.text().strip(),
             "zona_transporte": zone_combo.currentText().strip(),
             "contacto": contacto_edit.text().strip(),
             "telefone": telefone_edit.text().strip(),
@@ -10174,6 +10230,90 @@ class TransportsPage(QWidget):
             QMessageBox.critical(self, "Transportes", str(exc))
             return
         QMessageBox.information(self, "Transportes", f"PDF aberto:\n{path}")
+
+    def _open_trip_route(self) -> None:
+        detail = dict(self.current_detail or {})
+        if not detail:
+            row = self._current_trip_row()
+            numero = str(row.get("numero", "") or "").strip()
+            if numero:
+                try:
+                    detail = dict(self.backend.transport_detail(numero) or {})
+                except Exception as exc:
+                    QMessageBox.critical(self, "Transportes", str(exc))
+                    return
+        stops = [dict(row or {}) for row in list(detail.get("paragens", []) or [])]
+        if not stops:
+            QMessageBox.information(self, "Itinerário", "Esta viagem ainda não tem destinos.")
+            return
+
+        def _location(row: dict, address_key: str, lat_key: str, lon_key: str) -> str:
+            lat = str(row.get(lat_key, "") or "").strip().replace(",", ".")
+            lon = str(row.get(lon_key, "") or "").strip().replace(",", ".")
+            try:
+                if lat and lon:
+                    float(lat)
+                    float(lon)
+                    return f"{lat},{lon}"
+            except ValueError:
+                pass
+            return str(row.get(address_key, "") or "").strip()
+
+        origin = _location(detail, "origem", "origem_latitude", "origem_longitude")
+        destinations = [
+            _location(stop, "local_descarga", "latitude", "longitude")
+            for stop in stops
+        ]
+        destinations = [value for value in destinations if value]
+        if not destinations:
+            QMessageBox.information(
+                self,
+                "Itinerário",
+                "Preenche a morada ou as coordenadas de pelo menos um destino.",
+            )
+            return
+        destination = destinations[-1]
+        waypoints = destinations[:-1]
+        params = [
+            "api=1",
+            f"destination={quote(destination)}",
+            "travelmode=driving",
+        ]
+        if origin:
+            params.insert(1, f"origin={quote(origin)}")
+        if waypoints:
+            params.append(f"waypoints={quote('|'.join(waypoints))}")
+        QDesktopServices.openUrl(
+            QUrl("https://www.google.com/maps/dir/?" + "&".join(params))
+        )
+
+    def _open_selected_stop_map(self) -> None:
+        stop = dict(self._current_stop_row() or {})
+        if not stop:
+            QMessageBox.information(self, "Google Maps", "Seleciona primeiro um destino.")
+            return
+        latitude = str(stop.get("latitude", "") or "").strip().replace(",", ".")
+        longitude = str(stop.get("longitude", "") or "").strip().replace(",", ".")
+        location = ""
+        try:
+            if latitude and longitude:
+                float(latitude)
+                float(longitude)
+                location = f"{latitude},{longitude}"
+        except ValueError:
+            location = ""
+        if not location:
+            location = str(stop.get("local_descarga", "") or "").strip()
+        if not location:
+            QMessageBox.information(
+                self,
+                "Google Maps",
+                "Preenche a morada ou as coordenadas deste destino.",
+            )
+            return
+        QDesktopServices.openUrl(
+            QUrl(f"https://www.google.com/maps/search/?api=1&query={quote(location)}")
+        )
 
 
 from .purchase_notes_page import PurchaseNotesPage
@@ -11212,8 +11352,8 @@ class OrdersPage(QWidget):
                     font-weight: 700;
                 }
                 QCalendarWidget QAbstractItemView {
-                    selection-background-color: #05004d;
-                    selection-color: white;
+                    selection-background-color: #eaf7da;
+                    selection-color: #26331d;
                     outline: 0;
                 }
                 """
@@ -12422,7 +12562,7 @@ class LegacyPurchaseNotesPage(PurchaseNotesPage):
         create_note_btn = QPushButton("Criar nota")
         create_note_btn.clicked.connect(self._create_new_note)
         self.remove_note_list_btn = QPushButton("Apagar nota")
-        self.remove_note_list_btn.setProperty("variant", "danger")
+        self.remove_note_list_btn.setProperty("variant", "destructive")
         self.remove_note_list_btn.clicked.connect(self._remove_note)
         refresh_note_btn = QPushButton("Atualizar")
         refresh_note_btn.setProperty("variant", "secondary")
@@ -12679,6 +12819,7 @@ class LegacyOrdersPage(OrdersPage):
     def __init__(self, backend, parent=None) -> None:
         super().__init__(backend, parent)
         self.new_btn.setText("Nova ordem de fabrico")
+        self.new_btn.setProperty("variant", "success")
         self.edit_header_btn.setText("Editar ordem")
         self.remove_btn.setText("Eliminar ordem")
         self.reserve_btn.setText("Cativar material")
@@ -12879,7 +13020,7 @@ class LegacyOrdersPage(OrdersPage):
         detail_actions_layout.setSpacing(8)
         detail_actions.setMaximumHeight(52)
         back_btn = QPushButton("Voltar às ordens")
-        back_btn.setProperty("variant", "secondary")
+        back_btn.setProperty("variant", "success")
         back_btn.clicked.connect(self._show_order_list)
         edit_btn = QPushButton("Editar dados da OF")
         edit_btn.clicked.connect(self._edit_order_header)
@@ -12907,7 +13048,7 @@ class LegacyOrdersPage(OrdersPage):
         self.import_model_btn.setProperty("variant", "secondary")
         self.import_model_btn.setMinimumWidth(126)
         self.import_model_btn.setMaximumWidth(144)
-        self.print_of_btn.setProperty("variant", "warning")
+        self.print_of_btn.setProperty("variant", "success")
         self.print_of_btn.setMinimumWidth(128)
         self.print_of_btn.setMaximumWidth(146)
         detail_actions_layout.addWidget(self.import_model_btn)
@@ -13600,6 +13741,7 @@ class LegacyOperatorPage(OperatorPage):
         list_actions_layout.setContentsMargins(14, 10, 14, 10)
         list_actions_layout.setSpacing(8)
         self.open_order_btn = QPushButton("Abrir encomenda")
+        self.open_order_btn.setProperty("variant", "success")
         self.open_order_btn.clicked.connect(self._open_selected_order)
         refresh_group_btn = QPushButton("Atualizar")
         refresh_group_btn.setProperty("variant", "secondary")
@@ -14596,7 +14738,9 @@ class QuotesPage(QWidget):
         self.filter_edit.setEditable(True)
         self.filter_edit.setInsertPolicy(QComboBox.NoInsert)
         self.filter_edit.lineEdit().setPlaceholderText("Número, cliente ou encomenda")
-        self.filter_edit.lineEdit().textChanged.connect(self.refresh)
+        self.filter_edit.lineEdit().textChanged.connect(
+            lambda _text: self._filter_refresh_timer.start()
+        )
         self.state_combo = QComboBox()
         self.state_combo.addItems(["Ativas", "Todos", "Em edicao", "Enviado", "Aprovado", "Rejeitado", "Convertido"])
         self.state_combo.currentTextChanged.connect(self.refresh)
@@ -14763,7 +14907,7 @@ class QuotesPage(QWidget):
         back_btn.setProperty("variant", "secondary")
         back_btn.clicked.connect(self._show_list)
         save_btn = QPushButton("Guardar")
-        save_btn.setProperty("variant", "warning")
+        save_btn.setProperty("variant", "success")
         save_btn.clicked.connect(self._save_quote)
         self.quote_save_btn = save_btn
         edit_btn = QPushButton("Em edicao")
@@ -14776,7 +14920,7 @@ class QuotesPage(QWidget):
         approve_btn.setProperty("variant", "success")
         approve_btn.clicked.connect(lambda: self._set_quote_state("Aprovado"))
         reject_btn = QPushButton("Rejeitado")
-        reject_btn.setProperty("variant", "danger")
+        reject_btn.setProperty("variant", "rejected")
         reject_btn.setText("✕  Rejeitado")
         reject_btn.clicked.connect(lambda: self._set_quote_state("Rejeitado"))
         convert_btn = QPushButton("Criar encomenda")
@@ -15640,7 +15784,7 @@ class QuotesPage(QWidget):
             )
             widget.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             widget.setMinimumHeight(22)
-            value_color = "#b42318" if widget is self.discount_value_label else "#25364a"
+            value_color = "#b45f06" if widget is self.discount_value_label else "#30343b"
             widget.setStyleSheet(f"font-family: 'Segoe UI'; font-size: 9px; font-weight: 800; color: {value_color}; background: transparent; border: 0;")
             summary_rows_layout.addWidget(label, row_index * 2, 0)
             summary_rows_layout.addWidget(widget, row_index * 2, 1)
@@ -16088,7 +16232,7 @@ class QuotesPage(QWidget):
         inspector_caption = QLabel("Dados da proposta")
         inspector_caption.setStyleSheet("font-size: 10px; font-weight: 800; color: #475467;")
         self.quote_inspector_save_btn = QPushButton("Guardar")
-        self.quote_inspector_save_btn.setProperty("variant", "warning")
+        self.quote_inspector_save_btn.setProperty("variant", "success")
         self.quote_inspector_save_btn.setProperty("compact", "true")
         self.quote_inspector_save_btn.setMinimumWidth(92)
         self.quote_inspector_save_btn.setMaximumWidth(108)
@@ -16914,8 +17058,8 @@ class QuotesPage(QWidget):
                 total_item = self.lines_table.item(row_index, 11)
                 if total_item is not None and adjusted_total > 0:
                     if current_total + 0.009 < adjusted_total:
-                        total_item.setBackground(QBrush(QColor("#fee2e2")))
-                        total_item.setForeground(QBrush(QColor("#b42318")))
+                        total_item.setBackground(QBrush(QColor("#fff8eb")))
+                        total_item.setForeground(QBrush(QColor("#b45f06")))
                     elif current_total > adjusted_total + 0.009:
                         total_item.setBackground(QBrush(QColor("#dcfce7")))
                         total_item.setForeground(QBrush(QColor("#166534")))
@@ -22129,7 +22273,7 @@ class QuotesPage(QWidget):
                     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                     if col_index == 1:
                         item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
-                        item.setForeground(QBrush(QColor("#166534" if path_obj.exists() else "#b42318")))
+                        item.setForeground(QBrush(QColor("#4f7f1f" if path_obj.exists() else "#b45f06")))
                     docs_table.setItem(row_index, col_index, item)
             docs_label.setText(
                 f"{len(pdf_docs)} PDF(s) associado(s)." if pdf_docs else "Sem PDFs técnicos associados a esta peça."

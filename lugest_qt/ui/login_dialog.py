@@ -21,7 +21,6 @@ class LoginDialog(QDialog):
     def __init__(self, backend, parent=None) -> None:
         super().__init__(parent)
         self.backend = backend
-        primary = str(backend.branding.get("primary_color", "#0b1f66") or "#0b1f66")
         self.setWindowTitle("luGEST Qt")
         self.setModal(True)
         self.setMinimumSize(920, 560)
@@ -29,17 +28,17 @@ class LoginDialog(QDialog):
         self.setStyleSheet(
             f"""
             QDialog {{
-                background: #e6edf5;
+                background: #f1f2f0;
             }}
             QFrame#LoginShell {{
-                background: #f8fbfe;
-                border: 1px solid #b7c7d8;
+                background: #ffffff;
+                border: 1px solid #d5d8d4;
                 border-radius: 10px;
             }}
             QFrame#BrandPanel {{
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 {primary}, stop:0.62 #17365f, stop:1 #1f2937);
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #303330, stop:0.62 #444744, stop:1 #242724);
                 border-radius: 8px;
-                border: 1px solid #14315f;
+                border: 1px solid #242724;
             }}
             QFrame#LogoPlate {{
                 background: rgba(255,255,255,0.92);
@@ -49,7 +48,7 @@ class LoginDialog(QDialog):
             QFrame#AccessPanel {{
                 background: #ffffff;
                 border-radius: 8px;
-                border: 1px solid #c4d0df;
+                border: 1px solid #d5d8d4;
             }}
             QLabel#BrandName {{
                 color: #f8fbff;
@@ -78,15 +77,14 @@ class LoginDialog(QDialog):
             QLineEdit {{
                 min-height: 42px;
                 padding: 0 12px;
-                border: 1px solid #b8c7d9;
+                border: 1px solid #c9cdca;
                 border-radius: 7px;
-                background: #fbfdff;
+                background: #ffffff;
                 font-size: 15px;
                 color: #0f172a;
             }}
             QLineEdit:focus {{
-                border: 1px solid {primary};
-                background: #ffffff;
+                border: 2px solid #7ed321;
             }}
             QCheckBox {{
                 color: #40546c;
@@ -101,20 +99,20 @@ class LoginDialog(QDialog):
                 padding: 0 16px;
             }}
             QPushButton#PrimaryAction {{
-                background: {primary};
+                background: #70c51a;
                 color: #ffffff;
-                border: 0;
+                border: 1px solid #60aa14;
             }}
             QPushButton#PrimaryAction:hover {{
-                background: #15387d;
+                background: #60ad13;
             }}
             QPushButton#SecondaryAction {{
-                background: #f4f7fb;
-                color: #173252;
-                border: 1px solid #c7d6e8;
+                background: #d92d20;
+                color: #ffffff;
+                border: 1px solid #8f1d14;
             }}
             QPushButton#SecondaryAction:hover {{
-                background: #e3edf8;
+                background: #b42318;
             }}
             """
         )

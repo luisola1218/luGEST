@@ -44,7 +44,18 @@ def main() -> int:
 
     app = QApplication.instance() or QApplication(sys.argv)
     page = ProductsPage(backend)
-    assert "Preview stock" in [button.text() for button in page.findChildren(QPushButton)]
+    document_buttons = [
+        button
+        for button in page.findChildren(QPushButton)
+        if "Documentos" in button.text()
+    ]
+    assert document_buttons, "Botao agregado de documentos nao encontrado."
+    document_actions = [
+        action.text()
+        for button in document_buttons
+        for action in list((button.menu().actions() if button.menu() is not None else []))
+    ]
+    assert "Mapa de stock PDF" in document_actions
     opened: dict[str, object] = {}
     backend.product_open_stock_pdf = lambda **kwargs: opened.update(kwargs) or target
 

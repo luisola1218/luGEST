@@ -234,3 +234,23 @@ Estas alteracoes so devem avancar quando os dados reais justificarem o custo:
 - Nenhuma operacao de rede executada na thread visual.
 - Erros de um menu nao encerram a aplicacao.
 - Grelhas e dialogos sem cortes a partir de 1180 x 760.
+
+## Revisao 2026.07.28 - mapas, transportes e nova medicao
+
+- A matriz Qt voltou a medir todos os menus principais com a base atual.
+- Carga inicial de dados: 0,238 s.
+- Pagina fria mais lenta: 0,275 s.
+- Navegacao quente mais lenta: 0,032 s.
+- Nenhum menu ultrapassou os limites de 0,700 s definidos para o piloto.
+- A pesquisa de Transportes passou a usar debounce de 180 ms. A tabela deixa de
+  percorrer encomendas, viagens, tarifas e expedicoes a cada tecla premida.
+- A atualizacao automatica global continua limitada a paginas explicitamente
+  autorizadas e respeita edicao ativa, cache de backend e gravacoes pendentes.
+- A integracao Google Maps e executada pelo navegador do sistema e nao bloqueia a
+  interface Qt. Funciona com coordenadas e usa a morada como alternativa.
+- A viagem abre o itinerario completo pela ordem das paragens; cada destino pode
+  tambem ser aberto isoladamente no mapa.
+
+Conclusao desta revisao: nao foi encontrado um gargalo geral que justificasse
+threads adicionais, paginacao antecipada ou reescrita das grelhas atuais. Essas
+alteracoes aumentariam complexidade sem ganho mensuravel na base comercial atual.

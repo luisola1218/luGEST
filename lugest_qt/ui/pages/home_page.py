@@ -57,7 +57,7 @@ class HomePage(QWidget):
         self.tabs.setDocumentMode(True)
         self.tabs.setStyleSheet(
             "QTabBar::tab { min-width: 150px; padding: 9px 16px; font-weight: 800; }"
-            "QTabWidget::pane { border: 1px solid #cbd8e6; border-radius: 6px; background: #f8fafc; }"
+            "QTabWidget::pane { border: 1px solid #cfd3cf; border-radius: 5px; background: #f7f7f5; }"
         )
         root.addWidget(self.tabs)
 
@@ -79,12 +79,12 @@ class HomePage(QWidget):
         table.setWordWrap(False)
         table.setShowGrid(False)
         table.setStyleSheet(
-            "QTableWidget { font-size: 11px; alternate-background-color: #f8fafc;"
-            " background: #ffffff; border: 1px solid #d6e0eb; }"
-            "QTableWidget::item { padding: 4px 7px; border-bottom: 1px solid #edf2f7; }"
-            "QTableWidget::item:selected { background: #dbeafe; color: #102a43; }"
-            "QHeaderView::section { background: #eef4f8; color: #243b53; border: none;"
-            " border-bottom: 1px solid #cbd8e6; padding: 7px 8px; font-size: 10px; font-weight: 900; }"
+            "QTableWidget { font-size: 11px; alternate-background-color: #f7f7f5;"
+            " background: #ffffff; border: 1px solid #cfd3cf; }"
+            "QTableWidget::item { padding: 4px 7px; border-bottom: 1px solid #e4e5e3; }"
+            "QTableWidget::item:selected { background: #eaf7da; color: #26331d; }"
+            "QHeaderView::section { background: #444744; color: #ffffff; border: none;"
+            " border-bottom: 1px solid #343734; padding: 7px 8px; font-size: 10px; font-weight: 900; }"
         )
         header = table.horizontalHeader()
         for column in range(table.columnCount()):

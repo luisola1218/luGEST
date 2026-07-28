@@ -9,7 +9,6 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 BASE_SCHEMA_PATH = BASE_DIR / "lugest.sql"
-PATCH_FILES = sorted([*BASE_DIR.glob("patch_*.sql"), *(BASE_DIR / "Migracoes").glob("patch_*.sql")])
 
 REQUIRED = {
     "app_config": {"ckey", "cvalue"},
@@ -304,7 +303,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--app-password", default=str(os.environ.get("LUGEST_DB_PASS", "") or ""))
     parser.add_argument("--app-host", default=str(os.environ.get("LUGEST_DB_APP_HOST", "localhost") or "localhost"))
     parser.add_argument("--skip-base-schema", action="store_true", help="Nao importa o lugest.sql.")
-    parser.add_argument("--skip-patches", action="store_true", help="Nao aplica os patch_*.sql.")
     parser.add_argument("--skip-validation", action="store_true", help="Nao valida o schema final.")
     parser.add_argument("--validate-only", action="store_true", help="Apenas valida o schema da base existente.")
     parser.add_argument("--reset-database", action="store_true", help="Apaga e recria a base antes de importar o schema.")
@@ -315,10 +313,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
-    if args.validate_only and (args.reset_database or not args.skip_base_schema or not args.skip_patches):
+    if args.validate_only and (args.reset_database or not args.skip_base_schema):
         args.reset_database = False
         args.skip_base_schema = True
-        args.skip_patches = True
 
     if not args.validate_only and bool(args.app_user) != bool(args.app_password):
         print("Define ambos --app-user e --app-password para criar/atualizar o utilizador dedicado.")
@@ -411,18 +408,6 @@ def main() -> int:
                     label="schema-base",
                 )
                 print(f"schema-base: executed={executed} skipped={skipped}")
-
-            if not args.skip_patches:
-                for patch_path in PATCH_FILES:
-                    patch_statements = split_sql_statements(patch_path.read_text(encoding="utf-8"))
-                    executed, skipped = execute_sql_batch(
-                        cur,
-                        patch_statements,
-                        tolerant=True,
-                        dry_run=args.dry_run,
-                        label=patch_path.name,
-                    )
-                    print(f"{patch_path.name}: executed={executed} skipped={skipped}")
 
             if not args.dry_run and db_conn is not None:
                 db_conn.commit()

@@ -82,10 +82,9 @@ Obrigatorio antes da primeira venda:
   `produtos`, `plano`, `op_eventos`, `faturacao`, `expedicoes`,
   `notas_encomenda`, `operations_catalog` e `workcenter_catalog` persistem
   corretamente em MySQL.
-- Garantir `schema_migrations` em todas as bases de cliente.
 - Nunca aplicar `lugest.sql` por cima de base em producao.
 - Usar sempre:
-  `backup -> apply_lugest_migrations -> validate -> testes funcionais`.
+  `backup -> atualizar aplicacao -> validate -> testes funcionais`.
 
 ### Fase 2: normalizacao incremental
 
@@ -167,7 +166,6 @@ Em cliente:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\backup_lugest_mysql.ps1 -Label pre_update
-powershell -ExecutionPolicy Bypass -File .\apply_lugest_migrations.ps1
 powershell -ExecutionPolicy Bypass -File .\validate_lugest_mysql.ps1
 ```
 

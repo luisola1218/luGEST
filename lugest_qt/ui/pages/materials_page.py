@@ -1420,11 +1420,12 @@ class MaterialsPage(QWidget):
         actions_primary.setContentsMargins(10, 6, 10, 6)
         actions_primary.setSpacing(6)
         self.add_btn = QPushButton("Adicionar")
+        self.add_btn.setProperty("variant", "success")
         self.add_btn.clicked.connect(self.add_material)
         self.edit_btn = QPushButton("Editar")
         self.edit_btn.clicked.connect(self.edit_material)
         self.remove_btn = QPushButton("Remover")
-        self.remove_btn.setProperty("variant", "danger")
+        self.remove_btn.setProperty("variant", "destructive")
         self.remove_btn.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
         self.remove_btn.clicked.connect(self.remove_material)
         self.baixa_btn = QPushButton("Dar baixa")
@@ -1527,18 +1528,18 @@ class MaterialsPage(QWidget):
         self.table.setObjectName("StockTable")
         self.table.setStyleSheet(
             "QTableWidget {"
-            " gridline-color: #d8e3f2;"
-            " selection-background-color: #dff5f3;"
-            " selection-color: #0f172a;"
+            " gridline-color: #e1e3e0;"
+            " selection-background-color: #eaf7da;"
+            " selection-color: #26331d;"
             "}"
             "QTableWidget::item:selected {"
-            " background: #dff5f3;"
-            " color: #0f172a;"
-            " border-top: 1px solid #08a6a6;"
-            " border-bottom: 1px solid #08a6a6;"
+            " background: #eaf7da;"
+            " color: #26331d;"
+            " border-top: 1px solid #7ed321;"
+            " border-bottom: 1px solid #7ed321;"
             "}"
             "QHeaderView::section {"
-            " background: #0b0f5c;"
+            " background: #444744;"
             " color: white;"
             " padding: 8px 6px;"
             " border: 0;"
@@ -1911,7 +1912,7 @@ class MaterialsPage(QWidget):
         if severity == "critical":
             self.detail_status.setText("Stock crítico")
             self.detail_status.setStyleSheet(
-                "background: #fee4e2; color: #b42318; border: 1px solid #f3b7b3; "
+                "background: #fff8eb; color: #b45f06; border: 1px solid #e4c37f; "
                 "border-radius: 10px; padding: 6px 10px; font-weight: 800;"
             )
         elif severity == "warning":
@@ -2130,8 +2131,8 @@ class MaterialsPage(QWidget):
         if available_item is None:
             return
         if severity == "critical":
-            available_item.setBackground(QBrush(QColor("#fee4e2")))
-            available_item.setForeground(QBrush(QColor("#b42318")))
+            available_item.setBackground(QBrush(QColor("#fff8eb")))
+            available_item.setForeground(QBrush(QColor("#b45f06")))
             available_item.setToolTip("Stock crítico: disponível abaixo do limite vermelho.")
         elif severity == "warning":
             available_item.setBackground(QBrush(QColor("#fff4e5")))
@@ -2162,12 +2163,14 @@ class MaterialsPage(QWidget):
         if item is None:
             return
         state_norm = state_label.casefold()
-        if any(token in state_norm for token in ("rejeit", "devol", "bloque")):
+        if "rejeit" in state_norm:
             bg, fg = "#fee4e2", "#b42318"
+        elif any(token in state_norm for token in ("devol", "bloque")):
+            bg, fg = "#efefed", "#555955"
         elif any(token in state_norm for token in ("inspec", "averig", "baixo")) or severity == "warning":
             bg, fg = "#fff7ed", "#9a3412"
         elif severity == "critical":
-            bg, fg = "#fee4e2", "#b42318"
+            bg, fg = "#fff8eb", "#b45f06"
         else:
             bg, fg = "#ecfdf3", "#027a48"
         item.setBackground(QBrush(QColor(bg)))
@@ -2382,7 +2385,7 @@ class MaterialsPage(QWidget):
             if available_value <= 0:
                 zero_item = self.table.item(row_index, 13)
                 if zero_item is not None:
-                    zero_item.setForeground(QBrush(QColor("#b42318")))
+                    zero_item.setForeground(QBrush(QColor("#b45f06")))
         self.table.setUpdatesEnabled(True)
         self.table.setSortingEnabled(True)
 

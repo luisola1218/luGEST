@@ -95,13 +95,13 @@ def fill_table(table: QTableWidget, rows: list[list[str]], align_center_from: in
 def state_visual(state: str) -> dict[str, str]:
     norm = str(state or "").strip().lower()
     if "rejeit" in norm:
-        return {"bg": "#fff1f2", "fg": "#b42318", "border": "#f0c1bc", "tone": "danger"}
+        return {"bg": "#fff1f2", "fg": "#b42318", "border": "#f0c1bc", "tone": "rejected"}
     if "avaria" in norm:
-        return {"bg": "#fff1f2", "fg": "#b42318", "border": "#f0c1bc", "tone": "danger"}
+        return {"bg": "#fff8eb", "fg": "#b45f06", "border": "#e4c37f", "tone": "warning"}
     if "incomplet" in norm:
         return {"bg": "#fff9db", "fg": "#a16207", "border": "#f2d98b", "tone": "warning"}
     if "prepar" in norm or "edicao" in norm or "edição" in norm or "pendente" in norm:
-        return {"bg": "#eef4ff", "fg": "#1d4ed8", "border": "#bfd2ea", "tone": "info"}
+        return {"bg": "#f1f2f0", "fg": "#555955", "border": "#c9cdca", "tone": "info"}
     if "produc" in norm or "curso" in norm:
         return {"bg": "#fff4e5", "fg": "#c2410c", "border": "#efcf98", "tone": "warning"}
     if "paus" in norm or "interromp" in norm:
@@ -111,8 +111,8 @@ def state_visual(state: str) -> dict[str, str]:
     if "aprov" in norm or "convert" in norm or "entreg" in norm:
         return {"bg": "#f0fdf4", "fg": "#166534", "border": "#b7dcc5", "tone": "success"}
     if "enviado" in norm:
-        return {"bg": "#f5f9ff", "fg": "#1d4ed8", "border": "#bfd2ea", "tone": "info"}
-    return {"bg": "#f8fafc", "fg": "#334155", "border": "#c6d2e0", "tone": "default"}
+        return {"bg": "#eef3e9", "fg": "#46612f", "border": "#cbdcba", "tone": "info"}
+    return {"bg": "#f4f5f3", "fg": "#3c4140", "border": "#c9cdca", "tone": "default"}
 
 
 def state_palette(state: str) -> tuple[str, str]:

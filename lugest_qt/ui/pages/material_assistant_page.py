@@ -47,7 +47,7 @@ def _table_selected_row(table: QTableWidget) -> int:
 def _tone_colors(tone: str) -> tuple[str, str]:
     tone_txt = str(tone or "default").strip().lower()
     if tone_txt == "danger":
-        return "#fff1f2", "#b42318"
+        return "#fff8eb", "#b45f06"
     if tone_txt == "warning":
         return "#fff8e6", "#a16207"
     if tone_txt == "success":

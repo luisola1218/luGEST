@@ -9,7 +9,6 @@ param(
     [string]$AppHost = 'localhost',
     [switch]$ResetDatabase,
     [switch]$SkipBaseSchema,
-    [switch]$SkipPatches,
     [switch]$SkipValidation,
     [switch]$ValidateOnly,
     [switch]$DryRun
@@ -66,9 +65,6 @@ if ($ResetDatabase) {
 }
 if ($SkipBaseSchema) {
     $arguments += '--skip-base-schema'
-}
-if ($SkipPatches) {
-    $arguments += '--skip-patches'
 }
 if ($SkipValidation) {
     $arguments += '--skip-validation'

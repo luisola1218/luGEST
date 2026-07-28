@@ -33,6 +33,8 @@ class TransportBridgeMixin:
             "motorista": "",
             "telefone_motorista": "",
             "origem": origem,
+            "origem_latitude": "",
+            "origem_longitude": "",
             "paletes_total_manual": 0.0,
             "peso_total_manual_kg": 0.0,
             "volume_total_manual_m3": 0.0,
@@ -566,6 +568,8 @@ class TransportBridgeMixin:
                 "referencia_transporte": metrics.get("referencia_transporte", ""),
                 "zona_transporte": metrics.get("zona_transporte", ""),
                 "local_descarga": str(enc.get("local_descarga", "") or cli_obj.get("morada", "") or "").strip(),
+                "latitude": str(cli_obj.get("latitude", "") or "").strip(),
+                "longitude": str(cli_obj.get("longitude", "") or "").strip(),
                 "contacto": str(cli_obj.get("contacto", "") or "").strip(),
                 "telefone": str(cli_obj.get("contacto", "") or "").strip(),
                 "data_entrega": str(enc.get("data_entrega", "") or "").strip(),
@@ -631,6 +635,8 @@ class TransportBridgeMixin:
             "motorista": str(trip.get("motorista", "") or "").strip(),
             "telefone_motorista": str(trip.get("telefone_motorista", "") or "").strip(),
             "origem": str(trip.get("origem", "") or "").strip(),
+            "origem_latitude": str(trip.get("origem_latitude", "") or "").strip(),
+            "origem_longitude": str(trip.get("origem_longitude", "") or "").strip(),
             "transportadora_id": str(trip.get("transportadora_id", "") or "").strip(),
             "transportadora_nome": str(trip.get("transportadora_nome", "") or "").strip(),
             "referencia_transporte": str(trip.get("referencia_transporte", "") or "").strip(),
@@ -690,6 +696,8 @@ class TransportBridgeMixin:
                     "cliente_nome": str(stop.get("cliente_nome", "") or cli_obj.get("nome", "") or "").strip(),
                     "zona_transporte": zone_txt,
                     "local_descarga": str(stop.get("local_descarga", "") or (enc or {}).get("local_descarga", "") or cli_obj.get("morada", "") or "").strip(),
+                    "latitude": str(stop.get("latitude", "") or cli_obj.get("latitude", "") or "").strip(),
+                    "longitude": str(stop.get("longitude", "") or cli_obj.get("longitude", "") or "").strip(),
                     "contacto": str(stop.get("contacto", "") or cli_obj.get("contacto", "") or "").strip(),
                     "telefone": str(stop.get("telefone", "") or cli_obj.get("contacto", "") or "").strip(),
                     "data_planeada": str(stop.get("data_planeada", "") or "").replace("T", " ")[:19],
@@ -768,6 +776,8 @@ class TransportBridgeMixin:
         trip["motorista"] = str(payload.get("motorista", trip.get("motorista", "")) or "").strip()
         trip["telefone_motorista"] = str(payload.get("telefone_motorista", trip.get("telefone_motorista", "")) or "").strip()
         trip["origem"] = str(payload.get("origem", trip.get("origem", defaults["origem"])) or defaults["origem"]).strip()
+        trip["origem_latitude"] = str(payload.get("origem_latitude", trip.get("origem_latitude", "")) or "").strip()
+        trip["origem_longitude"] = str(payload.get("origem_longitude", trip.get("origem_longitude", "")) or "").strip()
         trip["transportadora_id"] = supplier_id
         trip["transportadora_nome"] = supplier_text
         trip["referencia_transporte"] = str(payload.get("referencia_transporte", trip.get("referencia_transporte", "")) or "").strip()
@@ -877,6 +887,8 @@ class TransportBridgeMixin:
         target["expedicao_numero"] = guide_number
         target["zona_transporte"] = str(payload.get("zona_transporte", target.get("zona_transporte", "")) or "").strip()
         target["local_descarga"] = str(payload.get("local_descarga", target.get("local_descarga", "")) or "").strip()
+        target["latitude"] = str(payload.get("latitude", target.get("latitude", "")) or "").strip()
+        target["longitude"] = str(payload.get("longitude", target.get("longitude", "")) or "").strip()
         target["contacto"] = str(payload.get("contacto", target.get("contacto", "")) or "").strip()
         target["telefone"] = str(payload.get("telefone", target.get("telefone", "")) or "").strip()
         target["data_planeada"] = str(payload.get("data_planeada", target.get("data_planeada", "")) or "").strip()
@@ -974,6 +986,8 @@ class TransportBridgeMixin:
                     "cliente_nome": str(cli_obj.get("nome", "") or "").strip(),
                     "zona_transporte": zone_txt,
                     "local_descarga": str(enc.get("local_descarga", "") or cli_obj.get("morada", "") or "").strip(),
+                    "latitude": str(cli_obj.get("latitude", "") or "").strip(),
+                    "longitude": str(cli_obj.get("longitude", "") or "").strip(),
                     "contacto": str(cli_obj.get("contacto", "") or "").strip(),
                     "telefone": str(cli_obj.get("contacto", "") or "").strip(),
                     "data_planeada": stop_dt,
@@ -1168,7 +1182,7 @@ class TransportBridgeMixin:
         regular = "Helvetica"
         bold = "Helvetica-Bold"
         c = canvas.Canvas(str(out_path), pagesize=A4)
-        c.setTitle(self._operator_pdf_text(f"Folha de rota {detail.get('numero', '')}"))
+        c.setTitle(self._operator_pdf_text(f"Documento de viagem {detail.get('numero', '')}"))
         page_number = 1
 
         def text(value: Any) -> str:
@@ -1193,7 +1207,7 @@ class TransportBridgeMixin:
             c.line(margin, 27, page_w - margin, 27)
             c.setFillColor(palette["muted"])
             c.setFont(regular, 6.3)
-            c.drawString(margin, 17, text(f"LUGEST | Folha de rota {detail.get('numero', '-') or '-'}"))
+            c.drawString(margin, 17, text(f"LUGEST | Documento de viagem {detail.get('numero', '-') or '-'}"))
             c.drawRightString(page_w - margin, 17, text(f"Pagina {page_number} | {printed_at}"))
 
         def draw_header() -> float:
@@ -1208,7 +1222,7 @@ class TransportBridgeMixin:
             title_w = inner_w - 190
             c.setFillColor(palette["primary_dark"])
             c.setFont(bold, 17)
-            c.drawString(title_x, top - 21, text("Transportes | Folha de rota"))
+            c.drawString(title_x, top - 21, text("Transportes | Documento de viagem"))
             c.setFillColor(palette["muted"])
             c.setFont(regular, 7.4)
             c.drawString(title_x, top - 37, text(_pdf_clip_text(f"Viagem {detail.get('numero', '-') or '-'} | {detail.get('data_planeada', '-') or '-'} as {detail.get('hora_saida', '-') or '-'}", title_w, regular, 7.4)))
@@ -1284,6 +1298,13 @@ class TransportBridgeMixin:
             notes = " | ".join(
                 part for part in (
                     f"Zona {stop.get('zona_transporte', '-') or '-'}",
+                    (
+                        f"GPS {str(stop.get('latitude', '') or '').strip()},"
+                        f"{str(stop.get('longitude', '') or '').strip()}"
+                        if str(stop.get("latitude", "") or "").strip()
+                        and str(stop.get("longitude", "") or "").strip()
+                        else ""
+                    ),
                     f"Carga {self._fmt(stop.get('paletes', 0))} pal / {self._fmt(stop.get('peso_bruto_kg', 0))} kg / {self._fmt(stop.get('volume_m3', 0))} m3",
                     checklist,
                     f"POD {stop.get('pod_estado', '-') or '-'}",

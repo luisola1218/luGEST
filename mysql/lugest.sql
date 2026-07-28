@@ -72,6 +72,8 @@ CREATE TABLE IF NOT EXISTS `clientes` (
   `prazo_entrega` varchar(120) DEFAULT NULL,
   `cond_pagamento` varchar(120) DEFAULT NULL,
   `obs_tecnicas` text,
+  `latitude` varchar(32) DEFAULT NULL,
+  `longitude` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`codigo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
@@ -185,6 +187,8 @@ CREATE TABLE IF NOT EXISTS `fornecedores` (
   `prazo_entrega_dias` int(11) DEFAULT NULL,
   `website` varchar(255) DEFAULT NULL,
   `obs` text,
+  `latitude` varchar(32) DEFAULT NULL,
+  `longitude` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_fornecedores_nome` (`nome`),
   KEY `idx_fornecedores_nif` (`nif`)
@@ -1178,3 +1182,23 @@ CREATE TABLE IF NOT EXISTS `notas_encomenda_linhas` (
 SET FOREIGN_KEY_CHECKS=1;
 
 -- Fim do schema atual consolidado.
+
+-- =====================================================
+-- UTILIZADORES INICIAIS
+-- =====================================================
+-- Primeiro login temporario:
+--   admin / Trocar#Admin2026 (Admin)
+--   operador / Trocar#Operador2026 (Operador)
+--   orcamentista / Trocar#Orc2026 (Orcamentista)
+--   planeamento / Trocar#Planeamento2026 (Planeamento)
+-- Troca estas passwords logo apos a instalacao.
+
+INSERT IGNORE INTO `users` (`username`, `password`, `role`) VALUES
+  ('admin', 'pbkdf2_sha256$260000$5VMdM-COT16MgTu-8zGokA$1fDxfRWHKvDQ2LMHyej4Lk8oKtZCoHSEJviuupaMoXA', 'Admin'),
+  ('operador', 'pbkdf2_sha256$260000$VXKXVlx_R9givHMb4evImA$sU-2n4K8GHdstIZFqFyet46RTAPBBobW3gyVbdHRlHE', 'Operador'),
+  ('orcamentista', 'pbkdf2_sha256$260000$qEWDKRLMfu9kL2b50_f4GA$FBXLKBNOEnaFSXHv1KzSnSTneEZKDJ869zP-OIqqB-s', 'Orcamentista'),
+  ('planeamento', 'pbkdf2_sha256$260000$haFJT56VQHt2ch7yJibOOg$t3A3oG2Mh22Bxc1IvkTg5e6YziNsHt-x-Tx1bHLFzw4', 'Planeamento');
+
+INSERT IGNORE INTO `operadores` (`nome`) VALUES ('Operador 1');
+
+INSERT IGNORE INTO `orcamentistas` (`nome`) VALUES ('Orcamentista 1');

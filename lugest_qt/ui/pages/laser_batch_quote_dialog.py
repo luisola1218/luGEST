@@ -662,8 +662,8 @@ class LaserBatchQuoteDialog(QDialog):
             "QTableWidget {"
             "  font-size: 11px;"
             "  alternate-background-color: #f8fafc;"
-            "  selection-background-color: #fff1d6;"
-            "  selection-color: #172033;"
+            "  selection-background-color: #eaf7da;"
+            "  selection-color: #26331d;"
             "  gridline-color: #c9d7e8;"
             "}"
             "QHeaderView::section {"
@@ -956,8 +956,8 @@ class LaserBatchQuoteDialog(QDialog):
                 if not issues
                 else "Confirmar antes de aceitar: " + "; ".join(issues) + "."
             )
-            status_item.setForeground(QColor("#087f5b" if not issues else "#b42318"))
-            status_item.setBackground(QColor("#e8f7f0" if not issues else "#fff0ed"))
+            status_item.setForeground(QColor("#4f7f1f" if not issues else "#b45f06"))
+            status_item.setBackground(QColor("#eef8e5" if not issues else "#fff8eb"))
         return issues
 
     def _pick_files(self) -> None:

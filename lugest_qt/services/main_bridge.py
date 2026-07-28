@@ -7618,7 +7618,7 @@ class LegacyBackend(
             "surface": colors.white,
             "surface_alt": colors.HexColor("#F3F6F8"),
             "success": colors.HexColor("#107569"),
-            "danger": colors.HexColor("#B42318"),
+            "danger": colors.HexColor("#555955"),
             "warning": colors.HexColor("#B54708"),
         }
 

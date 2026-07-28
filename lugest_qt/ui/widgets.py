@@ -112,11 +112,12 @@ class StatCard(CardFrame):
     def set_tone(self, tone: str = "default") -> None:
         super().set_tone(tone)
         tone_map = {
-            "default": ("#c6d2e0", "#0f172a"),
-            "info": ("#6b8fb3", "#16324b"),
-            "success": ("#4b8f69", "#0f172a"),
-            "warning": ("#b58a3c", "#0f172a"),
-            "danger": ("#b8574d", "#0f172a"),
+            "default": ("#b8bcb8", "#30343b"),
+            "info": ("#6f7771", "#30343b"),
+            "success": ("#70c51a", "#30343b"),
+            "warning": ("#d18a1f", "#30343b"),
+            "danger": ("#555955", "#30343b"),
+            "rejected": ("#d92d20", "#30343b"),
         }
         accent, value_color = tone_map.get(str(tone or "default"), tone_map["default"])
         self.accent.setStyleSheet(f"background: {accent}; border-radius: 2px;")

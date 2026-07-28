@@ -15,7 +15,6 @@ import main
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = BASE_DIR / "lugest.sql"
-FULL_INSTALL_OUTPUT = BASE_DIR / "lugest_instalacao_unica.sql"
 
 STARTER_USERS = [
     ("admin", "Trocar#Admin2026", "Admin"),
@@ -249,8 +248,7 @@ def main_entry(argv: list[str] | None = None) -> int:
         help="Inclui utilizadores iniciais minimos e listas base para arranque imediato.",
     )
     args = parser.parse_args(argv)
-    output_default = FULL_INSTALL_OUTPUT if args.with_starter_users and str(args.output) == str(DEFAULT_OUTPUT) else Path(args.output)
-    output_path = output_default.resolve()
+    output_path = Path(args.output).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if args.with_starter_users:
         final_path = export_full_install(output_path)

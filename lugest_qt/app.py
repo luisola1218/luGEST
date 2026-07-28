@@ -261,7 +261,7 @@ def main(argv: list[str] | None = None) -> int:
 
         _write_diagnostic_event("LOGIN_ACCEPTED", f"user={str(dict(backend.user or {}).get('username', '') or '')}")
         window = MainWindow(backend, runtime_service)
-        window.show()
+        window.showMaximized()
         _write_diagnostic_event("MAIN_WINDOW_READY")
         exit_code = app.exec()
         _write_diagnostic_event("SESSION_END", f"exit_code={exit_code}")
