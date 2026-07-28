@@ -72,6 +72,8 @@ CREATE TABLE IF NOT EXISTS `clientes` (
   `prazo_entrega` varchar(120) DEFAULT NULL,
   `cond_pagamento` varchar(120) DEFAULT NULL,
   `obs_tecnicas` text,
+  `latitude` varchar(32) DEFAULT NULL,
+  `longitude` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`codigo`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
@@ -185,6 +187,8 @@ CREATE TABLE IF NOT EXISTS `fornecedores` (
   `prazo_entrega_dias` int(11) DEFAULT NULL,
   `website` varchar(255) DEFAULT NULL,
   `obs` text,
+  `latitude` varchar(32) DEFAULT NULL,
+  `longitude` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_fornecedores_nome` (`nome`),
   KEY `idx_fornecedores_nif` (`nif`)
@@ -1190,10 +1194,10 @@ SET FOREIGN_KEY_CHECKS=1;
 -- Troca estas passwords logo apos a instalacao.
 
 INSERT IGNORE INTO `users` (`username`, `password`, `role`) VALUES
-  ('admin', 'pbkdf2_sha256$260000$MGe_U45oVF8wW_-0KJbYsw$NCeoMLooMYxuzcEFzJ-So0-6hC3fK-IdRmQehFpw9SE', 'Admin'),
-  ('operador', 'pbkdf2_sha256$260000$qMC-1m6OTORT6h1zEc1Hdw$kADjnTsnD2iLvXrF8zOs48R_V_552SLgefP4y23MY6M', 'Operador'),
-  ('orcamentista', 'pbkdf2_sha256$260000$JV1VAFpjJujW_Zz31a8-Aw$nhXFHbYUKDjW2dTXidVEBjtHybSfQ22g3etTrmFORj8', 'Orcamentista'),
-  ('planeamento', 'pbkdf2_sha256$260000$xbXVrF7mkCwj2vzfBYIfAQ$Y-nNPndHptxyN8RrEtPhN9WoNsm1GcovYbbcwyuXmnE', 'Planeamento');
+  ('admin', 'pbkdf2_sha256$260000$5VMdM-COT16MgTu-8zGokA$1fDxfRWHKvDQ2LMHyej4Lk8oKtZCoHSEJviuupaMoXA', 'Admin'),
+  ('operador', 'pbkdf2_sha256$260000$VXKXVlx_R9givHMb4evImA$sU-2n4K8GHdstIZFqFyet46RTAPBBobW3gyVbdHRlHE', 'Operador'),
+  ('orcamentista', 'pbkdf2_sha256$260000$qEWDKRLMfu9kL2b50_f4GA$FBXLKBNOEnaFSXHv1KzSnSTneEZKDJ869zP-OIqqB-s', 'Orcamentista'),
+  ('planeamento', 'pbkdf2_sha256$260000$haFJT56VQHt2ch7yJibOOg$t3A3oG2Mh22Bxc1IvkTg5e6YziNsHt-x-Tx1bHLFzw4', 'Planeamento');
 
 INSERT IGNORE INTO `operadores` (`nome`) VALUES ('Operador 1');
 

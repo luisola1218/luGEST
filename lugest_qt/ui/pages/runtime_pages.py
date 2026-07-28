@@ -80,6 +80,7 @@ from .runtime_common import (
     selected_row_index as _selected_row_index,
     set_panel_tone as _set_panel_tone,
     set_table_columns as _set_table_columns,
+    smart_sort_key as _smart_sort_key,
     state_palette as _state_palette,
     state_tone as _state_tone,
     state_visual as _state_visual,
@@ -689,8 +690,8 @@ def _open_operation_cost_profiles_dialog(parent: QWidget, backend) -> bool:
     operations = [str(op or "").strip() for op in list(backend.desktop_main.OFF_OPERACOES_DISPONIVEIS) if str(op or "").strip()]
 
     dialog = QDialog(parent)
-    dialog.setWindowTitle("Perfis de custo por operacao")
-    dialog.resize(1400, 540)
+    dialog.setWindowTitle("Perfis de custo por operação")
+    dialog.resize(1460, 600)
     dialog.setStyleSheet(
         "QLabel { font-size: 10px; }"
         "QLineEdit, QComboBox, QDoubleSpinBox { font-size: 10px; min-height: 24px; padding: 0 6px; }"
@@ -702,7 +703,8 @@ def _open_operation_cost_profiles_dialog(parent: QWidget, backend) -> bool:
     layout.setContentsMargins(10, 10, 10, 10)
     layout.setSpacing(8)
     info = QLabel(
-        "Define a logica base de custo por posto. O orcamentista pode depois ajustar o detalhe por linha no orcamento."
+        "Define a lógica base de custo de cada posto. Estes valores alimentam o orçamento e podem ser ajustados "
+        "individualmente em cada linha."
     )
     info.setWordWrap(True)
     info.setProperty("role", "muted")
@@ -719,12 +721,19 @@ def _open_operation_cost_profiles_dialog(parent: QWidget, backend) -> bool:
     profile_row.addWidget(profile_name_edit, 1)
     layout.addLayout(profile_row)
 
-    table = QTableWidget(len(operations), 9)
+    sort_hint = QLabel("Clique num cabeçalho para ordenar. Um segundo clique inverte a ordem.")
+    sort_hint.setProperty("role", "muted")
+    sort_hint.setStyleSheet("font-size: 9.5px; color: #52657d;")
+    layout.addWidget(sort_hint)
+
+    table = QTableWidget(0, 9)
     table.setHorizontalHeaderLabels(
-        ["Operacao", "Modo", "Etiqueta", "Qtd. padrao", "Setup min", "Tempo base", "EUR/h", "Fixo/un", "Min/un"]
+        ["Operação", "Modo de cálculo", "Unidade técnica", "Qtd. padrão", "Setup (min)", "Tempo base", "EUR/h", "Fixo/un", "Mín./un"]
     )
     table.verticalHeader().setVisible(False)
-    table.setAlternatingRowColors(False)
+    table.setAlternatingRowColors(True)
+    table.setSelectionBehavior(QAbstractItemView.SelectRows)
+    table.setSelectionMode(QAbstractItemView.SingleSelection)
     header = table.horizontalHeader()
     header.setDefaultAlignment(Qt.AlignCenter)
     _configure_table(table, stretch=(), contents=())
@@ -734,17 +743,27 @@ def _open_operation_cost_profiles_dialog(parent: QWidget, backend) -> bool:
     header.setSectionResizeMode(2, QHeaderView.Interactive)
     for col_index in range(3, 9):
         header.setSectionResizeMode(col_index, QHeaderView.Interactive)
-    table.setColumnWidth(0, 230)
-    table.setColumnWidth(1, 165)
-    table.setColumnWidth(2, 350)
-    table.setColumnWidth(3, 132)
-    table.setColumnWidth(4, 132)
-    table.setColumnWidth(5, 132)
-    table.setColumnWidth(6, 132)
-    table.setColumnWidth(7, 132)
-    table.setColumnWidth(8, 132)
-    for row_index in range(len(operations)):
-        table.setRowHeight(row_index, 34)
+    table.setColumnWidth(0, 190)
+    table.setColumnWidth(1, 150)
+    header.setSectionResizeMode(2, QHeaderView.Stretch)
+    for col_index in range(3, 9):
+        table.setColumnWidth(col_index, 118)
+    table.setCornerButtonEnabled(False)
+    header_items = (
+        "Posto ou operação produtiva",
+        "Forma de cálculo aplicada",
+        "Grandeza usada no cálculo por peça",
+        "Quantidade técnica assumida por defeito",
+        "Tempo de preparação do posto",
+        "Tempo produtivo base por unidade técnica",
+        "Custo horário do posto",
+        "Custo fixo aplicado por unidade",
+        "Preço mínimo aplicado por unidade",
+    )
+    for column, tooltip in enumerate(header_items):
+        item = table.horizontalHeaderItem(column)
+        if item is not None:
+            item.setToolTip(f"{tooltip}. Clique para ordenar.")
     layout.addWidget(table, 1)
 
     def _cell_host(widget: QWidget, *, left: int = 6, right: int = 6) -> QWidget:
@@ -756,13 +775,8 @@ def _open_operation_cost_profiles_dialog(parent: QWidget, backend) -> bool:
         return host
 
     row_controls: list[dict[str, Any]] = []
-    for row_index, op_name in enumerate(operations):
+    for op_name in operations:
         profile = dict(active_map.get(op_name, {}) or {})
-        name_item = QTableWidgetItem(op_name)
-        name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
-        name_item.setTextAlignment(int(Qt.AlignLeft | Qt.AlignVCenter))
-        table.setItem(row_index, 0, name_item)
-
         mode_combo = QComboBox()
         for key, label in _OPERATION_PRICING_MODE_ITEMS:
             mode_combo.addItem(label, key)
@@ -800,14 +814,16 @@ def _open_operation_cost_profiles_dialog(parent: QWidget, backend) -> bool:
             widget.setMaximumHeight(28)
             widget.setStyleSheet("font-size: 10px;")
 
-        table.setCellWidget(row_index, 1, _cell_host(mode_combo))
-        table.setCellWidget(row_index, 2, _cell_host(driver_edit))
-        table.setCellWidget(row_index, 3, _cell_host(driver_units_spin))
-        table.setCellWidget(row_index, 4, _cell_host(setup_spin))
-        table.setCellWidget(row_index, 5, _cell_host(time_spin))
-        table.setCellWidget(row_index, 6, _cell_host(hour_spin))
-        table.setCellWidget(row_index, 7, _cell_host(fixed_spin))
-        table.setCellWidget(row_index, 8, _cell_host(min_spin))
+        hosts = [
+            _cell_host(mode_combo),
+            _cell_host(driver_edit),
+            _cell_host(driver_units_spin),
+            _cell_host(setup_spin),
+            _cell_host(time_spin),
+            _cell_host(hour_spin),
+            _cell_host(fixed_spin),
+            _cell_host(min_spin),
+        ]
         row_controls.append(
             {
                 "op_name": op_name,
@@ -819,8 +835,62 @@ def _open_operation_cost_profiles_dialog(parent: QWidget, backend) -> bool:
                 "hour_spin": hour_spin,
                 "fixed_spin": fixed_spin,
                 "min_spin": min_spin,
+                "hosts": hosts,
             }
         )
+
+    operation_sort_state = {"section": -1, "order": Qt.AscendingOrder}
+
+    def _profile_sort_value(controls: dict[str, Any], section: int) -> tuple[int, object]:
+        values: tuple[object, ...] = (
+            controls["op_name"],
+            controls["mode_combo"].currentText(),
+            controls["driver_edit"].text(),
+            controls["driver_units_spin"].value(),
+            controls["setup_spin"].value(),
+            controls["time_spin"].value(),
+            controls["hour_spin"].value(),
+            controls["fixed_spin"].value(),
+            controls["min_spin"].value(),
+        )
+        return _smart_sort_key(values[max(0, min(section, len(values) - 1))])
+
+    def _render_profile_rows() -> None:
+        for controls in row_controls:
+            for host in controls["hosts"]:
+                host.setParent(None)
+        table.clearContents()
+        table.setRowCount(0)
+        for row_index, controls in enumerate(row_controls):
+            table.insertRow(row_index)
+            table.setRowHeight(row_index, 36)
+            name_item = QTableWidgetItem(str(controls["op_name"]))
+            name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
+            name_item.setTextAlignment(int(Qt.AlignLeft | Qt.AlignVCenter))
+            table.setItem(row_index, 0, name_item)
+            for column, host in enumerate(controls["hosts"], start=1):
+                table.setCellWidget(row_index, column, host)
+
+    def _sort_profile_rows(section: int) -> None:
+        if operation_sort_state["section"] == section:
+            operation_sort_state["order"] = (
+                Qt.DescendingOrder
+                if operation_sort_state["order"] == Qt.AscendingOrder
+                else Qt.AscendingOrder
+            )
+        else:
+            operation_sort_state["section"] = section
+            operation_sort_state["order"] = Qt.AscendingOrder
+        reverse = operation_sort_state["order"] == Qt.DescendingOrder
+        row_controls.sort(key=lambda controls: _profile_sort_value(controls, section), reverse=reverse)
+        header.setSortIndicator(section, operation_sort_state["order"])
+        header.setSortIndicatorShown(True)
+        _render_profile_rows()
+
+    _render_profile_rows()
+    header.setSectionsClickable(True)
+    header.setSortIndicatorShown(False)
+    header.sectionClicked.connect(_sort_profile_rows)
 
     buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
     buttons.setStyleSheet("QPushButton { font-size: 10.5px; min-height: 28px; padding: 4px 10px; }")
@@ -10289,7 +10359,8 @@ class OrdersPage(QWidget):
             "QTableWidget { font-size: 12px; alternate-background-color: #f8fafc;"
             " background: #ffffff; border: 1px solid #d6e0eb; border-radius: 6px; }"
             "QTableWidget::item { padding: 5px 8px; border-bottom: 1px solid #edf2f7; }"
-            "QTableWidget::item:selected { background: #dbeafe; color: #102a43; }"
+            "QTableWidget::item:selected { background: #efe4c8; color: #4a321b;"
+            " border: 1px solid #c9b387; }"
             "QHeaderView::section { font-size: 11px; padding: 7px 9px; font-weight: 900;"
             " background: #eef4f8; color: #243b53; border: none; border-bottom: 1px solid #cbd8e6; }"
         )
@@ -15875,6 +15946,15 @@ class QuotesPage(QWidget):
             " QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
         )
         self.lines_table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+        self.lines_table.horizontalHeader().setSectionsClickable(True)
+        self.lines_table.horizontalHeader().setSortIndicatorShown(False)
+        for column in range(self.lines_table.columnCount()):
+            header_item = self.lines_table.horizontalHeaderItem(column)
+            if header_item is not None:
+                header_item.setToolTip("Clique para ordenar; clique novamente para inverter.")
+        self._quote_lines_sort_section = -1
+        self._quote_lines_sort_order = Qt.AscendingOrder
+        self.lines_table.horizontalHeader().sectionClicked.connect(self._handle_quote_lines_sort)
         self.lines_table.verticalHeader().setDefaultSectionSize(24)
         self.lines_table.setMinimumHeight(380)
         self.lines_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -16193,22 +16273,61 @@ class QuotesPage(QWidget):
 
     def _selected_line_index(self) -> int:
         current = self.lines_table.currentItem()
-        if current is None or current.row() >= len(self.line_rows):
+        if current is None:
             return -1
-        return current.row()
+        source_index = current.data(Qt.UserRole)
+        if isinstance(source_index, int) and 0 <= source_index < len(self.line_rows):
+            return source_index
+        return current.row() if 0 <= current.row() < len(self.line_rows) else -1
 
     def _selected_line_indexes(self) -> list[int]:
-        indexes = sorted(
-            {
-                item.row()
-                for item in self.lines_table.selectedItems()
-                if item is not None and 0 <= item.row() < len(self.line_rows)
-            }
-        )
+        indexes: set[int] = set()
+        for item in self.lines_table.selectedItems():
+            if item is None:
+                continue
+            source_index = item.data(Qt.UserRole)
+            if isinstance(source_index, int) and 0 <= source_index < len(self.line_rows):
+                indexes.add(source_index)
+            elif 0 <= item.row() < len(self.line_rows):
+                indexes.add(item.row())
+        indexes = sorted(indexes)
         if indexes:
             return indexes
         single = self._selected_line_index()
         return [single] if single >= 0 else []
+
+    def _quote_line_sort_value(self, row: dict, section: int) -> tuple[int, object]:
+        values: tuple[object, ...] = (
+            self._quote_line_type_label(row),
+            self._quote_line_primary_ref(row),
+            row.get("ref_externa", ""),
+            row.get("descricao", ""),
+            self._quote_line_material_display(row),
+            row.get("espessura", "") or self._quote_line_unit_display(row),
+            row.get("operacao", ""),
+            row.get("tempo_peca_min", 0),
+            row.get("qtd", 0),
+            row.get("preco_unit_incrementado", row.get("preco_unit", 0)),
+            row.get("preco_unit_desconto", row.get("preco_unit", 0)),
+            row.get("total_desconto", row.get("total", 0)),
+            row.get("conjunto_nome", ""),
+        )
+        return _smart_sort_key(values[max(0, min(section, len(values) - 1))])
+
+    def _handle_quote_lines_sort(self, section: int) -> None:
+        if self._quote_lines_sort_section == section:
+            self._quote_lines_sort_order = (
+                Qt.DescendingOrder
+                if self._quote_lines_sort_order == Qt.AscendingOrder
+                else Qt.AscendingOrder
+            )
+        else:
+            self._quote_lines_sort_section = section
+            self._quote_lines_sort_order = Qt.AscendingOrder
+        header = self.lines_table.horizontalHeader()
+        header.setSortIndicator(section, self._quote_lines_sort_order)
+        header.setSortIndicatorShown(True)
+        self._render_quote_lines()
 
     def _sync_list_buttons(self) -> None:
         has_row = bool(self._selected_quote_row())
@@ -16670,6 +16789,14 @@ class QuotesPage(QWidget):
             row["desconto_aplicado"] = round(max(0.0, total - discounted_total), 2)
             normalized_rows.append(row)
         self.line_rows = normalized_rows
+        display_rows = list(enumerate(self.line_rows))
+        sort_section = int(getattr(self, "_quote_lines_sort_section", -1))
+        if sort_section >= 0:
+            reverse = getattr(self, "_quote_lines_sort_order", Qt.AscendingOrder) == Qt.DescendingOrder
+            display_rows.sort(
+                key=lambda indexed_row: self._quote_line_sort_value(indexed_row[1], sort_section),
+                reverse=reverse,
+            )
         _fill_table(
             self.lines_table,
             [
@@ -16688,10 +16815,15 @@ class QuotesPage(QWidget):
                     _fmt_eur(float(row.get("total_desconto", row.get("total", 0)) or 0)),
                     row.get("conjunto_nome", "-") or "-",
                 ]
-                for row in self.line_rows
+                for _source_index, row in display_rows
             ],
             align_center_from=5,
         )
+        for visual_row, (source_index, _row) in enumerate(display_rows):
+            for col_index in range(self.lines_table.columnCount()):
+                item = self.lines_table.item(visual_row, col_index)
+                if item is not None:
+                    item.setData(Qt.UserRole, source_index)
         for _ in range(2):
             spacer_row = self.lines_table.rowCount()
             self.lines_table.insertRow(spacer_row)
@@ -16702,7 +16834,7 @@ class QuotesPage(QWidget):
                 spacer_item.setBackground(QBrush(QColor("#f8fafc")))
                 self.lines_table.setItem(spacer_row, col_index, spacer_item)
         transport = float(self.transport_price_spin.value() or 0)
-        for row_index, row in enumerate(self.line_rows):
+        for row_index, (_source_index, row) in enumerate(display_rows):
             subtotal += float(row.get("total", 0) or 0)
             _paint_table_row(self.lines_table, row_index, "Preparacao")
             for col_index in (9, 10, 11):

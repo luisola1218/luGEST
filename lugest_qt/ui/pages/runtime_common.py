@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import re
+import unicodedata
+from datetime import datetime
+
 from PySide6.QtCore import QDate, QProcess, QProcessEnvironment, QTimer, Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
@@ -11,6 +15,62 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QWidget,
 )
+
+
+_SORT_NUMBER_RE = re.compile(
+    r"^[\s+\-]?\d[\d\s.,'’]*(?:\s*(?:€|eur|%|min|h|kg|g|mm|cm|m|m2|m²|un|unid\.?))?\s*$",
+    re.IGNORECASE,
+)
+
+
+def smart_sort_key(value: object) -> tuple[int, object]:
+    """Return a stable, locale-friendly key for dates, measurements and text."""
+    if value is None:
+        return (3, "")
+    if isinstance(value, bool):
+        return (0, int(value))
+    if isinstance(value, (int, float)):
+        return (0, float(value))
+
+    raw = str(value or "").strip()
+    if not raw or raw == "-":
+        return (3, "")
+
+    for date_format in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return (1, datetime.strptime(raw[:10], date_format).date().toordinal())
+        except ValueError:
+            continue
+
+    if _SORT_NUMBER_RE.fullmatch(raw):
+        number_text = re.sub(
+            r"(?i)\s*(?:€|eur|%|min|h|kg|g|mm|cm|m|m2|m²|un|unid\.?)\s*$",
+            "",
+            raw,
+        )
+        number_text = number_text.replace("\u00a0", "").replace(" ", "").replace("'", "").replace("’", "")
+        if "," in number_text and "." in number_text:
+            decimal_separator = "," if number_text.rfind(",") > number_text.rfind(".") else "."
+            thousands_separator = "." if decimal_separator == "," else ","
+            number_text = number_text.replace(thousands_separator, "").replace(decimal_separator, ".")
+        elif "," in number_text:
+            number_text = number_text.replace(".", "").replace(",", ".")
+        try:
+            return (0, float(number_text))
+        except ValueError:
+            pass
+
+    normalized = unicodedata.normalize("NFKD", raw)
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char)).casefold()
+    natural_parts: list[tuple[int, object]] = []
+    for part in re.split(r"(\d+(?:[.,]\d+)?)", normalized):
+        if not part:
+            continue
+        if re.fullmatch(r"\d+(?:[.,]\d+)?", part):
+            natural_parts.append((0, float(part.replace(",", "."))))
+        else:
+            natural_parts.append((1, part))
+    return (2, tuple(natural_parts))
 
 
 def fill_table(table: QTableWidget, rows: list[list[str]], align_center_from: int = 0) -> None:

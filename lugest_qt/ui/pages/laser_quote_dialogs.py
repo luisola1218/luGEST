@@ -417,7 +417,11 @@ class MaterialSubtypeCatalogDialog(QDialog):
             f"Sucata base: {_fmt_num(self.fallback_scrap_credit_per_kg, 3)} EUR/kg"
         )
         note.setProperty("role", "muted")
-        helper = QLabel("Cada linha sobrepoe o preco base da familia quando esse subtipo for escolhido no orcamento.")
+        helper = QLabel(
+            "Cada linha sobrepoe o preco base da familia. Para disponibilizar uma espessura unica, "
+            "indica o mesmo valor em Esp. min e Esp. max (ex.: 1,2 / 1,2 mm)."
+        )
+        helper.setWordWrap(True)
         helper.setProperty("role", "muted")
         header_layout.addWidget(title)
         header_layout.addWidget(note)
@@ -443,16 +447,28 @@ class MaterialSubtypeCatalogDialog(QDialog):
         table_layout.setSpacing(8)
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["Subtipo", "Esp. min (mm)", "Esp. max (mm)", "Preco material (EUR/kg)", "Densidade (kg/m3)", "Valor sucata (EUR/kg)"])
+        self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setEditTriggers(
+            QAbstractItemView.SelectedClicked
+            | QAbstractItemView.DoubleClicked
+            | QAbstractItemView.EditKeyPressed
+            | QAbstractItemView.AnyKeyPressed
+        )
+        self.table.setStyleSheet(
+            "QTableWidget { alternate-background-color: #f7f9fc; gridline-color: #c9d7e8; }"
+            "QHeaderView::section { min-height: 30px; padding: 5px 7px; font-weight: 700; }"
+        )
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         for section in (1, 2, 3, 4, 5):
             header.setSectionResizeMode(section, QHeaderView.ResizeToContents)
         table_layout.addWidget(self.table, 1)
         table_actions = QHBoxLayout()
-        self.add_btn = QPushButton("Adicionar regra")
-        self.remove_btn = QPushButton("Remover regra")
+        self.add_btn = QPushButton("Adicionar subtipo / espessura")
+        self.remove_btn = QPushButton("Remover selecionada")
         self.remove_btn.setProperty("variant", "secondary")
         table_actions.addWidget(self.add_btn)
         table_actions.addWidget(self.remove_btn)
@@ -468,7 +484,15 @@ class MaterialSubtypeCatalogDialog(QDialog):
         self.add_btn.clicked.connect(self._add_row)
         self.remove_btn.clicked.connect(self._remove_row)
         self.search_edit.textChanged.connect(self._apply_filter)
+        self.table.cellClicked.connect(self._edit_clicked_cell)
         self._load_rows(family_catalog)
+
+    def _edit_clicked_cell(self, row_index: int, column_index: int) -> None:
+        item = self.table.item(row_index, column_index)
+        if item is None or not bool(item.flags() & Qt.ItemIsEditable):
+            return
+        self.table.setCurrentCell(row_index, column_index)
+        self.table.editItem(item)
 
     def _load_rows(self, family_catalog: dict[str, Any]) -> None:
         rows: list[tuple[str, dict[str, Any], bool]] = []
@@ -492,6 +516,7 @@ class MaterialSubtypeCatalogDialog(QDialog):
             self.table.setItem(row_index, 3, _table_number_item(payload.get("price_per_kg", self.fallback_price_per_kg), 3))
             self.table.setItem(row_index, 4, _table_number_item(payload.get("density_kg_m3", 0.0), 1))
             self.table.setItem(row_index, 5, _table_number_item(payload.get("scrap_credit_per_kg", self.fallback_scrap_credit_per_kg), 3))
+            self.table.setRowHeight(row_index, 34)
         self._apply_filter()
 
     def _add_row(self) -> None:
@@ -757,10 +782,27 @@ class SeriesPricingDialog(QDialog):
 
 
 class LaserSettingsDialog(QDialog):
-    def __init__(self, backend, parent=None) -> None:
+    def __init__(
+        self,
+        backend,
+        parent=None,
+        *,
+        initial_machine: str = "",
+        initial_commercial: str = "",
+        initial_material: str = "",
+        initial_subtype: str = "",
+        initial_gas: str = "",
+    ) -> None:
         super().__init__(parent)
         self.backend = backend
         self.settings = dict(self.backend.laser_quote_settings() or {})
+        self._initial_context = {
+            "machine": str(initial_machine or "").strip(),
+            "commercial": str(initial_commercial or "").strip(),
+            "material": str(initial_material or "").strip(),
+            "subtype": str(initial_subtype or "").strip(),
+            "gas": str(initial_gas or "").strip(),
+        }
         self._material_catalog_cache: dict[str, Any] = {}
         self._series_tiers_cache: list[dict[str, Any]] = []
         self.setWindowFlag(Qt.WindowMinimizeButtonHint, True)
@@ -816,19 +858,25 @@ class LaserSettingsDialog(QDialog):
         self.machine_combo = QComboBox()
         self.machine_combo.setEditable(False)
         self.machine_combo.addItems(list(dict(self.settings.get("machine_profiles", {}) or {}).keys()))
-        self.machine_combo.setCurrentText(str(self.settings.get("active_machine", "") or self.machine_combo.currentText()))
+        self.machine_combo.setCurrentText(
+            self._initial_context["machine"]
+            or str(self.settings.get("active_machine", "") or self.machine_combo.currentText())
+        )
 
         self.commercial_combo = QComboBox()
         self.commercial_combo.setEditable(False)
         self.commercial_combo.addItems(list(dict(self.settings.get("commercial_profiles", {}) or {}).keys()))
-        self.commercial_combo.setCurrentText(str(self.settings.get("active_commercial", "") or self.commercial_combo.currentText()))
+        self.commercial_combo.setCurrentText(
+            self._initial_context["commercial"]
+            or str(self.settings.get("active_commercial", "") or self.commercial_combo.currentText())
+        )
 
         self.material_combo = QComboBox()
-        self.material_combo.setEditable(True)
+        self.material_combo.setEditable(False)
         self.subtype_combo = QComboBox()
-        self.subtype_combo.setEditable(True)
+        self.subtype_combo.setEditable(False)
         self.gas_combo = QComboBox()
-        self.gas_combo.setEditable(True)
+        self.gas_combo.setEditable(False)
         self.mark_patterns_edit = QLineEdit()
         self.ignore_patterns_edit = QLineEdit()
         for widget in (
@@ -856,6 +904,10 @@ class LaserSettingsDialog(QDialog):
         top_layout.addWidget(QLabel("Padroes ignorar"), 2, 2)
         top_layout.addWidget(self.mark_patterns_edit, 3, 0, 1, 2)
         top_layout.addWidget(self.ignore_patterns_edit, 3, 2, 1, 2)
+        self.context_label = QLabel("")
+        self.context_label.setProperty("role", "muted")
+        self.context_label.setWordWrap(True)
+        top_layout.addWidget(self.context_label, 4, 0, 1, 5)
         root.addWidget(top_card)
 
         manage_card = CardFrame()
@@ -983,10 +1035,9 @@ class LaserSettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
 
-        try:
-            self.subtype_combo.lineEdit().setPlaceholderText("Opcional / grau")
-        except Exception:
-            pass
+        self.material_combo.setPlaceholderText("Selecionar material")
+        self.subtype_combo.setPlaceholderText("Selecionar subtipo")
+        self.gas_combo.setPlaceholderText("Selecionar gas")
         self.machine_combo.currentTextChanged.connect(self._refresh_materials)
         self.material_combo.currentTextChanged.connect(self._refresh_subtypes)
         self._build_cost_tab()
@@ -998,6 +1049,19 @@ class LaserSettingsDialog(QDialog):
         self._reload_material_catalog_cache_from_current_profile()
         self._reload_series_cache_from_current_profile()
         self._refresh_materials()
+        self._apply_initial_context()
+
+    def _apply_initial_context(self) -> None:
+        material = _display_material_family(self._initial_context.get("material", "")) or self._initial_context.get("material", "")
+        if material and self.material_combo.findText(material, Qt.MatchFixedString) >= 0:
+            self.material_combo.setCurrentText(material)
+        subtype = self._initial_context.get("subtype", "")
+        if subtype and self.subtype_combo.findText(subtype, Qt.MatchFixedString) >= 0:
+            self.subtype_combo.setCurrentText(subtype)
+        gas = self._initial_context.get("gas", "")
+        if gas and self.gas_combo.findText(gas, Qt.MatchFixedString) >= 0:
+            self.gas_combo.setCurrentText(gas)
+        self._load_current_values()
 
     def _apply_screen_bounds(self) -> None:
         screen = self.screen()
@@ -1159,6 +1223,14 @@ class LaserSettingsDialog(QDialog):
         self._load_current_values()
 
     def _load_current_values(self) -> None:
+        self.context_label.setText(
+            "A editar: "
+            f"{self.machine_combo.currentText().strip() or '-'}  |  "
+            f"{self.commercial_combo.currentText().strip() or '-'}  |  "
+            f"{self.material_combo.currentText().strip() or '-'}  |  "
+            f"{self.subtype_combo.currentText().strip() or '-'}  |  "
+            f"{self.gas_combo.currentText().strip() or '-'}"
+        )
         machine = self._machine_profile()
         motion = dict(machine.get("motion", {}) or {})
         self.mark_patterns_edit.setText(",".join(list(dict(self.settings.get("layer_rules", {}) or {}).get("mark_patterns", []) or [])))
@@ -1498,7 +1570,11 @@ class LaserQuoteDialog(QDialog):
         self.gas_combo.setEditable(True)
         self.thickness_spin = _spin(1, 0.1, 500.0, 8.0, 0.5)
         self.quantity_spin = _spin(0, 1.0, 100000.0, 1.0, 1.0)
-        self.marking_check = QCheckBox("Contar marcacao")
+        self.marking_check = QCheckBox("Contar linhas de marcacao/quinagem")
+        self.marking_check.setToolTip(
+            "As linhas cinzentas ou tracejadas sao separadas do corte. "
+            "Ativa apenas quando o laser tiver de executar fisicamente essa marcacao."
+        )
         self.defilm_check = QCheckBox("Contar defilm")
         self.customer_material_check = QCheckBox("Material do cliente (sem materia-prima)")
         self.customer_material_check.setToolTip("Mantem corte/tempo/processo, mas retira o custo de materia-prima do orcamento.")

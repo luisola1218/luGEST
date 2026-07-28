@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 from typing import Any
 
 from PySide6.QtCore import QObject, QPoint, QPointF, QRect, QRectF, QSize, QThread, QTimer, Qt, Signal
@@ -93,10 +94,17 @@ class NestingWorker(QObject):
     def __init__(self, payload: dict[str, Any]) -> None:
         super().__init__()
         self.payload = dict(payload or {})
+        self._cancel_requested = False
+
+    def cancel(self) -> None:
+        self._cancel_requested = True
+
+    def is_cancelled(self) -> bool:
+        return bool(self._cancel_requested)
 
     def run(self) -> None:
         try:
-            result = nest_parts(**self.payload)
+            result = nest_parts(**self.payload, cancel_check=self.is_cancelled)
         except Exception as exc:
             self.failed.emit(str(exc))
             return
@@ -560,6 +568,18 @@ class LaserNestingDialog(QDialog):
         self.lead_opt_check = QCheckBox("Otimizar lead-ins / lead-outs")
         self.lead_opt_check.setChecked(bool(self.nesting_options.get("lead_optimization", True)))
         self.lead_opt_pct_spin = _spin(1, 0.0, 50.0, float(self.nesting_options.get("lead_optimization_pct", 8.0) or 8.0), 0.5)
+        self.optimization_level_combo = QComboBox()
+        self.optimization_level_combo.addItem("TAP 1 · Rápido — até 30 s", {"level": "tap1", "seconds": 30.0})
+        self.optimization_level_combo.addItem("TAP 2 · Equilibrado — até 120 s", {"level": "tap2", "seconds": 120.0})
+        self.optimization_level_combo.addItem("TAP 3 · Qualidade — até 240 s", {"level": "tap3", "seconds": 240.0})
+        saved_level = str(self.nesting_options.get("optimization_level", "tap1") or "tap1").strip().lower()
+        for index in range(self.optimization_level_combo.count()):
+            if str(dict(self.optimization_level_combo.itemData(index) or {}).get("level", "")) == saved_level:
+                self.optimization_level_combo.setCurrentIndex(index)
+                break
+        self.optimization_level_combo.setToolTip(
+            "Define o orçamento máximo de exploração. O motor termina antes se deixar de encontrar melhorias."
+        )
 
         sheet_btn = QPushButton("Biblioteca de chapas")
         sheet_btn.setProperty("variant", "secondary")
@@ -626,37 +646,36 @@ class LaserNestingDialog(QDialog):
         top_layout.setVerticalSpacing(8)
         top_layout.addWidget(QLabel("Grupo de material"), 0, 0)
         top_layout.addWidget(self.group_combo, 0, 1)
-        top_layout.addWidget(QLabel("Formato standard / compra"), 0, 2)
-        top_layout.addWidget(self.sheet_combo, 0, 3)
-        top_layout.addWidget(QLabel("Margem entre peças (mm)"), 1, 0)
-        top_layout.addWidget(self.spacing_spin, 1, 1)
-        top_layout.addWidget(QLabel("Margem à borda (mm)"), 1, 2)
-        top_layout.addWidget(self.edge_spin, 1, 3)
-        top_layout.addWidget(self.rotate_check, 2, 0, 1, 2)
-        top_layout.addWidget(self.mirror_check, 2, 2, 1, 2)
-        top_layout.addWidget(self.auto_sheet_check, 3, 0, 1, 2)
-        top_layout.addWidget(self.use_stock_check, 3, 2, 1, 2)
-        top_layout.addWidget(self.shape_check, 4, 0, 1, 2)
-        top_layout.addWidget(self.free_angle_check, 4, 2, 1, 2)
-        top_layout.addWidget(QLabel("Grelha de contingência (mm)"), 5, 0)
-        top_layout.addWidget(self.shape_grid_spin, 5, 1)
+        top_layout.addWidget(QLabel("Formato standard / compra"), 1, 0)
+        top_layout.addWidget(self.sheet_combo, 1, 1)
+        top_layout.addWidget(QLabel("Lacuna entre peças (mm)"), 2, 0)
+        top_layout.addWidget(self.spacing_spin, 2, 1)
+        top_layout.addWidget(QLabel("Lacuna da borda (mm)"), 3, 0)
+        top_layout.addWidget(self.edge_spin, 3, 1)
+        top_layout.addWidget(self.rotate_check, 4, 0, 1, 2)
+        top_layout.addWidget(self.mirror_check, 5, 0, 1, 2)
+        top_layout.addWidget(self.auto_sheet_check, 6, 0, 1, 2)
+        top_layout.addWidget(self.use_stock_check, 7, 0, 1, 2)
+        top_layout.addWidget(self.allow_purchase_check, 8, 0, 1, 2)
+        top_layout.addWidget(self.shape_check, 9, 0, 1, 2)
+        top_layout.addWidget(self.free_angle_check, 10, 0, 1, 2)
+        top_layout.addWidget(self.shape_strict_check, 11, 0, 1, 2)
+        top_layout.addWidget(QLabel("Grelha de contingência (mm)"), 12, 0)
+        top_layout.addWidget(self.shape_grid_spin, 12, 1)
         self.shape_grid_spin.setToolTip("Usada apenas se o motor geométrico GEOS não estiver disponível.")
-        top_layout.addWidget(self.allow_purchase_check, 5, 2, 1, 2)
-        top_layout.addWidget(self.shape_strict_check, 6, 0, 1, 2)
-        top_layout.addWidget(self.common_line_check, 6, 2, 1, 2)
-        top_layout.addWidget(QLabel("Tolerância common-line (mm)"), 7, 0)
-        top_layout.addWidget(self.common_line_tol_spin, 7, 1)
-        top_layout.addWidget(self.lead_opt_check, 7, 2, 1, 2)
-        top_layout.addWidget(QLabel("Redução lead-ins %"), 8, 0)
-        top_layout.addWidget(self.lead_opt_pct_spin, 8, 1)
-        top_layout.addWidget(sheet_btn, 8, 2)
-        top_layout.addWidget(config_btn, 8, 3)
+        top_layout.addWidget(self.common_line_check, 13, 0, 1, 2)
+        top_layout.addWidget(QLabel("Tolerância common-line (mm)"), 14, 0)
+        top_layout.addWidget(self.common_line_tol_spin, 14, 1)
+        top_layout.addWidget(self.lead_opt_check, 15, 0, 1, 2)
+        top_layout.addWidget(QLabel("Redução lead-ins %"), 16, 0)
+        top_layout.addWidget(self.lead_opt_pct_spin, 16, 1)
+        top_layout.addWidget(QLabel("Tempo de exploração"), 17, 0)
+        top_layout.addWidget(self.optimization_level_combo, 17, 1)
+        top_layout.addWidget(sheet_btn, 18, 0)
+        top_layout.addWidget(config_btn, 18, 1)
         top_layout.setColumnStretch(0, 2)
         top_layout.setColumnStretch(1, 3)
-        top_layout.setColumnStretch(2, 2)
-        top_layout.setColumnStretch(3, 3)
         self.config_grid = top_layout
-        config_page_layout.addWidget(top_card)
 
         parts_card = CardFrame()
         parts_card.setStyleSheet(
@@ -757,8 +776,65 @@ class LaserNestingDialog(QDialog):
         stock_layout.addWidget(self.stock_hint)
         stock_layout.addWidget(self.stock_empty_label)
         stock_layout.addWidget(self.stock_table, 1)
-        config_page_layout.addWidget(self.stock_card)
-        config_page_layout.addStretch(1)
+
+        sheet_selector_card = CardFrame()
+        sheet_selector_layout = QVBoxLayout(sheet_selector_card)
+        sheet_selector_layout.setContentsMargins(16, 14, 16, 14)
+        sheet_selector_layout.setSpacing(10)
+        sheet_selector_header = QHBoxLayout()
+        sheet_selector_title = QLabel("Chapas disponíveis")
+        sheet_selector_title.setStyleSheet("font-size: 17px; font-weight: 900; color: #30343b;")
+        sheet_selector_note = QLabel("Seleciona o formato base ou ativa a escolha automática.")
+        sheet_selector_note.setProperty("role", "muted")
+        sheet_selector_note.setWordWrap(True)
+        sheet_selector_header.addWidget(sheet_selector_title)
+        sheet_selector_header.addStretch(1)
+        sheet_selector_layout.addLayout(sheet_selector_header)
+        sheet_selector_layout.addWidget(sheet_selector_note)
+        self.sheet_profile_list = QListWidget()
+        self.sheet_profile_list.setSelectionMode(QListWidget.SingleSelection)
+        self.sheet_profile_list.setMinimumHeight(180)
+        self.sheet_profile_list.setStyleSheet(
+            "QListWidget {background:#ffffff; border:1px solid #d7dadd; border-radius:4px; padding:4px;}"
+            "QListWidget::item {padding:12px 14px; border-bottom:1px solid #eceef0; color:#30343b;}"
+            "QListWidget::item:hover {background:#f4fbe9;}"
+            "QListWidget::item:selected {background:#eef9df; color:#2f5f10; border-left:4px solid #7ed321;}"
+        )
+        self.sheet_profile_list.currentRowChanged.connect(
+            lambda index: self.sheet_combo.setCurrentIndex(index)
+            if 0 <= index < self.sheet_combo.count() and self.sheet_combo.currentIndex() != index
+            else None
+        )
+        sheet_selector_layout.addWidget(self.sheet_profile_list, 1)
+
+        settings_host = QWidget()
+        settings_host_layout = QVBoxLayout(settings_host)
+        settings_host_layout.setContentsMargins(0, 0, 0, 0)
+        settings_host_layout.setSpacing(8)
+        settings_title = QLabel("Definições de nesting")
+        settings_title.setStyleSheet("font-size: 20px; font-weight: 900; color: #30343b;")
+        settings_caption = QLabel("Margens, rotações, motor geométrico e profundidade da otimização.")
+        settings_caption.setProperty("role", "muted")
+        settings_caption.setWordWrap(True)
+        settings_host_layout.addWidget(settings_title)
+        settings_host_layout.addWidget(settings_caption)
+        settings_host_layout.addWidget(top_card, 1)
+
+        config_left = QWidget()
+        config_left_layout = QVBoxLayout(config_left)
+        config_left_layout.setContentsMargins(0, 0, 0, 0)
+        config_left_layout.setSpacing(10)
+        config_left_layout.addWidget(sheet_selector_card, 1)
+        config_left_layout.addWidget(self.stock_card)
+
+        self.config_splitter = QSplitter(Qt.Horizontal)
+        self.config_splitter.setChildrenCollapsible(False)
+        self.config_splitter.addWidget(config_left)
+        self.config_splitter.addWidget(settings_host)
+        self.config_splitter.setStretchFactor(0, 3)
+        self.config_splitter.setStretchFactor(1, 2)
+        self.config_splitter.setSizes([900, 520])
+        config_page_layout.addWidget(self.config_splitter, 1)
 
         materials_page = QWidget()
         materials_page_layout = QVBoxLayout(materials_page)
@@ -831,6 +907,7 @@ class LaserNestingDialog(QDialog):
             ("profile", "Perfil escolhido"),
             ("method", "Método"),
             ("strategy", "Estratégia"),
+            ("optimization", "Exploração"),
             ("sheets", "Chapas no plano"),
             ("stock_used", "Stock aplicado"),
             ("buy_count", "Chapas a comprar"),
@@ -981,8 +1058,9 @@ class LaserNestingDialog(QDialog):
         sheet_plan_hint.setProperty("role", "muted")
         sheet_plan_hint.setWordWrap(True)
         self.sheet_plan_hint_label = sheet_plan_hint
-        self.sheet_plan_table = QTableWidget(0, 7)
+        self.sheet_plan_table = QTableWidget(0, 8)
         self.sheet_plan_table.setHorizontalHeaderLabels(["Chapa", "Origem", "Perfil", "Peças", "Util. real %", "Área m2", "Compra"])
+        self.sheet_plan_table.setHorizontalHeaderItem(7, QTableWidgetItem("Fundamento"))
         self.sheet_plan_table.verticalHeader().setVisible(False)
         self.sheet_plan_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.sheet_plan_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -1009,11 +1087,13 @@ class LaserNestingDialog(QDialog):
         sheet_plan_header = self.sheet_plan_table.horizontalHeader()
         sheet_plan_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         sheet_plan_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        sheet_plan_header.setSectionResizeMode(2, QHeaderView.Stretch)
+        sheet_plan_header.setSectionResizeMode(2, QHeaderView.Interactive)
+        self.sheet_plan_table.setColumnWidth(2, 260)
         sheet_plan_header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         sheet_plan_header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         sheet_plan_header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
         sheet_plan_header.setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        sheet_plan_header.setSectionResizeMode(7, QHeaderView.Stretch)
         sheet_plan_layout.addWidget(sheet_plan_title)
         sheet_plan_layout.addWidget(sheet_plan_hint)
         sheet_plan_layout.addWidget(self.sheet_plan_table, 1)
@@ -1291,11 +1371,18 @@ class LaserNestingDialog(QDialog):
         self._nesting_thread: QThread | None = None
         self._nesting_worker: NestingWorker | None = None
         self._nesting_progress_value = 0
+        self._nesting_started_at = 0.0
+        self._nesting_time_limit_s = 30.0
         self._nesting_progress_timer = QTimer(self)
         self._nesting_progress_timer.setInterval(420)
         self._nesting_progress_timer.timeout.connect(self._tick_nesting_progress)
 
         self.group_combo.currentIndexChanged.connect(self._load_group_rows)
+        self.sheet_combo.currentIndexChanged.connect(
+            lambda index: self.sheet_profile_list.setCurrentRow(index)
+            if hasattr(self, "sheet_profile_list") and self.sheet_profile_list.currentRow() != index
+            else None
+        )
         self.auto_sheet_check.toggled.connect(self._sync_sheet_mode)
         self.shape_check.toggled.connect(self._sync_shape_mode)
         self.common_line_check.toggled.connect(self._sync_process_mode)
@@ -1497,98 +1584,192 @@ class LaserNestingDialog(QDialog):
     def _apply_premium_layout(self) -> None:
         root = self.layout()
         if isinstance(root, QVBoxLayout):
-            root.setContentsMargins(12, 12, 12, 12)
-            root.setSpacing(10)
+            root.setContentsMargins(0, 0, 0, 0)
+            root.setSpacing(0)
         self.setStyleSheet(
             """
             QDialog {
-                background: #edf3f8;
+                background: #f4f4f2;
+                color: #30343b;
+                font-size: 12px;
+            }
+            QWidget {
+                selection-background-color: #7ed321;
+                selection-color: #20310f;
+            }
+            CardFrame {
+                background: #ffffff;
+                border: 1px solid #dedfdd;
+                border-radius: 3px;
             }
             QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox, QTextEdit, QPlainTextEdit {
-                min-height: 34px;
-                padding: 4px 10px;
+                min-height: 32px;
+                padding: 3px 9px;
                 background: #ffffff;
-                border: 1px solid #c8d4e2;
-                border-radius: 6px;
-                selection-background-color: #16344f;
+                color: #30343b;
+                border: 1px solid #cfd2cf;
+                border-radius: 3px;
             }
             QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QSpinBox:focus, QTextEdit:focus {
-                border: 1px solid #5f87a8;
+                border: 2px solid #7ed321;
             }
             QCheckBox {
                 spacing: 8px;
                 font-size: 12px;
-                color: #16324d;
+                color: #30343b;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+            }
+            QPushButton {
+                min-height: 34px;
+                padding: 3px 14px;
+                background: #ffffff;
+                color: #3c4147;
+                border: 1px solid #c8cbc8;
+                border-radius: 18px;
+                font-weight: 800;
+            }
+            QPushButton:hover {
+                background: #f3fae9;
+                border-color: #9dcc63;
+            }
+            QPushButton:pressed {
+                background: #e9f6d7;
+            }
+            QPushButton:disabled {
+                background: #eeeeec;
+                color: #a1a4a1;
+                border-color: #dedfdd;
             }
             QTableWidget {
                 background: #ffffff;
-                border: 1px solid #d3dde8;
-                border-radius: 6px;
-                gridline-color: #dde6ef;
+                alternate-background-color: #fafaf9;
+                border: 1px solid #dedfdd;
+                border-radius: 2px;
+                gridline-color: #e4e5e3;
+                color: #30343b;
+            }
+            QTableWidget::item {
+                padding: 6px 7px;
+                border: none;
+            }
+            QTableWidget::item:selected {
+                background: #eaf7da;
+                color: #24420f;
+            }
+            QHeaderView::section {
+                background: #f0f1ef;
+                color: #3d4247;
+                border: none;
+                border-right: 1px solid #d9dbd8;
+                border-bottom: 1px solid #cfd2cf;
+                padding: 8px 7px;
+                font-weight: 900;
             }
             QListWidget {
                 background: #ffffff;
-                border: 1px solid #d3dde8;
-                border-radius: 6px;
+                border: 1px solid #dedfdd;
+                border-radius: 3px;
                 padding: 6px;
+            }
+            QScrollArea {
+                background: #f4f4f2;
+                border: none;
+            }
+            QSplitter::handle {
+                background: #dedfdd;
+            }
+            QSplitter::handle:horizontal {
+                width: 1px;
+                margin: 0 9px;
             }
             """
         )
+        for card in self.findChildren(CardFrame):
+            card.setStyleSheet(
+                "CardFrame {background:#ffffff; border:1px solid #dedfdd; border-radius:3px;}"
+            )
         self.header_card.setStyleSheet(
-            "QFrame {background: #ffffff; border: 1px solid #d4dde7; border-radius: 8px;}"
+            "QFrame {background: #ffffff; border: none; border-bottom: 1px solid #dedfdd; border-radius: 0;}"
         )
         self.stepper_card.setStyleSheet(
-            "QFrame {background: #ffffff; border: 1px solid #d4dde7; border-radius: 8px;}"
+            "QFrame {background: #ffffff; border: none; border-bottom: 1px solid #d4d6d3; border-radius: 0;}"
         )
-        self.header_title_label.setStyleSheet("font-size: 20px; font-weight: 900; color: #102a43;")
+        self.header_card.layout().setContentsMargins(22, 11, 22, 9)
+        self.stepper_card.layout().setContentsMargins(22, 7, 22, 7)
+        self.header_title_label.setStyleSheet("font-size: 21px; font-weight: 900; color: #30343b;")
         self.header_subtitle_label.setText("")
         self.header_subtitle_label.hide()
         self.header_subtitle_label.setMinimumHeight(0)
         self.header_subtitle_label.setMaximumHeight(0)
         self.group_badge_label.setStyleSheet(
-            "padding: 7px 12px; border-radius: 6px; background: #edf4fb; color: #274c77; "
-            "border: 1px solid #c7d7e8; font-size: 12px; font-weight: 900;"
+            "padding: 8px 14px; background: transparent; color: #6b706f; "
+            "border: none; font-size: 13px; font-weight: 800;"
         )
         self.section_stack.setStyleSheet(
             """
             QTabWidget::pane {
-                border: 1px solid #d5dee9;
-                background: #f7fafc;
-                border-radius: 8px;
-                top: -1px;
+                border: none;
+                background: #f4f4f2;
             }
             QTabBar::tab {
-                background: #f0f4f8;
-                border: 1px solid #d6e0ea;
+                background: #f0f1ef;
+                border: 1px solid #dedfdd;
                 padding: 10px 20px;
                 min-width: 136px;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                color: #16324d;
+                color: #30343b;
                 font-weight: 800;
             }
             QTabBar::tab:selected {
-                background: #16344f;
+                background: #7ed321;
                 color: #ffffff;
-                border-color: #16344f;
+                border-color: #7ed321;
             }
             """
         )
-        self.page_title_label.setStyleSheet("font-size: 17px; font-weight: 900; color: #102a43;")
+        self.body_layout.setContentsMargins(14, 10, 14, 8)
+        self.page_title_label.setStyleSheet("font-size: 15px; font-weight: 900; color: #30343b;")
         self.page_subtitle_label.setText("")
         self.page_subtitle_label.hide()
         self.page_subtitle_label.setMinimumHeight(0)
         self.page_subtitle_label.setMaximumHeight(0)
         for button in self.major_step_buttons:
-            button.setMinimumHeight(36)
-            button.setMinimumWidth(136)
+            button.setMinimumHeight(44)
+            button.setMinimumWidth(220)
             button.setCursor(Qt.PointingHandCursor)
         for button in (self.sheet_library_btn, self.dxf_settings_btn, self.prev_section_btn, self.next_section_btn, self.pdf_btn):
             button.setMinimumHeight(38)
             button.setCursor(Qt.PointingHandCursor)
+        secondary_style = (
+            "QPushButton {background:#ffffff; color:#3c4147; border:1px solid #c8cbc8; "
+            "border-radius:19px; padding:4px 16px; font-weight:800;}"
+            "QPushButton:hover {background:#f3fae9; border-color:#9dcc63;}"
+            "QPushButton:disabled {background:#eeeeec; color:#a1a4a1; border-color:#dedfdd;}"
+        )
+        for button in (self.sheet_library_btn, self.dxf_settings_btn, self.prev_section_btn, self.pdf_btn):
+            button.setStyleSheet(secondary_style)
+        primary_style = (
+            "QPushButton {background:#7ed321; color:#ffffff; border:1px solid #6dbb19; "
+            "border-radius:20px; padding:5px 20px; font-weight:900;}"
+            "QPushButton:hover {background:#72c51b; border-color:#5fac12;}"
+            "QPushButton:pressed {background:#65b311;}"
+            "QPushButton:disabled {background:#d9e8c8; color:#f7faf4; border-color:#cfdfbf;}"
+        )
+        self.next_section_btn.setStyleSheet(primary_style)
         self.analyze_btn.setMinimumHeight(40)
         self.analyze_btn.setMinimumWidth(168)
         self.analyze_btn.setCursor(Qt.PointingHandCursor)
+        self.analyze_btn.setStyleSheet(primary_style)
+        ok_button = self.dialog_buttons.button(QDialogButtonBox.Ok)
+        close_button = self.dialog_buttons.button(QDialogButtonBox.Close)
+        if ok_button is not None:
+            ok_button.setMinimumHeight(40)
+            ok_button.setStyleSheet(primary_style)
+        if close_button is not None:
+            close_button.setMinimumHeight(40)
+            close_button.setStyleSheet(secondary_style)
         self.group_combo.setMinimumHeight(36)
         self.sheet_combo.setMinimumHeight(36)
         self.sheet_view_combo.setMinimumHeight(34)
@@ -1599,7 +1780,17 @@ class LaserNestingDialog(QDialog):
         self.stock_empty_label.setMinimumHeight(46)
         self.sheet_library_btn.setMinimumWidth(188)
         self.dxf_settings_btn.setMinimumWidth(206)
+        table_style = (
+            "QTableWidget {background:#ffffff; alternate-background-color:#fafaf9; "
+            "border:1px solid #dedfdd; border-radius:2px; gridline-color:#e4e5e3; color:#30343b;}"
+            "QTableWidget::item {padding:6px 7px; border:none;}"
+            "QTableWidget::item:selected {background:#eaf7da; color:#24420f;}"
+            "QHeaderView::section {background:#f0f1ef; color:#3d4247; border:none; "
+            "border-right:1px solid #d9dbd8; border-bottom:1px solid #cfd2cf; "
+            "padding:8px 7px; font-weight:900;}"
+        )
         for table in (
+            self.parts_table,
             self.stock_table,
             self.candidate_table,
             self.sheet_plan_table,
@@ -1607,6 +1798,7 @@ class LaserNestingDialog(QDialog):
             self.cost_table,
             self.process_table,
         ):
+            table.setStyleSheet(table_style)
             table.verticalHeader().setDefaultSectionSize(32)
             table.setAlternatingRowColors(True)
         self.parts_table.verticalHeader().setDefaultSectionSize(96)
@@ -1639,6 +1831,22 @@ class LaserNestingDialog(QDialog):
         self.wizard_path_label.setMinimumHeight(0)
         self.wizard_path_label.setMaximumHeight(0)
         self.window_toggle_btn.hide()
+        self.preview_frame.setStyleSheet(
+            "QFrame {background:#ffffff; border:1px solid #d7d9d6; border-radius:3px;}"
+        )
+        self.preview_view.setStyleSheet("background:#ffffff; border:none;")
+        self.sheet_gallery.setStyleSheet(
+            "QListWidget {background:#ffffff; border:1px solid #dedfdd; border-radius:3px; padding:8px;}"
+            "QListWidget::item {background:#ffffff; color:#30343b; border:1px solid #dedfdd; "
+            "border-radius:3px; padding:8px; margin:3px;}"
+            "QListWidget::item:hover {background:#f5faee; border-color:#a8cf76;}"
+            "QListWidget::item:selected {background:#eef9df; color:#24420f; border:2px solid #7ed321;}"
+        )
+        self.nesting_progress.setStyleSheet(
+            "QProgressBar {border:1px solid #b9d994; border-radius:9px; background:#f1f8e8; "
+            "color:#355716; font-weight:800; text-align:center; height:22px;}"
+            "QProgressBar::chunk {border-radius:8px; background:#7ed321;}"
+        )
 
     def quote_bridge_payload(self) -> dict[str, Any]:
         if not self.result_data:
@@ -1723,6 +1931,7 @@ class LaserNestingDialog(QDialog):
             "common_line_tolerance_mm": float(self.common_line_tol_spin.value()),
             "lead_optimization": bool(self.lead_opt_check.isChecked()),
             "lead_optimization_pct": float(self.lead_opt_pct_spin.value()),
+            "optimization_level": str(dict(self.optimization_level_combo.currentData() or {}).get("level", "tap1")),
         }
 
     def _current_overrides_snapshot(self) -> dict[str, Any]:
@@ -1781,6 +1990,11 @@ class LaserNestingDialog(QDialog):
             self.common_line_tol_spin.setValue(float(options.get("common_line_tolerance_mm", self.common_line_tol_spin.value()) or self.common_line_tol_spin.value()))
             self.lead_opt_check.setChecked(bool(options.get("lead_optimization", self.lead_opt_check.isChecked())))
             self.lead_opt_pct_spin.setValue(float(options.get("lead_optimization_pct", self.lead_opt_pct_spin.value()) or self.lead_opt_pct_spin.value()))
+            saved_level = str(options.get("optimization_level", "") or "").strip().lower()
+            for index in range(self.optimization_level_combo.count()):
+                if str(dict(self.optimization_level_combo.itemData(index) or {}).get("level", "")) == saved_level:
+                    self.optimization_level_combo.setCurrentIndex(index)
+                    break
             selected_sheet_name = str(options.get("sheet_profile_name", "") or "").strip()
             if selected_sheet_name:
                 self._refresh_sheet_profiles(selected_sheet_name)
@@ -1880,6 +2094,11 @@ class LaserNestingDialog(QDialog):
         self.common_line_tol_spin.setValue(float(self.nesting_options.get("common_line_tolerance_mm", 1.0) or 1.0))
         self.lead_opt_check.setChecked(bool(self.nesting_options.get("lead_optimization", True)))
         self.lead_opt_pct_spin.setValue(float(self.nesting_options.get("lead_optimization_pct", 8.0) or 8.0))
+        saved_level = str(self.nesting_options.get("optimization_level", "tap1") or "tap1").strip().lower()
+        for index in range(self.optimization_level_combo.count()):
+            if str(dict(self.optimization_level_combo.itemData(index) or {}).get("level", "")) == saved_level:
+                self.optimization_level_combo.setCurrentIndex(index)
+                break
         self._sync_sheet_mode()
         self._sync_shape_mode()
         self._sync_process_mode()
@@ -1903,6 +2122,7 @@ class LaserNestingDialog(QDialog):
         nesting["common_line_tolerance_mm"] = float(self.common_line_tol_spin.value())
         nesting["lead_optimization"] = bool(self.lead_opt_check.isChecked())
         nesting["lead_optimization_pct"] = float(self.lead_opt_pct_spin.value())
+        nesting["optimization_level"] = str(dict(self.optimization_level_combo.currentData() or {}).get("level", "tap1"))
         settings["nesting"] = nesting
         self.settings = dict(self.backend.laser_quote_save_settings(settings) or {})
         self.nesting_options = default_nesting_options(self.settings)
@@ -1912,13 +2132,27 @@ class LaserNestingDialog(QDialog):
         current_name = selected_name or self.sheet_combo.currentText().strip()
         self.sheet_combo.blockSignals(True)
         self.sheet_combo.clear()
+        if hasattr(self, "sheet_profile_list"):
+            self.sheet_profile_list.blockSignals(True)
+            self.sheet_profile_list.clear()
         for profile in list(self.sheet_profiles or []):
             self.sheet_combo.addItem(str(profile.get("name", "")), dict(profile))
+            if hasattr(self, "sheet_profile_list"):
+                width = float(profile.get("width_mm", 0) or 0)
+                height = float(profile.get("height_mm", 0) or 0)
+                name = str(profile.get("name", "") or f"{width:g} x {height:g}")
+                item = QListWidgetItem(f"{name}\n{width:g} × {height:g} mm")
+                item.setData(Qt.UserRole, dict(profile))
+                self.sheet_profile_list.addItem(item)
         if self.sheet_combo.count() > 0:
             target_name = current_name or str(self.sheet_profiles[0].get("name", "") or "")
             index = self.sheet_combo.findText(target_name)
             self.sheet_combo.setCurrentIndex(index if index >= 0 else 0)
+            if hasattr(self, "sheet_profile_list"):
+                self.sheet_profile_list.setCurrentRow(self.sheet_combo.currentIndex())
         self.sheet_combo.blockSignals(False)
+        if hasattr(self, "sheet_profile_list"):
+            self.sheet_profile_list.blockSignals(False)
 
     def _select_smallest_fitting_sheet(self, part_dimensions: list[tuple[float, float]]) -> None:
         dimensions = [
@@ -2841,31 +3075,46 @@ class LaserNestingDialog(QDialog):
         for widget in (
             self.prev_section_btn,
             self.next_section_btn,
-            self.analyze_btn,
             self.pdf_btn,
             self.sheet_library_btn,
             self.dxf_settings_btn,
             self.group_combo,
             self.sheet_combo,
+            self.optimization_level_combo,
         ):
             widget.setEnabled(not busy)
         if hasattr(self, "dialog_buttons"):
             self.dialog_buttons.setEnabled(not busy)
         self.nesting_progress.setVisible(busy)
         if busy:
+            quality = dict(self.optimization_level_combo.currentData() or {})
+            self._nesting_started_at = time.monotonic()
+            self._nesting_time_limit_s = max(1.0, float(quality.get("seconds", 30.0) or 30.0))
             self._nesting_progress_value = 0
             self.nesting_progress.setValue(0)
-            self.nesting_progress.setFormat("A otimizar nesting... %p%")
+            self.nesting_progress.setFormat(
+                f"{self.optimization_level_combo.currentText().split('·')[0].strip()} · a explorar layouts... %p%"
+            )
+            self.analyze_btn.setEnabled(True)
+            self.analyze_btn.setText("Parar e usar o melhor plano")
             self._nesting_progress_timer.start()
         else:
             self._nesting_progress_timer.stop()
             self.nesting_progress.setValue(0)
+            self.analyze_btn.setEnabled(True)
+            self._sync_wizard_controls()
 
     def _tick_nesting_progress(self) -> None:
         if self._nesting_thread is None:
             return
-        self._nesting_progress_value = min(95, int(self._nesting_progress_value or 0) + 1)
+        elapsed = max(0.0, time.monotonic() - float(self._nesting_started_at or time.monotonic()))
+        self._nesting_progress_value = min(
+            95,
+            max(int(self._nesting_progress_value or 0), int((elapsed / max(1.0, self._nesting_time_limit_s)) * 95.0)),
+        )
         self.nesting_progress.setValue(self._nesting_progress_value)
+        remaining = max(0, int(round(self._nesting_time_limit_s - elapsed)))
+        self.nesting_progress.setFormat(f"A explorar o melhor plano · até {remaining} s · %p%")
 
     def _cleanup_nesting_thread(self) -> None:
         self._nesting_worker = None
@@ -2974,9 +3223,12 @@ class LaserNestingDialog(QDialog):
                 f"{_fmt_num((row.get('sheet_area_mm2', 0) or 0) / 1_000_000.0, 4)} m2",
                 "Sim" if source_kind == "purchase" else "Não",
             ]
+            values.append(str(row.get("opening_reason", "") or "-"))
             for col_index, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                item.setTextAlignment(int((Qt.AlignLeft if col_index == 2 else Qt.AlignCenter) | Qt.AlignVCenter))
+                item.setTextAlignment(int((Qt.AlignLeft if col_index in (2, 7) else Qt.AlignCenter) | Qt.AlignVCenter))
+                if col_index == 7:
+                    item.setToolTip(value)
                 self.sheet_plan_table.setItem(row_index, col_index, item)
 
     def _populate_unplaced_table(self) -> None:
@@ -3478,6 +3730,8 @@ class LaserNestingDialog(QDialog):
         selected_profile = dict(summary.get("selected_sheet_profile", {}) or {})
         selected_name = str(selected_profile.get("name", "") or "").strip()
         strategy_name = STRATEGY_LABELS.get(str(summary.get("strategy_name", "") or "").strip(), str(summary.get("strategy_name", "") or "").strip() or "-")
+        if "explore-" in strategy_name:
+            strategy_name = f"Exploração multiarranque #{strategy_name.rsplit('-', 1)[-1]}"
         requested = int(summary.get("part_count_requested", 0) or 0)
         placed = int(summary.get("part_count_placed", 0) or 0)
         unplaced = int(summary.get("part_count_unplaced", 0) or 0)
@@ -3494,6 +3748,12 @@ class LaserNestingDialog(QDialog):
         self.summary_labels["profile"].setText(selected_name or "Apenas stock")
         self.summary_labels["method"].setText(self._analysis_method_label(summary))
         self.summary_labels["strategy"].setText(strategy_name)
+        level_labels = {"tap1": "TAP 1 · Rápido", "tap2": "TAP 2 · Equilibrado", "tap3": "TAP 3 · Qualidade"}
+        optimization_level = str(summary.get("optimization_level", "tap1") or "tap1").strip().lower()
+        self.summary_labels["optimization"].setText(
+            f"{level_labels.get(optimization_level, optimization_level.upper())} · "
+            f"{_fmt_num(summary.get('optimization_elapsed_s', 0), 2)} s"
+        )
         self.summary_labels["sheets"].setText(str(int(summary.get("sheet_count", 0) or 0)))
         self.summary_labels["stock_used"].setText(stock_used_txt)
         self.summary_labels["buy_count"].setText(str(int(summary.get("purchased_sheet_count", 0) or 0)))
@@ -3577,6 +3837,10 @@ class LaserNestingDialog(QDialog):
 
     def _analyze(self) -> None:
         if self._nesting_thread is not None:
+            if self._nesting_worker is not None:
+                self._nesting_worker.cancel()
+                self.analyze_btn.setEnabled(False)
+                self.nesting_progress.setFormat("A terminar a tentativa atual e a guardar o melhor plano...")
             return
         group = self._current_group()
         rows = [dict(row or {}) for row in list(group.get("rows", []) or [])]
@@ -3622,6 +3886,8 @@ class LaserNestingDialog(QDialog):
             "shape_aware": shape_aware,
             "strict_shape_only": bool(self.shape_strict_check.isChecked()),
             "shape_grid_mm": float(self.shape_grid_spin.value()),
+            "optimization_level": str(dict(self.optimization_level_combo.currentData() or {}).get("level", "tap1")),
+            "time_limit_s": float(dict(self.optimization_level_combo.currentData() or {}).get("seconds", 30.0) or 30.0),
         }
         self._set_nesting_busy(True)
         thread = QThread(self)
@@ -3836,26 +4102,23 @@ def _laser_nesting_sync_wizard_controls_v2(self: LaserNestingDialog) -> None:
         if active:
             button.setStyleSheet(
                 "QPushButton {"
-                "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4b6078, stop:1 #24384f);"
-                "color: #ffffff; border: 1px solid #1c2d41; border-bottom: 3px solid #152334;"
-                "border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 900;"
+                "background:#7ed321; color:#ffffff; border:1px solid #6dbb19;"
+                "border-radius:2px; padding:9px 22px; font-size:14px; font-weight:900;"
                 "}"
             )
         elif section_index in enabled_sections:
             button.setStyleSheet(
                 "QPushButton {"
-                "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #e8eef5);"
-                "color: #24384f; border: 1px solid #b8c7d8; border-bottom: 3px solid #9fb0c3;"
-                "border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 800;"
+                "background:#ffffff; color:#3c4147; border:1px solid #d7d9d6;"
+                "border-radius:2px; padding:9px 22px; font-size:14px; font-weight:800;"
                 "}"
-                "QPushButton:hover {background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #dde7f0);}"
+                "QPushButton:hover {background:#f3fae9; border-color:#9dcc63;}"
             )
         else:
             button.setStyleSheet(
                 "QPushButton {"
-                "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f4f6f8, stop:1 #e6ebf1);"
-                "color: #8b98a7; border: 1px solid #d2d9e1; border-bottom: 3px solid #c4ccd6;"
-                "border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 800;"
+                "background:#f0f1ef; color:#9a9d99; border:1px solid #dedfdd;"
+                "border-radius:2px; padding:9px 22px; font-size:14px; font-weight:800;"
                 "}"
             )
     self.prev_section_btn.setEnabled(step_index > 0)
@@ -3868,7 +4131,7 @@ def _laser_nesting_sync_wizard_controls_v2(self: LaserNestingDialog) -> None:
         4: "Seguinte: Custos e decisao",
     }
     self.next_section_btn.setText(next_labels.get(step_index, "Concluir"))
-    self.analyze_btn.setText("Atualizar nesting" if step_index >= 2 else "Iniciar otimizacao")
+    self.analyze_btn.setText("Atualizar nesting" if step_index >= 2 else "Iniciar otimização")
     if self.section_stack.currentIndex() == 1 and self.nest_tabs.currentIndex() == 1 and self.result_data:
         QTimer.singleShot(0, self._render_sheet_preview)
 

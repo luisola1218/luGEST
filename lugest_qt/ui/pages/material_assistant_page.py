@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -96,7 +97,26 @@ class MaterialAssistantPage(QWidget):
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(14)
+        root.setSpacing(10)
+
+        hero = CardFrame()
+        hero.set_tone("info")
+        hero_layout = QHBoxLayout(hero)
+        hero_layout.setContentsMargins(16, 12, 16, 12)
+        hero_layout.setSpacing(12)
+        hero_text = QVBoxLayout()
+        hero_text.setSpacing(2)
+        hero_title = QLabel("Centro de decisão de Matéria-Prima")
+        hero_title.setStyleSheet("font-size: 20px; font-weight: 900; color: #10253d;")
+        hero_subtitle = QLabel(
+            "Prioriza o que separar, identifica ruturas e confirma decisões sem sair do planeamento."
+        )
+        hero_subtitle.setProperty("role", "muted")
+        hero_subtitle.setWordWrap(True)
+        hero_text.addWidget(hero_title)
+        hero_text.addWidget(hero_subtitle)
+        hero_layout.addLayout(hero_text, 1)
+        root.addWidget(hero)
 
         cards_host = QWidget()
         cards_layout = QGridLayout(cards_host)
@@ -110,12 +130,14 @@ class MaterialAssistantPage(QWidget):
         controls = CardFrame()
         controls.set_tone("info")
         controls_layout = QVBoxLayout(controls)
-        controls_layout.setContentsMargins(16, 14, 16, 14)
-        controls_layout.setSpacing(10)
+        controls_layout.setContentsMargins(14, 10, 14, 10)
+        controls_layout.setSpacing(7)
 
         top_row = QHBoxLayout()
         top_row.setSpacing(8)
-        top_row.addWidget(QLabel("Horizonte"))
+        horizon_label = QLabel("JANELA DE PLANEAMENTO")
+        horizon_label.setStyleSheet("font-size: 9px; font-weight: 800; color: #60758d;")
+        top_row.addWidget(horizon_label)
         self.horizon_combo = QComboBox()
         self.horizon_combo.addItem("Hoje", 1)
         self.horizon_combo.addItem("48 horas", 2)
@@ -126,41 +148,48 @@ class MaterialAssistantPage(QWidget):
         top_row.addWidget(self.horizon_combo)
         top_row.addStretch(1)
 
-        self.refresh_btn = QPushButton("Atualizar")
+        self.refresh_btn = QPushButton("↻ Atualizar análise")
         self.refresh_btn.setProperty("variant", "secondary")
         self.refresh_btn.clicked.connect(self.refresh)
-        self.accept_btn = QPushButton("Validar")
+        self.accept_btn = QPushButton("✓ Validar recomendação")
         self.accept_btn.clicked.connect(lambda: self._apply_feedback("accepted"))
-        self.ignore_btn = QPushButton("Ignorar hoje")
+        self.ignore_btn = QPushButton("Adiar por hoje")
         self.ignore_btn.setProperty("variant", "secondary")
         self.ignore_btn.clicked.connect(lambda: self._apply_feedback("ignored"))
-        self.clear_btn = QPushButton("Limpar decisao")
+        self.clear_btn = QPushButton("Reabrir decisão")
         self.clear_btn.setProperty("variant", "secondary")
         self.clear_btn.clicked.connect(lambda: self._apply_feedback("clear"))
-        self.alerts_btn = QPushButton("Sugestoes / alertas")
+        self.alerts_btn = QPushButton("Painel completo de alertas")
         self.alerts_btn.setProperty("variant", "secondary")
         self.alerts_btn.clicked.connect(self._open_alerts_dialog)
-        self.separation_btn = QPushButton("Separacao - MP")
-        self.separation_btn.setProperty("variant", "secondary")
+        self.separation_btn = QPushButton("▤ Abrir plano de separação")
         self.separation_btn.clicked.connect(self._open_separation_dialog)
-        self.stock_btn = QPushButton("Ver stock")
+        self.stock_btn = QPushButton("Consultar stock")
         self.stock_btn.setProperty("variant", "secondary")
         self.stock_btn.clicked.connect(self._open_stock_dialog)
-        self.order_btn = QPushButton("Ver encomenda")
+        self.order_btn = QPushButton("Abrir encomenda")
         self.order_btn.setProperty("variant", "secondary")
         self.order_btn.clicked.connect(self._open_order_dialog)
+        top_row.addWidget(self.refresh_btn)
+        top_row.addWidget(self.separation_btn)
+        controls_layout.addLayout(top_row)
+
+        decision_row = QHBoxLayout()
+        decision_row.setSpacing(7)
+        decision_label = QLabel("AÇÃO SOBRE A SELEÇÃO")
+        decision_label.setStyleSheet("font-size: 9px; font-weight: 800; color: #60758d;")
+        decision_row.addWidget(decision_label)
         for widget in (
-            self.refresh_btn,
             self.accept_btn,
             self.ignore_btn,
             self.clear_btn,
-            self.alerts_btn,
-            self.separation_btn,
-            self.stock_btn,
             self.order_btn,
+            self.stock_btn,
         ):
-            top_row.addWidget(widget)
-        controls_layout.addLayout(top_row)
+            decision_row.addWidget(widget)
+        decision_row.addStretch(1)
+        decision_row.addWidget(self.alerts_btn)
+        controls_layout.addLayout(decision_row)
 
         self.summary_label = QLabel("Sem dados para mostrar.")
         self.summary_label.setWordWrap(True)
@@ -168,19 +197,21 @@ class MaterialAssistantPage(QWidget):
         controls_layout.addWidget(self.summary_label)
         root.addWidget(controls)
 
-        main_split = QSplitter(Qt.Vertical)
-        main_split.setChildrenCollapsible(False)
+        workspace_split = QSplitter(Qt.Horizontal)
+        workspace_split.setChildrenCollapsible(False)
+        self.workspace_tabs = QTabWidget()
+        self.workspace_tabs.setDocumentMode(True)
 
         suggestions_card = CardFrame()
         suggestions_card.set_tone("warning")
         suggestions_layout = QVBoxLayout(suggestions_card)
         suggestions_layout.setContentsMargins(14, 12, 14, 12)
         suggestions_layout.setSpacing(8)
-        suggestions_title = QLabel("Sugestoes / alertas")
+        suggestions_title = QLabel("Exceções que exigem decisão")
         suggestions_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
         suggestions_layout.addWidget(suggestions_title)
         suggestions_subtitle = QLabel(
-            "Mostra apenas trocas por urgencia, falta de stock e materiais a manter prontos."
+            "Trocas por urgência, falta de stock e materiais que devem permanecer disponíveis."
         )
         suggestions_subtitle.setProperty("role", "muted")
         suggestions_subtitle.setWordWrap(True)
@@ -196,7 +227,7 @@ class MaterialAssistantPage(QWidget):
         self.suggestions_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.suggestions_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.suggestions_table.setAlternatingRowColors(True)
-        self.suggestions_table.itemSelectionChanged.connect(self._sync_selection_detail)
+        self.suggestions_table.itemSelectionChanged.connect(self._on_suggestion_selected)
         header = self.suggestions_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
@@ -210,21 +241,18 @@ class MaterialAssistantPage(QWidget):
         self.suggestions_table.setColumnWidth(3, 220)
         self.suggestions_table.setColumnWidth(4, 150)
         suggestions_layout.addWidget(self.suggestions_table)
-        main_split.addWidget(suggestions_card)
-
-        lower_split = QSplitter(Qt.Horizontal)
-        lower_split.setChildrenCollapsible(False)
+        self.workspace_tabs.addTab(suggestions_card, "Alertas")
 
         needs_card = CardFrame()
         needs_card.set_tone("info")
         needs_layout = QVBoxLayout(needs_card)
         needs_layout.setContentsMargins(14, 12, 14, 12)
         needs_layout.setSpacing(8)
-        needs_title = QLabel("Separacao orientada pelo planeamento")
+        needs_title = QLabel("Plano de separação recomendado")
         needs_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
         needs_layout.addWidget(needs_title)
         needs_subtitle = QLabel(
-            "Leitura rapida para o separador: encomenda, espessura, lote, dimensao e quantidade."
+            "Ordem operacional para o separador: encomenda, material, lote, dimensão e quantidade."
         )
         needs_subtitle.setProperty("role", "muted")
         needs_subtitle.setWordWrap(True)
@@ -240,7 +268,7 @@ class MaterialAssistantPage(QWidget):
         self.needs_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.needs_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.needs_table.setAlternatingRowColors(True)
-        self.needs_table.itemSelectionChanged.connect(self._sync_selection_detail)
+        self.needs_table.itemSelectionChanged.connect(self._on_need_selected)
         needs_header = self.needs_table.horizontalHeader()
         needs_header.setSectionResizeMode(0, QHeaderView.Interactive)
         needs_header.setSectionResizeMode(1, QHeaderView.Interactive)
@@ -259,7 +287,8 @@ class MaterialAssistantPage(QWidget):
         self.needs_table.setColumnWidth(5, 120)
         self.needs_table.setColumnWidth(6, 130)
         needs_layout.addWidget(self.needs_table)
-        lower_split.addWidget(needs_card)
+        self.workspace_tabs.insertTab(0, needs_card, "Plano de separação")
+        workspace_split.addWidget(self.workspace_tabs)
 
         detail_card = CardFrame()
         detail_card.set_tone("default")
@@ -286,15 +315,30 @@ class MaterialAssistantPage(QWidget):
         self.detail_text.setFrameStyle(QFrame.NoFrame)
         self.detail_text.setMinimumHeight(220)
         detail_layout.addWidget(self.detail_text, 1)
-        lower_split.addWidget(detail_card)
-        lower_split.setSizes([1180, 620])
-
-        main_split.addWidget(lower_split)
-        main_split.setSizes([360, 520])
-        root.addWidget(main_split, 1)
+        workspace_split.addWidget(detail_card)
+        workspace_split.setStretchFactor(0, 7)
+        workspace_split.setStretchFactor(1, 3)
+        workspace_split.setSizes([1260, 500])
+        root.addWidget(workspace_split, 1)
 
     def can_auto_refresh(self) -> bool:
         return True
+
+    def _on_suggestion_selected(self) -> None:
+        if self.suggestions_table.selectionModel() is not None and self.suggestions_table.selectionModel().hasSelection():
+            self.needs_table.blockSignals(True)
+            self.needs_table.clearSelection()
+            self.needs_table.blockSignals(False)
+            self.workspace_tabs.setCurrentIndex(1)
+        self._sync_selection_detail()
+
+    def _on_need_selected(self) -> None:
+        if self.needs_table.selectionModel() is not None and self.needs_table.selectionModel().hasSelection():
+            self.suggestions_table.blockSignals(True)
+            self.suggestions_table.clearSelection()
+            self.suggestions_table.blockSignals(False)
+            self.workspace_tabs.setCurrentIndex(0)
+        self._sync_selection_detail()
 
     def _selected_suggestion(self) -> dict | None:
         row = _table_selected_row(self.suggestions_table)
@@ -336,6 +380,8 @@ class MaterialAssistantPage(QWidget):
         self.snapshot = dict(self.backend.material_assistant_snapshot(horizon_days=horizon) or {})
         self.suggestions = list(self.snapshot.get("suggestions", []) or [])
         self.needs = list(self.snapshot.get("needs", []) or [])
+        self.workspace_tabs.setTabText(0, f"Plano de separação ({len(self.needs)})")
+        self.workspace_tabs.setTabText(1, f"Alertas ({len(self.suggestions)})")
 
         for card, payload in zip(self.cards, list(self.snapshot.get("cards", []) or [])):
             card.title_label.setText(str(payload.get("title", "") or "-"))

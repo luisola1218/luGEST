@@ -705,8 +705,39 @@ def default_laser_quote_settings() -> dict[str, Any]:
         "active_machine": "BLT641 12kW",
         "active_commercial": "Laser Oficina",
         "layer_rules": {
-            "mark_patterns": ["mark", "scribe", "engrave", "grav", "texto", "text", "txt"],
-            "ignore_patterns": ["fold", "bend", "guide", "construction", "dim", "assist", "layer0-ignore"],
+            "mark_patterns": [
+                "mark",
+                "scribe",
+                "engrave",
+                "grav",
+                "texto",
+                "text",
+                "txt",
+                "fold",
+                "bend",
+                "quin",
+                "dobra",
+                "vinco",
+            ],
+            "ignore_patterns": ["guide", "construction", "dim", "assist", "layer0-ignore"],
+            # Alguns exportadores CAD colocam corte e quinagem na camada 0 e
+            # distinguem as linhas apenas pela cor ACI. A cor 8 (cinzento) e a
+            # convencao usada nos desenhos de fabrico para marcacao/quinagem.
+            "mark_colors": [8, 9],
+            "ignore_colors": [],
+            "mark_linetype_patterns": [
+                "dash",
+                "hidden",
+                "center",
+                "phantom",
+                "dot",
+                "trace",
+                "traco",
+                "traço",
+                "quin",
+                "fold",
+                "bend",
+            ],
         },
         "nesting": {
             "default_part_spacing_mm": 8.0,
@@ -973,6 +1004,24 @@ def merge_laser_quote_settings(stored: dict[str, Any] | None = None) -> dict[str
         return target
 
     merge_dict(base, incoming)
+    layer_rules = dict(base.get("layer_rules", {}) or {})
+    marking_aliases = ("fold", "bend", "quin", "dobra", "vinco")
+    mark_patterns = [
+        str(value or "").strip()
+        for value in list(layer_rules.get("mark_patterns", []) or [])
+        if str(value or "").strip()
+    ]
+    ignore_patterns = [
+        str(value or "").strip()
+        for value in list(layer_rules.get("ignore_patterns", []) or [])
+        if str(value or "").strip() and str(value or "").strip().casefold() not in marking_aliases
+    ]
+    for alias in marking_aliases:
+        if alias not in [value.casefold() for value in mark_patterns]:
+            mark_patterns.append(alias)
+    layer_rules["mark_patterns"] = mark_patterns
+    layer_rules["ignore_patterns"] = ignore_patterns
+    base["layer_rules"] = layer_rules
     default_profiles = dict(defaults.get("commercial_profiles", {}) or {})
     for profile_name, profile in dict(base.get("commercial_profiles", {}) or {}).items():
         if not isinstance(profile, dict):
@@ -1049,11 +1098,78 @@ def _iter_pairs(path: str | Path) -> list[tuple[int, str]]:
 
 def _entity_common(entity_pairs: list[tuple[int, str]]) -> dict[str, Any]:
     layer = ""
+    color: int | None = None
+    linetype = ""
     for code, value in entity_pairs:
         if code == 8:
             layer = str(value or "").strip()
-            break
-    return {"layer": layer}
+        elif code == 62:
+            raw_color = abs(_as_int(value, 256))
+            color = raw_color if 1 <= raw_color <= 255 else None
+        elif code == 6:
+            linetype = str(value or "").strip()
+    return {"layer": layer, "color": color, "linetype": linetype}
+
+
+def _layer_styles_from_pairs(pairs: list[tuple[int, str]]) -> dict[str, dict[str, Any]]:
+    styles: dict[str, dict[str, Any]] = {}
+    index = 0
+    while index < len(pairs):
+        code, value = pairs[index]
+        if code != 0 or str(value or "").strip().upper() != "LAYER":
+            index += 1
+            continue
+        index += 1
+        layer_pairs: list[tuple[int, str]] = []
+        while index < len(pairs) and pairs[index][0] != 0:
+            layer_pairs.append(pairs[index])
+            index += 1
+        name = ""
+        color: int | None = None
+        linetype = ""
+        for layer_code, layer_value in layer_pairs:
+            if layer_code == 2:
+                name = str(layer_value or "").strip()
+            elif layer_code == 62:
+                raw_color = abs(_as_int(layer_value, 256))
+                color = raw_color if 1 <= raw_color <= 255 else None
+            elif layer_code == 6:
+                linetype = str(layer_value or "").strip()
+        if name:
+            styles[name.casefold()] = {"color": color, "linetype": linetype}
+    return styles
+
+
+def _patterned_linetypes_from_pairs(pairs: list[tuple[int, str]]) -> set[str]:
+    patterned: set[str] = set()
+    index = 0
+    while index < len(pairs):
+        code, value = pairs[index]
+        if code != 0 or str(value or "").strip().upper() != "LTYPE":
+            index += 1
+            continue
+        index += 1
+        name = ""
+        has_gap_or_dot = False
+        while index < len(pairs) and pairs[index][0] != 0:
+            linetype_code, linetype_value = pairs[index]
+            if linetype_code == 2:
+                name = str(linetype_value or "").strip()
+            elif linetype_code == 49 and _as_float(linetype_value, 1.0) <= 0.0:
+                has_gap_or_dot = True
+            index += 1
+        if name and has_gap_or_dot:
+            patterned.add(name.casefold())
+    return patterned
+
+
+def _apply_effective_layer_style(contour: dict[str, Any], layer_styles: dict[str, dict[str, Any]]) -> None:
+    style = dict(layer_styles.get(str(contour.get("layer", "") or "").strip().casefold(), {}) or {})
+    if contour.get("color") in (None, 0, 256):
+        contour["color"] = style.get("color")
+    linetype = str(contour.get("linetype", "") or "").strip()
+    if not linetype or linetype.casefold() in {"bylayer", "byblock"}:
+        contour["linetype"] = str(style.get("linetype", "") or "").strip()
 
 
 def _parse_lwpolyline(entity_pairs: list[tuple[int, str]]) -> dict[str, Any]:
@@ -1257,6 +1373,12 @@ def _parse_splines_with_ezdxf(path: str | Path) -> tuple[list[dict[str, Any]], l
             contours.append(
                 {
                     "layer": str(getattr(entity.dxf, "layer", "") or "").strip(),
+                    "color": (
+                        abs(_as_int(getattr(entity.dxf, "color", 256), 256))
+                        if 1 <= abs(_as_int(getattr(entity.dxf, "color", 256), 256)) <= 255
+                        else None
+                    ),
+                    "linetype": str(getattr(entity.dxf, "linetype", "") or "").strip(),
                     "entity_type": "SPLINE",
                     "points": points,
                     "closed": closed,
@@ -1270,6 +1392,8 @@ def _parse_splines_with_ezdxf(path: str | Path) -> tuple[list[dict[str, Any]], l
 
 def _parse_entities(path: str | Path) -> tuple[list[dict[str, Any]], list[str], dict[str, int]]:
     pairs = _iter_pairs(path)
+    layer_styles = _layer_styles_from_pairs(pairs)
+    patterned_linetypes = _patterned_linetypes_from_pairs(pairs)
     contours: list[dict[str, Any]] = []
     warnings: list[str] = []
     counts: Counter[str] = Counter()
@@ -1358,6 +1482,11 @@ def _parse_entities(path: str | Path) -> tuple[list[dict[str, Any]], list[str], 
                 counts.pop("UNSUPPORTED:SPLINE", None)
     if not contours:
         raise ValueError("Nao foram encontradas entidades DXF suportadas (LINE, ARC, CIRCLE, LWPOLYLINE ou POLYLINE).")
+    for contour in contours:
+        _apply_effective_layer_style(contour, layer_styles)
+        contour["linetype_patterned"] = (
+            str(contour.get("linetype", "") or "").strip().casefold() in patterned_linetypes
+        )
     return contours, warnings, dict(counts)
 
 
@@ -1372,6 +1501,27 @@ def _classify_layer(layer_name: str, layer_rules: dict[str, Any]) -> str:
         if pattern and pattern in layer_txt:
             return "mark"
     return "cut"
+
+
+def _configured_aci_colors(layer_rules: dict[str, Any], key: str) -> set[int]:
+    colors: set[int] = set()
+    for value in list(layer_rules.get(key, []) or []):
+        color = abs(_as_int(value, 0))
+        if 1 <= color <= 255:
+            colors.add(color)
+    return colors
+
+
+def _linetype_is_marking(linetype: Any, layer_rules: dict[str, Any]) -> bool:
+    value = str(linetype or "").strip().casefold()
+    if not value or value in {"continuous", "bylayer", "byblock"}:
+        return False
+    patterns = [
+        str(pattern or "").strip().casefold()
+        for pattern in list(layer_rules.get("mark_linetype_patterns", []) or [])
+        if str(pattern or "").strip()
+    ]
+    return any(pattern in value for pattern in patterns)
 
 
 def _component_from_single_contour(contour: dict[str, Any]) -> dict[str, Any]:
@@ -1538,8 +1688,40 @@ def analyze_dxf_geometry(path: str | Path, layer_rules: dict[str, Any] | None = 
     cut_contours: list[dict[str, Any]] = []
     mark_contours: list[dict[str, Any]] = []
     ignored_count = 0
+    mark_colors = _configured_aci_colors(rules, "mark_colors")
+    ignore_colors = _configured_aci_colors(rules, "ignore_colors")
+    color_rule_candidates = mark_colors | ignore_colors
+    # Nao se deve transformar um ficheiro monocromatico inteiro em marcacao.
+    # As cores secundarias so ganham significado quando existe geometria de
+    # corte primaria, noutra cor ou ByLayer, dentro do mesmo desenho.
+    has_primary_cut_geometry = any(
+        _classify_layer(str(contour.get("layer", "") or ""), rules) == "cut"
+        and contour.get("color") not in color_rule_candidates
+        and not bool(contour.get("linetype_patterned"))
+        and not _linetype_is_marking(contour.get("linetype"), rules)
+        for contour in contours
+    )
+    color_mark_count = 0
+    color_ignore_count = 0
+    linetype_mark_count = 0
+    layer_mark_count = 0
     for contour in contours:
         mode = _classify_layer(str(contour.get("layer", "") or ""), rules)
+        if mode == "mark":
+            layer_mark_count += 1
+        color = contour.get("color")
+        if mode == "cut" and (
+            bool(contour.get("linetype_patterned"))
+            or _linetype_is_marking(contour.get("linetype"), rules)
+        ):
+            mode = "mark"
+            linetype_mark_count += 1
+        elif mode == "cut" and has_primary_cut_geometry and color in ignore_colors:
+            mode = "ignore"
+            color_ignore_count += 1
+        elif mode == "cut" and has_primary_cut_geometry and color in mark_colors:
+            mode = "mark"
+            color_mark_count += 1
         contour["mode"] = mode
         if mode == "ignore":
             ignored_count += 1
@@ -1548,6 +1730,22 @@ def analyze_dxf_geometry(path: str | Path, layer_rules: dict[str, Any] | None = 
             mark_contours.append(contour)
         else:
             cut_contours.append(contour)
+    if color_mark_count:
+        warnings.append(
+            f"{color_mark_count} entidade(s) em cor ACI de marcacao foram separadas do corte."
+        )
+    if color_ignore_count:
+        warnings.append(
+            f"{color_ignore_count} entidade(s) em cor ACI auxiliar foram ignoradas."
+        )
+    if linetype_mark_count:
+        warnings.append(
+            f"{linetype_mark_count} entidade(s) tracejada(s) foram reconhecidas como marcacao/quinagem."
+        )
+    if layer_mark_count:
+        warnings.append(
+            f"{layer_mark_count} entidade(s) foram reconhecidas como marcacao/quinagem pelo nome da camada."
+        )
     closed_cut = [_component_from_single_contour(contour) for contour in cut_contours if bool(contour.get("closed"))]
     open_cut = [contour for contour in cut_contours if not bool(contour.get("closed"))]
     assembled_open, open_warnings = _assemble_open_components(open_cut)
@@ -2371,6 +2569,23 @@ def estimate_laser_quote(payload: dict[str, Any], settings: dict[str, Any] | Non
             "material_fornecido_cliente": material_supplied_by_client,
             "material_cost_included": material_cost_included,
             "espessura": f"{_round_mm(thickness_mm, 3):g}",
+            "largura_mm": round(_as_float(dict(geometry.get("bbox_mm", {}) or {}).get("width", 0.0), 0.0), 3),
+            "altura_mm": round(_as_float(dict(geometry.get("bbox_mm", {}) or {}).get("height", 0.0), 0.0), 3),
+            "area_m2": round(net_area_m2, 6),
+            "net_area_m2": round(net_area_m2, 6),
+            "peso_unid": round(net_mass_kg, 4),
+            "net_mass_kg": round(net_mass_kg, 4),
+            "gross_mass_kg": round(gross_mass_kg, 4),
+            "geometry_area_quality": str(metrics.get("area_quality", "") or ""),
+            "geometry_warnings": list(
+                dict.fromkeys(
+                    [
+                        str(item or "").strip()
+                        for item in list(geometry.get("warnings", []) or [])
+                        if str(item or "").strip()
+                    ]
+                )
+            ),
             "operacao": " + ".join(operations),
             "tempo_peca_min": round(machine_time_total_unit / 60.0, 3),
             "qtd": quantity,

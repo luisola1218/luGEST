@@ -147,6 +147,41 @@ Copy-Item $logoFile $releaseRoot -Force
 Copy-Item $versionFile $releaseRoot -Force
 Copy-Item -Recurse $logosDir $releaseRoot -Force
 
+if ($Commercial) {
+    $commercialBranding = [ordered]@{
+        logo_candidates = @('logo.jpg', 'Logos\logo.png', 'Logos\lg.png')
+        empresa_info_rodape = @()
+        guia_emitente = [ordered]@{
+            nome = ''
+            nif = ''
+            morada = ''
+            local_carga = ''
+        }
+        guia_info_extra = @()
+        primary_color = '#454567'
+        logo_scale_pct = 90
+    }
+    $commercialBranding |
+        ConvertTo-Json -Depth 6 |
+        Set-Content -Path (Join-Path $releaseRoot 'lugest_branding.json') -Encoding UTF8
+
+    $sourceQtConfig = Get-Content $qtConfigFile -Raw | ConvertFrom-Json
+    $commercialQtConfig = [ordered]@{
+        ui_options = [ordered]@{
+            operator_show_client_name = $true
+        }
+        user_profiles = [ordered]@{}
+        material_assistant_feedback = [ordered]@{}
+        material_assistant_checks = [ordered]@{}
+        pulse_plan_delay_reasons = @()
+        update_settings = $sourceQtConfig.update_settings
+        pdf = $sourceQtConfig.pdf
+    }
+    $commercialQtConfig |
+        ConvertTo-Json -Depth 20 |
+        Set-Content -Path (Join-Path $releaseRoot 'lugest_qt_config.json') -Encoding UTF8
+}
+
 $trialTemplate = [ordered]@{
     enabled = $false
     company_name = ''
@@ -250,11 +285,9 @@ if (-not `$NoPause) { Pause }
 Write-Utf8NoBomFile -Path (Join-Path $releaseRoot 'INSTALAR_LUISGEST.ps1') -Content $installer
 
 if (Test-Path $venvPython) {
-    & $venvPython (Join-Path $databaseSource 'export_current_schema_sql.py') --output (Join-Path $databaseSource 'lugest.sql') | Out-Null
     & $venvPython (Join-Path $databaseSource 'export_current_schema_sql.py') --with-starter-users --output (Join-Path $databaseSource 'lugest_instalacao_unica.sql') | Out-Null
 }
 Copy-Item (Join-Path $databaseSource 'lugest_instalacao_unica.sql') (Join-Path $mysqlDir 'IMPORTAR_NO_HEIDI.sql') -Force
-Copy-Item (Join-Path $databaseSource 'lugest.sql') (Join-Path $mysqlDir 'SCHEMA_SEM_UTILIZADORES.sql') -Force
 $dbReadme = @"
 # Base de Dados LuisGEST
 
@@ -271,8 +304,6 @@ Utilizadores temporarios:
 - planeamento / Trocar#Planeamento2026
 
 Trocar as passwords logo apos a instalacao.
-
-O ficheiro SCHEMA_SEM_UTILIZADORES.sql contem apenas tabelas, sem utilizadores iniciais.
 "@
 Write-Utf8NoBomFile -Path (Join-Path $mysqlDir 'README_BASE_DADOS.txt') -Content $dbReadme
 
@@ -281,6 +312,34 @@ Copy-Item $localGuide (Join-Path $docsDir 'GUIA - Arranque Desktop Local.md') -F
 Copy-Item $updateGuide (Join-Path $docsDir 'GUIA - Atualizacao Cliente.md') -Force
 Copy-Item $readinessGuide (Join-Path $docsDir 'PRONTIDAO COMERCIAL.md') -Force
 Copy-Item $fluidityAudit (Join-Path $docsDir 'AUDITORIA - Fluidez e Robustez.md') -Force
+
+$presentationReadme = @"
+# Guia de Apresentacao Comercial
+
+## Antes da demonstracao
+1. Importar `Base de Dados\mysql\IMPORTAR_NO_HEIDI.sql` numa instalacao MySQL limpa.
+2. Configurar `lugest.env` com o servidor, utilizador e password dedicados ao cliente.
+3. Executar `INSTALAR_LUISGEST.ps1` com PowerShell.
+4. Entrar com `admin / Trocar#Admin2026` e alterar imediatamente as passwords temporarias.
+5. Configurar logotipo, dados da empresa, operadores e parametros comerciais antes de usar em producao.
+
+## Percurso recomendado da demonstracao
+1. Dashboard e Pulse: visao global da operacao.
+2. Clientes e Fornecedores: fichas, contactos e localizacao.
+3. Orcamentos: calculo, referencias, PDF e aprovacao.
+4. Encomendas: ordem de fabrico, materiais, pecas e montagem.
+5. Assistente MP: prioridades, plano de separacao, stock e alertas.
+6. Planeamento, Operador e OPP: execucao industrial.
+7. Expedicao e Transportes: guia, carga, rota e comprovativo de entrega.
+8. Notas Encomenda e Faturacao: compra, rececao, documentos e controlo financeiro.
+
+## Seguranca comercial
+- Este pacote nao inclui credenciais, dados da base de desenvolvimento, perfis pessoais ou passwords internas.
+- O SQL cria apenas a estrutura e utilizadores temporarios.
+- Usar uma conta MySQL dedicada; nao usar `root` nos postos cliente.
+- Definir uma pasta partilhada segura para documentos quando existirem varios postos.
+"@
+Write-Utf8NoBomFile -Path (Join-Path $docsDir 'GUIA - Apresentacao Comercial.md') -Content $presentationReadme
 
 $readme = @"
 # LuisGEST Desktop

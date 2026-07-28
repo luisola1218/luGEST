@@ -76,7 +76,7 @@
     "ASSIST-VERIFY-0001|ASSIST-RETALHO|5|ASSIST-LOT-Z|principal": {
       "sep": false,
       "conf": false,
-      "updated_at": "2026-07-23T14:46:31"
+      "updated_at": "2026-07-27T15:52:42"
     }
   },
   "pulse_plan_delay_reasons": {},
@@ -91,16 +91,37 @@
         "grav",
         "texto",
         "text",
-        "txt"
-      ],
-      "ignore_patterns": [
+        "txt",
         "fold",
         "bend",
+        "quin",
+        "dobra",
+        "vinco"
+      ],
+      "ignore_patterns": [
         "guide",
         "construction",
         "dim",
         "assist",
         "layer0-ignore"
+      ],
+      "mark_colors": [
+        8,
+        9
+      ],
+      "ignore_colors": [],
+      "mark_linetype_patterns": [
+        "dash",
+        "hidden",
+        "center",
+        "phantom",
+        "dot",
+        "trace",
+        "traco",
+        "traço",
+        "quin",
+        "fold",
+        "bend"
       ]
     },
     "nesting": {
@@ -222,7 +243,8 @@
       ],
       "shape_strict": false,
       "allow_mirror": true,
-      "free_angle_rotation": true
+      "free_angle_rotation": true,
+      "optimization_level": "tap2"
     },
     "machine_profiles": {
       "BLT641 12kW": {
@@ -2161,7 +2183,7 @@
             }
           },
           "Aco inox": {
-            "density_kg_m3": 8000.0,
+            "density_kg_m3": 7930.0,
             "default_gas": "Nitrogenio",
             "gases": {
               "Nitrogenio": {

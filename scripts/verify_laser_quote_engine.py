@@ -72,6 +72,115 @@ ENDSEC
 EOF
 """
 
+MIXED_COLOR_DXF = """0
+SECTION
+2
+ENTITIES
+0
+LWPOLYLINE
+8
+0
+62
+7
+90
+4
+70
+1
+10
+0
+20
+0
+10
+100
+20
+0
+10
+100
+20
+100
+10
+0
+20
+100
+0
+CIRCLE
+8
+0
+62
+7
+10
+20
+20
+20
+40
+5
+0
+LINE
+8
+0
+62
+8
+10
+10
+20
+10
+11
+90
+21
+10
+0
+LINE
+8
+0
+62
+8
+10
+90
+20
+10
+11
+90
+21
+90
+0
+LINE
+8
+0
+62
+8
+10
+90
+20
+90
+11
+10
+21
+90
+0
+LINE
+8
+0
+62
+8
+10
+10
+20
+90
+11
+10
+21
+10
+0
+ENDSEC
+0
+EOF
+"""
+
+DASHED_FOLD_DXF = MIXED_COLOR_DXF.replace(
+    "62\n8",
+    "62\n7\n6\nCENTERX2",
+)
+
 
 def main() -> int:
     with TemporaryDirectory() as tmp_dir:
@@ -98,6 +207,22 @@ def main() -> int:
         assert float(pricing.get("unit_price", 0) or 0) > 0, pricing
         assert float(pricing.get("total_price", 0) or 0) >= float(pricing.get("unit_price", 0) or 0), pricing
         assert str(line.get("operacao", "") or "").strip().startswith("Corte Laser"), line
+        mixed_path = Path(tmp_dir) / "laser_mixed_color_piece.dxf"
+        mixed_path.write_text(MIXED_COLOR_DXF, encoding="utf-8")
+        mixed_geometry = analyze_dxf_geometry(mixed_path, default_laser_quote_settings().get("layer_rules", {}))
+        mixed_metrics = dict(mixed_geometry.get("metrics", {}) or {})
+        assert abs(float(mixed_metrics.get("net_area_mm2", 0)) - (10000.0 - (3.141592653589793 * 25.0))) < 1.0, mixed_metrics
+        assert abs(float(mixed_metrics.get("mark_length_mm", 0)) - 320.0) < 0.1, mixed_metrics
+        assert int(mixed_metrics.get("inner_contours", 0) or 0) == 1, mixed_metrics
+        assert any("cor ACI" in str(row) for row in list(mixed_geometry.get("warnings", []) or [])), mixed_geometry
+        dashed_path = Path(tmp_dir) / "laser_dashed_fold_piece.dxf"
+        dashed_path.write_text(DASHED_FOLD_DXF, encoding="utf-8")
+        dashed_geometry = analyze_dxf_geometry(dashed_path, default_laser_quote_settings().get("layer_rules", {}))
+        dashed_metrics = dict(dashed_geometry.get("metrics", {}) or {})
+        assert abs(float(dashed_metrics.get("net_area_mm2", 0)) - (10000.0 - (3.141592653589793 * 25.0))) < 1.0, dashed_metrics
+        assert abs(float(dashed_metrics.get("mark_length_mm", 0)) - 320.0) < 0.1, dashed_metrics
+        assert int(dashed_metrics.get("inner_contours", 0) or 0) == 1, dashed_metrics
+        assert any("tracejada" in str(row) for row in list(dashed_geometry.get("warnings", []) or [])), dashed_geometry
         profile_payload = {
             "path": str(Path(tmp_dir) / "cantoneira.step"),
             "material": "Aco carbono",

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import math
+import random
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import local
 from typing import Any
 
 from lugest_core.laser.quote_engine import analyze_dxf_geometry, merge_laser_quote_settings
@@ -34,6 +38,21 @@ DEFAULT_SHEET_PROFILES: list[dict[str, Any]] = [
     {"name": "1500 x 3000", "width_mm": 1500.0, "height_mm": 3000.0},
     {"name": "2000 x 4000", "width_mm": 2000.0, "height_mm": 4000.0},
 ]
+
+_NESTING_RUN_CONTEXT = local()
+
+
+def _optimization_level() -> str:
+    level = str(getattr(_NESTING_RUN_CONTEXT, "level", "tap1") or "tap1").strip().lower()
+    return level if level in {"tap1", "tap2", "tap3"} else "tap1"
+
+
+def _optimization_deadline_reached() -> bool:
+    cancel_check = getattr(_NESTING_RUN_CONTEXT, "cancel_check", None)
+    if callable(cancel_check) and bool(cancel_check()):
+        return True
+    deadline = float(getattr(_NESTING_RUN_CONTEXT, "deadline", 0.0) or 0.0)
+    return deadline > 0.0 and time.monotonic() >= deadline
 
 
 @dataclass
@@ -840,6 +859,11 @@ def default_nesting_options(laser_settings: dict[str, Any] | None = None) -> dic
         "common_line_tolerance_mm": max(0.0, _as_float(payload.get("common_line_tolerance_mm", 1.0), 1.0)),
         "lead_optimization": bool(payload.get("lead_optimization", True)),
         "lead_optimization_pct": max(0.0, min(50.0, _as_float(payload.get("lead_optimization_pct", 8.0), 8.0))),
+        "optimization_level": (
+            str(payload.get("optimization_level", "tap1") or "tap1").strip().lower()
+            if str(payload.get("optimization_level", "tap1") or "tap1").strip().lower() in {"tap1", "tap2", "tap3"}
+            else "tap1"
+        ),
         "sheet_profiles": default_sheet_profiles(settings),
     }
 
@@ -1958,8 +1982,9 @@ def _material_estimate(items: list[NestItem], summary: dict[str, Any], settings:
     }
 
 
-def _result_score(result: dict[str, Any]) -> tuple[float, ...]:
+def _result_score(result: dict[str, Any]) -> tuple[Any, ...]:
     summary = dict(result.get("summary", {}) or {})
+    sheet_rows = [dict(row or {}) for row in list(result.get("sheets", []) or [])]
     purchase_area = _as_float(summary.get("purchase_sheet_area_mm2", 0.0), 0.0)
     total_area = _as_float(summary.get("total_sheet_area_mm2", 0.0), 0.0)
     span_area = _as_float(summary.get("layout_span_area_mm2", 0.0), 0.0)
@@ -1968,14 +1993,35 @@ def _result_score(result: dict[str, Any]) -> tuple[float, ...]:
     wasted_area = max(0.0, total_area - _as_float(summary.get("used_net_area_mm2", 0.0), 0.0))
     largest_edge_remnant = _as_float(summary.get("largest_edge_remnant_area_mm2", 0.0), 0.0)
     fragmented_remainder = _as_float(summary.get("fragmented_remainder_area_mm2", 0.0), 0.0)
+    sequential_fill_reward = sum(
+        (
+            _as_float(row.get("used_net_area_mm2", 0.0), 0.0)
+            / max(1.0, _as_float(row.get("sheet_area_mm2", 0.0), 0.0))
+        )
+        ** 2
+        for row in sheet_rows
+    )
+    sequential_fill_profile = tuple(
+        -value
+        for value in sorted(
+            (
+                _as_float(row.get("used_net_area_mm2", 0.0), 0.0)
+                / max(1.0, _as_float(row.get("sheet_area_mm2", 0.0), 0.0))
+                for row in sheet_rows
+            ),
+            reverse=True,
+        )
+    )
     return (
         _as_int(summary.get("part_count_unplaced", 0), 0),
         purchase_area,
+        _as_int(summary.get("sheet_count", 0), 0),
+        sequential_fill_profile,
+        -sequential_fill_reward,
         fragmented_remainder,
         -largest_edge_remnant,
         wasted_area,
         total_area,
-        _as_int(summary.get("sheet_count", 0), 0),
         span_area,
         -utilization_net,
         -compactness,
@@ -2127,6 +2173,7 @@ def _build_sheet_row(sheet: dict[str, Any], index: int) -> dict[str, Any]:
         "source_material_id": str(profile.get("material_id", "") or "").strip(),
         "source_lote": str(profile.get("lote", "") or "").strip(),
         "source_local": str(profile.get("local", "") or "").strip(),
+        "opening_reason": str(sheet.get("opening_reason", "") or "").strip(),
         "sheet_outer_polygons": [list(polygon) for polygon in list(sheet.get("sheet_outer_polygons", []) or [])],
         "sheet_hole_polygons": [list(polygon) for polygon in list(sheet.get("sheet_hole_polygons", []) or [])],
         "placements": placements,
@@ -2210,6 +2257,27 @@ def _finalize_result(
     strategy_name: str,
     shape_grid_mm: float = 0.0,
 ) -> dict[str, Any]:
+    def _sheet_sequence_key(sheet: dict[str, Any]) -> tuple[float, ...]:
+        profile = dict(sheet.get("profile", {}) or {})
+        source_kind = str(profile.get("source_kind", "purchase") or "purchase").strip().lower()
+        source_rank = 0.0 if source_kind in {"stock", "retalho"} else 1.0
+        area = max(
+            1.0,
+            _as_float(profile.get("width_mm", 0.0), 0.0)
+            * _as_float(profile.get("height_mm", 0.0), 0.0),
+        )
+        utilization = _as_float(sheet.get("used_net_area_mm2", 0.0), 0.0) / area
+        return (source_rank, -utilization, -_as_float(sheet.get("used_bbox_area_mm2", 0.0), 0.0))
+
+    sheets = sorted(list(sheets or []), key=_sheet_sequence_key)
+    for sheet_index, sheet in enumerate(sheets):
+        if sheet_index == 0:
+            sheet["opening_reason"] = "Chapa prioritária: recebe primeiro todas as peças compatíveis."
+        else:
+            sheet["opening_reason"] = (
+                "Chapa complementar: as peças restantes já não tinham posição válida nas chapas mais preenchidas "
+                "com as margens, rotações e colisões atuais."
+            )
     sheet_rows: list[dict[str, Any]] = []
     summary = _build_summary_base(
         expanded,
@@ -2303,6 +2371,15 @@ def _finalize_result(
     summary["waste_bbox_pct"] = round(max(0.0, 100.0 - _as_float(summary.get("utilization_bbox_pct", 0.0), 0.0)), 2)
     summary["remaining_net_area_mm2"] = round(max(0.0, total_area - _as_float(summary.get("used_net_area_mm2", 0.0), 0.0)), 2)
     summary["remaining_bbox_area_mm2"] = round(max(0.0, total_area - _as_float(summary.get("used_bbox_area_mm2", 0.0), 0.0)), 2)
+    summary["optimization_level"] = _optimization_level()
+    summary["optimization_time_limit_s"] = round(
+        max(0.0, float(getattr(_NESTING_RUN_CONTEXT, "time_limit_s", 0.0) or 0.0)),
+        1,
+    )
+    summary["optimization_elapsed_s"] = round(
+        max(0.0, time.monotonic() - float(getattr(_NESTING_RUN_CONTEXT, "started_at", time.monotonic()) or time.monotonic())),
+        3,
+    )
     summary.update(_material_estimate(items, summary, settings))
     return {
         "sheets": sheet_rows,
@@ -2329,10 +2406,13 @@ def _pack_profile(
         raise ValueError("Seleciona um formato de chapa valido.")
     usable_width, usable_height = _profile_usable_dimensions(normalized_profile, edge_margin_mm)
     best_result: dict[str, Any] | None = None
-    strategy_names = _strategy_names(shape_mode=False, free_angles=False, part_count=len(expanded))
-
-    for strategy_name in strategy_names:
-        ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(strategy_name), reverse=True)
+    for strategy_name, ordered_rows in _strategy_order_variants(
+        expanded,
+        shape_mode=False,
+        free_angles=False,
+    ):
+        if best_result is not None and _optimization_deadline_reached():
+            break
         warnings = list(base_warnings or [])
         sheets: list[dict[str, Any]] = []
         unplaced: list[dict[str, Any]] = []
@@ -2354,8 +2434,8 @@ def _pack_profile(
                     continue
                 candidate_score = (
                     0.0,
-                    *_placement_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm),
                     float(sheet_index),
+                    *_placement_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm),
                 )
                 if best_candidate is None or candidate_score < best_candidate["score"]:
                     best_candidate = {"placement": candidate, "score": candidate_score}
@@ -2486,15 +2566,72 @@ def _effective_shape_grid_mm(raw_grid_mm: float, part_spacing_mm: float, edge_ma
 
 def _strategy_names(*, shape_mode: bool, free_angles: bool, part_count: int) -> tuple[str, ...]:
     normalized_count = max(0, int(part_count or 0))
+    level = _optimization_level()
     if shape_mode:
         if free_angles:
-            return ("shape-retalho", "shape-compact")
-        if normalized_count <= 8:
-            return ("shape-retalho", "shape-compact", "shape-area")
-        return ("shape-retalho", "shape-area", "shape-height-first")
+            base = ("shape-retalho", "shape-compact")
+        elif normalized_count <= 8:
+            base = ("shape-retalho", "shape-compact", "shape-area")
+        else:
+            base = ("shape-retalho", "shape-area", "shape-height-first")
+        if level in {"tap2", "tap3"}:
+            base += ("shape-width-first", "shape-compact")
+        return tuple(dict.fromkeys(base))
     if normalized_count <= 8:
-        return ("retalho", "compact", "area")
-    return ("retalho", "area", "height-first")
+        base = ("retalho", "compact", "area")
+    else:
+        base = ("retalho", "area", "height-first")
+    if level in {"tap2", "tap3"}:
+        base += ("width-first", "compact", "longest-side")
+    return tuple(dict.fromkeys(base))
+
+
+def _strategy_order_variants(
+    expanded: list[dict[str, Any]],
+    *,
+    shape_mode: bool,
+    free_angles: bool,
+) -> Iterator[tuple[str, list[dict[str, Any]]]]:
+    """Build deterministic multi-start orders without losing user priorities."""
+    rows = list(expanded or [])
+    for name in _strategy_names(shape_mode=shape_mode, free_angles=free_angles, part_count=len(rows)):
+        yield name, sorted(rows, key=_strategy_sort_key(name), reverse=True)
+    level = _optimization_level()
+    time_limit_s = float(getattr(_NESTING_RUN_CONTEXT, "time_limit_s", 0.0) or 0.0)
+    if level == "tap1" or time_limit_s <= 0.0 or len(rows) <= 1:
+        return
+
+    seed_parts = [
+        (
+            str(getattr(row.get("item"), "ref_externa", "") or ""),
+            round(_as_float(row.get("bbox_area_mm2", 0.0), 0.0), 3),
+            int(row.get("copy_index", 0) or 0),
+        )
+        for row in rows
+    ]
+    seed = sum(
+        (index + 1) * (sum(ord(char) for char in ref) + int(area) + copy_index)
+        for index, (ref, area, copy_index) in enumerate(seed_parts)
+    )
+    rng = random.Random(seed)
+    prefix = "shape-" if shape_mode else ""
+    attempt = 0
+    while attempt < 1_000_000:
+        if _optimization_deadline_reached():
+            break
+        attempt += 1
+        randomized = list(rows)
+        rng.shuffle(randomized)
+        # Prioridades críticas continuam sempre antes das normais/baixas;
+        # a exploração altera apenas a sequência dentro do mesmo nível.
+        randomized.sort(
+            key=lambda row: max(
+                -1,
+                min(2, _as_int(getattr(row.get("item"), "priority", row.get("priority", 0)), 0)),
+            ),
+            reverse=True,
+        )
+        yield f"{prefix}explore-{attempt}", randomized
 
 
 def _shape_anchor_positions(
@@ -2902,7 +3039,7 @@ def _pack_profile_shapely(
                 )
                 if candidate is None:
                     continue
-                score = (0.0, *tuple(candidate.get("score", ())), float(sheet_index))
+                score = (0.0, float(sheet_index), *tuple(candidate.get("score", ())))
                 if best_candidate is None or score < best_candidate["global_score"]:
                     best_candidate = {**candidate, "global_score": score}
                     target_sheet = sheet
@@ -3002,10 +3139,13 @@ def _pack_profile_shape(
         raise ValueError("Seleciona um formato de chapa valido.")
     best_result: dict[str, Any] | None = None
     shape_cache: dict[tuple, dict[str, Any]] = {}
-    strategy_names = _strategy_names(shape_mode=True, free_angles=free_angles, part_count=len(expanded))
-
-    for strategy_name in strategy_names:
-        ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(strategy_name), reverse=True)
+    for strategy_name, ordered_rows in _strategy_order_variants(
+        expanded,
+        shape_mode=True,
+        free_angles=free_angles,
+    ):
+        if best_result is not None and _optimization_deadline_reached():
+            break
         warnings = list(base_warnings or [])
         sheets: list[dict[str, Any]] = []
         unplaced: list[dict[str, Any]] = []
@@ -3031,8 +3171,8 @@ def _pack_profile_shape(
                     continue
                 candidate_score = (
                     0.0,
-                    *_shape_candidate_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm),
                     float(sheet_index),
+                    *_shape_candidate_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm),
                 )
                 if best_candidate is None or candidate_score < best_candidate["score"]:
                     best_candidate = {"placement": candidate, "score": candidate_score}
@@ -3156,10 +3296,13 @@ def _pack_with_stock(
         "source_label": "Apenas stock",
     }
     best_result: dict[str, Any] | None = None
-    strategy_names = _strategy_names(shape_mode=False, free_angles=False, part_count=len(expanded))
-
-    for strategy_name in strategy_names:
-        ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(strategy_name), reverse=True)
+    for strategy_name, ordered_rows in _strategy_order_variants(
+        expanded,
+        shape_mode=False,
+        free_angles=False,
+    ):
+        if best_result is not None and _optimization_deadline_reached():
+            break
         warnings = list(base_warnings or [])
         sheets: list[dict[str, Any]] = []
         unplaced: list[dict[str, Any]] = []
@@ -3190,8 +3333,8 @@ def _pack_with_stock(
                     continue
                 candidate_score = (
                     0.0,
-                    *_placement_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm),
                     float(sheet_index),
+                    *_placement_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm),
                 )
                 if best_candidate is None or candidate_score < best_candidate["score"]:
                     best_candidate = {"placement": candidate, "score": candidate_score}
@@ -3359,7 +3502,7 @@ def _pack_with_stock_shapely(
                 continue
             source_kind = str(dict(sheet.get("profile", {}) or {}).get("source_kind", "purchase") or "purchase").lower()
             source_rank = 0.0 if source_kind in {"stock", "retalho"} else 1.0
-            score = (source_rank, *tuple(candidate.get("score", ())), float(sheet_index))
+            score = (source_rank, float(sheet_index), *tuple(candidate.get("score", ())))
             if best_candidate is None or score < best_candidate["global_score"]:
                 best_candidate = {**candidate, "global_score": score}
                 target_sheet = sheet
@@ -3464,10 +3607,13 @@ def _pack_with_stock_shape(
     }
     best_result: dict[str, Any] | None = None
     shape_cache: dict[tuple, dict[str, Any]] = {}
-    strategy_names = _strategy_names(shape_mode=True, free_angles=free_angles, part_count=len(expanded))
-
-    for strategy_name in strategy_names:
-        ordered_rows = sorted(list(expanded or []), key=_strategy_sort_key(strategy_name), reverse=True)
+    for strategy_name, ordered_rows in _strategy_order_variants(
+        expanded,
+        shape_mode=True,
+        free_angles=free_angles,
+    ):
+        if best_result is not None and _optimization_deadline_reached():
+            break
         warnings = list(base_warnings or [])
         sheets: list[dict[str, Any]] = []
         unplaced: list[dict[str, Any]] = []
@@ -3495,8 +3641,8 @@ def _pack_with_stock_shape(
                     continue
                 candidate_score = (
                     0.0,
-                    *_shape_candidate_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm),
                     float(sheet_index),
+                    *_shape_candidate_score(candidate, strategy_name=strategy_name, sheet=sheet, edge_margin_mm=edge_margin_mm),
                 )
                 if best_candidate is None or candidate_score < best_candidate["score"]:
                     best_candidate = {"placement": candidate, "score": candidate_score}
@@ -3651,9 +3797,22 @@ def nest_parts(
     free_angle_rotation: bool | None = None,
     strict_shape_only: bool = False,
     shape_grid_mm: float | None = None,
+    optimization_level: str | None = None,
+    time_limit_s: float | None = None,
+    cancel_check: Any = None,
 ) -> dict[str, Any]:
     settings = merge_laser_quote_settings(laser_settings)
     nesting_options = default_nesting_options(settings)
+    requested_level = str(optimization_level or nesting_options.get("optimization_level", "tap1") or "tap1").strip().lower()
+    level = requested_level if requested_level in {"tap1", "tap2", "tap3"} else "tap1"
+    default_limits = {"tap1": 30.0, "tap2": 120.0, "tap3": 240.0}
+    limit_s = max(0.0, _as_float(time_limit_s, default_limits[level])) if time_limit_s is not None else default_limits[level]
+    started_at = time.monotonic()
+    _NESTING_RUN_CONTEXT.level = level
+    _NESTING_RUN_CONTEXT.time_limit_s = limit_s
+    _NESTING_RUN_CONTEXT.started_at = started_at
+    _NESTING_RUN_CONTEXT.deadline = started_at + limit_s if limit_s > 0.0 else 0.0
+    _NESTING_RUN_CONTEXT.cancel_check = cancel_check
     items, warnings = build_nesting_items(rows, settings)
     expanded = _expand_items(items)
     normalized_stock = [profile for index, row in enumerate(list(stock_sheet_candidates or [])) if (profile := _normalize_stock_sheet_candidate(row, index)) is not None]
