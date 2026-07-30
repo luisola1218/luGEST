@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas as pdf_canvas
 
@@ -49,7 +49,7 @@ def render_company_value_report(backend, path: str | Path, payload: dict[str, An
 
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    page_size = landscape(A4)
+    page_size = A4
     branding = dict(backend.branding_settings() or {})
     logo_text = str(branding.get("logo_path", "") or "").strip()
     logo = Path(logo_text) if logo_text and Path(logo_text).exists() else None
@@ -85,7 +85,7 @@ def render_company_value_report(backend, path: str | Path, payload: dict[str, An
         page_no = page_index + 1
         titles = {
             "summary": ("Relatório de Valor Empresarial", "Património, compras, compromissos, vendas e recebimentos"),
-            "analysis": ("Análise de Compras e Cobertura", "Concentração por fornecedor, evolução mensal e qualidade da informação"),
+            "analysis": ("Análise de Compras e Cobertura", "Fornecedores, evolução mensal e qualidade da informação"),
             "materials": ("Inventário de Matéria-Prima", "Valorização física ao preço unitário atual"),
             "products": ("Inventário de Produto Acabado", "Valorização física ao preço unitário atual"),
             "purchases": ("Compras Recebidas", "Linhas efetivamente rececionadas no período selecionado"),
@@ -103,22 +103,22 @@ def render_company_value_report(backend, path: str | Path, payload: dict[str, An
 
         if kind == "summary":
             y = layout.section(y, "01", "Posição executiva", "Valores registados no sistema")
-            y = layout.metrics(y, [
+            executive_metrics = [
                 ("PATRIMÓNIO EM STOCK", _money(summary.get("stock_total")), layout.palette["primary"]),
                 ("COMPRAS RECEBIDAS", _money(summary.get("compras_total")), layout.palette["amber"]),
                 ("COMPROMISSOS ABERTOS", _money(summary.get("compromissos_total")), layout.palette["steel"]),
                 ("SALDO DE CLIENTES", _money(summary.get("saldo_clientes")), layout.palette["danger"]),
-            ])
-            y = layout.metrics(y, [
                 ("VENDAS REGISTADAS", _money(summary.get("vendido_total")), layout.palette["green"]),
                 ("FATURADO", _money(summary.get("faturado_total")), layout.palette["primary"]),
                 ("RECEBIDO", _money(summary.get("recebido_total")), layout.palette["green"]),
                 ("STOCK RESERVADO", _money(summary.get("stock_reservado")), layout.palette["amber"]),
-            ])
+            ]
+            for metric_index in range(0, len(executive_metrics), 2):
+                y = layout.metrics(y, executive_metrics[metric_index : metric_index + 2], height=16 * mm)
             value_cols = [
-                Column("Componente", 48 * mm), Column("Valor físico", 34 * mm, "right"),
-                Column("Disponível", 34 * mm, "right"), Column("Reservado", 34 * mm, "right"),
-                Column("Critério", 125 * mm),
+                Column("Componente", 34 * mm), Column("Valor físico", 32 * mm, "right"),
+                Column("Disponível", 32 * mm, "right"), Column("Reservado", 32 * mm, "right"),
+                Column("Critério", 58 * mm),
             ]
             y = layout.section(y, "02", "Composição do património", "Stock atual, disponível e reservado")
             y = layout.table_header(y, value_cols)
@@ -142,7 +142,7 @@ def render_company_value_report(backend, path: str | Path, payload: dict[str, An
             suppliers = list(payload.get("compras_por_fornecedor", []) or [])
             months = list(payload.get("compras_por_mes", []) or [])
             combined = max(len(suppliers), len(months), 1)
-            flow_cols = [Column("Indicador", 55 * mm), Column("Valor", 38 * mm, "right"), Column("Leitura", 182 * mm)]
+            flow_cols = [Column("Indicador", 38 * mm), Column("Valor", 32 * mm, "right"), Column("Leitura", 118 * mm)]
             y = layout.section(y, "03", "Fluxo comercial e financeiro", "Sem confundir stock com movimento do período")
             y = layout.table_header(y, flow_cols)
             for index, row in enumerate(list(payload.get("flow_rows", []) or [])):
@@ -150,9 +150,9 @@ def render_company_value_report(backend, path: str | Path, payload: dict[str, An
                     row.get("indicador"), _money(row.get("valor")), row.get("leitura"),
                 ], index=index, height=6.5 * mm, font_size=5.8)
             cols = [
-                Column("Fornecedor", 91 * mm), Column("Total", 37 * mm, "right"),
-                Column("Mês", 42 * mm), Column("Total", 37 * mm, "right"),
-                Column("Peso no período", 68 * mm),
+                Column("Fornecedor", 58 * mm), Column("Total", 28 * mm, "right"),
+                Column("Mês", 30 * mm), Column("Total", 28 * mm, "right"),
+                Column("Peso no período", 44 * mm),
             ]
             y = layout.section(y - 3 * mm, "04", "Distribuição das compras", "Fornecedor e mês de receção")
             y = layout.table_header(y, cols)
@@ -193,10 +193,10 @@ def render_company_value_report(backend, path: str | Path, payload: dict[str, An
 
         elif kind == "materials":
             cols = [
-                Column("ID", 31 * mm), Column("Material", 39 * mm), Column("Esp.", 18 * mm, "center"),
-                Column("Tipo / dimensão", 58 * mm), Column("Físico", 22 * mm, "right"),
-                Column("Reserv.", 22 * mm, "right"), Column("Dispon.", 22 * mm, "right"),
-                Column("Preço", 27 * mm, "right"), Column("Valor", 36 * mm, "right"),
+                Column("ID", 21 * mm), Column("Material", 29 * mm), Column("Esp.", 12 * mm, "center"),
+                Column("Tipo / dimensão", 38 * mm), Column("Físico", 17 * mm, "right"),
+                Column("Reserv.", 17 * mm, "right"), Column("Dispon.", 17 * mm, "right"),
+                Column("Preço", 18 * mm, "right"), Column("Valor", 19 * mm, "right"),
             ]
             y = layout.section(y, "06", "Matéria-prima valorizada", f"{len(materials)} referências com stock positivo")
             y = layout.table_header(y, cols)
@@ -210,9 +210,9 @@ def render_company_value_report(backend, path: str | Path, payload: dict[str, An
 
         elif kind == "products":
             cols = [
-                Column("Código", 37 * mm), Column("Descrição", 73 * mm), Column("Categoria", 40 * mm),
-                Column("Físico", 23 * mm, "right"), Column("Reserv.", 23 * mm, "right"),
-                Column("Dispon.", 23 * mm, "right"), Column("Preço", 27 * mm, "right"), Column("Valor", 29 * mm, "right"),
+                Column("Código", 24 * mm), Column("Descrição", 52 * mm), Column("Categoria", 28 * mm),
+                Column("Físico", 16 * mm, "right"), Column("Reserv.", 16 * mm, "right"),
+                Column("Dispon.", 16 * mm, "right"), Column("Preço", 18 * mm, "right"), Column("Valor", 18 * mm, "right"),
             ]
             y = layout.section(y, "07", "Produto acabado valorizado", f"{len(products)} referências com stock positivo")
             y = layout.table_header(y, cols)
@@ -224,9 +224,9 @@ def render_company_value_report(backend, path: str | Path, payload: dict[str, An
 
         elif kind == "purchases":
             cols = [
-                Column("Data", 25 * mm), Column("NE", 34 * mm), Column("Fornecedor", 52 * mm),
-                Column("Artigo", 79 * mm), Column("Qtd.", 20 * mm, "right"),
-                Column("Preço", 28 * mm, "right"), Column("Total", 37 * mm, "right"),
+                Column("Data", 20 * mm), Column("NE", 24 * mm), Column("Fornecedor", 34 * mm),
+                Column("Artigo", 54 * mm), Column("Qtd.", 15 * mm, "right"),
+                Column("Preço", 18 * mm, "right"), Column("Total", 23 * mm, "right"),
             ]
             y = layout.section(y, "08", "Histórico de receções", f"{len(purchases)} linhas no período")
             y = layout.table_header(y, cols)
@@ -238,9 +238,9 @@ def render_company_value_report(backend, path: str | Path, payload: dict[str, An
 
         elif kind == "commitments":
             cols = [
-                Column("NE", 35 * mm), Column("Fornecedor", 58 * mm), Column("Artigo", 87 * mm),
-                Column("Pendente", 24 * mm, "right"), Column("Preço", 27 * mm, "right"),
-                Column("Compromisso", 31 * mm, "right"), Column("Entrega", 23 * mm),
+                Column("NE", 24 * mm), Column("Fornecedor", 38 * mm), Column("Artigo", 54 * mm),
+                Column("Pendente", 18 * mm, "right"), Column("Preço", 18 * mm, "right"),
+                Column("Compromisso", 22 * mm, "right"), Column("Entrega", 14 * mm),
             ]
             y = layout.section(y, "09", "Linhas aprovadas por receber", f"{len(commitments)} compromissos abertos")
             y = layout.table_header(y, cols)
@@ -252,10 +252,10 @@ def render_company_value_report(backend, path: str | Path, payload: dict[str, An
 
         elif kind == "billing":
             cols = [
-                Column("Registo", 33 * mm), Column("Cliente", 74 * mm), Column("Data", 25 * mm),
-                Column("Vendido", 34 * mm, "right"), Column("Faturado", 34 * mm, "right"),
-                Column("Recebido", 34 * mm, "right"), Column("Saldo", 34 * mm, "right"),
-                Column("Estado", 41 * mm),
+                Column("Registo", 22 * mm), Column("Cliente", 43 * mm), Column("Data", 18 * mm),
+                Column("Vendido", 22 * mm, "right"), Column("Faturado", 22 * mm, "right"),
+                Column("Recebido", 22 * mm, "right"), Column("Saldo", 22 * mm, "right"),
+                Column("Estado", 17 * mm),
             ]
             y = layout.section(y, "10", "Posição comercial por registo", f"{len(billing)} registos no período")
             y = layout.table_header(y, cols)
@@ -281,7 +281,7 @@ def render_pulse_performance_report(
 ) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    page_size = landscape(A4)
+    page_size = A4
     branding = dict(backend.branding_settings() or {})
     logo_text = str(branding.get("logo_path", "") or "").strip()
     logo = Path(logo_text) if logo_text and Path(logo_text).exists() else None
@@ -320,21 +320,21 @@ def render_pulse_performance_report(
         y = layout.begin_page(title, scope_text, page_no, total_pages, section_label="INDÚSTRIA 4.0 E OEE")
         if kind == "summary":
             y = layout.section(y, "01", "Indicadores de desempenho", "OEE e componentes do período")
-            y = layout.metrics(y, [
+            pulse_metrics = [
                 ("OEE", f"{float(summary.get('oee', 0) or 0):.1f}%", layout.palette["primary"]),
                 ("DISPONIBILIDADE", f"{float(summary.get('disponibilidade', 0) or 0):.1f}%", layout.palette["green"]),
                 ("PERFORMANCE", f"{float(summary.get('performance', 0) or 0):.1f}%", layout.palette["amber"]),
                 ("QUALIDADE", f"{float(summary.get('qualidade', 0) or 0):.1f}%", layout.palette["steel"]),
-            ])
-            y = layout.metrics(y, [
                 ("PARAGENS", f"{float(summary.get('paragens_min', 0) or 0):.1f} min", layout.palette["danger"]),
                 ("DESVIO MÁXIMO", f"{float(summary.get('desvio_max_min', 0) or 0):.1f} min", layout.palette["amber"]),
                 ("PEÇAS EM CURSO", str(int(summary.get("pecas_em_curso", 0) or 0)), layout.palette["primary"]),
                 ("FORA DE TEMPO", str(int(summary.get("pecas_fora_tempo", 0) or 0)), layout.palette["danger"]),
-            ])
+            ]
+            for metric_index in range(0, len(pulse_metrics), 2):
+                y = layout.metrics(y, pulse_metrics[metric_index : metric_index + 2], height=16 * mm)
             stop_cols = [
-                Column("Causa", 85 * mm), Column("Encomenda", 45 * mm), Column("Operador", 55 * mm),
-                Column("Ocorrências", 35 * mm, "right"), Column("Minutos", 35 * mm, "right"), Column("Peso", 20 * mm, "right"),
+                Column("Causa", 50 * mm), Column("Encomenda", 28 * mm), Column("Operador", 35 * mm),
+                Column("Ocorrências", 25 * mm, "right"), Column("Minutos", 25 * mm, "right"), Column("Peso", 25 * mm, "right"),
             ]
             y = layout.section(y, "02", "Principais causas de paragem", "Concentração de perdas registadas")
             y = layout.table_header(y, stop_cols)
@@ -349,8 +349,8 @@ def render_pulse_performance_report(
             layout.label_value(layout.margin, y, layout.inner_width, "ALERTAS", str(summary.get("alerts", "-") or "-"), height=16 * mm, max_lines=3)
         elif kind == "running":
             cols = [
-                Column("Encomenda", 42 * mm), Column("Peça", 65 * mm), Column("Operação", 53 * mm),
-                Column("Operador", 45 * mm), Column("Tempo", 30 * mm, "right"), Column("Desvio", 30 * mm, "right"),
+                Column("Encomenda", 28 * mm), Column("Peça", 50 * mm), Column("Operação", 35 * mm),
+                Column("Operador", 30 * mm), Column("Tempo", 22 * mm, "right"), Column("Desvio", 23 * mm, "right"),
             ]
             y = layout.section(y, "04", "Trabalho em execução", f"{len(running)} peças em curso")
             y = layout.table_header(y, cols)
@@ -362,9 +362,9 @@ def render_pulse_performance_report(
                 ], index=index, height=9 * mm, font_size=6.0, tone="danger" if delta > 0 else "success")
         else:
             cols = [
-                Column("Encomenda", 66 * mm), Column("Operações", 35 * mm, "right"),
-                Column("Tempo real", 46 * mm, "right"), Column("Planeado", 46 * mm, "right"),
-                Column("Desvio", 42 * mm, "right"), Column("Leitura", 40 * mm),
+                Column("Encomenda", 40 * mm), Column("Operações", 23 * mm, "right"),
+                Column("Tempo real", 32 * mm, "right"), Column("Planeado", 32 * mm, "right"),
+                Column("Desvio", 30 * mm, "right"), Column("Leitura", 31 * mm),
             ]
             y = layout.section(y, "05", "Histórico de execução", f"{len(history)} encomendas consolidadas")
             y = layout.table_header(y, cols)

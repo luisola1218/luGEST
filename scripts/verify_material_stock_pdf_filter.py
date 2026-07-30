@@ -30,6 +30,30 @@ def main() -> int:
     assert "Formatos selecionados: Chapa" in text
 
     materials = list(backend.ensure_data().get("materiais", []) or [])
+    searchable_material = next(
+        (
+            row
+            for row in materials
+            if str(row.get("formato", "") or "").strip().casefold() == "chapa"
+            and str(row.get("material", "") or "").strip()
+            and str(row.get("espessura", "") or "").strip()
+        ),
+        None,
+    )
+    assert searchable_material is not None
+    smart_query = " ".join(
+        (
+            str(searchable_material.get("formato", "")).strip(),
+            str(searchable_material.get("material", "")).strip(),
+            f"{str(searchable_material.get('espessura', '')).strip()}mm",
+        )
+    )
+    smart_ids = {
+        str(payload.get("row", {}).get("id", "") or "").strip()
+        for payload in backend.material_rows(smart_query)
+    }
+    assert str(searchable_material.get("id", "") or "").strip() in smart_ids
+
     selected_ids = [
         str(row.get("id", "") or "")
         for row in materials
@@ -45,6 +69,16 @@ def main() -> int:
 
     app = QApplication.instance() or QApplication(sys.argv)
     page = MaterialsPage(backend)
+    page.filter_edit.setText(smart_query)
+    page.refresh()
+    assert page.table.rowCount() > 0
+    expected_material = str(searchable_material.get("material", "") or "").strip().casefold()
+    expected_thickness = str(searchable_material.get("espessura", "") or "").strip().replace(",", ".")
+    for row_index in range(page.table.rowCount()):
+        assert (page.table.item(row_index, 2).text() or "").strip().casefold() == expected_material
+        assert (page.table.item(row_index, 5).text() or "").strip().replace(",", ".") == expected_thickness
+        assert (page.table.item(row_index, 8).text() or "").strip().casefold() == "chapa"
+
     button_labels = [button.text() for button in page.findChildren(QPushButton)]
     assert button_labels.count("Preview PDF") == 1
     assert "PDF" not in button_labels
@@ -63,7 +97,10 @@ def main() -> int:
     QTimer.singleShot(250, choose_sheet_only)
     page.preview_pdf()
     assert opened.get("formats") == ["Chapa"]
-    print(f"material-stock-pdf-filter-ok formats={len(formats)} chapa_rows={len(selected_ids)}")
+    print(
+        "material-stock-pdf-filter-ok "
+        f"formats={len(formats)} chapa_rows={len(selected_ids)} smart_query={smart_query!r}"
+    )
     return 0
 
 

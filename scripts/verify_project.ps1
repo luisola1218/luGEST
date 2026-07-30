@@ -1,6 +1,7 @@
 param(
     [switch]$SkipCompile,
-    [switch]$SkipCoreFlows
+    [switch]$SkipCoreFlows,
+    [switch]$AllowRemoteDatabase
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,13 +18,40 @@ else {
 
 Write-Host "Python: $python" -ForegroundColor Cyan
 
+if (-not $SkipCoreFlows -and -not $AllowRemoteDatabase) {
+    $envFile = Join-Path $repoRoot 'lugest.env'
+    if (Test-Path -LiteralPath $envFile) {
+        $hostLine = Get-Content -LiteralPath $envFile |
+            Where-Object { $_ -match '^\s*LUGEST_DB_HOST\s*=' } |
+            Select-Object -First 1
+        if ($hostLine) {
+            $dbHost = (($hostLine -split '=', 2)[1]).Trim().Trim('"').Trim("'")
+            $localHosts = @('', 'localhost', '127.0.0.1', '::1')
+            if ($dbHost -notin $localHosts) {
+                throw "Verificacao funcional bloqueada: a base configurada e remota ($dbHost). Usa -AllowRemoteDatabase apenas numa base de testes, nunca na base do cliente."
+            }
+        }
+    }
+}
+
 if (-not $SkipCompile) {
     Write-Host "A compilar ficheiros Python..." -ForegroundColor Cyan
     $compileScript = @'
 import py_compile
 from pathlib import Path
 
-excluded = {".venv", ".cad312", "build", "dist", "generated"}
+excluded = {
+    ".venv",
+    ".cad312",
+    "backups",
+    "build",
+    "build_qt_stable",
+    "dist",
+    "dist_qt_stable",
+    "generated",
+    "output",
+    "tmp",
+}
 files = [
     path
     for path in Path(".").rglob("*.py")

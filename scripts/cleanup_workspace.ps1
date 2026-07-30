@@ -1,6 +1,7 @@
 param(
     [switch]$DryRun,
-    [switch]$CachesOnly
+    [switch]$CachesOnly,
+    [switch]$TempOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,8 +30,11 @@ function Remove-PathSafe {
     }
 }
 
-$pathsToRemove = if ($CachesOnly) {
-    @('build', 'build_qt_stable', '.pytest_cache', '.mypy_cache', '.ruff_cache')
+$pathsToRemove = if ($TempOnly) {
+    @('tmp', '__pycache__')
+}
+elseif ($CachesOnly) {
+    @('build', 'build_qt_stable', 'dist_qt_stable', '.pytest_cache', '.mypy_cache', '.ruff_cache')
 }
 else {
     @(
@@ -50,7 +54,8 @@ else {
         '.mypy_cache',
         '.ruff_cache',
         '.idea',
-        'previews'
+        'previews',
+        'tmp'
     )
 }
 
@@ -58,15 +63,17 @@ foreach ($relativePath in $pathsToRemove) {
     Remove-PathSafe -PathToRemove (Join-Path $repoRoot $relativePath)
 }
 
-Get-ChildItem $repoRoot -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
-    Where-Object {
-        $_.FullName -notlike '*\.venv\*' -and
-        $_.FullName -notlike '*\dist\*' -and
-        $_.FullName -notlike '*\dist_qt_stable\*' -and
-        $_.FullName -notlike '*\generated\*' -and
-        $_.FullName -notlike '*\backups\*'
-    } |
-    ForEach-Object { Remove-PathSafe -PathToRemove $_.FullName }
+if (-not $TempOnly) {
+    Get-ChildItem $repoRoot -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.FullName -notlike '*\.venv\*' -and
+            $_.FullName -notlike '*\dist\*' -and
+            $_.FullName -notlike '*\dist_qt_stable\*' -and
+            $_.FullName -notlike '*\generated\*' -and
+            $_.FullName -notlike '*\backups\*'
+        } |
+        ForEach-Object { Remove-PathSafe -PathToRemove $_.FullName }
+}
 
 Write-Host ""
 if ($DryRun) {

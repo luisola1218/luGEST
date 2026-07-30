@@ -181,6 +181,114 @@ DASHED_FOLD_DXF = MIXED_COLOR_DXF.replace(
     "62\n7\n6\nCENTERX2",
 )
 
+OVERLAPPING_CUT_DXF = """0
+SECTION
+2
+ENTITIES
+0
+LINE
+8
+0
+62
+7
+10
+0
+20
+0
+11
+100
+21
+0
+0
+LINE
+8
+0
+62
+7
+10
+0
+20
+0
+11
+50
+21
+0
+0
+LINE
+8
+0
+62
+7
+10
+50
+20
+0
+11
+100
+21
+0
+0
+LINE
+8
+0
+62
+7
+10
+100
+20
+0
+11
+100
+21
+50
+0
+LINE
+8
+0
+62
+7
+10
+100
+20
+50
+11
+0
+21
+50
+0
+LINE
+8
+0
+62
+7
+10
+0
+20
+50
+11
+0
+21
+0
+0
+LINE
+8
+0
+62
+7
+10
+0
+20
+50
+11
+0
+21
+0
+0
+ENDSEC
+0
+EOF
+"""
+
 
 def main() -> int:
     with TemporaryDirectory() as tmp_dir:
@@ -223,6 +331,15 @@ def main() -> int:
         assert abs(float(dashed_metrics.get("mark_length_mm", 0)) - 320.0) < 0.1, dashed_metrics
         assert int(dashed_metrics.get("inner_contours", 0) or 0) == 1, dashed_metrics
         assert any("tracejada" in str(row) for row in list(dashed_geometry.get("warnings", []) or [])), dashed_geometry
+        overlap_path = Path(tmp_dir) / "laser_overlapping_cut_piece.dxf"
+        overlap_path.write_text(OVERLAPPING_CUT_DXF, encoding="utf-8")
+        overlap_geometry = analyze_dxf_geometry(overlap_path, default_laser_quote_settings().get("layer_rules", {}))
+        overlap_metrics = dict(overlap_geometry.get("metrics", {}) or {})
+        assert str(overlap_metrics.get("area_quality", "") or "") == "exacta", overlap_metrics
+        assert abs(float(overlap_metrics.get("net_area_mm2", 0)) - 5000.0) < 0.1, overlap_metrics
+        assert abs(float(overlap_metrics.get("cut_length_mm", 0)) - 300.0) < 0.1, overlap_metrics
+        assert abs(float(overlap_metrics.get("mark_length_mm", 0))) < 0.1, overlap_metrics
+        assert any("coincidente" in str(row) for row in list(overlap_geometry.get("warnings", []) or [])), overlap_geometry
         profile_payload = {
             "path": str(Path(tmp_dir) / "cantoneira.step"),
             "material": "Aco carbono",

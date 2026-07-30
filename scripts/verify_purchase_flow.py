@@ -82,6 +82,7 @@ def main() -> int:
                 "fornecedor_id": "FOR-0001",
                 "fornecedor": "Luis",
                 "contacto": "",
+                "referencias_orcamento": "ORC-VERIFY-001, COT-VERIFY-002",
                 "data_entrega": "2026-03-31",
                 "obs": "VERIFY_FLOW",
                 "local_descarga": "Nossas Instalacoes",
@@ -116,6 +117,11 @@ def main() -> int:
                 ],
             }
         )
+        parent_detail = backend.ne_detail(parent_number)
+        if not str(parent_detail.get("created_at", "") or "").strip():
+            raise RuntimeError(f"Data de criação não foi persistida: {parent_detail}")
+        if parent_detail.get("referencias_orcamento") != "ORC-VERIFY-001, COT-VERIFY-002":
+            raise RuntimeError(f"Referências de orçamento incorretas: {parent_detail}")
         backend.ne_approve(parent_number)
         created = backend.ne_generate_supplier_orders(parent_number)
         child_numbers = [str(row.get("numero", "") or "").strip() for row in created]
@@ -138,6 +144,10 @@ def main() -> int:
         )
 
         child = backend.ne_detail(child_number)
+        if not str(child.get("created_at", "") or "").strip():
+            raise RuntimeError(f"Data de criação da NE gerada não foi persistida: {child}")
+        if child.get("referencias_orcamento") != "ORC-VERIFY-001, COT-VERIFY-002":
+            raise RuntimeError(f"Referências não foram herdadas pela NE gerada: {child}")
         if not all("ENTREGUE" in str(line.get("entrega", "") or "").upper() for line in child.get("lines", [])):
             raise RuntimeError(f"Entrega nao ficou concluida: {child}")
 

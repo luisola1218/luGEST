@@ -177,31 +177,55 @@ def render_planning_order(
 def render_material_separation(backend, path: str | Path, rows: list[dict[str, Any]], horizon_days: int) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    page_size = landscape(A4)
+    page_size = A4
     _brand, logo, issued = _branding(backend)
     alerts = list(backend.material_assistant_alert_rows(horizon_days=horizon_days) or [])
-    per_page = 14
-    separation_pages = max(1, math.ceil(len(rows) / per_page))
-    alert_pages = max(1, math.ceil(len(alerts) / 16))
-    total_pages = separation_pages + alert_pages
+
+    def paginate(items: list[dict[str, Any]], first_capacity: int, next_capacity: int) -> list[list[dict[str, Any]]]:
+        if not items:
+            return [[]]
+        pages = [items[:first_capacity]]
+        offset = first_capacity
+        while offset < len(items):
+            pages.append(items[offset : offset + next_capacity])
+            offset += next_capacity
+        return pages
+
+    separation_chunks = paginate(rows, 10, 14)
+    alert_chunks = paginate(alerts, 14, 14)
+    total_pages = len(separation_chunks) + len(alert_chunks)
     c = pdf_canvas.Canvas(str(target), pagesize=page_size)
     layout = _layout(backend, c, page_size, "MP-SEPARACAO", issued, logo)
     cols = [
-        Column("Prio.", 18 * mm), Column("Posto", 29 * mm), Column("Encomenda", 27 * mm),
-        Column("Lote", 32 * mm), Column("Dimensao", 30 * mm), Column("Qtd.", 18 * mm, "right"),
-        Column("Planeado", 26 * mm), Column("Hora", 19 * mm), Column("Acao sugerida", 41 * mm),
+        Column("Prio.", 14 * mm),
+        Column("Posto", 24 * mm),
+        Column("Encomenda", 24 * mm),
+        Column("Material / lote", 35 * mm),
+        Column("Qtd. / dimensao", 24 * mm),
+        Column("Planeado", 27 * mm),
+        Column("Acao sugerida", 40 * mm),
     ]
     alert_cols = [
-        Column("Prioridade", 25 * mm), Column("Encomenda", 31 * mm), Column("Material", 43 * mm),
-        Column("Necessidade", 30 * mm), Column("Disponivel", 27 * mm), Column("Acao", 56 * mm), Column("Prazo", 28 * mm),
+        Column("Prioridade", 20 * mm),
+        Column("Encomenda", 25 * mm),
+        Column("Material", 36 * mm),
+        Column("Necessario / disponivel", 30 * mm),
+        Column("Acao recomendada", 46 * mm),
+        Column("Prazo", 31 * mm),
     ]
     page_no = 0
-    for chunk in range(separation_pages):
+    for chunk_index, page_rows in enumerate(separation_chunks):
         page_no += 1
         if page_no > 1:
             c.showPage()
-        y = layout.begin_page("Separacao de Materia-Prima", f"Horizonte operacional de {int(horizon_days)} dias uteis", page_no, total_pages, section_label="ASSISTENTE DE MATERIAL")
-        if chunk == 0:
+        y = layout.begin_page(
+            "Separacao de Materia-Prima",
+            f"Horizonte operacional de {int(horizon_days)} dias uteis",
+            page_no,
+            total_pages,
+            section_label="ASSISTENTE DE MATERIAL",
+        )
+        if chunk_index == 0:
             groups = len({(str(r.get("numero", "")), str(r.get("material_group", ""))) for r in rows})
             y = layout.section(y, "01", "Resumo de separacao", "Necessidades por posto e encomenda")
             y = layout.metrics(y, [
@@ -212,30 +236,46 @@ def render_material_separation(backend, path: str | Path, rows: list[dict[str, A
             ])
         y = layout.section(y, "02", "Lista de separacao", "Lote, quantidade e acao operacional")
         y = layout.table_header(y, cols)
-        for local_index, row in enumerate(rows[chunk * per_page : (chunk + 1) * per_page]):
+        for local_index, row in enumerate(page_rows):
             tone = str(row.get("priority_tone", "") or "")
+            material = str(row.get("material_group", row.get("material", "")) or "-").strip() or "-"
+            lot = str(row.get("lote_sugerido", row.get("lote_atual", "")) or "").strip()
+            material_lot = f"{material}\nLote {lot}" if lot and lot != "-" else material
+            quantity = str(row.get("quantidade_label", backend._fmt(row.get("quantidade", 0))) or "-")
+            dimension = str(row.get("dimensao", "") or "").strip()
+            quantity_dimension = f"{quantity}\n{dimension}" if dimension and dimension != "-" else quantity
+            planning_day = str(row.get("planeamento_dia", "") or "-").strip() or "-"
+            planning_time = str(row.get("planeamento_hora", row.get("proxima_acao", "")) or "").strip()
+            planning = f"{planning_day}\n{planning_time}" if planning_time and planning_time != "-" else planning_day
             y = layout.table_row(y, cols, [
-                row.get("priority_label"), row.get("posto_trabalho"), row.get("numero"),
-                row.get("lote_sugerido", row.get("lote_atual")), row.get("dimensao"),
-                row.get("quantidade_label", backend._fmt(row.get("quantidade", 0))), row.get("planeamento_dia"),
-                row.get("planeamento_hora", row.get("proxima_acao")), row.get("acao_sugerida"),
-            ], height=10 * mm, index=local_index, tone=tone if tone in {"danger", "warning", "success"} else "", font_size=5.8, max_lines=2)
+                row.get("priority_label"),
+                row.get("posto_trabalho"),
+                row.get("numero"),
+                material_lot,
+                quantity_dimension,
+                planning,
+                row.get("acao_sugerida"),
+            ], height=13 * mm, index=local_index, tone=tone if tone in {"danger", "warning", "success"} else "", font_size=5.8, max_lines=3)
         if not rows:
             layout.label_value(layout.margin, y, layout.inner_width, "SEPARACAO", "Sem necessidades no horizonte atual.", height=16 * mm)
         layout.footer(page_no, total_pages, "SEPARACAO DE MATERIA-PRIMA")
-    for chunk in range(alert_pages):
+    for chunk_index, page_rows in enumerate(alert_chunks):
         page_no += 1
         c.showPage()
         y = layout.begin_page("Sugestoes e Alertas de Material", "Acoes de compra, cativacao e regularizacao", page_no, total_pages, section_label="ASSISTENTE DE MATERIAL")
         y = layout.section(y, "03", "Alertas e sugestoes", "Decisoes recomendadas")
         y = layout.table_header(y, alert_cols)
-        for local_index, row in enumerate(alerts[chunk * 16 : (chunk + 1) * 16]):
+        for local_index, row in enumerate(page_rows):
+            needed = str(row.get("quantidade_necessaria", row.get("necessidade", "-")) or "-")
+            available = str(row.get("quantidade_disponivel", row.get("disponivel", "-")) or "-")
             y = layout.table_row(y, alert_cols, [
-                row.get("priority_label", row.get("prioridade")), row.get("numero"),
-                row.get("material_group", row.get("material")), row.get("quantidade_necessaria", row.get("necessidade")),
-                row.get("quantidade_disponivel", row.get("disponivel")), row.get("acao_sugerida", row.get("sugestao")),
+                row.get("priority_label", row.get("prioridade")),
+                row.get("numero"),
+                row.get("material_group", row.get("material")),
+                f"Nec. {needed}\nDisp. {available}",
+                row.get("acao_sugerida", row.get("sugestao")),
                 row.get("delivery", row.get("prazo")),
-            ], height=10 * mm, index=local_index, tone=str(row.get("priority_tone", "") or ""), font_size=5.9, max_lines=2)
+            ], height=13 * mm, index=local_index, tone=str(row.get("priority_tone", "") or ""), font_size=5.9, max_lines=3)
         if not alerts:
             layout.label_value(layout.margin, y, layout.inner_width, "ALERTAS", "Sem alertas de material pendentes.", height=16 * mm)
         layout.footer(page_no, total_pages, "ALERTAS DE MATERIAL")

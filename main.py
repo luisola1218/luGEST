@@ -17,7 +17,7 @@ import uuid
 import webbrowser
 import base64
 import hmac
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from tkinter import Tk, Toplevel, StringVar, DoubleVar, BooleanVar, IntVar, END, PhotoImage, Canvas, Text, Listbox, Button, Frame, Label, Entry
 from tkinter import ttk, messagebox, filedialog, colorchooser, font as tkfont
 
@@ -34,6 +34,11 @@ from lugest_desktop.legacy import plan_actions
 from lugest_desktop.legacy import produtos_actions
 from lugest_desktop.legacy import qualidade_actions
 from lugest_desktop.legacy import ui_build_blocks
+from lugest_core.licensing.trusted_time import (
+    TrustedTimeError,
+    portugal_datetime,
+    trusted_time_snapshot,
+)
 from lugest_infra.storage import files as lugest_storage
 
 # UI mode: auto | ttk | custom
@@ -515,6 +520,7 @@ PROD_CATEGORIAS = [
     "Hidraulica",
     "Fixacao",
     "Consumiveis",
+    "Tintas / Quimicos",
     "Corte Laser",
     "Quinagem",
     "Soldadura",
@@ -548,8 +554,17 @@ PROD_SUBCATS = [
     "Parafusos",
     "Porcas",
     "Anilhas",
+    "Rebites",
+    "Buchas e ancoragens",
+    "Pinos e cavilhas",
+    "Inserts roscados",
+    "Abracadeiras",
     "Abrasivos",
     "Quimicos",
+    "Tintas e revestimentos",
+    "Solventes e diluentes",
+    "Adesivos e selantes",
+    "Tratamento de superficie",
     "Embalagem",
     "Consumiveis",
     "Gases",
@@ -577,7 +592,16 @@ PROD_TIPOS = [
     "PLC", "HMI", "Reles", "Fontes",
     "2 vias", "3 vias", "5 vias", "Proporcional",
     "Compacto", "ISO", "Guiado",
-    "Allen", "Sextavado", "Escareado", "Auto perfurante",
+    "Fenda", "Phillips / Cruz (PH)", "Pozidriv (PZ)", "Torx (TX)",
+    "Allen / Umbrako", "Sextavado exterior", "Quadrado", "Seguranca",
+    "Sextavada", "Travante / Nyloc", "Flangeada", "Castelo", "Gaiola", "Cega",
+    "Lisa", "Pressao", "Dentada", "Belleville", "Vedacao",
+    "Cego / POP", "Roscado", "Estrutural", "Macico",
+    "Bucha plastica", "Bucha metalica", "Quimica", "Mecanica", "Chumbadouro",
+    "Cilindrico", "Conico", "Elastico", "Cavilha", "Contrapino",
+    "Helicoil", "Rebite roscado", "Metalica", "Nylon", "Mangueira",
+    "Esmalte", "Primario", "Tinta tecnica", "Verniz", "Spray",
+    "Diluente", "Desengordurante", "Acetona", "Limpeza", "Cola", "Vedante", "Trava roscas",
     "Disco corte", "Disco flap", "Lixa", "Escova",
     "Oxigenio", "Azoto", "Argon", "CO2",
     "Puncao", "Matriz V", "Arame MIG", "Eletrodo", "Vareta TIG",
@@ -7723,9 +7747,31 @@ def _parse_trial_dt(raw_value):
     if not raw:
         return None
     try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            utc_guess = parsed.replace(tzinfo=timezone.utc)
+            portugal_offset = portugal_datetime(utc_guess).utcoffset() or timedelta(0)
+            parsed = (parsed - portugal_offset).replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
     except Exception:
         return None
+
+
+def _trial_time_snapshot(force=False):
+    return dict(trusted_time_snapshot(force=bool(force)) or {})
+
+
+def _trial_trusted_now(force=False):
+    snapshot = _trial_time_snapshot(force=force)
+    current = snapshot.get("utc")
+    if not isinstance(current, datetime):
+        raise TrustedTimeError("A fonte HTTPS não devolveu uma hora UTC válida.")
+    return current.astimezone(timezone.utc), snapshot
+
+
+def _trial_now_iso(force=False):
+    current, _snapshot = _trial_trusted_now(force=force)
+    return current.isoformat(timespec="seconds")
 
 
 def _trial_config_defaults():
@@ -7743,6 +7789,8 @@ def _trial_config_defaults():
         "last_success_user": "",
         "last_owner_auth_at": "",
         "last_owner_auth_user": "",
+        "last_trusted_at": "",
+        "last_time_source": "",
         "notes": "",
     }
 
@@ -7769,6 +7817,8 @@ def load_trial_config():
         "last_success_user",
         "last_owner_auth_at",
         "last_owner_auth_user",
+        "last_trusted_at",
+        "last_time_source",
         "notes",
     ):
         cfg[key] = str(cfg.get(key, "") or "").strip()
@@ -7795,25 +7845,61 @@ def save_trial_config(payload):
         "last_success_user",
         "last_owner_auth_at",
         "last_owner_auth_user",
+        "last_trusted_at",
+        "last_time_source",
         "notes",
     ):
         cfg[key] = str(cfg.get(key, "") or "").strip()
     return _app_config_save_json(TRIAL_CONFIG_KEY, TRIAL_CONFIG_FILE, cfg)
 
 
-def get_trial_status(now_dt=None):
+def get_trial_status(now_dt=None, force_time=False):
     cfg = load_trial_config()
-    now_obj = now_dt if isinstance(now_dt, datetime) else datetime.now()
+    trial_enabled = bool(cfg.get("enabled", False))
+    supplied_time = isinstance(now_dt, datetime)
+    time_valid = not trial_enabled
+    time_error = ""
+    time_source = ""
+    time_cached = False
+    now_obj = None
+    portugal_now = None
+    if supplied_time:
+        parsed_now = now_dt
+        if parsed_now.tzinfo is None:
+            utc_guess = parsed_now.replace(tzinfo=timezone.utc)
+            portugal_offset = portugal_datetime(utc_guess).utcoffset() or timedelta(0)
+            parsed_now = (parsed_now - portugal_offset).replace(tzinfo=timezone.utc)
+        now_obj = parsed_now.astimezone(timezone.utc)
+        portugal_now = portugal_datetime(now_obj)
+        time_valid = True
+        time_source = "hora fornecida para validação"
+    elif trial_enabled:
+        try:
+            now_obj, time_snapshot = _trial_trusted_now(force=bool(force_time))
+            portugal_now = time_snapshot.get("portugal")
+            if not isinstance(portugal_now, datetime):
+                portugal_now = portugal_datetime(now_obj)
+            time_source = str(time_snapshot.get("source", "") or "").strip()
+            time_cached = bool(time_snapshot.get("cached", False))
+            time_valid = True
+        except Exception as exc:
+            time_error = str(exc or "Não foi possível validar a hora online.").strip()
+            time_valid = False
+    else:
+        now_obj = datetime.now(timezone.utc)
+        portugal_now = portugal_datetime(now_obj)
     current_fingerprint = current_machine_fingerprint()
     started_dt = _parse_trial_dt(cfg.get("started_at"))
+    last_trusted_dt = _parse_trial_dt(cfg.get("last_trusted_at"))
     expires_dt = None
     expired = False
     device_mismatch = False
+    time_rollback = False
     blocking = False
     state = "disabled"
     message = "Trial desativado."
     days_remaining = None
-    if bool(cfg.get("enabled", False)):
+    if trial_enabled:
         state = "active"
         if started_dt is None:
             blocking = True
@@ -7822,27 +7908,61 @@ def get_trial_status(now_dt=None):
         else:
             expires_dt = started_dt + timedelta(days=max(1, int(cfg.get("duration_days", 60) or 60)))
             device_mismatch = trial_bind_device_enabled() and str(cfg.get("device_fingerprint", "") or "").strip() not in ("", current_fingerprint)
-            expired = now_obj > expires_dt
-            days_remaining = max(0, (expires_dt.date() - now_obj.date()).days)
-            if device_mismatch:
+            if not time_valid or now_obj is None:
+                blocking = True
+                state = "time_unavailable"
+                message = "Licença bloqueada: é obrigatória uma ligação à internet para validar a hora oficial."
+                if time_error:
+                    message = f"{message} {time_error}"
+            elif last_trusted_dt is not None and now_obj < (last_trusted_dt - timedelta(minutes=2)):
+                blocking = True
+                time_rollback = True
+                state = "time_rollback"
+                message = "Licença bloqueada: foi detetada uma regressão da hora validada."
+            else:
+                expired = now_obj > expires_dt
+                portugal_expiry = portugal_datetime(expires_dt)
+                days_remaining = max(0, (portugal_expiry.date() - portugal_now.date()).days)
+            if device_mismatch and not blocking:
                 blocking = True
                 state = "device_mismatch"
                 message = "Licenca bloqueada: o trial foi criado para outro equipamento."
-            elif expired:
+            elif expired and not blocking:
                 blocking = True
                 state = "expired"
                 message = "Trial expirado. So o login do proprietario pode autorizar nova utilizacao."
-            else:
-                message = f"Trial ativo ate {expires_dt.strftime('%d/%m/%Y %H:%M')}."
+            elif not blocking:
+                message = f"Trial ativo ate {portugal_datetime(expires_dt).strftime('%d/%m/%Y %H:%M')} (Portugal)."
+
+        if time_valid and not supplied_time and now_obj is not None and not time_rollback:
+            should_persist_time = last_trusted_dt is None or now_obj >= (last_trusted_dt + timedelta(seconds=45))
+            if should_persist_time:
+                cfg["last_trusted_at"] = now_obj.isoformat(timespec="seconds")
+                cfg["last_time_source"] = time_source
+                try:
+                    save_trial_config(cfg)
+                except Exception:
+                    pass
+
+    expires_portugal = portugal_datetime(expires_dt) if expires_dt is not None else None
     return {
         **cfg,
         "state": state,
         "blocking": bool(blocking),
         "expired": bool(expired),
         "device_mismatch": bool(device_mismatch),
+        "time_rollback": bool(time_rollback),
+        "online_time_required": bool(trial_enabled),
+        "time_valid": bool(time_valid),
+        "time_source": time_source or str(cfg.get("last_time_source", "") or "").strip(),
+        "time_cached": bool(time_cached),
+        "time_error": time_error,
+        "trusted_utc": now_obj.isoformat(timespec="seconds") if isinstance(now_obj, datetime) else "",
+        "portugal_time": portugal_now.isoformat(timespec="seconds") if isinstance(portugal_now, datetime) else "",
         "current_device_fingerprint": current_fingerprint,
         "started_at": started_dt.isoformat(timespec="seconds") if started_dt else "",
         "expires_at": expires_dt.isoformat(timespec="seconds") if expires_dt else "",
+        "expires_at_portugal": expires_portugal.isoformat(timespec="seconds") if expires_portugal else "",
         "days_remaining": days_remaining,
         "owner_username": trial_owner_username(),
         "owner_configured": trial_owner_configured(),
@@ -7854,7 +7974,9 @@ def activate_trial_license(company_name="", duration_days=60, created_by="", not
     if not trial_owner_configured():
         raise ValueError("Define LUGEST_OWNER_USERNAME e LUGEST_OWNER_PASSWORD no lugest.env antes de ativar um trial.")
     current = load_trial_config()
-    start_txt = now_iso() if reset_start or not str(current.get("started_at", "") or "").strip() else str(current.get("started_at", "") or "").strip()
+    trusted_now, time_snapshot = _trial_trusted_now(force=True)
+    trusted_txt = trusted_now.isoformat(timespec="seconds")
+    start_txt = trusted_txt if reset_start or not str(current.get("started_at", "") or "").strip() else str(current.get("started_at", "") or "").strip()
     payload = {
         **current,
         "enabled": True,
@@ -7862,10 +7984,12 @@ def activate_trial_license(company_name="", duration_days=60, created_by="", not
         "device_fingerprint": current_machine_fingerprint(),
         "started_at": start_txt,
         "duration_days": max(1, int(duration_days or current.get("duration_days", 60) or 60)),
-        "created_at": str(current.get("created_at", "") or "").strip() or now_iso(),
+        "created_at": str(current.get("created_at", "") or "").strip() or trusted_txt,
         "created_by": str(created_by or current.get("created_by", "") or "").strip(),
-        "updated_at": now_iso(),
+        "updated_at": trusted_txt,
         "updated_by": str(created_by or "").strip(),
+        "last_trusted_at": trusted_txt,
+        "last_time_source": str(time_snapshot.get("source", "") or "").strip(),
         "notes": str(notes or current.get("notes", "") or "").strip(),
     }
     save_trial_config(payload)
@@ -7876,23 +8000,28 @@ def extend_trial_license(extra_days=30, updated_by=""):
     current = load_trial_config()
     if not bool(current.get("enabled", False)):
         raise ValueError("Nao existe um trial ativo para prolongar.")
+    trusted_now, time_snapshot = _trial_trusted_now(force=True)
+    trusted_txt = trusted_now.isoformat(timespec="seconds")
     try:
         extra_num = max(1, int(extra_days or 0))
     except Exception:
         extra_num = 30
     current["duration_days"] = max(1, int(current.get("duration_days", 60) or 60)) + extra_num
-    current["updated_at"] = now_iso()
+    current["updated_at"] = trusted_txt
     current["updated_by"] = str(updated_by or "").strip()
-    current["last_owner_auth_at"] = now_iso()
+    current["last_owner_auth_at"] = trusted_txt
     current["last_owner_auth_user"] = str(updated_by or "").strip()
+    current["last_trusted_at"] = trusted_txt
+    current["last_time_source"] = str(time_snapshot.get("source", "") or "").strip()
     save_trial_config(current)
     return get_trial_status()
 
 
 def disable_trial_license(updated_by=""):
     current = load_trial_config()
+    trusted_txt = _trial_now_iso(force=True)
     current["enabled"] = False
-    current["updated_at"] = now_iso()
+    current["updated_at"] = trusted_txt
     current["updated_by"] = str(updated_by or "").strip()
     save_trial_config(current)
     return get_trial_status()
@@ -7900,7 +8029,7 @@ def disable_trial_license(updated_by=""):
 
 def touch_trial_success(username="", owner=False):
     current = load_trial_config()
-    now_txt = now_iso()
+    now_txt = _trial_now_iso(force=False) if bool(current.get("enabled", False)) else now_iso()
     current["last_success_at"] = now_txt
     current["last_success_user"] = str(username or "").strip()
     if owner:

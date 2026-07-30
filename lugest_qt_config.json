@@ -76,7 +76,7 @@
     "ASSIST-VERIFY-0001|ASSIST-RETALHO|5|ASSIST-LOT-Z|principal": {
       "sep": false,
       "conf": false,
-      "updated_at": "2026-07-27T15:52:42"
+      "updated_at": "2026-07-30T08:46:37"
     }
   },
   "pulse_plan_delay_reasons": {},
@@ -3053,5 +3053,14 @@
     "ink": "#14212B",
     "large_color_blocks": false,
     "inventory_scan_schema": 1
-  }
+  },
+  "product_catalog_learning": [
+    {
+      "keyword": "parafuso",
+      "categoria": "Fixacao",
+      "subcat": "Parafusos",
+      "tipo": "",
+      "updated_at": "2026-07-29T14:00:21"
+    }
+  ]
 }

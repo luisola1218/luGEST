@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QGridLayout,
+    QHeaderView,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -110,15 +111,32 @@ class PulsePage(QWidget):
         filters_root.addLayout(filters_layout)
         root.addWidget(filters)
 
-        cards_host = QWidget()
+        cards_host = CardFrame()
+        cards_host.set_tone("default")
         cards_layout = QGridLayout(cards_host)
-        cards_layout.setContentsMargins(0, 0, 0, 0)
+        cards_layout.setContentsMargins(10, 10, 10, 10)
         cards_layout.setHorizontalSpacing(10)
         cards_layout.setVerticalSpacing(10)
-        self.cards = [StatCard(title) for title in ("OEE", "Disponibilidade", "Performance", "Qualidade", "Paragens", "Desvio máximo")]
-        for index, card in enumerate(self.cards):
-            card.setMaximumHeight(112)
-            cards_layout.addWidget(card, index // 3, index % 3)
+        self.cards = [
+            StatCard(title)
+            for title in ("OEE global", "Disponibilidade", "Performance", "Qualidade", "Paragens", "Desvio máximo")
+        ]
+        self.cards[0].setMinimumWidth(235)
+        self.cards[0].setMinimumHeight(178)
+        self.cards[0].value_label.setStyleSheet("font-size: 34px; font-weight: 900; color: #30343b;")
+        self.cards[5].setMinimumWidth(225)
+        self.cards[5].setMinimumHeight(178)
+        self.cards[5].value_label.setStyleSheet("font-size: 27px; font-weight: 850; color: #30343b;")
+        cards_layout.addWidget(self.cards[0], 0, 0, 2, 1)
+        cards_layout.addWidget(self.cards[1], 0, 1)
+        cards_layout.addWidget(self.cards[2], 0, 2)
+        cards_layout.addWidget(self.cards[3], 1, 1)
+        cards_layout.addWidget(self.cards[4], 1, 2)
+        cards_layout.addWidget(self.cards[5], 0, 3, 2, 1)
+        cards_layout.setColumnStretch(0, 2)
+        cards_layout.setColumnStretch(1, 3)
+        cards_layout.setColumnStretch(2, 3)
+        cards_layout.setColumnStretch(3, 2)
         self.cards[0].set_tone("info")
         self.cards[1].set_tone("success")
         self.cards[2].set_tone("warning")
@@ -129,15 +147,16 @@ class PulsePage(QWidget):
 
         self.alert_card = CardFrame()
         alert_layout = QVBoxLayout(self.alert_card)
-        alert_layout.setContentsMargins(14, 12, 14, 12)
+        alert_layout.setContentsMargins(16, 14, 16, 14)
         alert_layout.setSpacing(8)
-        alert_title = QLabel("Alertas")
-        alert_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
+        alert_title = QLabel("Leitura operacional")
+        alert_title.setStyleSheet("font-size: 16px; font-weight: 850; color: #0f172a;")
         self.alert_label = QLabel("-")
         self.alert_label.setWordWrap(True)
         alert_layout.addWidget(alert_title)
         alert_layout.addWidget(self.alert_label)
-        self.alert_card.setMaximumHeight(120)
+        self.alert_card.setMinimumHeight(96)
+        self.alert_card.setMaximumHeight(132)
         self.alert_card.set_tone("default")
 
         self.running_table = QTableWidget(0, 6)
@@ -307,14 +326,19 @@ class PulsePage(QWidget):
     def _show_plan_delay_dialog(self) -> None:
         dialog = QDialog(self)
         dialog.setWindowTitle("Atrasos Face Ao Planeamento")
-        dialog.setMinimumWidth(980)
-        dialog.setMinimumHeight(520)
+        dialog.setModal(True)
+        screen = self.screen()
+        available = screen.availableGeometry() if screen is not None else None
+        target_width = min(1380, max(1080, (available.width() - 100) if available is not None else 1240))
+        target_height = min(760, max(600, (available.height() - 120) if available is not None else 680))
+        dialog.resize(target_width, target_height)
+        dialog.setMinimumSize(1040, 580)
         layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(10)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
 
         title = QLabel("Grupos de corte laser fora do horário planeado")
-        title.setStyleSheet("font-size: 18px; font-weight: 800; color: #0f172a;")
+        title.setStyleSheet("font-size: 20px; font-weight: 850; color: #0f172a;")
         info_label = QLabel("")
         info_label.setWordWrap(True)
         info_label.setProperty("role", "muted")
@@ -328,7 +352,14 @@ class PulsePage(QWidget):
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setSelectionMode(QAbstractItemView.SingleSelection)
-        _configure_table(table, stretch=(1, 4, 7), contents=(0, 2, 3, 5, 6))
+        table.setAlternatingRowColors(True)
+        table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        table.horizontalHeader().setMinimumSectionSize(64)
+        table.horizontalHeader().setStretchLastSection(False)
+        for column, width in enumerate((115, 220, 95, 60, 160, 130, 100)):
+            table.horizontalHeader().setSectionResizeMode(column, QHeaderView.Interactive)
+            table.setColumnWidth(column, width)
+        table.horizontalHeader().setSectionResizeMode(7, QHeaderView.Stretch)
         layout.addWidget(table, 1)
 
         actions = QHBoxLayout()
@@ -340,7 +371,13 @@ class PulsePage(QWidget):
         refresh_btn = QPushButton("Atualizar")
         refresh_btn.setProperty("variant", "secondary")
         close_btn = QPushButton("Fechar")
-        close_btn.setProperty("variant", "secondary")
+        close_btn.setProperty("variant", "danger")
+        for button in (justify_btn, reactivate_btn, refresh_btn, close_btn):
+            button.setMinimumHeight(38)
+        justify_btn.setMinimumWidth(170)
+        reactivate_btn.setMinimumWidth(150)
+        refresh_btn.setMinimumWidth(115)
+        close_btn.setMinimumWidth(110)
         actions.addWidget(justify_btn)
         actions.addWidget(reactivate_btn)
         actions.addStretch(1)

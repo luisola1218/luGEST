@@ -4,7 +4,7 @@ import html
 import os
 import re
 import tempfile
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -338,6 +338,17 @@ class PurchaseNotesPage(QWidget):
         self.delivery_edit.setDisplayFormat("yyyy-MM-dd")
         self.delivery_edit.setMinimumDate(QDate(2000, 1, 1))
         self.delivery_edit.setDate(QDate.currentDate())
+        self.created_at_edit = QLineEdit()
+        self.created_at_edit.setReadOnly(True)
+        self.created_at_edit.setFocusPolicy(Qt.NoFocus)
+        self.created_at_edit.setPlaceholderText("Automática")
+        self.created_at_edit.setToolTip("Data e hora em que a nota foi criada. Este valor é automático.")
+        self.quote_reference_edit = QLineEdit()
+        self.quote_reference_edit.setPlaceholderText("Ex.: ORÇ-145/2026, COT-78")
+        self.quote_reference_edit.setToolTip(
+            "Referência(s) do orçamento ou cotação do fornecedor. "
+            "Podes indicar várias referências separadas por vírgulas."
+        )
         self.location_edit = QComboBox()
         self.location_edit.setEditable(True)
         self.transport_edit = QComboBox()
@@ -349,7 +360,15 @@ class PurchaseNotesPage(QWidget):
         if self.location_edit.lineEdit() is not None:
             self.location_edit.lineEdit().setPlaceholderText("Local de descarga")
         note_field_css = "font-size: 10px; padding: 2px 7px;"
-        for field in (self.supplier_combo, self.contact_edit, self.delivery_edit, self.transport_edit, self.location_edit):
+        for field in (
+            self.supplier_combo,
+            self.contact_edit,
+            self.delivery_edit,
+            self.created_at_edit,
+            self.quote_reference_edit,
+            self.transport_edit,
+            self.location_edit,
+        ):
             field.setMinimumHeight(28)
             field.setMaximumHeight(30)
             field.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
@@ -363,6 +382,8 @@ class PurchaseNotesPage(QWidget):
             (self.supplier_combo, 760, 160),
             (self.contact_edit, 290, 120),
             (self.delivery_edit, 164, 130),
+            (self.created_at_edit, 220, 190),
+            (self.quote_reference_edit, 760, 180),
             (self.transport_edit, 240, 120),
             (self.location_edit, 470, 160),
         ):
@@ -371,6 +392,11 @@ class PurchaseNotesPage(QWidget):
         supplier_title = QLabel("Dados do documento")
         supplier_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
         supplier_layout.addWidget(supplier_title)
+        self.created_at_edit.setStyleSheet(
+            note_field_css
+            + "background: #f4f7f5; color: #334155; font-weight: 700;"
+            "border: 1px solid #cbd5d1;"
+        )
 
         def _field_block(label_text: str, widget: QWidget) -> QWidget:
             host = QWidget()
@@ -388,70 +414,112 @@ class PurchaseNotesPage(QWidget):
         supplier_grid.setContentsMargins(0, 0, 0, 0)
         supplier_grid.setHorizontalSpacing(8)
         supplier_grid.setVerticalSpacing(4)
-        supplier_grid.addWidget(_field_block("Fornecedor base", self.supplier_combo), 0, 0)
-        supplier_grid.addWidget(_field_block("Contacto", self.contact_edit), 0, 1)
-        supplier_grid.addWidget(_field_block("Entrega", self.delivery_edit), 0, 2)
+        supplier_grid.addWidget(_field_block("Fornecedor base", self.supplier_combo), 0, 0, 1, 2)
+        supplier_grid.addWidget(_field_block("Contacto", self.contact_edit), 0, 2)
+        supplier_grid.addWidget(_field_block("Data de criação", self.created_at_edit), 0, 3)
         supplier_grid.addWidget(_field_block("Transporte", self.transport_edit), 1, 0)
-        supplier_grid.addWidget(_field_block("Local Descarga", self.location_edit), 1, 1, 1, 2)
-        supplier_grid.setColumnStretch(0, 7)
-        supplier_grid.setColumnStretch(1, 3)
-        supplier_grid.setColumnStretch(2, 2)
+        supplier_grid.addWidget(_field_block("Local de descarga", self.location_edit), 1, 1, 1, 2)
+        supplier_grid.addWidget(_field_block("Entrega prevista", self.delivery_edit), 1, 3)
+        supplier_grid.addWidget(
+            _field_block("N.º orçamento(s) / cotação do fornecedor", self.quote_reference_edit),
+            2,
+            0,
+            1,
+            4,
+        )
+        supplier_grid.setColumnStretch(0, 3)
+        supplier_grid.setColumnStretch(1, 4)
+        supplier_grid.setColumnStretch(2, 3)
+        supplier_grid.setColumnStretch(3, 3)
         supplier_layout.addLayout(supplier_grid)
-        supplier_card.setMinimumHeight(146)
+        supplier_card.setMinimumHeight(188)
         supplier_card.setMinimumWidth(0)
         supplier_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
         summary_card = CardFrame()
         summary_card.set_tone("info")
+        summary_card.setObjectName("PurchaseFinancialSummary")
+        summary_card.setStyleSheet(
+            "QFrame#PurchaseFinancialSummary { background: #f8faf9; border: 1px solid #c8d3cf; }"
+            "QFrame#PurchaseTotalPanel { background: #e8f6f1; border: 1px solid #9fd5c4; border-radius: 7px; }"
+            "QFrame#PurchaseMpMetric { background: #fff8e9; border: 1px solid #efd29b; border-radius: 6px; }"
+            "QFrame#PurchaseProductMetric { background: #f0f8e9; border: 1px solid #bedb9f; border-radius: 6px; }"
+        )
         summary_layout = QVBoxLayout(summary_card)
-        summary_layout.setContentsMargins(12, 8, 12, 8)
-        summary_layout.setSpacing(3)
+        summary_layout.setContentsMargins(12, 9, 12, 9)
+        summary_layout.setSpacing(5)
         summary_title = QLabel("Resumo financeiro")
         summary_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
+        self.summary_kind_chip = QLabel("RASCUNHO")
+        self.summary_kind_chip.setAlignment(Qt.AlignCenter)
+        self.summary_kind_chip.setStyleSheet(
+            "background: #ffffff; border: 1px solid #b8c7c1; border-radius: 7px;"
+            "color: #45615a; font-size: 8px; font-weight: 800; padding: 2px 8px;"
+        )
+        summary_header = QHBoxLayout()
+        summary_header.setContentsMargins(0, 0, 0, 0)
+        summary_header.addWidget(summary_title)
+        summary_header.addStretch(1)
+        summary_header.addWidget(self.summary_kind_chip)
         self.summary_hint = QLabel("Pedido")
         self.summary_hint.setWordWrap(True)
         self.summary_hint.setProperty("role", "muted")
-        self.summary_hint.setMinimumHeight(18)
+        self.summary_hint.setStyleSheet("font-size: 10px; color: #64748b;")
+        self.summary_hint.setMinimumHeight(16)
         self.total_label = QLabel("0.00 EUR")
-        self.total_label.setStyleSheet("font-size: 15px; font-weight: 900; color: #087f83;")
-        self.total_label.setMinimumHeight(18)
+        self.total_label.setStyleSheet("font-size: 18px; font-weight: 900; color: #08765f; border: none;")
+        self.total_label.setMinimumHeight(23)
         self.total_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.total_materials_label = QLabel("0,00 EUR")
-        self.total_materials_label.setStyleSheet("font-size: 12px; font-weight: 800; color: #7c4a03;")
+        self.total_materials_label.setStyleSheet("font-size: 13px; font-weight: 900; color: #8b5608; border: none;")
         self.total_materials_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.total_materials_label.setMinimumHeight(15)
+        self.total_materials_label.setMinimumHeight(18)
         self.total_products_label = QLabel("0,00 EUR")
-        self.total_products_label.setStyleSheet("font-size: 12px; font-weight: 800; color: #166534;")
+        self.total_products_label.setStyleSheet("font-size: 13px; font-weight: 900; color: #356b19; border: none;")
         self.total_products_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.total_products_label.setMinimumHeight(15)
-        summary_layout.addWidget(summary_title)
+        self.total_products_label.setMinimumHeight(18)
+        summary_layout.addLayout(summary_header)
         summary_layout.addWidget(self.summary_hint)
-        summary_grid = QGridLayout()
-        summary_grid.setContentsMargins(0, 0, 0, 0)
-        summary_grid.setHorizontalSpacing(10)
-        summary_grid.setVerticalSpacing(2)
-        mp_caption = QLabel("Matéria-Prima")
-        mp_caption.setProperty("role", "muted")
-        products_caption = QLabel("Produtos")
-        products_caption.setProperty("role", "muted")
-        summary_grid.addWidget(mp_caption, 0, 0)
-        summary_grid.addWidget(self.total_materials_label, 0, 1)
-        summary_grid.addWidget(products_caption, 1, 0)
-        summary_grid.addWidget(self.total_products_label, 1, 1)
-        summary_grid.setColumnStretch(0, 1)
-        summary_grid.setColumnStretch(1, 1)
-        summary_layout.addLayout(summary_grid)
-        total_row = QHBoxLayout()
-        total_row.setContentsMargins(0, 2, 0, 0)
-        total_caption = QLabel("Total")
-        total_caption.setProperty("role", "muted")
-        total_row.addWidget(total_caption)
+
+        total_panel = QFrame()
+        total_panel.setObjectName("PurchaseTotalPanel")
+        total_row = QHBoxLayout(total_panel)
+        total_row.setContentsMargins(10, 5, 10, 5)
+        total_copy = QVBoxLayout()
+        total_copy.setContentsMargins(0, 0, 0, 0)
+        total_copy.setSpacing(0)
+        total_caption = QLabel("TOTAL DO DOCUMENTO")
+        total_caption.setStyleSheet("font-size: 8px; font-weight: 800; color: #4f6f66; border: none;")
+        total_note = QLabel("Valor líquido das linhas")
+        total_note.setStyleSheet("font-size: 9px; color: #648078; border: none;")
+        total_copy.addWidget(total_caption)
+        total_copy.addWidget(total_note)
+        total_row.addLayout(total_copy)
         total_row.addStretch(1)
         total_row.addWidget(self.total_label)
-        summary_layout.addLayout(total_row)
+        summary_layout.addWidget(total_panel)
+
+        def _metric_tile(object_name: str, title: str, amount: QLabel) -> QFrame:
+            tile = QFrame()
+            tile.setObjectName(object_name)
+            tile_layout = QVBoxLayout(tile)
+            tile_layout.setContentsMargins(8, 4, 8, 4)
+            tile_layout.setSpacing(0)
+            caption = QLabel(title)
+            caption.setStyleSheet("font-size: 8px; font-weight: 800; color: #64748b; border: none;")
+            tile_layout.addWidget(caption)
+            tile_layout.addWidget(amount)
+            return tile
+
+        metrics_row = QHBoxLayout()
+        metrics_row.setContentsMargins(0, 0, 0, 0)
+        metrics_row.setSpacing(6)
+        metrics_row.addWidget(_metric_tile("PurchaseMpMetric", "MATÉRIA-PRIMA", self.total_materials_label))
+        metrics_row.addWidget(_metric_tile("PurchaseProductMetric", "PRODUTOS", self.total_products_label))
+        summary_layout.addLayout(metrics_row)
         summary_card.setMinimumWidth(340)
-        summary_card.setMaximumWidth(410)
-        summary_card.setMinimumHeight(146)
+        summary_card.setMaximumWidth(420)
+        summary_card.setMinimumHeight(188)
         summary_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
 
         meta_row.addWidget(supplier_card, 10, Qt.AlignTop)
@@ -1145,6 +1213,17 @@ class PurchaseNotesPage(QWidget):
 
     def _set_delivery_text(self, raw: str) -> None:
         self.delivery_edit.setDate(_coerce_editor_qdate(raw, fallback_today=True))
+
+    @staticmethod
+    def _display_created_at(raw: str) -> str:
+        value = str(raw or "").strip()
+        if not value:
+            return "Data não registada"
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.strftime("%d/%m/%Y  %H:%M")
+        except ValueError:
+            return value
 
     def _document_dialog(self, title: str, initial: dict | None = None, allow_line_apply: bool = True) -> dict | None:
         initial = dict(initial or {})
@@ -2289,6 +2368,7 @@ class PurchaseNotesPage(QWidget):
         self.line_rows = []
         self._set_header(self.current_number, "Em edicao")
         self.summary_hint.setText("Pedido em preparação")
+        self.summary_kind_chip.setText("RASCUNHO")
         self.generate_btn.setEnabled(True)
         self.delivery_btn.setEnabled(False)
         self.attach_doc_btn.setEnabled(False)
@@ -2299,6 +2379,9 @@ class PurchaseNotesPage(QWidget):
         self.quote_btn.setToolTip("Gera o PDF de cotação e prepara o email no Outlook com os fornecedores em BCC.")
         self.supplier_combo.setCurrentText("")
         self.contact_edit.clear()
+        self.created_at_edit.setText(datetime.now().strftime("%d/%m/%Y  %H:%M"))
+        self.created_at_edit.setToolTip("Data e hora de criação deste novo documento.")
+        self.quote_reference_edit.clear()
         self._set_delivery_text("")
         self.location_edit.setCurrentText("")
         self.transport_edit.setCurrentText("")
@@ -2319,6 +2402,16 @@ class PurchaseNotesPage(QWidget):
         self._set_header(detail.get("numero", ""), detail.get("estado", "Em edicao"))
         self.supplier_combo.setCurrentText(str(detail.get("fornecedor", "") or "").strip())
         self.contact_edit.setText(str(detail.get("contacto", "") or "").strip())
+        raw_created_at = str(detail.get("created_at", "") or "").strip()
+        self.created_at_edit.setText(self._display_created_at(raw_created_at))
+        if raw_created_at:
+            self.created_at_edit.setToolTip("Data e hora em que esta nota foi criada.")
+        else:
+            self.created_at_edit.setToolTip(
+                "Este registo é anterior ao controlo automático da data de criação; "
+                "por isso a data original não está disponível."
+            )
+        self.quote_reference_edit.setText(str(detail.get("referencias_orcamento", "") or "").strip())
         self._set_delivery_text(str(detail.get("data_entrega", "") or "").strip())
         self.location_edit.setCurrentText(str(detail.get("local_descarga", "") or "").strip())
         self.transport_edit.setCurrentText(str(detail.get("meio_transporte", "") or "").strip())
@@ -2332,6 +2425,7 @@ class PurchaseNotesPage(QWidget):
         doc_count = int(detail.get("document_count", len(self.current_documents)) or 0)
         document_status = str(detail.get("document_status", "") or "").strip()
         if kind == "rfq":
+            self.summary_kind_chip.setText("COTAÇÃO")
             text = "Cotação"
             if generated:
                 text = f"{text} | NEs {len(generated)}"
@@ -2347,6 +2441,7 @@ class PurchaseNotesPage(QWidget):
             self.quote_btn.setEnabled(True)
             self.quote_btn.setToolTip("Gera o PDF de cotação e prepara o email no Outlook com os fornecedores em BCC.")
         elif kind == "supplier_order":
+            self.summary_kind_chip.setText("ENCOMENDA")
             summary = "NE gerada"
             if doc_count:
                 summary = f"{summary} | {document_status or f'Docs {doc_count}'}"
@@ -2360,6 +2455,7 @@ class PurchaseNotesPage(QWidget):
             self.quote_btn.setEnabled(False)
             self.quote_btn.setToolTip("As NEs já geradas por fornecedor usam o botão 'Pre-visualizar NE'.")
         else:
+            self.summary_kind_chip.setText("COMPRA DIRETA")
             summary = "Compra direta / cotação simples"
             if doc_count:
                 summary = f"{summary} | {document_status or f'Docs {doc_count}'}"
@@ -3616,6 +3712,7 @@ class PurchaseNotesPage(QWidget):
             "fornecedor": supplier_text or str(supplier.get("nome", "") or ""),
             "fornecedor_id": str(supplier.get("id", "") or ""),
             "contacto": self.contact_edit.text().strip(),
+            "referencias_orcamento": self.quote_reference_edit.text().strip(),
             "data_entrega": self._delivery_text(),
             "obs": self.obs_edit.toPlainText().strip(),
             "local_descarga": self.location_edit.currentText().strip(),

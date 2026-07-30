@@ -3759,6 +3759,8 @@ def _render_ne_pdf_modern(self, path, ne):
     forn_email = str(forn_obj.get("email", "") or "").strip()
     pagamento = str(forn_obj.get("cond_pagamento", "") or "60 dias").strip()
     entrega_prevista = str(ne.get("data_entrega", "") or "").strip()
+    created_at = str(ne.get("created_at", "") or "").strip()
+    referencias_orcamento = str(ne.get("referencias_orcamento", "") or "").strip()
     estado_doc = str(ne.get("estado", "") or "Em edicao").strip() or "Em edicao"
     docs = list(reversed(list(ne.get("entregas", []) or [])[-4:]))
     footer_company = list(get_empresa_rodape_lines() or [])
@@ -3988,7 +3990,7 @@ def _render_ne_pdf_modern(self, path, ne):
                 min_subtitle_size=7.2,
             )
             info_chip(metric_grid["col1"], metric_grid["row1"], metric_grid["chip_w"], "Documento", doc_num, box_h=metric_grid["chip_h"])
-            info_chip(metric_grid["col2"], metric_grid["row1"], metric_grid["chip_w"], "Data", datetime.now().strftime("%d/%m/%Y"), box_h=metric_grid["chip_h"])
+            info_chip(metric_grid["col2"], metric_grid["row1"], metric_grid["chip_w"], "Criada em", fmt_display_date(created_at), box_h=metric_grid["chip_h"])
             info_chip(metric_grid["col1"], metric_grid["row2"], metric_grid["chip_w"], "Estado", estado_doc, box_h=metric_grid["chip_h"])
             info_chip(metric_grid["col2"], metric_grid["row2"], metric_grid["chip_w"], "Pagina", f"{page_no}/{total_pages}", box_h=metric_grid["chip_h"])
             card(
@@ -4014,6 +4016,7 @@ def _render_ne_pdf_modern(self, path, ne):
                 "Dados da encomenda",
                 [
                     f"Entrega prevista: {fmt_display_date(entrega_prevista)}",
+                    f"Orcamento/cotacao: {referencias_orcamento or '-'}",
                     f"Local de descarga: {str(ne.get('local_descarga', '') or '-').strip()}",
                     f"Meio de transporte: {str(ne.get('meio_transporte', '') or '-').strip()}",
                     f"Ultima guia/fatura: {str(ne.get('guia_ultima', '') or '-').strip()} / {str(ne.get('fatura_ultima', '') or '-').strip()}",
@@ -4190,7 +4193,8 @@ def _render_ne_cotacao_pdf_modern(self, path, ne):
     contacto = str(ne.get("contacto", "") or "").strip()
     entrega = str(ne.get("data_entrega", "") or "").strip()
     observacoes = str(ne.get("obs", "") or "").strip()
-    data_doc = datetime.now().strftime("%d/%m/%Y")
+    created_at = str(ne.get("created_at", "") or "").strip()
+    referencias_orcamento = str(ne.get("referencias_orcamento", "") or "").strip()
 
     def yinv(top_y):
         return h - top_y
@@ -4380,7 +4384,7 @@ def _render_ne_cotacao_pdf_modern(self, path, ne):
                 min_subtitle_size=7.2,
             )
             info_chip(metric_grid["col1"], metric_grid["row1"], metric_grid["chip_w"], "Documento", doc_num, box_h=metric_grid["chip_h"])
-            info_chip(metric_grid["col2"], metric_grid["row1"], metric_grid["chip_w"], "Data", data_doc, box_h=metric_grid["chip_h"])
+            info_chip(metric_grid["col2"], metric_grid["row1"], metric_grid["chip_w"], "Criada em", fmt_display_date(created_at), box_h=metric_grid["chip_h"])
             info_chip(metric_grid["col1"], metric_grid["row2"], metric_grid["chip_w"], "Pagina", f"{page_no}/{total_pages}", box_h=metric_grid["chip_h"])
             info_chip(metric_grid["col2"], metric_grid["row2"], metric_grid["chip_w"], "Entrega", fmt_display_date(entrega), box_h=metric_grid["chip_h"])
             card(
@@ -4403,8 +4407,8 @@ def _render_ne_cotacao_pdf_modern(self, path, ne):
                 "Resposta pretendida",
                 [
                     "Preencher preco unitario, total e prazo de entrega.",
+                    f"Referencia(s): {referencias_orcamento or 'a indicar pelo fornecedor'}.",
                     "Indicar validade da proposta e eventuais condicoes comerciais.",
-                    "Responder para os contactos indicados no rodape.",
                 ],
             )
             c.setFont(fonts["regular"], 8.3)

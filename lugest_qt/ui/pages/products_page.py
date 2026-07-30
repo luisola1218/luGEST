@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -32,6 +33,312 @@ from PySide6.QtWidgets import (
 )
 
 from ..widgets import CardFrame
+
+
+class _ProductAILookupThread(QThread):
+    completed = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, lookup, description: str, parent=None) -> None:
+        super().__init__(parent)
+        self._lookup = lookup
+        self._description = description
+
+    def run(self) -> None:
+        try:
+            self.completed.emit(dict(self._lookup(self._description) or {}))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class _ProductAIResultDialog(QDialog):
+    """Human-in-the-loop review for a product classification proposed by AI."""
+
+    def __init__(
+        self,
+        result: dict,
+        current_description: str,
+        refine_callback=None,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.action = "cancel"
+        self.result = dict(result or {})
+        self.current_description = str(current_description or "").strip()
+        self.refine_callback = refine_callback
+        self._refine_thread = None
+        self._pending_question = ""
+        self.setWindowTitle("Copiloto LuGEST · Análise do produto")
+        self.setModal(True)
+        self.resize(820, 720)
+        self.setMinimumSize(760, 660)
+
+        candidate = dict(result.get("candidate", {}) or {})
+        sources = list(result.get("sources", []) or [])
+        engine = str(result.get("engine", "") or "").strip()
+        confidence = int(round(float(candidate.get("confidence", 0) or 0) * 100))
+        category = str(candidate.get("categoria", "") or "").strip()
+        subcategory = str(candidate.get("subcat", "") or "").strip()
+        product_type = str(candidate.get("tipo", "") or "").strip()
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+
+        title_row = QHBoxLayout()
+        title = QLabel("Análise do Copiloto")
+        title.setStyleSheet("font-size: 18px; font-weight: 800; color: #172b3f;")
+        self.confidence_label = QLabel(f"CONFIANÇA {confidence}%")
+        self.confidence_label.setStyleSheet(
+            "background: #edf8df; color: #47780c; border: 1px solid #aedb75;"
+            "padding: 6px 10px; font-size: 10px; font-weight: 800;"
+        )
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+        title_row.addWidget(self.confidence_label)
+        layout.addLayout(title_row)
+
+        self.subtitle = QLabel(
+            f"Motor: {engine.removeprefix('ollama-') if engine.startswith('ollama-') else engine or 'IA'}"
+            + (" · análise local e privada" if engine.startswith("ollama-") else "")
+        )
+        self.subtitle.setStyleSheet("color: #60758a; font-size: 10px;")
+        layout.addWidget(self.subtitle)
+
+        answer_parts = [
+            str(candidate.get("resumo", "") or "").strip()
+            or f"Interpretei “{current_description}” como {str(candidate.get('descricao_normalizada', '') or current_description)}.",
+        ]
+        justification = str(candidate.get("justificacao", "") or "").strip()
+        recommendation = str(candidate.get("recomendacao", "") or "").strip()
+        if justification:
+            answer_parts.extend(["", f"Porque proponho esta classificação:\n{justification}"])
+        if recommendation:
+            answer_parts.extend(["", f"O que deves confirmar:\n{recommendation}"])
+        if sources:
+            answer_parts.extend(
+                ["", "Fontes:"]
+                + [f"• {row.get('title', '')}: {row.get('url', '')}" for row in sources[:5]]
+            )
+        elif engine.startswith("ollama-"):
+            answer_parts.extend(
+                ["", "Esta análise foi feita localmente e não incluiu pesquisa na Internet."]
+            )
+        self.answer = QPlainTextEdit()
+        self.answer.setReadOnly(True)
+        self.answer.setPlainText("\n".join(answer_parts))
+        self.answer.setMinimumHeight(175)
+        self.answer.setStyleSheet(
+            "QPlainTextEdit { background: #f7f9f8; color: #203448; border: 1px solid #cbd4cf;"
+            "padding: 10px; font-size: 11px; }"
+        )
+        layout.addWidget(self.answer)
+
+        proposal = QFrame()
+        proposal.setStyleSheet(
+            "QFrame { background: white; border: 1px solid #cbd4cf; }"
+            "QLabel { border: none; color: #203448; }"
+        )
+        proposal_layout = QGridLayout(proposal)
+        proposal_layout.setContentsMargins(14, 12, 14, 12)
+        proposal_layout.setHorizontalSpacing(16)
+        proposal_layout.setVerticalSpacing(8)
+        fields = [
+            ("Descrição proposta", candidate.get("descricao_normalizada") or current_description),
+            ("Categoria", category or "-"),
+            ("Subcategoria", subcategory or "-"),
+            ("Tipo", product_type or "-"),
+            ("Fabricante", candidate.get("fabricante") or "-"),
+            ("Modelo", candidate.get("modelo") or "-"),
+            ("Dimensões", candidate.get("dimensoes") or "-"),
+        ]
+        self.field_value_labels: dict[str, QLabel] = {}
+        for index, (label_text, value) in enumerate(fields):
+            row, column = divmod(index, 2)
+            host = QWidget()
+            host_layout = QVBoxLayout(host)
+            host_layout.setContentsMargins(0, 0, 0, 0)
+            host_layout.setSpacing(2)
+            label = QLabel(label_text.upper())
+            label.setStyleSheet("color: #6c7e8f; font-size: 8px; font-weight: 800;")
+            content = QLabel(str(value or "-"))
+            content.setWordWrap(True)
+            content.setStyleSheet("font-size: 11px; font-weight: 700;")
+            self.field_value_labels[label_text] = content
+            host_layout.addWidget(label)
+            host_layout.addWidget(content)
+            proposal_layout.addWidget(host, row, column)
+        proposal_layout.setColumnStretch(0, 1)
+        proposal_layout.setColumnStretch(1, 1)
+        layout.addWidget(proposal)
+
+        conversation_label = QLabel("Queres corrigir ou aprofundar esta análise?")
+        conversation_label.setStyleSheet("font-size: 10px; font-weight: 800; color: #203448;")
+        layout.addWidget(conversation_label)
+        question_row = QHBoxLayout()
+        self.question_edit = QPlainTextEdit()
+        self.question_edit.setPlaceholderText(
+            "Ex.: Isto não deve ser classificado como periférico de computador?"
+        )
+        self.question_edit.setMaximumHeight(66)
+        self.question_edit.setStyleSheet(
+            "QPlainTextEdit { background: white; border: 1px solid #aebbb4;"
+            "padding: 7px; font-size: 10px; }"
+        )
+        self.ask_button = QPushButton("Perguntar à IA")
+        self.ask_button.setMinimumSize(138, 42)
+        self.ask_button.setStyleSheet(
+            "background: #454a46; color: white; border: none; padding: 8px 12px; font-weight: 800;"
+        )
+        self.ask_button.clicked.connect(self._ask_ai)
+        question_row.addWidget(self.question_edit, 1)
+        question_row.addWidget(self.ask_button)
+        layout.addLayout(question_row)
+
+        note = QLabel(
+            "Nada é guardado automaticamente. Aplicar apenas preenche a ficha; "
+            "Ensinar também memoriza esta associação para produtos semelhantes."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #60758a; font-size: 10px;")
+        layout.addWidget(note)
+
+        actions = QHBoxLayout()
+        self.cancel_button = QPushButton("Cancelar")
+        self.teach_button = QPushButton("Criar estrutura / ensinar")
+        self.apply_button = QPushButton("Aplicar proposta")
+        for button in (self.cancel_button, self.teach_button, self.apply_button):
+            button.setMinimumHeight(38)
+            button.setMinimumWidth(145)
+        self.teach_button.setStyleSheet(
+            "background: #454a46; color: white; border: none; padding: 8px 14px; font-weight: 800;"
+        )
+        self.apply_button.setStyleSheet(
+            "background: #6dcc12; color: white; border: none; padding: 8px 14px; font-weight: 800;"
+        )
+        self.cancel_button.clicked.connect(self.reject)
+        self.teach_button.clicked.connect(lambda: self._finish("teach"))
+        self.apply_button.clicked.connect(lambda: self._finish("apply"))
+        actions.addStretch(1)
+        actions.addWidget(self.cancel_button)
+        actions.addWidget(self.teach_button)
+        actions.addWidget(self.apply_button)
+        layout.addLayout(actions)
+        self._render_result()
+
+    def _render_result(self) -> None:
+        candidate = dict(self.result.get("candidate", {}) or {})
+        sources = list(self.result.get("sources", []) or [])
+        engine = str(self.result.get("engine", "") or "").strip()
+        confidence = int(round(float(candidate.get("confidence", 0) or 0) * 100))
+        self.confidence_label.setText(f"CONFIANÇA {confidence}%")
+        self.subtitle.setText(
+            f"Motor: {engine.removeprefix('ollama-') if engine.startswith('ollama-') else engine or 'IA'}"
+            + (" · análise local e privada" if engine.startswith("ollama-") else "")
+        )
+        answer_parts = [
+            str(candidate.get("resumo", "") or "").strip()
+            or f"Interpretei “{self.current_description}” como "
+            f"{str(candidate.get('descricao_normalizada', '') or self.current_description)}.",
+        ]
+        justification = str(candidate.get("justificacao", "") or "").strip()
+        recommendation = str(candidate.get("recomendacao", "") or "").strip()
+        if justification:
+            answer_parts.extend(["", f"Porque proponho esta classificação:\n{justification}"])
+        if recommendation:
+            answer_parts.extend(["", f"O que deves confirmar:\n{recommendation}"])
+        if sources:
+            answer_parts.extend(
+                ["", "Fontes:"]
+                + [f"• {row.get('title', '')}: {row.get('url', '')}" for row in sources[:5]]
+            )
+        elif engine.startswith("ollama-"):
+            answer_parts.extend(
+                ["", "Esta análise foi feita localmente e não incluiu pesquisa na Internet."]
+            )
+        self.answer.setPlainText("\n".join(answer_parts))
+        values = {
+            "Descrição proposta": candidate.get("descricao_normalizada") or self.current_description,
+            "Categoria": candidate.get("categoria") or "-",
+            "Subcategoria": candidate.get("subcat") or "-",
+            "Tipo": candidate.get("tipo") or "-",
+            "Fabricante": candidate.get("fabricante") or "-",
+            "Modelo": candidate.get("modelo") or "-",
+            "Dimensões": candidate.get("dimensoes") or "-",
+        }
+        for label_text, value in values.items():
+            label = self.field_value_labels.get(label_text)
+            if label is not None:
+                label.setText(str(value or "-"))
+
+    def _ask_ai(self) -> None:
+        question = self.question_edit.toPlainText().strip()
+        if not question:
+            QMessageBox.information(self, "Copiloto LuGEST", "Escreve primeiro a tua pergunta.")
+            return
+        if not callable(self.refine_callback) or self._refine_thread is not None:
+            return
+        self.ask_button.setEnabled(False)
+        self.ask_button.setText("A responder…")
+        self.question_edit.setEnabled(False)
+        self.cancel_button.setEnabled(False)
+        self.teach_button.setEnabled(False)
+        self.apply_button.setEnabled(False)
+        self._pending_question = question
+        worker = _ProductAILookupThread(
+            lambda _value: self.refine_callback(question, self.result),
+            question,
+            self,
+        )
+        self._refine_thread = worker
+        worker.completed.connect(self._refinement_completed)
+        worker.failed.connect(self._refinement_failed)
+        worker.finished.connect(self._refinement_finished)
+        worker.start()
+
+    def _refinement_completed(self, result: dict) -> None:
+        previous_conversation = self.answer.toPlainText().strip()
+        self.result = dict(result or {})
+        self.question_edit.clear()
+        self._render_result()
+        latest_answer = self.answer.toPlainText().strip()
+        self.answer.setPlainText(
+            previous_conversation
+            + "\n\n────────────────────────────────\n"
+            + f"Tu:\n{self._pending_question}\n\nCopiloto:\n{latest_answer}"
+        )
+        scrollbar = self.answer.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+
+    def _refinement_failed(self, message: str) -> None:
+        QMessageBox.warning(self, "Conversa com IA", message or "Não foi possível responder.")
+
+    def _refinement_finished(self) -> None:
+        self.ask_button.setEnabled(True)
+        self.ask_button.setText("Perguntar à IA")
+        self.question_edit.setEnabled(True)
+        self.cancel_button.setEnabled(True)
+        self.teach_button.setEnabled(True)
+        self.apply_button.setEnabled(True)
+        worker = self._refine_thread
+        self._refine_thread = None
+        self._pending_question = ""
+        if worker is not None:
+            worker.deleteLater()
+
+    def _finish(self, action: str) -> None:
+        self.action = action
+        self.accept()
+
+    def reject(self) -> None:
+        if self._refine_thread is not None:
+            QMessageBox.information(
+                self,
+                "Copiloto LuGEST",
+                "Aguarda pela resposta da IA antes de fechar esta janela.",
+            )
+            return
+        super().reject()
 
 
 def _product_grid_search_normalize(value: object) -> str:
@@ -553,6 +860,8 @@ class ProductsPage(QWidget):
         self.backend = backend
         self.current_code = ""
         self._moves_years: list[str] = []
+        self._columns_compact: bool | None = None
+        self._auto_catalog_values: dict[str, str] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(4, 4, 4, 4)
@@ -577,17 +886,22 @@ class ProductsPage(QWidget):
         portfolio_row.setSpacing(10)
         title_wrap = QVBoxLayout()
         title_wrap.setContentsMargins(0, 0, 0, 0)
-        title_wrap.setSpacing(1)
+        title_wrap.setSpacing(3)
         title = QLabel("Portefólio de Produtos")
-        title.setStyleSheet("font-size: 17px; font-weight: 800; color: #10253d;")
+        title.setMinimumHeight(23)
+        title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        title.setStyleSheet("font-size: 18px; font-weight: 850; color: #10253d;")
         subtitle = QLabel("Stock, preços, disponibilidade e rastreabilidade numa única área de trabalho.")
         subtitle.setProperty("role", "muted")
+        subtitle.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        subtitle.setStyleSheet("font-size: 11px; color: #5b6675;")
         subtitle.setWordWrap(True)
         subtitle.setMinimumWidth(0)
         subtitle.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         title_wrap.addWidget(title)
         title_wrap.addWidget(subtitle)
         portfolio_row.addLayout(title_wrap, 1)
+        portfolio_row.setAlignment(title_wrap, Qt.AlignVCenter)
 
         def metric_widget(label_text: str) -> tuple[QFrame, QLabel]:
             frame = QFrame()
@@ -786,11 +1100,13 @@ class ProductsPage(QWidget):
         self.table.setWordWrap(False)
         header = self.table.horizontalHeader()
         header.setFixedHeight(34)
-        header.setStretchLastSection(True)
+        # The description is the information users need to scan; keep Estado
+        # compact instead of allowing the last column to consume the spare room.
+        header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.Interactive)
         header.resizeSection(0, 144)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
-        for col, width in ((2, 116), (3, 104), (4, 68), (5, 78), (6, 68), (7, 102), (8, 108), (9, 132), (10, 110)):
+        for col, width in ((2, 116), (3, 104), (4, 68), (5, 78), (6, 68), (7, 102), (8, 108), (9, 132), (10, 88)):
             header.setSectionResizeMode(col, QHeaderView.Interactive)
             header.resizeSection(col, width)
         self.table.setColumnHidden(3, True)
@@ -801,9 +1117,10 @@ class ProductsPage(QWidget):
         table_layout.addWidget(self.table)
 
         detail_host = CardFrame()
+        detail_host.setObjectName("ProductInspector")
         detail_host.set_tone("default")
-        detail_host.setMinimumWidth(410)
-        detail_host.setMaximumWidth(560)
+        detail_host.setMinimumWidth(480)
+        detail_host.setMaximumWidth(680)
         detail_host_layout = QVBoxLayout(detail_host)
         detail_host_layout.setContentsMargins(12, 10, 12, 12)
         detail_host_layout.setSpacing(9)
@@ -811,13 +1128,14 @@ class ProductsPage(QWidget):
         inspector_title_wrap = QVBoxLayout()
         inspector_title_wrap.setSpacing(1)
         inspector_eyebrow = QLabel("PRODUTO SELECIONADO")
-        inspector_eyebrow.setStyleSheet("color: #5b7088; font-size: 8px; font-weight: 700;")
+        inspector_eyebrow.setStyleSheet("color: #5b7088; font-size: 9px; font-weight: 700;")
         self.current_product_label = QLabel("Sem produto selecionado")
         self.current_product_label.setWordWrap(True)
-        self.current_product_label.setStyleSheet("font-size: 14px; font-weight: 800; color: #10253d;")
+        self.current_product_label.setStyleSheet("font-size: 16px; font-weight: 800; color: #10253d;")
         self.inspector_meta_label = QLabel("Selecione uma linha para consultar ou editar.")
         self.inspector_meta_label.setProperty("role", "muted")
         self.inspector_meta_label.setWordWrap(True)
+        self.inspector_meta_label.setStyleSheet("font-size: 11px; color: #5b7088;")
         inspector_title_wrap.addWidget(inspector_eyebrow)
         inspector_title_wrap.addWidget(self.current_product_label)
         inspector_title_wrap.addWidget(self.inspector_meta_label)
@@ -833,8 +1151,8 @@ class ProductsPage(QWidget):
         summary_strip.setFixedHeight(58)
         summary_strip.setStyleSheet(
             "QFrame#ProductSummaryStrip { background: #f1f6fa; border: none; }"
-            "QLabel#ProductSummaryLabel { color: #60758d; font-size: 8px; font-weight: 700; border: none; background: transparent; }"
-            "QLabel#ProductSummaryValue { color: #10253d; font-size: 11px; font-weight: 800; border: none; background: transparent; }"
+            "QLabel#ProductSummaryLabel { color: #60758d; font-size: 9px; font-weight: 700; border: none; background: transparent; }"
+            "QLabel#ProductSummaryValue { color: #10253d; font-size: 12px; font-weight: 800; border: none; background: transparent; }"
         )
         inspector_metrics = QHBoxLayout(summary_strip)
         inspector_metrics.setContentsMargins(10, 6, 10, 6)
@@ -870,7 +1188,7 @@ class ProductsPage(QWidget):
         self.detail_stack.setUsesScrollButtons(False)
         self.detail_stack.setStyleSheet(
             "QTabWidget::pane { border: 1px solid #cbd8e5; background: #ffffff; top: -1px; }"
-            "QTabBar::tab { min-width: 92px; min-height: 30px; padding: 0 8px; color: #4a6179; font-size: 9px; font-weight: 700; }"
+            "QTabBar::tab { min-width: 104px; min-height: 32px; padding: 0 9px; color: #4a6179; font-size: 10px; font-weight: 700; }"
             "QTabBar::tab:selected { background: #ffffff; color: #087f83; border-bottom: 2px solid #08a6a6; }"
         )
         detail_host_layout.addWidget(self.detail_stack, 1)
@@ -892,6 +1210,12 @@ class ProductsPage(QWidget):
         form_grid.setVerticalSpacing(5)
         self.code_edit = QLineEdit()
         self.desc_edit = QLineEdit()
+        self._catalog_suggestion_timer = QTimer(self)
+        self._catalog_suggestion_timer.setSingleShot(True)
+        self._catalog_suggestion_timer.setInterval(320)
+        self._catalog_suggestion_timer.timeout.connect(self._apply_catalog_suggestion)
+        self.desc_edit.textEdited.connect(lambda _text: self._catalog_suggestion_timer.start())
+        self.desc_edit.editingFinished.connect(self._apply_catalog_suggestion)
         self.category_combo = self._make_combo()
         self.subcat_combo = self._make_combo()
         self.type_combo = self._make_combo()
@@ -910,7 +1234,7 @@ class ProductsPage(QWidget):
 
         def add_field(grid: QGridLayout, label_text: str, widget: QWidget, row: int, col: int, span: int = 1) -> None:
             label = QLabel(label_text)
-            label.setStyleSheet("color: #5b7088; font-size: 8px; font-weight: 700;")
+            label.setStyleSheet("color: #5b7088; font-size: 9px; font-weight: 700;")
             grid.addWidget(label, row * 2, col, 1, span)
             grid.addWidget(widget, row * 2 + 1, col, 1, span)
 
@@ -927,6 +1251,45 @@ class ProductsPage(QWidget):
         form_grid.setColumnStretch(0, 1)
         form_grid.setColumnStretch(1, 1)
         form_content_layout.addLayout(form_grid)
+        self.catalog_suggestion_label = QLabel("")
+        self.catalog_suggestion_label.setWordWrap(True)
+        self.catalog_suggestion_label.setStyleSheet(
+            "background: #f1f8e8; color: #456a13; border: 1px solid #c9e6a3;"
+            "padding: 6px 8px; font-size: 10px; font-weight: 700;"
+        )
+        self.catalog_suggestion_label.hide()
+        self.normalize_description_button = QPushButton("Normalizar")
+        self.normalize_description_button.setMinimumWidth(112)
+        self.normalize_description_button.setToolTip(
+            "Aplica a designação limpa sugerida pelo Copiloto. A alteração só é gravada quando clicares em Guardar."
+        )
+        self.normalize_description_button.clicked.connect(self._apply_normalized_description)
+        self.normalize_description_button.hide()
+        self.teach_catalog_button = QPushButton("Criar estrutura / ensinar")
+        self.teach_catalog_button.setMinimumWidth(148)
+        self.teach_catalog_button.setToolTip(
+            "Guarda a classificação atual e cria automaticamente a categoria, subcategoria "
+            "ou tipo que ainda não existam."
+        )
+        self.teach_catalog_button.clicked.connect(self._teach_catalog_classification)
+        self.teach_catalog_button.hide()
+        self.product_ai_button = QPushButton("Pesquisar com IA")
+        self.product_ai_button.setMinimumWidth(148)
+        self.product_ai_button.setToolTip(
+            "Pesquisa fabricante, referência e características através do serviço seguro LuGEST. "
+            "Nenhuma sugestão é gravada sem confirmação."
+        )
+        self.product_ai_button.clicked.connect(self._lookup_product_with_ai)
+        self.product_ai_button.hide()
+        copilot_actions = QHBoxLayout()
+        copilot_actions.setContentsMargins(0, 0, 0, 0)
+        copilot_actions.setSpacing(6)
+        copilot_actions.addStretch(1)
+        copilot_actions.addWidget(self.normalize_description_button)
+        copilot_actions.addWidget(self.teach_catalog_button)
+        copilot_actions.addWidget(self.product_ai_button)
+        form_content_layout.addWidget(self.catalog_suggestion_label)
+        form_content_layout.addLayout(copilot_actions)
         form_content_layout.addStretch(1)
 
         self.stock_page = QWidget()
@@ -993,13 +1356,16 @@ class ProductsPage(QWidget):
         self.detail_stack.addTab(self.moves_page, "Movimentos")
 
         workspace = QSplitter(Qt.Horizontal)
+        workspace.setObjectName("ProductsWorkspace")
         workspace.setChildrenCollapsible(False)
         workspace.addWidget(table_card)
         workspace.addWidget(detail_host)
-        workspace.setStretchFactor(0, 1)
-        workspace.setStretchFactor(1, 0)
-        workspace.setSizes([1400, 440])
+        workspace.setStretchFactor(0, 3)
+        workspace.setStretchFactor(1, 1)
+        workspace.setSizes([1320, 540])
+        workspace.splitterMoved.connect(lambda *_args: self._resize_product_columns())
         root.addWidget(workspace, 1)
+        QTimer.singleShot(0, self._resize_product_columns)
 
         for edit in (self.meters_edit, self.weight_edit, self.qty_edit, self.buy_price_edit):
             edit.textChanged.connect(self._refresh_price_labels)
@@ -1013,6 +1379,27 @@ class ProductsPage(QWidget):
         self._load_presets()
         self._new_product()
         self._show_form_page()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._resize_product_columns)
+
+    def _resize_product_columns(self) -> None:
+        if not hasattr(self, "table"):
+            return
+        viewport_width = self.table.viewport().width()
+        compact = viewport_width < 1000
+        if self._columns_compact is compact:
+            return
+        self._columns_compact = compact
+        widths = (
+            ((0, 108), (2, 88), (3, 82), (4, 52), (5, 64), (6, 56), (7, 82), (8, 92), (9, 108), (10, 78))
+            if compact
+            else ((0, 144), (2, 116), (3, 104), (4, 68), (5, 78), (6, 68), (7, 102), (8, 108), (9, 132), (10, 88))
+        )
+        header = self.table.horizontalHeader()
+        for column, width in widths:
+            header.resizeSection(column, width)
 
     def _make_combo(self) -> QComboBox:
         combo = QComboBox()
@@ -1155,6 +1542,284 @@ class ProductsPage(QWidget):
         self._set_filter_combo_values(self.filter_type_combo, type_presets.get("tipos", []), current_type)
         self.refresh()
 
+    def _apply_catalog_suggestion(self) -> None:
+        description = self.desc_edit.text().strip()
+        suggester = getattr(self.backend, "product_copilot_analysis", None)
+        if not callable(suggester):
+            suggester = getattr(self.backend, "product_catalog_suggestion", None)
+        if not description or not callable(suggester):
+            self.catalog_suggestion_label.hide()
+            self.normalize_description_button.hide()
+            self.teach_catalog_button.hide()
+            self.product_ai_button.hide()
+            return
+        try:
+            suggestion = dict(suggester(description, self.code_edit.text().strip()) or {})
+        except TypeError:
+            suggestion = dict(suggester(description) or {})
+        category = str(suggestion.get("categoria", "") or "").strip()
+        subcategory = str(suggestion.get("subcat", "") or "").strip()
+        product_type = str(suggestion.get("tipo", "") or "").strip()
+        dimensions = str(suggestion.get("dimensoes", "") or "").strip()
+        manufacturer = str(suggestion.get("fabricante", "") or "").strip()
+        model = str(suggestion.get("modelo", "") or "").strip()
+        if not category:
+            self.catalog_suggestion_label.hide()
+            self.normalize_description_button.hide()
+            self.teach_catalog_button.hide()
+            self.product_ai_button.setVisible(bool(description))
+            return
+
+        previous = dict(self._auto_catalog_values)
+        current_category = self.category_combo.currentText().strip()
+        may_set_category = not current_category or current_category == previous.get("categoria", "")
+        if may_set_category:
+            self.category_combo.setCurrentText(category)
+            self._sync_form_catalog()
+            current_subcategory = self.subcat_combo.currentText().strip()
+            if subcategory and (not current_subcategory or current_subcategory == previous.get("subcat", "")):
+                self.subcat_combo.setCurrentText(subcategory)
+                self._sync_form_catalog()
+            current_type = self.type_combo.currentText().strip()
+            if product_type and (not current_type or current_type == previous.get("tipo", "")):
+                self.type_combo.setCurrentText(product_type)
+            current_dimensions = self.dim_edit.text().strip()
+            if dimensions and (not current_dimensions or current_dimensions == previous.get("dimensoes", "")):
+                self.dim_edit.setText(dimensions)
+            current_manufacturer = self.maker_edit.text().strip()
+            if manufacturer and (
+                not current_manufacturer or current_manufacturer == previous.get("fabricante", "")
+            ):
+                self.maker_edit.setText(manufacturer)
+            current_model = self.model_edit.text().strip()
+            if model and (not current_model or current_model == previous.get("modelo", "")):
+                self.model_edit.setText(model)
+            self._auto_catalog_values = {
+                "categoria": category,
+                "subcat": subcategory,
+                "tipo": product_type,
+                "dimensoes": dimensions,
+                "fabricante": manufacturer,
+                "modelo": model,
+            }
+
+        applied_category = self.category_combo.currentText().strip()
+        applied_subcategory = self.subcat_combo.currentText().strip()
+        applied_type = self.type_combo.currentText().strip()
+        confidence = int(suggestion.get("confidence_percent", 0) or 0)
+        path = "  ›  ".join(value for value in (category, applied_subcategory, applied_type) if value)
+        if applied_category == category:
+            heading = f"Copiloto LuGEST{f' · {confidence}%' if confidence else ''}: {path}"
+        else:
+            heading = (
+                f"Sugestão disponível{f' · {confidence}%' if confidence else ''}: {category}  ›  {subcategory}"
+                + (f"  ›  {product_type}" if product_type else "")
+                + ". A seleção manual foi mantida."
+            )
+        details: list[str] = [heading]
+        attributes = dict(suggestion.get("atributos", {}) or {})
+        if attributes:
+            details.append(
+                "Atributos: "
+                + " · ".join(f"{str(key).replace('_', ' ').title()}: {value}" for key, value in attributes.items())
+            )
+        normalized = str(suggestion.get("descricao_normalizada", "") or "").strip()
+        self._suggested_normalized_description = normalized
+        if normalized and normalized.casefold() != description.casefold():
+            details.append(f"Designação normalizada: {normalized}")
+            self.normalize_description_button.show()
+        else:
+            self.normalize_description_button.hide()
+        similar = list(suggestion.get("semelhantes", []) or [])
+        if similar:
+            details.append(
+                "Possíveis semelhantes: "
+                + " · ".join(
+                    f"{row.get('codigo', '')} ({int(row.get('percent', 0) or 0)}%)"
+                    for row in similar
+                )
+            )
+        duplicate_warning = bool(suggestion.get("duplicate_warning"))
+        needs_learning = bool(suggestion.get("needs_learning"))
+        self.teach_catalog_button.setVisible(needs_learning)
+        self.product_ai_button.setVisible(bool(description))
+        if needs_learning:
+            details.append(
+                "Termo ainda não conhecido. Corrige a classificação, se necessário, e clica “Ensinar ao LuGEST”."
+            )
+        if duplicate_warning:
+            self.catalog_suggestion_label.setStyleSheet(
+                "background: #fff7e8; color: #8a5400; border: 1px solid #efc36f;"
+                "padding: 6px 8px; font-size: 10px; font-weight: 700;"
+            )
+        else:
+            self.catalog_suggestion_label.setStyleSheet(
+                "background: #f1f8e8; color: #456a13; border: 1px solid #c9e6a3;"
+                "padding: 6px 8px; font-size: 10px; font-weight: 700;"
+            )
+        self.catalog_suggestion_label.setText("\n".join(details))
+        self.catalog_suggestion_label.show()
+
+    def _lookup_product_with_ai(self) -> None:
+        description = self.desc_edit.text().strip()
+        lookup = getattr(self.backend, "product_ai_lookup", None)
+        if not description:
+            QMessageBox.information(self, "Copiloto LuGEST", "Escreve primeiro a descrição do produto.")
+            return
+        if not callable(lookup):
+            QMessageBox.warning(self, "Copiloto LuGEST", "A pesquisa externa não está disponível nesta versão.")
+            return
+        if getattr(self, "_product_ai_thread", None) is not None:
+            return
+        self.product_ai_button.setEnabled(False)
+        self.product_ai_button.setText("A pesquisar…")
+        worker = _ProductAILookupThread(lookup, description, self)
+        self._product_ai_thread = worker
+        worker.completed.connect(self._product_ai_lookup_completed)
+        worker.failed.connect(self._product_ai_lookup_failed)
+        worker.finished.connect(self._product_ai_lookup_finished)
+        worker.start()
+
+    def _product_ai_lookup_finished(self) -> None:
+        self.product_ai_button.setEnabled(True)
+        self.product_ai_button.setText("Pesquisar com IA")
+        worker = getattr(self, "_product_ai_thread", None)
+        self._product_ai_thread = None
+        if worker is not None:
+            worker.deleteLater()
+
+    def _product_ai_lookup_failed(self, message: str) -> None:
+        QMessageBox.warning(
+            self,
+            "Pesquisa com IA",
+            message or "Não foi possível concluir a pesquisa externa.",
+        )
+
+    def _product_ai_lookup_completed(self, result: dict) -> None:
+        original_description = self.desc_edit.text().strip()
+
+        def refine(question: str, previous_result: dict) -> dict:
+            lookup = getattr(self.backend, "product_ai_lookup", None)
+            if not callable(lookup):
+                raise RuntimeError("A conversa com IA não está disponível nesta versão.")
+            return dict(
+                lookup(
+                    original_description,
+                    user_instruction=question,
+                    previous_candidate=dict(previous_result.get("candidate", {}) or {}),
+                )
+                or {}
+            )
+
+        dialog = _ProductAIResultDialog(result, original_description, refine, self)
+        if dialog.exec() != QDialog.Accepted or dialog.action == "cancel":
+            return
+        result = dict(dialog.result or {})
+        candidate = dict(result.get("candidate", {}) or {})
+        sources = list(result.get("sources", []) or [])
+        category = str(candidate.get("categoria", "") or "").strip()
+        subcategory = str(candidate.get("subcat", "") or "").strip()
+        product_type = str(candidate.get("tipo", "") or "").strip()
+        normalized = str(candidate.get("descricao_normalizada", "") or "").strip()
+        manufacturer = str(candidate.get("fabricante", "") or "").strip()
+        model = str(candidate.get("modelo", "") or "").strip()
+        dimensions = str(candidate.get("dimensoes", "") or "").strip()
+        confidence = int(round(float(candidate.get("confidence", 0) or 0) * 100))
+        if category:
+            self.category_combo.setCurrentText(category)
+            self._sync_form_catalog()
+        if subcategory:
+            self.subcat_combo.setCurrentText(subcategory)
+            self._sync_form_catalog()
+        if product_type:
+            self.type_combo.setCurrentText(product_type)
+        if normalized:
+            self.desc_edit.setText(normalized)
+        if manufacturer:
+            self.maker_edit.setText(manufacturer)
+        if model:
+            self.model_edit.setText(model)
+        if dimensions:
+            self.dim_edit.setText(dimensions)
+        self._auto_catalog_values = {
+            "categoria": category,
+            "subcat": subcategory,
+            "tipo": product_type,
+            "dimensoes": dimensions,
+            "fabricante": manufacturer,
+            "modelo": model,
+        }
+        source_names = ", ".join(str(row.get("title", "") or "") for row in sources[:3] if row.get("title"))
+        self.catalog_suggestion_label.setText(
+            f"Proposta da IA aplicada · {confidence}%"
+            + (f"\nFontes: {source_names}" if source_names else "\nAnálise local; confirma os dados antes de guardar.")
+        )
+        self.catalog_suggestion_label.show()
+        if dialog.action == "teach":
+            self._teach_catalog_classification(already_confirmed=True)
+
+    def _apply_normalized_description(self) -> None:
+        normalized = str(getattr(self, "_suggested_normalized_description", "") or "").strip()
+        if not normalized:
+            return
+        self.desc_edit.setText(normalized)
+        self._apply_catalog_suggestion()
+
+    def _teach_catalog_classification(self, already_confirmed: bool = False) -> None:
+        teacher = getattr(self.backend, "product_catalog_teach", None)
+        if not callable(teacher):
+            QMessageBox.warning(self, "Copiloto LuGEST", "A aprendizagem local não está disponível.")
+            return
+        description = self.desc_edit.text().strip()
+        category = self.category_combo.currentText().strip()
+        subcategory = self.subcat_combo.currentText().strip()
+        product_type = self.type_combo.currentText().strip()
+        if not description or not category or not subcategory:
+            QMessageBox.warning(
+                self,
+                "Copiloto LuGEST",
+                "Preenche a descrição, a categoria e a subcategoria antes de ensinar.",
+            )
+            return
+        if not already_confirmed:
+            answer = QMessageBox.question(
+                self,
+                "Ensinar ao LuGEST",
+                "Guardar esta associação para os próximos produtos?\n\n"
+                f"{description}\n"
+                f"→ {category} › {subcategory}"
+                + (f" › {product_type}" if product_type else ""),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if answer != QMessageBox.Yes:
+                return
+        try:
+            learned = dict(teacher(description, category, subcategory, product_type) or {})
+        except Exception as exc:
+            QMessageBox.critical(self, "Copiloto LuGEST", str(exc))
+            return
+        self._load_presets()
+        self._apply_catalog_suggestion()
+        created_parts = []
+        if learned.get("created_category"):
+            created_parts.append(f"categoria “{category}”")
+        if learned.get("created_subcategory"):
+            created_parts.append(f"subcategoria “{subcategory}”")
+        if learned.get("created_type"):
+            created_parts.append(f"tipo “{product_type}”")
+        creation_message = (
+            "\n\nEstrutura criada: " + ", ".join(created_parts) + "."
+            if created_parts
+            else ""
+        )
+        QMessageBox.information(
+            self,
+            "Copiloto LuGEST",
+            f"Aprendido. O termo “{learned.get('keyword', '')}” será classificado automaticamente."
+            + creation_message,
+        )
+
     def _fmt_eur(self, value) -> str:
         try:
             number = float(value or 0)
@@ -1185,6 +1850,12 @@ class ProductsPage(QWidget):
 
     def _new_product(self) -> None:
         self.current_code = ""
+        self._auto_catalog_values = {}
+        if hasattr(self, "catalog_suggestion_label"):
+            self.catalog_suggestion_label.hide()
+            self.normalize_description_button.hide()
+            self.teach_catalog_button.hide()
+        self._suggested_normalized_description = ""
         self.current_product_label.setText("Novo produto")
         self.inspector_meta_label.setText("Preencha a identificação e os dados de stock.")
         self._set_inspector_state("Novo")
@@ -1214,6 +1885,11 @@ class ProductsPage(QWidget):
         self._show_form_page()
 
     def _fill_form(self, detail: dict) -> None:
+        self._auto_catalog_values = {}
+        self.catalog_suggestion_label.hide()
+        self.normalize_description_button.hide()
+        self.teach_catalog_button.hide()
+        self._suggested_normalized_description = ""
         self.current_code = str(detail.get("codigo", "") or "").strip()
         description = str(detail.get("descricao", "") or "").strip() or "-"
         category = str(detail.get("categoria", "") or "").strip() or "Sem categoria"
@@ -1672,8 +2348,27 @@ class ProductsPage(QWidget):
         self._fill_form(detail)
 
     def _save_product(self) -> None:
+        payload = self._payload()
+        analyzer = getattr(self.backend, "product_copilot_analysis", None)
+        if callable(analyzer):
+            analysis = dict(analyzer(payload.get("descricao", ""), payload.get("codigo", "")) or {})
+            similar = list(analysis.get("semelhantes", []) or [])
+            if analysis.get("duplicate_warning") and similar:
+                first = dict(similar[0] or {})
+                answer = QMessageBox.question(
+                    self,
+                    "Possível produto duplicado",
+                    "O Copiloto encontrou um produto muito semelhante:\n\n"
+                    f"{first.get('codigo', '')} · {first.get('descricao', '')}\n"
+                    f"Semelhança: {int(first.get('percent', 0) or 0)}%\n\n"
+                    "Queres guardar este registo mesmo assim?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
+                if answer != QMessageBox.Yes:
+                    return
         try:
-            detail = self.backend.product_save(self._payload())
+            detail = self.backend.product_save(payload)
         except Exception as exc:
             QMessageBox.critical(self, "Produtos", str(exc))
             return

@@ -1524,6 +1524,107 @@ def _linetype_is_marking(linetype: Any, layer_rules: dict[str, Any]) -> bool:
     return any(pattern in value for pattern in patterns)
 
 
+def _merge_overlapping_cut_lines(
+    contours: list[dict[str, Any]],
+    tolerance_mm: float = 0.01,
+) -> tuple[list[dict[str, Any]], int]:
+    """Consolidate coincident collinear LINE entities before topology analysis.
+
+    CAD exports frequently contain both a full cutting edge and smaller LINE
+    entities over the same edge. Treating every copy as a separate graph edge
+    creates false branches, doubles cutting length and turns an otherwise
+    closed part into an estimated/open contour.
+    """
+
+    line_groups: defaultdict[tuple[float, float, float], list[dict[str, Any]]] = defaultdict(list)
+    preserved: list[dict[str, Any]] = []
+    for contour in list(contours or []):
+        points = list(contour.get("points", []) or [])
+        if (
+            str(contour.get("entity_type", "") or "").strip().upper() != "LINE"
+            or bool(contour.get("closed"))
+            or len(points) != 2
+        ):
+            preserved.append(contour)
+            continue
+        start = (float(points[0][0]), float(points[0][1]))
+        end = (float(points[1][0]), float(points[1][1]))
+        length = _distance(start, end)
+        if length <= tolerance_mm:
+            preserved.append(contour)
+            continue
+        ux = (end[0] - start[0]) / length
+        uy = (end[1] - start[1]) / length
+        if ux < -1e-9 or (abs(ux) <= 1e-9 and uy < 0):
+            ux, uy = -ux, -uy
+        nx, ny = -uy, ux
+        offset = (nx * start[0]) + (ny * start[1])
+        key = (round(ux, 6), round(uy, 6), round(offset, 4))
+        t_start = (ux * start[0]) + (uy * start[1])
+        t_end = (ux * end[0]) + (uy * end[1])
+        line_groups[key].append(
+            {
+                "start": min(t_start, t_end),
+                "end": max(t_start, t_end),
+                "template": contour,
+                "ux": ux,
+                "uy": uy,
+                "nx": nx,
+                "ny": ny,
+                "offset": offset,
+            }
+        )
+
+    merged_lines: list[dict[str, Any]] = []
+    removed_count = 0
+    for rows in line_groups.values():
+        rows.sort(key=lambda row: (float(row["start"]), float(row["end"])))
+        current = dict(rows[0])
+        consumed = 1
+        for row in rows[1:]:
+            if float(row["start"]) <= float(current["end"]) + tolerance_mm:
+                current["end"] = max(float(current["end"]), float(row["end"]))
+                consumed += 1
+                continue
+            template = dict(current["template"])
+            start_t = float(current["start"])
+            end_t = float(current["end"])
+            template["points"] = [
+                (
+                    (float(current["ux"]) * start_t) + (float(current["nx"]) * float(current["offset"])),
+                    (float(current["uy"]) * start_t) + (float(current["ny"]) * float(current["offset"])),
+                ),
+                (
+                    (float(current["ux"]) * end_t) + (float(current["nx"]) * float(current["offset"])),
+                    (float(current["uy"]) * end_t) + (float(current["ny"]) * float(current["offset"])),
+                ),
+            ]
+            template["length_mm"] = end_t - start_t
+            template["closed"] = False
+            merged_lines.append(template)
+            removed_count += max(0, consumed - 1)
+            current = dict(row)
+            consumed = 1
+        template = dict(current["template"])
+        start_t = float(current["start"])
+        end_t = float(current["end"])
+        template["points"] = [
+            (
+                (float(current["ux"]) * start_t) + (float(current["nx"]) * float(current["offset"])),
+                (float(current["uy"]) * start_t) + (float(current["ny"]) * float(current["offset"])),
+            ),
+            (
+                (float(current["ux"]) * end_t) + (float(current["nx"]) * float(current["offset"])),
+                (float(current["uy"]) * end_t) + (float(current["ny"]) * float(current["offset"])),
+            ),
+        ]
+        template["length_mm"] = end_t - start_t
+        template["closed"] = False
+        merged_lines.append(template)
+        removed_count += max(0, consumed - 1)
+    return preserved + merged_lines, removed_count
+
+
 def _component_from_single_contour(contour: dict[str, Any]) -> dict[str, Any]:
     points = list(contour.get("points", []) or [])
     bbox = _bbox_from_points(points)
@@ -1745,6 +1846,11 @@ def analyze_dxf_geometry(path: str | Path, layer_rules: dict[str, Any] | None = 
     if layer_mark_count:
         warnings.append(
             f"{layer_mark_count} entidade(s) foram reconhecidas como marcacao/quinagem pelo nome da camada."
+        )
+    cut_contours, merged_cut_line_count = _merge_overlapping_cut_lines(cut_contours)
+    if merged_cut_line_count:
+        warnings.append(
+            f"{merged_cut_line_count} segmento(s) de corte coincidente(s) foram consolidados sem duplicar area ou tempo."
         )
     closed_cut = [_component_from_single_contour(contour) for contour in cut_contours if bool(contour.get("closed"))]
     open_cut = [contour for contour in cut_contours if not bool(contour.get("closed"))]

@@ -461,6 +461,8 @@ class PurchasingBridgeMixin:
                 "numero": str(note.get("numero", "") or "").strip(),
                 "fornecedor": str(note.get("fornecedor", "") or "").strip() or ("Multi-fornecedor" if self._note_kind(note) == "rfq" else "Por adjudicar"),
                 "data_entrega": str(note.get("data_entrega", "") or "").strip(),
+                "created_at": str(note.get("created_at", "") or "").strip(),
+                "referencias_orcamento": str(note.get("referencias_orcamento", "") or "").strip(),
                 "estado": estado,
                 "total": round(self._parse_float(note.get("total", 0), 0), 2),
                 "linhas": len(list(note.get("linhas", []) or [])),
@@ -649,6 +651,8 @@ class PurchasingBridgeMixin:
             "fornecedor": str(note.get("fornecedor", "") or "").strip(),
             "fornecedor_id": str(note.get("fornecedor_id", "") or "").strip(),
             "contacto": str(note.get("contacto", "") or "").strip(),
+            "created_at": str(note.get("created_at", "") or "").strip(),
+            "referencias_orcamento": str(note.get("referencias_orcamento", "") or "").strip(),
             "data_entrega": str(note.get("data_entrega", "") or "").strip(),
             "obs": str(note.get("obs", "") or "").strip(),
             "local_descarga": str(note.get("local_descarga", "") or "").strip(),
@@ -1197,6 +1201,7 @@ class PurchasingBridgeMixin:
         fornecedor_id = str(payload.get("fornecedor_id", "") or "").strip()
         fornecedor = str(payload.get("fornecedor", "") or "").strip()
         contacto = str(payload.get("contacto", "") or "").strip()
+        referencias_orcamento = str(payload.get("referencias_orcamento", "") or "").strip()
         data_entrega = str(payload.get("data_entrega", "") or "").strip()
         obs = str(payload.get("obs", "") or "").strip()
         local_descarga = str(payload.get("local_descarga", "") or "").strip()
@@ -1234,6 +1239,12 @@ class PurchasingBridgeMixin:
             "fornecedor": fornecedor,
             "fornecedor_id": fornecedor_id,
             "contacto": contacto,
+            "created_at": str(
+                (existing or {}).get("created_at", "")
+                or payload.get("created_at", "")
+                or self.desktop_main.now_iso()
+            ).strip(),
+            "referencias_orcamento": referencias_orcamento,
             "data_entrega": data_entrega,
             "obs": obs,
             "local_descarga": local_descarga,
@@ -1305,6 +1316,8 @@ class PurchasingBridgeMixin:
             "fornecedor": "",
             "fornecedor_id": "",
             "contacto": "",
+            "created_at": self.desktop_main.now_iso(),
+            "referencias_orcamento": "",
             "data_entrega": "",
             "obs": "",
             "local_descarga": "",
@@ -1406,6 +1419,8 @@ class PurchasingBridgeMixin:
                 "fornecedor": group.get("fornecedor", ""),
                 "fornecedor_id": group.get("fornecedor_id", ""),
                 "contacto": group.get("contacto", ""),
+                "created_at": self.desktop_main.now_iso(),
+                "referencias_orcamento": str(note.get("referencias_orcamento", "") or "").strip(),
                 "data_entrega": str(note.get("data_entrega", "") or "").strip(),
                 "obs": f"Gerada de {note.get('numero', '')}".strip(),
                 "local_descarga": str(note.get("local_descarga", "") or "").strip(),

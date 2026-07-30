@@ -39,8 +39,12 @@ class _FullSurfaceComboFilter(QObject):
         if isinstance(watched, QLineEdit):
             combo = watched.parentWidget()
             if isinstance(combo, QComboBox) and combo.isEnabled():
+                watched.setFocus()
                 combo.showPopup()
-                return bool(watched.isReadOnly())
+                # Editable selectors remain searchable: the popup receives
+                # keyboard navigation while the edit keeps its current text
+                # and can be focused again by typing/clicking.
+                return True
         return False
 
 

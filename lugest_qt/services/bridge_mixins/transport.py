@@ -583,6 +583,49 @@ class TransportBridgeMixin:
         rows.sort(key=lambda item: (item.get("data_entrega") or "9999-99-99", item.get("numero") or ""))
         return rows
 
+    def transport_pending_overview(self) -> dict[str, int]:
+        """Explain why orders do or do not appear in the transport planner."""
+
+        data = self.ensure_data()
+        active_assignments = {
+            str(stop.get("encomenda_numero", stop.get("encomenda", "")) or "").strip()
+            for trip in list(data.get("transportes", []) or [])
+            if isinstance(trip, dict)
+            and "anulad" not in self.desktop_main.norm_text(str(trip.get("estado", "") or ""))
+            for stop in list(trip.get("paragens", []) or [])
+            if isinstance(stop, dict)
+        }
+        overview = {
+            "total_orders": 0,
+            "eligible": 0,
+            "customer_transport": 0,
+            "waiting_stock_or_guide": 0,
+            "already_assigned": 0,
+        }
+        for order in list(data.get("encomendas", []) or []):
+            if not isinstance(order, dict):
+                continue
+            order_number = str(order.get("numero", "") or "").strip()
+            if not order_number:
+                continue
+            overview["total_orders"] += 1
+            if not self._transport_is_own_cargo(order):
+                overview["customer_transport"] += 1
+                continue
+            if order_number in active_assignments:
+                overview["already_assigned"] += 1
+                continue
+            pieces = list(self.desktop_main.encomenda_pecas(order))
+            available = sum(
+                max(0.0, self._parse_float(self.desktop_main.peca_qtd_disponivel_expedicao(piece), 0))
+                for piece in pieces
+            )
+            if available <= 0 and not self._transport_latest_guide_for_order(order_number):
+                overview["waiting_stock_or_guide"] += 1
+                continue
+            overview["eligible"] += 1
+        return overview
+
     def transport_rows(self, filter_text: str = "", estado: str = "Todas") -> list[dict[str, Any]]:
         query = str(filter_text or "").strip().lower()
         state_filter = str(estado or "Todas").strip().lower()

@@ -37,6 +37,25 @@ from lugest_infra.pdf.dossier_reports import render_material_history as _render_
 from lugest_infra.pdf.dossier_reports import render_quality_dossier as _render_dossier_quality
 
 from lugest_core.laser.quote_engine import analyze_dxf_geometry, estimate_laser_quote, estimate_profile_laser_quote, merge_laser_quote_settings
+from lugest_core.intelligence import (
+    ERPCopilot as _ERPCopilot,
+    MODULE_KNOWLEDGE as _ERP_MODULE_KNOWLEDGE,
+    RemoteProductAIClient as _RemoteProductAIClient,
+    build_erp_snapshot as _build_erp_snapshot,
+    contextual_question as _contextual_copilot_question,
+    extract_product_attributes as _extract_product_attributes,
+    normalize_product_description as _normalize_product_description,
+    product_similarity as _product_similarity,
+)
+from lugest_core.materials import (
+    PROFILE_SERIES_META,
+    detect_profile_designation as _detect_profile_designation,
+    profile_entry as _profile_entry,
+    profile_mass_tables as _profile_mass_tables,
+    profile_series as _profile_series,
+    profile_sizes as _profile_sizes,
+)
+from lugest_core.search import search_matches as _smart_search_matches
 from .legacy_runtime import load_legacy_runtime
 from .bridge_mixins import (
     BillingBridgeMixin,
@@ -273,6 +292,7 @@ _PROFILE_STANDARD_KG_M: dict[str, dict[str, float]] = {
         "400": 71.8,
     },
 }
+_PROFILE_STANDARD_KG_M = _profile_mass_tables()
 
 _TUBE_SECTION_OPTIONS: list[dict[str, Any]] = [
     {"key": "quadrado", "label": "Quadrado"},
@@ -281,12 +301,13 @@ _TUBE_SECTION_OPTIONS: list[dict[str, Any]] = [
 ]
 
 _PROFILE_SECTION_OPTIONS: list[dict[str, Any]] = [
-    {"key": "IPN", "label": "IPN (tabela ACAIL)", "catalog": True},
-    {"key": "IPE", "label": "IPE (tabela ACAIL)", "catalog": True},
-    {"key": "HEA", "label": "HEA (tabela ACAIL)", "catalog": True},
-    {"key": "HEB", "label": "HEB (tabela ACAIL)", "catalog": True},
-    {"key": "HEM", "label": "HEM (tabela ACAIL)", "catalog": True},
-    {"key": "UPN", "label": "UPN (tabela ACAIL)", "catalog": True},
+    {
+        "key": series,
+        "label": str(PROFILE_SERIES_META.get(series, {}).get("label", series) or series),
+        "catalog": True,
+    }
+    for series in _profile_series()
+] + [
     {"key": "L", "label": "L (kg/m manual)", "catalog": False},
     {"key": "T", "label": "T (kg/m manual)", "catalog": False},
     {"key": "U", "label": "U genérico (kg/m manual)", "catalog": False},
@@ -329,11 +350,7 @@ def _profile_size_lookup_key(value: Any) -> str:
 
 
 def _detect_profile_catalog_from_text(value: Any) -> tuple[str, str]:
-    raw = str(value or "").upper()
-    match = re.search(r"\b(IPN|IPE|HEA|HEB|HEM|UPN)\s*[- ]?(\d{2,4})\b", raw)
-    if not match:
-        return "", ""
-    return str(match.group(1) or "").strip(), str(match.group(2) or "").strip()
+    return _detect_profile_designation(value)
 
 
 class _ValueHolder:
@@ -1439,13 +1456,16 @@ class LegacyBackend(
             not force
             and isinstance(self._trial_status_cache, dict)
             and self._trial_status_loaded_at > 0
-            and (time.time() - self._trial_status_loaded_at) <= self._trial_status_cache_ttl_sec
+            and (time.monotonic() - self._trial_status_loaded_at) <= self._trial_status_cache_ttl_sec
         ):
             return dict(self._trial_status_cache)
-        payload = dict(self.desktop_main.get_trial_status() or {})
+        try:
+            payload = dict(self.desktop_main.get_trial_status(force_time=bool(force)) or {})
+        except TypeError:
+            payload = dict(self.desktop_main.get_trial_status() or {})
         payload["management_allowed"] = self.is_owner_session()
         self._trial_status_cache = dict(payload)
-        self._trial_status_loaded_at = time.time()
+        self._trial_status_loaded_at = time.monotonic()
         return payload
 
     def is_owner_session(self) -> bool:
@@ -1459,7 +1479,7 @@ class LegacyBackend(
     def activate_trial_license(self, company_name: str = "", duration_days: int = 60, notes: str = "") -> dict[str, Any]:
         self._ensure_trial_management_access()
         actor = str((self.user or {}).get("username", "") or "").strip()
-        return dict(
+        payload = dict(
             self.desktop_main.activate_trial_license(
                 company_name=company_name,
                 duration_days=duration_days,
@@ -1469,16 +1489,28 @@ class LegacyBackend(
             )
             or {}
         )
+        payload["management_allowed"] = True
+        self._trial_status_cache = dict(payload)
+        self._trial_status_loaded_at = time.monotonic()
+        return payload
 
     def extend_trial_license(self, extra_days: int = 30) -> dict[str, Any]:
         self._ensure_trial_management_access()
         actor = str((self.user or {}).get("username", "") or "").strip()
-        return dict(self.desktop_main.extend_trial_license(extra_days=extra_days, updated_by=actor) or {})
+        payload = dict(self.desktop_main.extend_trial_license(extra_days=extra_days, updated_by=actor) or {})
+        payload["management_allowed"] = True
+        self._trial_status_cache = dict(payload)
+        self._trial_status_loaded_at = time.monotonic()
+        return payload
 
     def disable_trial_license(self) -> dict[str, Any]:
         self._ensure_trial_management_access()
         actor = str((self.user or {}).get("username", "") or "").strip()
-        return dict(self.desktop_main.disable_trial_license(updated_by=actor) or {})
+        payload = dict(self.desktop_main.disable_trial_license(updated_by=actor) or {})
+        payload["management_allowed"] = True
+        self._trial_status_cache = dict(payload)
+        self._trial_status_loaded_at = time.monotonic()
+        return payload
 
     def _parse_float(self, value: Any, default: float = 0.0) -> float:
         return float(self.desktop_main.parse_float(value, default))
@@ -2421,6 +2453,411 @@ class LegacyBackend(
             "locais": locais,
         }
 
+    def _local_material_command_candidate(self, command: str) -> dict[str, Any]:
+        raw = str(command or "").strip()
+        text = self._product_catalog_text(raw)
+        candidate: dict[str, Any] = {
+            "formato": "",
+            "material": "",
+            "material_familia": "",
+            "secao_tipo": "",
+            "espessura": "",
+            "comprimento": "",
+            "largura": "",
+            "altura": "",
+            "diametro": "",
+            "metros": "",
+            "kg_m": "",
+            "quantidade": "",
+            "reservado": "0",
+            "local": "",
+            "lote_fornecedor": "",
+            "p_compra": "",
+        }
+        format_rules = (
+            ("Chapa", r"\bchapas?\b"),
+            ("Tubo", r"\btubos?\b"),
+            ("Perfil", r"\b(?:perfil|perfis)\b"),
+            ("Cantoneira", r"\bcantoneiras?\b"),
+            ("Barra", r"\bbarras?\b"),
+            ("Varão nervurado", r"\bvar(?:a|ã)o\s+nervurado\b"),
+        )
+        for label, pattern in format_rules:
+            if re.search(pattern, text):
+                candidate["formato"] = label
+                break
+        profile_series, profile_size = _detect_profile_catalog_from_text(text)
+        if profile_series:
+            candidate["formato"] = "Perfil"
+            candidate["secao_tipo"] = profile_series
+            candidate["altura"] = profile_size
+
+        dimension_match = re.search(
+            r"\b(?:formato|dimens(?:ao|oes))?\s*:?\s*(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)\s*(?:mm)?\b",
+            text,
+        )
+        text_without_dimensions = text
+        if dimension_match:
+            candidate["comprimento"] = dimension_match.group(1).replace(",", ".")
+            candidate["largura"] = dimension_match.group(2).replace(",", ".")
+            text_without_dimensions = text[: dimension_match.start()] + " " + text[dimension_match.end() :]
+
+        thickness_match = re.search(
+            r"\b(?:espessura\s*(?:de)?\s*)?(\d+(?:[.,]\d+)?)\s*mm\b",
+            text_without_dimensions,
+        )
+        if thickness_match and not profile_series:
+            candidate["espessura"] = thickness_match.group(1).replace(",", ".")
+
+        quantity_match = re.search(
+            r"\b(\d+(?:[.,]\d+)?)\s*(?:unidades?|unid\.?|uds?|chapas?|barras?|vigas?|perfil|perfis)\b",
+            text,
+        )
+        if quantity_match:
+            candidate["quantidade"] = quantity_match.group(1).replace(",", ".")
+        length_match = re.search(
+            r"\b(?:com\s+)?(\d+(?:[.,]\d+)?)\s*(?:m|metros?)\s*(?:de\s+comprimento)?\b",
+            text,
+        )
+        if length_match and candidate["formato"] in {"Tubo", "Perfil", "Cantoneira", "Barra", "Varão nervurado"}:
+            candidate["metros"] = length_match.group(1).replace(",", ".")
+
+        lot_match = re.search(
+            r"\blote\s*(?:externo|fornecedor|do\s+fornecedor)?\s*[:#=-]?\s*([a-z0-9][a-z0-9._/-]*)",
+            text,
+        )
+        if lot_match:
+            candidate["lote_fornecedor"] = lot_match.group(1).upper()
+
+        location_match = re.search(
+            r"\b(?:local|localizacao)\s*[:#=-]?\s*([a-z0-9][a-z0-9._/-]*)",
+            text,
+        )
+        if location_match:
+            candidate["local"] = location_match.group(1).upper()
+
+        presets = self.material_presets()
+        known_materials = sorted(
+            [str(value or "").strip() for value in presets.get("materiais", []) if str(value or "").strip()],
+            key=len,
+            reverse=True,
+        )
+        normalized_material_lookup = {
+            self._product_catalog_text(value): value
+            for value in known_materials
+        }
+        for normalized, original in normalized_material_lookup.items():
+            if normalized and re.search(rf"\b{re.escape(normalized)}\b", text):
+                candidate["material"] = original
+                break
+        if not candidate["material"]:
+            grade_match = re.search(
+                r"\b(s\d{3,4}j[a-z0-9]*|dc0?1|dx5[1-9]d|aisi\s*\d{3,4}[a-z]?|inox\s*\d{3,4}[a-z]?|aluminio\s*\d{4})\b",
+                text,
+            )
+            if grade_match:
+                candidate["material"] = grade_match.group(1).upper().replace(" ", "")
+        if not candidate["material"] and candidate["formato"]:
+            material_match = re.search(
+                rf"\b{re.escape(candidate['formato'].casefold().replace('ã', 'a'))}s?\s+(.+?)\s+\d+(?:[.,]\d+)?\s*mm\b",
+                text,
+            )
+            if material_match:
+                candidate["material"] = material_match.group(1).strip().upper()
+        if candidate["material"]:
+            candidate["material_familia"] = str(
+                self.material_family_profile(candidate["material"]).get("key", "") or ""
+            ).strip()
+        return candidate
+
+    def material_ai_command(self, command: str) -> dict[str, Any]:
+        """Prepare, but never persist, a material record from natural language."""
+
+        clean_command = str(command or "").strip()
+        if not clean_command:
+            raise ValueError("Escreve primeiro o stock de matéria-prima que pretendes criar.")
+        local_candidate = self._local_material_command_candidate(clean_command)
+        cfg = self._load_qt_config()
+        try:
+            timeout_seconds = float(
+                os.getenv("LUGEST_AI_TIMEOUT_SECONDS")
+                or cfg.get("product_ai_timeout_seconds")
+                or 45
+            )
+        except (TypeError, ValueError):
+            timeout_seconds = 45.0
+        client = _RemoteProductAIClient(
+            str(os.getenv("LUGEST_AI_ENDPOINT") or cfg.get("product_ai_endpoint") or "").strip(),
+            str(os.getenv("LUGEST_AI_ACCESS_TOKEN") or cfg.get("product_ai_access_token") or "").strip(),
+            ollama_url=str(
+                os.getenv("LUGEST_OLLAMA_URL")
+                or cfg.get("product_ai_ollama_url")
+                or "http://127.0.0.1:11434"
+            ).strip(),
+            ollama_model=str(
+                os.getenv("LUGEST_OLLAMA_MODEL")
+                or cfg.get("product_ai_ollama_model")
+                or "qwen3:4b"
+            ).strip(),
+            timeout_seconds=timeout_seconds,
+        )
+        remote_result: dict[str, Any] = {}
+        remote_error = ""
+        try:
+            remote_result = dict(
+                client.material_stock_command(
+                    clean_command,
+                    presets={
+                        **self.material_presets(),
+                        "familias": self.material_family_options(),
+                    },
+                    locale="pt-PT",
+                )
+                or {}
+            )
+        except Exception as exc:
+            remote_error = str(exc)
+        candidate = dict(remote_result.get("candidate", {}) or {})
+        for key, value in local_candidate.items():
+            if str(value or "").strip():
+                candidate[key] = value
+        detected_series, detected_size = _detect_profile_catalog_from_text(
+            " ".join(
+                str(value or "")
+                for value in (
+                    clean_command,
+                    candidate.get("secao_tipo"),
+                    candidate.get("material"),
+                    candidate.get("altura"),
+                )
+            )
+        )
+        if detected_series:
+            entry = _profile_entry(detected_series, detected_size)
+            candidate["formato"] = "Perfil"
+            candidate["secao_tipo"] = detected_series
+            candidate["altura"] = detected_size
+            candidate["espessura"] = ""
+            candidate["kg_m"] = self._fmt(entry.get("kg_m", 0))
+            metros = self._parse_float(candidate.get("metros", 0), 0)
+            if metros > 0:
+                candidate["peso_unid"] = self._fmt(float(entry.get("kg_m", 0) or 0) * metros)
+            candidate["resumo"] = (
+                f"{entry.get('designation', detected_series)} · "
+                f"{entry.get('kg_m', 0):g} kg/m · {entry.get('standard', 'EN 10365')}"
+            )
+        candidate.setdefault("reservado", "0")
+        required = ["formato", "material", "quantidade"]
+        if str(candidate.get("formato", "") or "").strip().title() == "Chapa":
+            required.extend(["espessura", "comprimento", "largura"])
+        elif str(candidate.get("formato", "") or "").strip().title() == "Perfil":
+            required.extend(["secao_tipo", "altura", "metros"])
+        missing = [
+            key
+            for key in required
+            if not str(candidate.get(key, "") or "").strip()
+        ]
+        candidate["missing_fields"] = missing
+        candidate["_ai_summary"] = str(candidate.get("resumo", "") or "").strip()
+        candidate["_ai_confidence"] = float(candidate.get("confidence", 0) or 0)
+        candidate["_ai_engine"] = str(remote_result.get("engine", "") or "regras-locais")
+        candidate["_ai_warning"] = remote_error
+        if missing and remote_error:
+            raise ValueError(
+                remote_error
+                + "\n\nNão foi possível completar automaticamente: "
+                + ", ".join(missing)
+                + "."
+            )
+        return candidate
+
+    def _erp_copilot_client(self) -> _ERPCopilot:
+        cfg = self._load_qt_config()
+        try:
+            timeout_seconds = float(
+                os.getenv("LUGEST_AI_TIMEOUT_SECONDS")
+                or cfg.get("product_ai_timeout_seconds")
+                or 45
+            )
+        except (TypeError, ValueError):
+            timeout_seconds = 45.0
+        return _ERPCopilot(
+            ollama_url=str(
+                os.getenv("LUGEST_OLLAMA_URL")
+                or cfg.get("product_ai_ollama_url")
+                or "http://127.0.0.1:11434"
+            ).strip(),
+            ollama_model=str(
+                os.getenv("LUGEST_OLLAMA_MODEL")
+                or cfg.get("product_ai_ollama_model")
+                or "qwen3:4b"
+            ).strip(),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def erp_copilot_status(self) -> dict[str, Any]:
+        """Report optional AI availability without making it a runtime dependency."""
+
+        cfg = self._load_qt_config()
+        enabled_text = str(
+            os.getenv("LUGEST_AI_ENABLED")
+            or cfg.get("erp_copilot_enabled", "1")
+            or "1"
+        ).strip().casefold()
+        enabled = enabled_text not in {"0", "false", "no", "off", "nao", "não"}
+        if not enabled:
+            return {
+                "enabled": False,
+                "available": False,
+                "service_online": False,
+                "message": "Copiloto desativado na configuração deste posto.",
+            }
+        return {"enabled": True, **self._erp_copilot_client().status()}
+
+    def erp_copilot_snapshot(self) -> dict[str, Any]:
+        user = dict(self.user or {})
+        permissions = dict(user.get("menu_permissions", {}) or {})
+        data = self.ensure_data()
+        snapshot = _build_erp_snapshot(data, permissions=permissions)
+        snapshot["modulos_lugest"] = {
+            key: copy.deepcopy(value)
+            for key, value in _ERP_MODULE_KNOWLEDGE.items()
+            if not permissions or bool(permissions.get(key, True))
+        }
+        if not permissions or bool(permissions.get("stock_dashboard", True)):
+            try:
+                dashboard = dict(self.finance_dashboard("Todos") or {})
+                summary = dict(dashboard.get("executive_summary", {}) or {})
+                allowed_finance_keys = (
+                    "stock_total",
+                    "stock_disponivel",
+                    "stock_reservado",
+                    "stock_materias",
+                    "stock_produtos",
+                    "compras_total",
+                    "compras_materias",
+                    "compras_produtos",
+                    "compromissos_total",
+                    "ne_aprovadas",
+                    "vendido_total",
+                    "faturado_total",
+                    "recebido_total",
+                    "saldo_clientes",
+                    "referencias_sem_preco",
+                    "periodo",
+                )
+                snapshot["financeiro"] = {
+                    key: summary.get(key)
+                    for key in allowed_finance_keys
+                    if key in summary
+                }
+            except Exception:
+                # The Copilot remains usable if an optional dashboard calculation fails.
+                pass
+        snapshot["cadastros"] = {
+            "clientes": len(list(data.get("clientes", []) or []))
+            if not permissions or bool(permissions.get("customers", True))
+            else None,
+            "fornecedores": len(list(data.get("fornecedores", []) or []))
+            if not permissions or bool(permissions.get("suppliers", True))
+            else None,
+        }
+        return snapshot
+
+    def erp_copilot_ask(
+        self,
+        question: str,
+        current_page: str = "",
+        conversation: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Answer from a privacy-bounded snapshot; this method never mutates ERP data."""
+
+        cfg = self._load_qt_config()
+        enabled_text = str(
+            os.getenv("LUGEST_AI_ENABLED")
+            or cfg.get("erp_copilot_enabled", "1")
+            or "1"
+        ).strip().casefold()
+        enabled = enabled_text not in {"0", "false", "no", "off", "nao", "não"}
+        snapshot = self.erp_copilot_snapshot()
+        if enabled:
+            return self._erp_copilot_client().ask(
+                question,
+                snapshot,
+                current_page=current_page,
+                conversation=conversation,
+            )
+        from lugest_core.intelligence import deterministic_answer
+
+        result = deterministic_answer(
+            _contextual_copilot_question(question, conversation),
+            snapshot,
+            current_page=current_page,
+        )
+        result["engine"] = "regras-locais (IA desativada)"
+        return result
+
+    def erp_copilot_prepare_action(self, action: dict[str, Any]) -> dict[str, Any]:
+        """Prepare an agent action without persisting it and enforce menu permissions."""
+
+        payload = dict(action or {})
+        action_type = str(payload.get("type", "") or "").strip()
+        target = str(payload.get("target", "") or "").strip()
+        allowed_pages = set(self.allowed_pages_for_user())
+        if target and target not in allowed_pages:
+            raise PermissionError("O utilizador atual não tem permissão para este módulo.")
+        if action_type == "create_material_stock":
+            command = str(payload.get("command", "") or "").strip()
+            return {
+                "type": action_type,
+                "target": "materials",
+                "candidate": self.material_ai_command(command),
+            }
+        if action_type == "open_workflow":
+            return {
+                "type": action_type,
+                "target": target,
+            }
+        raise ValueError("Esta ação ainda não possui um executor seguro no Copiloto.")
+
+    def erp_copilot_resolve_action_followup(
+        self,
+        question: str,
+        action: dict[str, Any],
+        conversation: list[dict[str, Any]] | None = None,
+    ) -> dict[str, str]:
+        """Let the local model understand natural confirmation/correction language."""
+
+        return self._erp_copilot_client().resolve_action_followup(
+            question,
+            dict(action or {}),
+            conversation=list(conversation or []),
+        )
+
+    def erp_copilot_execute_action(
+        self,
+        action: dict[str, Any],
+        confirmed_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Execute a previously reviewed action. UI confirmation is mandatory."""
+
+        payload = dict(action or {})
+        action_type = str(payload.get("type", "") or "").strip()
+        target = str(payload.get("target", "") or "").strip()
+        allowed_pages = set(self.allowed_pages_for_user())
+        if target and target not in allowed_pages:
+            raise PermissionError("O utilizador atual não tem permissão para este módulo.")
+        if action_type == "create_material_stock":
+            record = dict(self.add_material(dict(confirmed_payload or {})) or {})
+            return {
+                "ok": True,
+                "type": action_type,
+                "target": "materials",
+                "record_id": str(record.get("id", "") or ""),
+                "record": record,
+            }
+        raise ValueError("Esta ação não pode ser executada automaticamente.")
+
     def material_section_options(self, formato: Any = "") -> list[dict[str, Any]]:
         formato_txt = str(formato or "").strip().title()
         if formato_txt == "Tubo":
@@ -2437,8 +2874,22 @@ class LegacyBackend(
         lookup_key = _profile_catalog_lookup_key(secao_tipo)
         if not lookup_key:
             return []
-        options = [str(value or "").strip() for value in _PROFILE_STANDARD_KG_M.get(lookup_key, {}).keys() if str(value or "").strip()]
-        return sorted(options, key=lambda value: int(_profile_size_lookup_key(value) or "0"))
+        return _profile_sizes(lookup_key)
+
+    def material_profile_entry(
+        self,
+        secao_tipo: Any = "",
+        tamanho: Any = "",
+        metros: Any = 0,
+    ) -> dict[str, Any]:
+        key = self._material_section_type("Perfil", {"secao_tipo": secao_tipo})
+        row = dict(_profile_entry(key, tamanho) or {})
+        if not row:
+            return {}
+        length_m = self._parse_float(metros, 0)
+        row["metros"] = length_m
+        row["peso_unid"] = round(float(row.get("kg_m", 0) or 0) * length_m, 4)
+        return row
 
     def _material_section_type(self, formato: str, row: dict[str, Any] | None = None) -> str:
         payload = dict(row or {})
@@ -2683,7 +3134,7 @@ class LegacyBackend(
             if kg_m > 0:
                 calc_hint = "Perfil: kg/m da secção x comprimento da barra."
                 if uses_catalog:
-                    calc_hint = "Perfil: tabela ACAIL ajustada pela densidade da família selecionada x comprimento da barra."
+                    calc_hint = "Perfil: catálogo técnico normalizado ajustado pela densidade da família selecionada x comprimento da barra."
         elif formato == "Cantoneira":
             if comprimento <= 0 and largura > 0:
                 comprimento = largura
@@ -2805,7 +3256,6 @@ class LegacyBackend(
 
     def material_rows(self, filter_text: str = "", in_stock_only: bool = False) -> list[dict[str, Any]]:
         data = self.ensure_data()
-        query_terms = _search_terms(filter_text)
         rows: list[dict[str, Any]] = []
         assigned_internal_lots = False
         for index, material in enumerate(data.get("materiais", [])):
@@ -2861,8 +3311,23 @@ class LegacyBackend(
                 "id": str(material.get("id", "")).strip(),
                 "scan_code": str(material.get("scan_code", "") or self.inventory_scan_code("MAT", material.get("id"))).strip(),
             }
+            # Keep the free search focused on identifying the stock item. Stock
+            # quantities and prices are intentionally excluded: "chapa s235jr
+            # 6mm" must target thickness 6, not an 8 mm sheet with quantity 6.
             search_values = [
-                *values.values(),
+                values.get("lote", ""),
+                values.get("lote_fornecedor", ""),
+                values.get("material", ""),
+                values.get("comprimento", ""),
+                values.get("largura", ""),
+                values.get("espessura", ""),
+                values.get("formato", ""),
+                values.get("tipo", ""),
+                values.get("local", ""),
+                values.get("id", ""),
+                values.get("scan_code", ""),
+                f"espessura {values.get('espessura', '')} mm",
+                f"dimensoes {values.get('comprimento', '')} x {values.get('largura', '')} mm",
                 preview.get("dimension_label", ""),
                 preview.get("secao_label", ""),
                 preview.get("secao_tipo", ""),
@@ -2874,8 +3339,7 @@ class LegacyBackend(
                 material.get("referencia", ""),
                 material.get("descricao", ""),
             ]
-            haystack = _search_normalize(" ".join(str(value or "") for value in search_values))
-            if query_terms and not all(term in haystack for term in query_terms):
+            if not _smart_search_matches(search_values, filter_text):
                 continue
             severity = "ok"
             if quality_blocked:
@@ -4030,7 +4494,7 @@ class LegacyBackend(
         return slug or fallback
 
     def product_taxonomy(self) -> dict[str, Any]:
-        return {
+        taxonomy = {
             "categories": [
                 {
                     "id": "inox",
@@ -4094,7 +4558,11 @@ class LegacyBackend(
                     "subcategories": [
                         {"id": "eletronica-sensores", "label": "Sensores", "types": ["Indutivo", "Capacitivo", "Optico", "Temperatura"]},
                         {"id": "eletronica-automacao", "label": "Automacao", "types": ["PLC", "HMI", "Reles", "Fontes"]},
-                        {"id": "eletronica-cablagem", "label": "Cablagem", "types": ["Cabo", "Ficha", "Terminal", "Calha"]},
+                        {
+                            "id": "eletronica-cablagem",
+                            "label": "Cablagem",
+                            "types": ["Cabo", "Ficha", "Terminal", "Calha", "Bucim / Prensa-cabos"],
+                        },
                     ],
                 },
                 {
@@ -4128,10 +4596,56 @@ class LegacyBackend(
                     "badge": "Montagem",
                     "tone": "slate",
                     "subcategories": [
-                        {"id": "fixacao-parafusos", "label": "Parafusos", "types": ["Allen", "Sextavado", "Escareado", "Auto perfurante"]},
-                        {"id": "fixacao-porcas", "label": "Porcas", "types": ["Sextavada", "Travante", "Rebite", "Gaiola"]},
-                        {"id": "fixacao-anilhas", "label": "Anilhas", "types": ["Lisa", "Pressao", "Dentada"]},
-                        {"id": "fixacao-ancoragem", "label": "Ancoragem", "types": ["Quimica", "Mecanica", "Bucha"]},
+                        {
+                            "id": "fixacao-parafusos",
+                            "label": "Parafusos",
+                            "types": [
+                                "Fenda",
+                                "Phillips / Cruz (PH)",
+                                "Pozidriv (PZ)",
+                                "Torx (TX)",
+                                "Allen / Umbrako",
+                                "Sextavado exterior",
+                                "Quadrado",
+                                "Seguranca",
+                                "Sem acionamento",
+                            ],
+                        },
+                        {
+                            "id": "fixacao-porcas",
+                            "label": "Porcas",
+                            "types": ["Sextavada", "Travante / Nyloc", "Flangeada", "Castelo", "Gaiola", "Cega"],
+                        },
+                        {
+                            "id": "fixacao-anilhas",
+                            "label": "Anilhas",
+                            "types": ["Lisa", "Pressao", "Dentada", "Belleville", "Vedacao"],
+                        },
+                        {
+                            "id": "fixacao-rebites",
+                            "label": "Rebites",
+                            "types": ["Cego / POP", "Roscado", "Estrutural", "Maciço"],
+                        },
+                        {
+                            "id": "fixacao-ancoragem",
+                            "label": "Buchas e ancoragens",
+                            "types": ["Bucha plastica", "Bucha metalica", "Quimica", "Mecanica", "Chumbadouro"],
+                        },
+                        {
+                            "id": "fixacao-pinos",
+                            "label": "Pinos e cavilhas",
+                            "types": ["Cilindrico", "Conico", "Elastico", "Cavilha", "Contrapino"],
+                        },
+                        {
+                            "id": "fixacao-inserts",
+                            "label": "Inserts roscados",
+                            "types": ["Helicoil", "Rebite roscado", "Madeira", "Plastico"],
+                        },
+                        {
+                            "id": "fixacao-abracadeiras",
+                            "label": "Abracadeiras",
+                            "types": ["Metalica", "Nylon", "Mangueira", "Tubo"],
+                        },
                     ],
                 },
                 {
@@ -4144,6 +4658,35 @@ class LegacyBackend(
                         {"id": "consumiveis-abrasivos", "label": "Abrasivos", "types": ["Disco corte", "Disco flap", "Lixa", "Escova"]},
                         {"id": "consumiveis-quimicos", "label": "Quimicos", "types": ["Desengordurante", "Spray zincado", "Lubrificante", "Cola"]},
                         {"id": "consumiveis-embalagem", "label": "Embalagem", "types": ["Filme", "Fita", "Cantoneira", "Caixa"]},
+                    ],
+                },
+                {
+                    "id": "tintas-quimicos",
+                    "label": "Tintas / Quimicos",
+                    "icon": "CHM",
+                    "badge": "Acabamento",
+                    "tone": "orange",
+                    "subcategories": [
+                        {
+                            "id": "tintas-revestimentos",
+                            "label": "Tintas e revestimentos",
+                            "types": ["Esmalte", "Primario", "Tinta tecnica", "Verniz", "Spray"],
+                        },
+                        {
+                            "id": "tintas-solventes",
+                            "label": "Solventes e diluentes",
+                            "types": ["Diluente", "Desengordurante", "Acetona", "Limpeza"],
+                        },
+                        {
+                            "id": "tintas-adesivos",
+                            "label": "Adesivos e selantes",
+                            "types": ["Cola", "Silicone", "Vedante", "Trava roscas"],
+                        },
+                        {
+                            "id": "tintas-tratamento",
+                            "label": "Tratamento de superficie",
+                            "types": ["Zincado", "Decapante", "Passivante", "Anticorrosivo"],
+                        },
                     ],
                 },
                 {
@@ -4217,6 +4760,30 @@ class LegacyBackend(
                     ],
                 },
                 {
+                    "id": "movimentacao",
+                    "label": "Movimentacao",
+                    "icon": "MOV",
+                    "badge": "Mobilidade",
+                    "tone": "blue",
+                    "subcategories": [
+                        {
+                            "id": "movimentacao-rodizios",
+                            "label": "Rodizios industriais",
+                            "types": [
+                                "Giratorio",
+                                "Giratorio com travao total",
+                                "Fixo",
+                                "Roda avulsa",
+                            ],
+                        },
+                        {
+                            "id": "movimentacao-componentes",
+                            "label": "Componentes de movimentacao",
+                            "types": ["Suporte", "Placa", "Eixo", "Travão"],
+                        },
+                    ],
+                },
+                {
                     "id": "motores-redutores",
                     "label": "Motores & Redutores",
                     "icon": "MOT",
@@ -4265,6 +4832,74 @@ class LegacyBackend(
                     ],
                 },
                 {
+                    "id": "escritorio-papelaria",
+                    "label": "Escritorio & Papelaria",
+                    "icon": "OFF",
+                    "badge": "Administrativo",
+                    "tone": "blue",
+                    "subcategories": [
+                        {
+                            "id": "escritorio-cadernos",
+                            "label": "Cadernos e blocos",
+                            "types": ["Caderno", "Bloco de notas", "Agenda", "Livro de registo"],
+                        },
+                        {
+                            "id": "escritorio-papel",
+                            "label": "Papel e etiquetas",
+                            "types": ["Papel A4", "Papel A3", "Etiquetas", "Papel tecnico"],
+                        },
+                        {
+                            "id": "escritorio-escrita",
+                            "label": "Escrita e marcacao",
+                            "types": ["Caneta", "Marcador", "Lapis", "Lapiseira", "Corretor"],
+                        },
+                        {
+                            "id": "escritorio-arquivo",
+                            "label": "Arquivo e organizacao",
+                            "types": ["Dossier", "Pasta", "Separador", "Caixa de arquivo"],
+                        },
+                        {
+                            "id": "escritorio-impressao",
+                            "label": "Consumiveis de impressao",
+                            "types": ["Toner", "Tinteiro", "Tambor", "Ribbon"],
+                        },
+                    ],
+                },
+                {
+                    "id": "informatica",
+                    "label": "Informatica",
+                    "icon": "IT",
+                    "badge": "Tecnologia",
+                    "tone": "indigo",
+                    "subcategories": [
+                        {
+                            "id": "informatica-perifericos",
+                            "label": "Perifericos de computador",
+                            "types": ["Rato", "Teclado", "Monitor", "Webcam", "Headset", "Colunas"],
+                        },
+                        {
+                            "id": "informatica-computadores",
+                            "label": "Computadores",
+                            "types": ["Portatil", "Desktop", "Workstation", "Mini PC"],
+                        },
+                        {
+                            "id": "informatica-tablets",
+                            "label": "Tablets e dispositivos moveis",
+                            "types": ["iPad", "Tablet Android", "Tablet Windows", "E-reader"],
+                        },
+                        {
+                            "id": "informatica-redes",
+                            "label": "Redes e conectividade",
+                            "types": ["Switch", "Router", "Access point", "Adaptador", "Cabo de rede"],
+                        },
+                        {
+                            "id": "informatica-armazenamento",
+                            "label": "Armazenamento",
+                            "types": ["SSD", "Disco rigido", "Pen USB", "Cartao de memoria"],
+                        },
+                    ],
+                },
+                {
                     "id": "outros",
                     "label": "Outros",
                     "icon": "ETC",
@@ -4276,6 +4911,59 @@ class LegacyBackend(
                 },
             ]
         }
+        try:
+            learned_rules = list(dict(self._load_qt_config() or {}).get("product_catalog_learning", []) or [])
+        except Exception:
+            learned_rules = []
+        categories = list(taxonomy.get("categories", []) or [])
+        for learned in learned_rules:
+            if not isinstance(learned, dict):
+                continue
+            category_label = str(learned.get("categoria", "") or "").strip()
+            subcategory_label = str(learned.get("subcat", "") or "").strip()
+            type_label = str(learned.get("tipo", "") or "").strip()
+            if not category_label:
+                continue
+            category = next(
+                (row for row in categories if str(row.get("label", "") or "").casefold() == category_label.casefold()),
+                None,
+            )
+            if category is None:
+                category = {
+                    "id": self._product_catalog_slug(category_label, "categoria"),
+                    "label": category_label,
+                    "icon": "AI",
+                    "badge": "Aprendido",
+                    "tone": "teal",
+                    "subcategories": [],
+                }
+                categories.append(category)
+            if not subcategory_label:
+                continue
+            subcategories = category.setdefault("subcategories", [])
+            subcategory = next(
+                (
+                    row
+                    for row in subcategories
+                    if str(row.get("label", "") or "").casefold() == subcategory_label.casefold()
+                ),
+                None,
+            )
+            if subcategory is None:
+                subcategory = {
+                    "id": self._product_catalog_slug(
+                        f"{category.get('id', '')}-{subcategory_label}",
+                        "subcategoria",
+                    ),
+                    "label": subcategory_label,
+                    "types": [],
+                }
+                subcategories.append(subcategory)
+            types = subcategory.setdefault("types", [])
+            if type_label and not any(str(value or "").casefold() == type_label.casefold() for value in types):
+                types.append(type_label)
+        taxonomy["categories"] = categories
+        return taxonomy
 
     def _product_taxonomy_nodes(self) -> tuple[dict[str, Any], dict[tuple[str, str], dict[str, Any]], dict[tuple[str, str, str], dict[str, Any]]]:
         category_map: dict[str, Any] = {}
@@ -4332,6 +5020,850 @@ class LegacyBackend(
             },
         }
 
+    def _product_catalog_text(self, value: Any) -> str:
+        text = unicodedata.normalize("NFKD", str(value or ""))
+        text = "".join(char for char in text if not unicodedata.combining(char))
+        text = text.casefold()
+        text = re.sub(r"(?<=\d)\s*[x×]\s*(?=\d)", "x", text)
+        text = re.sub(r"[^a-z0-9+./-]+", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _product_learning_keyword(self, description: str) -> str:
+        text = self._product_catalog_text(description)
+        ignored = {
+            "de", "do", "da", "dos", "das", "com", "sem", "para", "e", "em",
+            "inox", "aco", "aluminio", "ferro", "zincado", "galvanizado", "preto",
+            "branco", "grande", "pequeno", "industrial", "tecnico", "tecnica",
+        }
+        for token in re.findall(r"[a-z][a-z0-9+./-]{2,}", text):
+            if token in ignored or re.fullmatch(r"m?\d+(?:[x./-]\d+)*", token):
+                continue
+            return token[:-1] if token.endswith("s") and len(token) > 4 else token
+        return ""
+
+    def _product_learned_catalog_suggestion(self, description: str) -> dict[str, Any]:
+        text = self._product_catalog_text(description)
+        try:
+            rules = list(dict(self._load_qt_config() or {}).get("product_catalog_learning", []) or [])
+        except Exception:
+            rules = []
+        matches: list[dict[str, Any]] = []
+        for row in rules:
+            if not isinstance(row, dict):
+                continue
+            keyword = self._product_catalog_text(row.get("keyword", ""))
+            if keyword and re.search(rf"\b{re.escape(keyword)}\b", text):
+                matches.append(dict(row))
+        if not matches:
+            return {}
+        matches.sort(key=lambda row: len(str(row.get("keyword", ""))), reverse=True)
+        learned = matches[0]
+        return {
+            "categoria": str(learned.get("categoria", "") or "").strip(),
+            "subcat": str(learned.get("subcat", "") or "").strip(),
+            "tipo": str(learned.get("tipo", "") or "").strip(),
+            "dimensoes": "",
+            "confidence": 0.96,
+            "reason": f"Classificação aprendida para “{learned.get('keyword', '')}”",
+            "learned": True,
+            "needs_learning": False,
+        }
+
+    def product_catalog_teach(
+        self,
+        description: str,
+        category: str,
+        subcategory: str,
+        product_type: str = "",
+    ) -> dict[str, Any]:
+        keyword = self._product_learning_keyword(description)
+        category = str(category or "").strip()
+        subcategory = str(subcategory or "").strip()
+        product_type = str(product_type or "").strip()
+        if not keyword:
+            raise ValueError("Não foi possível identificar o termo principal da descrição.")
+        if not category or not subcategory:
+            raise ValueError("Seleciona pelo menos a categoria e a subcategoria antes de ensinar.")
+        taxonomy_before = self.product_taxonomy()
+        existing_category = next(
+            (
+                row
+                for row in list(taxonomy_before.get("categories", []) or [])
+                if str(row.get("label", "") or "").casefold() == category.casefold()
+            ),
+            None,
+        )
+        existing_subcategory = next(
+            (
+                row
+                for row in list((existing_category or {}).get("subcategories", []) or [])
+                if str(row.get("label", "") or "").casefold() == subcategory.casefold()
+            ),
+            None,
+        )
+        existing_types = {
+            str(item.get("label", "") if isinstance(item, dict) else item or "").strip().casefold()
+            for item in list((existing_subcategory or {}).get("types", []) or [])
+        }
+        cfg = self._load_qt_config()
+        rules = [
+            dict(row)
+            for row in list(cfg.get("product_catalog_learning", []) or [])
+            if isinstance(row, dict)
+        ]
+        learned = {
+            "keyword": keyword,
+            "categoria": category,
+            "subcat": subcategory,
+            "tipo": product_type,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        replaced = False
+        for index, row in enumerate(rules):
+            if str(row.get("keyword", "") or "").casefold() == keyword.casefold():
+                rules[index] = learned
+                replaced = True
+                break
+        if not replaced:
+            rules.append(learned)
+        cfg["product_catalog_learning"] = rules
+        self._save_qt_config(cfg)
+        return {
+            **learned,
+            "created_category": existing_category is None,
+            "created_subcategory": existing_subcategory is None,
+            "created_type": bool(product_type) and product_type.casefold() not in existing_types,
+        }
+
+    def product_catalog_suggestion(self, description: str) -> dict[str, Any]:
+        """Infer catalog fields from a product description without external AI.
+
+        Rules are deliberately deterministic and conservative so the same
+        description always produces the same catalog assignment, including
+        when the workstation is offline.
+        """
+
+        text = self._product_catalog_text(description)
+        empty = {
+            "categoria": "",
+            "subcat": "",
+            "tipo": "",
+            "dimensoes": "",
+            "confidence": 0.0,
+            "reason": "",
+        }
+        if not text:
+            return empty
+
+        learned_suggestion = self._product_learned_catalog_suggestion(description)
+
+        def contains(*patterns: str) -> bool:
+            return any(re.search(pattern, text) for pattern in patterns)
+
+        metric_match = re.search(
+            r"\bm\s*(\d+(?:[.,]\d+)?)(?:\s*[x×]\s*(\d+(?:[.,]\d+)?))?\b",
+            text,
+        )
+        commercial_size_match = re.search(
+            r"\b(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)\s*mm\b",
+            text,
+        )
+        dimensions = ""
+        if metric_match:
+            diameter = metric_match.group(1).replace(",", ".")
+            length = str(metric_match.group(2) or "").replace(",", ".")
+            dimensions = f"M{diameter}" + (f"x{length}" if length else "")
+        elif commercial_size_match:
+            first = commercial_size_match.group(1).replace(",", ".")
+            second = commercial_size_match.group(2).replace(",", ".")
+            dimensions = f"{first}x{second} mm"
+
+        if learned_suggestion:
+            learned_suggestion["dimensoes"] = dimensions
+            return learned_suggestion
+
+        def result(category: str, subcategory: str, product_type: str = "", reason: str = "") -> dict[str, Any]:
+            return {
+                "categoria": category,
+                "subcat": subcategory,
+                "tipo": product_type,
+                "dimensoes": dimensions,
+                "confidence": 0.98 if product_type else 0.90,
+                "reason": reason or f"{category} / {subcategory}",
+            }
+
+        # Fixing elements come first: material words such as "inox" describe
+        # the finish/material and must not turn a screw into an Inox stock item.
+        if contains(r"\bparafus", r"\bperno\b", r"\bbolt\b", r"\bscrew\b"):
+            drive = ""
+            if contains(r"\btorx\b", r"\btx\s*\d"):
+                drive = "Torx (TX)"
+            elif contains(r"\bpozidriv\b", r"\bpz\s*\d"):
+                drive = "Pozidriv (PZ)"
+            elif contains(r"\bphillips\b", r"\bphilips\b", r"\bph\s*\d", r"\bcruz\b"):
+                drive = "Phillips / Cruz (PH)"
+            elif contains(r"\ballen\b", r"\bumbrak", r"\bunbrak", r"\bsextavad[oa]\s+interior\b", r"\bhex\s+socket\b"):
+                drive = "Allen / Umbrako"
+            elif contains(r"\bfenda\b", r"\bslotted\b"):
+                drive = "Fenda"
+            elif contains(r"\bsextavad[oa]\b", r"\bhexagonal\b"):
+                drive = "Sextavado exterior"
+            elif contains(r"\bquadrad[oa]\b", r"\brobertson\b"):
+                drive = "Quadrado"
+            return result("Fixacao", "Parafusos", drive, "Descrição identificada como parafuso")
+
+        if contains(r"\bporcas?\b", r"\bnuts?\b"):
+            nut_type = ""
+            if contains(
+                r"\bnyloc\b",
+                r"\btravante\b",
+                r"\bautobloc",
+                r"\bauto\s*bloc",
+                r"\bauto[-\s]*bloqueio\b",
+                r"\bautotravante\b",
+                r"\bfreio\b",
+            ):
+                nut_type = "Travante / Nyloc"
+            elif contains(r"\bflange"):
+                nut_type = "Flangeada"
+            elif contains(r"\bcastelo\b"):
+                nut_type = "Castelo"
+            elif contains(r"\bgaiola\b"):
+                nut_type = "Gaiola"
+            elif contains(r"\bcega\b"):
+                nut_type = "Cega"
+            elif contains(r"\bsextavad"):
+                nut_type = "Sextavada"
+            return result("Fixacao", "Porcas", nut_type, "Descrição identificada como porca")
+
+        if contains(r"\banilh", r"\bwashers?\b"):
+            washer_type = ""
+            if contains(r"\bpressao\b", r"\bgrower\b"):
+                washer_type = "Pressao"
+            elif contains(r"\bdentad"):
+                washer_type = "Dentada"
+            elif contains(r"\bbelleville\b", r"\bprato\b"):
+                washer_type = "Belleville"
+            elif contains(r"\bvedacao\b", r"\bvedante\b"):
+                washer_type = "Vedacao"
+            elif contains(r"\blisa\b", r"\bplana\b"):
+                washer_type = "Lisa"
+            return result("Fixacao", "Anilhas", washer_type, "Descrição identificada como anilha")
+
+        if contains(r"\bhelicoil\b", r"\binsert\s+roscad", r"\brebite\s+roscad"):
+            insert_type = "Helicoil" if "helicoil" in text else "Rebite roscado"
+            return result("Fixacao", "Inserts roscados", insert_type, "Descrição identificada como insert roscado")
+
+        if contains(r"\brebite\b", r"\brivet\b"):
+            rivet_type = ""
+            if contains(r"\bpop\b", r"\bcego\b"):
+                rivet_type = "Cego / POP"
+            elif contains(r"\bestrutural\b"):
+                rivet_type = "Estrutural"
+            elif contains(r"\bmacic"):
+                rivet_type = "Maciço"
+            return result("Fixacao", "Rebites", rivet_type, "Descrição identificada como rebite")
+
+        if contains(r"\bbucha\b", r"\bancor", r"\bchumbadour"):
+            anchor_type = ""
+            if contains(r"\bquimic"):
+                anchor_type = "Quimica"
+            elif contains(r"\bchumbadour"):
+                anchor_type = "Chumbadouro"
+            elif contains(r"\bplastic"):
+                anchor_type = "Bucha plastica"
+            elif contains(r"\bmetal"):
+                anchor_type = "Bucha metalica"
+            return result("Fixacao", "Buchas e ancoragens", anchor_type, "Descrição identificada como ancoragem")
+
+        if contains(r"\bcavilh", r"\bcontrapino\b", r"\bpino\b"):
+            pin_type = ""
+            if contains(r"\bcontrapino\b"):
+                pin_type = "Contrapino"
+            elif contains(r"\bcavilh"):
+                pin_type = "Cavilha"
+            elif contains(r"\belastic"):
+                pin_type = "Elastico"
+            elif contains(r"\bconic"):
+                pin_type = "Conico"
+            elif contains(r"\bcilindr"):
+                pin_type = "Cilindrico"
+            return result("Fixacao", "Pinos e cavilhas", pin_type, "Descrição identificada como pino ou cavilha")
+
+        if contains(r"\babracadeir", r"\babraçadeir"):
+            clamp_type = ""
+            if contains(r"\bnylon\b", r"\bplast"):
+                clamp_type = "Nylon"
+            elif contains(r"\bmangueira\b"):
+                clamp_type = "Mangueira"
+            elif contains(r"\btubo\b"):
+                clamp_type = "Tubo"
+            elif contains(r"\bmetal"):
+                clamp_type = "Metalica"
+            return result("Fixacao", "Abracadeiras", clamp_type, "Descrição identificada como abraçadeira")
+
+        tente_model = re.search(r"\b(347[078])\s*ufr\s*(\d{3})\s*p(\d{2})\b", text)
+        if contains(r"\brodizio", r"\broda\b", r"\broulett", r"\bcaster\b") or tente_model:
+            caster_type = ""
+            if tente_model:
+                caster_type = {
+                    "3470": "Giratorio",
+                    "3477": "Giratorio com travao total",
+                    "3478": "Fixo",
+                }.get(tente_model.group(1), "")
+            if not caster_type and contains(r"\btravao\b", r"\btravão\b", r"\bfreio\b", r"\btotal\s+lock\b"):
+                caster_type = "Giratorio com travao total"
+            elif not caster_type and contains(r"\bfix[oa]\b", r"\bfixed\b"):
+                caster_type = "Fixo"
+            elif not caster_type and contains(r"\bgiratori", r"\bpivotante\b", r"\bswivel\b"):
+                caster_type = "Giratorio"
+            elif not caster_type:
+                caster_type = "Roda avulsa"
+            return result(
+                "Movimentacao",
+                "Rodizios industriais",
+                caster_type,
+                "Descrição identificada como roda ou rodízio industrial",
+            )
+
+        # The remaining catalog is described by ordered family rules. Each
+        # family first identifies the object and then refines its type. This
+        # keeps the classifier extensible and avoids a fragile list of exact
+        # product descriptions.
+        catalog_rules: list[tuple[str, str, tuple[str, ...], tuple[tuple[str, tuple[str, ...]], ...]]] = [
+            ("EPIs", "Luvas", (r"\bluva", r"\bglove"), (
+                ("Soldadura", (r"\bsoldadur", r"\bsoldador")),
+                ("Nitrilo", (r"\bnitril",)),
+                ("Termicas", (r"\btermic",)),
+                ("Corte", (r"\banticorte", r"\bcorte\b")),
+            )),
+            ("EPIs", "Capacetes", (r"\bcapacete", r"\bhelmet"), (
+                ("Com viseira", (r"\bviseira",)),
+                ("Eletrico", (r"\beletric",)),
+                ("Industrial", (r"\bindustrial",)),
+            )),
+            ("EPIs", "Mascaras", (r"\bmascara", r"\brespirador"), (
+                ("FFP3", (r"\bffp\s*3\b",)),
+                ("FFP2", (r"\bffp\s*2\b",)),
+                ("Soldadura", (r"\bsoldadur",)),
+                ("Respiratoria", (r"\brespirat",)),
+            )),
+            ("EPIs", "Botas", (r"\bbota", r"\bsapato\s+seguranca"), (
+                ("S1P", (r"\bs1p\b",)),
+                ("S3", (r"\bs3\b",)),
+                ("Soldador", (r"\bsoldador",)),
+                ("Borracha", (r"\bborracha",)),
+            )),
+            ("EPIs", "Oculos", (r"\boculos", r"\bgoggle"), (
+                ("Panoramicos", (r"\bpanoram",)),
+                ("Escuros", (r"\bescuro", r"\bfumado")),
+                ("Transparentes", (r"\btransparent",)),
+            )),
+            ("Eletronica", "Sensores", (r"\bsensor",), (
+                ("Indutivo", (r"\bindutiv",)),
+                ("Capacitivo", (r"\bcapacit",)),
+                ("Optico", (r"\boptic", r"\bfotoele")),
+                ("Temperatura", (r"\btemperatur", r"\btermopar")),
+            )),
+            ("Eletronica", "Automacao", (r"\bplc\b", r"\bhmi\b", r"\brele\b", r"\bfonte\s+(?:de\s+)?aliment"), (
+                ("PLC", (r"\bplc\b",)),
+                ("HMI", (r"\bhmi\b",)),
+                ("Reles", (r"\brele\b",)),
+                ("Fontes", (r"\bfonte",)),
+            )),
+            (
+                "Eletronica",
+                "Cablagem",
+                (
+                    r"\bbucim",
+                    r"\bprensa[-\s]*cabos?\b",
+                    r"\bcable\s+gland\b",
+                    r"\bcabo\b",
+                    r"\bficha\b",
+                    r"\bterminal\b",
+                    r"\bcalha\s+tecnica",
+                ),
+                (
+                ("Bucim / Prensa-cabos", (r"\bbucim", r"\bprensa[-\s]*cabos?\b", r"\bcable\s+gland\b")),
+                ("Cabo", (r"\bcabo\b",)),
+                ("Ficha", (r"\bficha\b",)),
+                ("Terminal", (r"\bterminal\b",)),
+                ("Calha", (r"\bcalha",)),
+                ),
+            ),
+            ("Pneumatica", "Valvulas", (r"\bvalvula\s+pneumat", r"\bpneumat.+\bvalvula"), (
+                ("5 vias", (r"\b5\s*(?:vias|/2)\b",)),
+                ("3 vias", (r"\b3\s*(?:vias|/2)\b",)),
+                ("2 vias", (r"\b2\s*(?:vias|/2)\b",)),
+                ("Proporcional", (r"\bproporcional",)),
+            )),
+            ("Pneumatica", "Cilindros", (r"\bcilindro\s+pneumat", r"\bpneumat.+\bcilindro"), (
+                ("Sem haste", (r"\bsem\s+haste",)),
+                ("Guiado", (r"\bguiad",)),
+                ("Compacto", (r"\bcompact",)),
+                ("ISO", (r"\biso\b",)),
+            )),
+            ("Pneumatica", "Ligacoes", (r"\bracor\s+pneumat", r"\bligacao\s+pneumat", r"\bcotovelo\s+pneumat"), (
+                ("Cotovelo", (r"\bcotovelo",)),
+                ("Regulador", (r"\bregulador",)),
+                ("T", (r"\b(?:racor|ligacao)\s+t\b",)),
+                ("Reto", (r"\breto\b",)),
+            )),
+            ("Hidraulica", "Valvulas", (r"\bvalvula\s+hidraulic", r"\bhidraulic.+\bvalvula"), (
+                ("Retencao", (r"\bretenc",)),
+                ("Alivio", (r"\balivio",)),
+                ("Direcional", (r"\bdirecional",)),
+                ("Esfera", (r"\besfera",)),
+            )),
+            ("Hidraulica", "Mangueiras", (r"\bmangueira\s+hidraulic", r"\bhidraulic.+\bmangueira"), (
+                ("Alta pressao", (r"\balta\s+pressao",)),
+                ("Retorno", (r"\bretorno",)),
+                ("Aspiracao", (r"\baspir",)),
+            )),
+            ("Hidraulica", "Acessorios", (r"\b(?:conexao|adaptador|filtro)\s+hidraulic", r"\bhidraulic.+\b(?:conexao|adaptador|filtro)"), (
+                ("Conexao", (r"\bconexao",)),
+                ("Adaptador", (r"\badaptador",)),
+                ("Vedante", (r"\bvedante",)),
+                ("Filtro", (r"\bfiltro",)),
+            )),
+            ("Consumiveis", "Abrasivos", (r"\bdisco\s+(?:de\s+)?corte\b", r"\bdisco\s+flap\b", r"\blixa\b", r"\bescova\s+abras"), (
+                ("Disco corte", (r"\bdisco\s+(?:de\s+)?corte\b",)),
+                ("Disco flap", (r"\bflap\b",)),
+                ("Lixa", (r"\blixa\b",)),
+                ("Escova", (r"\bescova",)),
+            )),
+            ("Consumiveis", "Embalagem", (r"\bfilme\s+estiravel\b", r"\bfita\s+embal", r"\bcantoneira\s+cartao\b", r"\bcaixa\s+cartao\b"), (
+                ("Filme", (r"\bfilme",)),
+                ("Fita", (r"\bfita",)),
+                ("Cantoneira", (r"\bcantoneira",)),
+                ("Caixa", (r"\bcaixa",)),
+            )),
+            ("Corte Laser", "Consumiveis", (r"\bbico\s+laser\b", r"\blente\s+laser\b", r"\bceramica\s+laser\b", r"\bfiltro\s+laser\b"), (
+                ("Bico", (r"\bbico",)),
+                ("Lente", (r"\blente",)),
+                ("Ceramica", (r"\bceramica",)),
+                ("Filtro", (r"\bfiltro",)),
+            )),
+            ("Soldadura", "Consumiveis", (r"\barame\s+mig\b", r"\beletrodo\b", r"\bvareta\s+tig\b", r"\banti\s*salpico"), (
+                ("Arame MIG", (r"\bmig\b",)),
+                ("Vareta TIG", (r"\btig\b",)),
+                ("Anti salpicos", (r"\bsalpico",)),
+                ("Eletrodo", (r"\beletrodo",)),
+            )),
+            ("Soldadura", "Acessorios", (r"\btocha\s+(?:mig|tig|sold)", r"\bbocal\s+(?:mig|tig|sold)", r"\bdifusor\s+(?:mig|tig|sold)"), (
+                ("Tocha", (r"\btocha",)),
+                ("Bocal", (r"\bbocal",)),
+                ("Difusor", (r"\bdifusor",)),
+                ("Pinca", (r"\bpinca",)),
+            )),
+            ("Maquinacao", "Fresas", (r"\bfresa\b",), (
+                ("Esferica", (r"\besferic",)),
+                ("Chanfrar", (r"\bchanfr",)),
+                ("Disco", (r"\bdisco",)),
+                ("Topo", (r"\btopo",)),
+            )),
+            ("Maquinacao", "Brocas", (r"\bbroca\b",), (
+                ("Carbureto", (r"\bcarburet",)),
+                ("Escalonada", (r"\bescalon",)),
+                ("Centrar", (r"\bcentrar",)),
+                ("HSS", (r"\bhss\b",)),
+            )),
+            ("Ferramentas", "Medicao", (r"\bpaquimetro\b", r"\bmicrometro\b", r"\besquadro\b", r"\bfita\s+metrica\b"), (
+                ("Paquimetro", (r"\bpaquimetro",)),
+                ("Micrometro", (r"\bmicrometro",)),
+                ("Esquadro", (r"\besquadro",)),
+                ("Fita metrica", (r"\bfita\s+metrica",)),
+            )),
+            ("Ferramentas", "Manuais", (r"\bchave\b", r"\balicate\b", r"\bmartelo\b", r"\btorquimetro\b"), (
+                ("Alicate", (r"\balicate",)),
+                ("Martelo", (r"\bmartelo",)),
+                ("Torquimetro", (r"\btorquimetro",)),
+                ("Chave", (r"\bchave",)),
+            )),
+            ("Motores & Redutores", "Motores", (r"\bmotor\b",), (
+                ("Passo a passo", (r"\bpasso\s+a\s+passo\b", r"\bstepper\b")),
+                ("Servo", (r"\bservo",)),
+                ("Trifasico", (r"\btrifas",)),
+                ("Monofasico", (r"\bmonofas",)),
+            )),
+            ("Motores & Redutores", "Redutores", (r"\bredutor\b",), (
+                ("Sem fim", (r"\bsem\s+fim\b", r"\bcoroa",)),
+                ("Planetario", (r"\bplanet",)),
+                ("Eixo paralelo", (r"\beixo\s+paralelo",)),
+                ("Coaxial", (r"\bcoaxial",)),
+            )),
+            ("Motores & Redutores", "Variadores", (r"\bvariador\b", r"\binversor\s+frequencia\b", r"\bsoft\s*starter\b"), (
+                ("Soft starter", (r"\bsoft\s*starter",)),
+                ("Controlador servo", (r"\bservo",)),
+                ("VFD", (r"\bvfd\b", r"\bvariador\b", r"\binversor",)),
+            )),
+            ("Vedacao & Borracha", "Juntas", (r"\bo[-\s]*ring\b", r"\bjunta\b"), (
+                ("O-ring", (r"\bo[-\s]*ring",)),
+                ("Espiral", (r"\bespiral",)),
+                ("Cortica", (r"\bcortica",)),
+                ("Plana", (r"\bplana",)),
+            )),
+            ("Vedacao & Borracha", "Retentores", (r"\bretentor\b", r"\bv[-\s]*ring\b"), (
+                ("V-ring", (r"\bv[-\s]*ring",)),
+                ("Cassete", (r"\bcassete",)),
+                ("Radial", (r"\bradial",)),
+            )),
+            ("Vedacao & Borracha", "Borracha tecnica", (r"\bepdm\b", r"\bnbr\b", r"\bneoprene\b"), (
+                ("EPDM", (r"\bepdm\b",)),
+                ("NBR", (r"\bnbr\b",)),
+                ("Neoprene", (r"\bneoprene\b",)),
+            )),
+            ("MRO & Manutencao", "Material eletrico", (r"\bdisjuntor\b", r"\bcontator\b", r"\bborne\b", r"\bcanaleta\b"), (
+                ("Disjuntor", (r"\bdisjuntor",)),
+                ("Contator", (r"\bcontator",)),
+                ("Borne", (r"\bborne",)),
+                ("Canaleta", (r"\bcanaleta",)),
+            )),
+            ("MRO & Manutencao", "Lubrificacao", (r"\bmassa\s+lubrificante\b", r"\boleo\s+lubrificante\b", r"\bspray\s+tecnico\b", r"\bdoseador\b"), (
+                ("Massa", (r"\bmassa",)),
+                ("Oleo", (r"\boleo",)),
+                ("Spray tecnico", (r"\bspray",)),
+                ("Doseador", (r"\bdoseador",)),
+            )),
+            ("Escritorio & Papelaria", "Cadernos e blocos", (r"\bcaderno\b", r"\bbloco\s+de\s+notas\b", r"\bagenda\b", r"\blivro\s+de\s+registo\b"), (
+                ("Bloco de notas", (r"\bbloco\s+de\s+notas\b",)),
+                ("Agenda", (r"\bagenda\b",)),
+                ("Livro de registo", (r"\blivro\s+de\s+registo\b",)),
+                ("Caderno", (r"\bcaderno\b",)),
+            )),
+            ("Escritorio & Papelaria", "Papel e etiquetas", (r"\bpapel\s+a[34]\b", r"\bresma\b", r"\betiqueta\b"), (
+                ("Papel A3", (r"\ba3\b",)),
+                ("Papel A4", (r"\ba4\b", r"\bresma\b")),
+                ("Etiquetas", (r"\betiqueta\b",)),
+                ("Papel tecnico", (r"\bpapel\b",)),
+            )),
+            ("Escritorio & Papelaria", "Escrita e marcacao", (r"\bcaneta\b", r"\bmarcador\b", r"\blapis\b", r"\blapiseira\b", r"\bcorretor\b"), (
+                ("Marcador", (r"\bmarcador\b",)),
+                ("Lapiseira", (r"\blapiseira\b",)),
+                ("Lapis", (r"\blapis\b",)),
+                ("Corretor", (r"\bcorretor\b",)),
+                ("Caneta", (r"\bcaneta\b",)),
+            )),
+            ("Escritorio & Papelaria", "Arquivo e organizacao", (r"\bdossier\b", r"\bpasta\s+de\s+arquivo\b", r"\bseparador\b", r"\bcaixa\s+de\s+arquivo\b"), (
+                ("Dossier", (r"\bdossier\b",)),
+                ("Separador", (r"\bseparador\b",)),
+                ("Caixa de arquivo", (r"\bcaixa\s+de\s+arquivo\b",)),
+                ("Pasta", (r"\bpasta\b",)),
+            )),
+            ("Escritorio & Papelaria", "Consumiveis de impressao", (r"\btoner\b", r"\btinteiro\b", r"\btambor\s+de\s+impress", r"\bribbon\b"), (
+                ("Toner", (r"\btoner\b",)),
+                ("Tinteiro", (r"\btinteiro\b",)),
+                ("Tambor", (r"\btambor\b",)),
+                ("Ribbon", (r"\bribbon\b",)),
+            )),
+            ("Informatica", "Perifericos de computador", (r"\brato\s+(?:usb|sem\s+fios|wireless)\b", r"\bmouse\b", r"\bteclado\b", r"\bmonitor\b", r"\bwebcam\b", r"\bheadset\b"), (
+                ("Rato", (r"\brato\b", r"\bmouse\b")),
+                ("Teclado", (r"\bteclado\b",)),
+                ("Monitor", (r"\bmonitor\b",)),
+                ("Webcam", (r"\bwebcam\b",)),
+                ("Headset", (r"\bheadset\b",)),
+                ("Colunas", (r"\bcolunas?\b",)),
+            )),
+            ("Informatica", "Computadores", (r"\bcomputador\b", r"\bportatil\b", r"\blaptop\b", r"\bworkstation\b", r"\bmini\s*pc\b"), (
+                ("Portatil", (r"\bportatil\b", r"\blaptop\b")),
+                ("Workstation", (r"\bworkstation\b",)),
+                ("Mini PC", (r"\bmini\s*pc\b",)),
+                ("Desktop", (r"\bdesktop\b", r"\bcomputador\b")),
+            )),
+            ("Informatica", "Tablets e dispositivos moveis", (r"\bipad\b", r"\btablet\b", r"\be[\s-]?reader\b", r"\bkindle\b"), (
+                ("iPad", (r"\bipad\b",)),
+                ("Tablet Android", (r"\btablet\b.*\bandroid\b", r"\bandroid\b.*\btablet\b")),
+                ("Tablet Windows", (r"\btablet\b.*\bwindows\b", r"\bwindows\b.*\btablet\b")),
+                ("E-reader", (r"\be[\s-]?reader\b", r"\bkindle\b")),
+            )),
+            ("Informatica", "Redes e conectividade", (r"\bswitch\s+(?:de\s+)?rede\b", r"\brouter\b", r"\baccess\s*point\b", r"\bcabo\s+(?:de\s+)?rede\b"), (
+                ("Switch", (r"\bswitch\b",)),
+                ("Router", (r"\brouter\b",)),
+                ("Access point", (r"\baccess\s*point\b",)),
+                ("Cabo de rede", (r"\bcabo\b",)),
+                ("Adaptador", (r"\badaptador\b",)),
+            )),
+            ("Informatica", "Armazenamento", (r"\bssd\b", r"\bdisco\s+rigido\b", r"\bpen\s*usb\b", r"\bcartao\s+de\s+memoria\b"), (
+                ("SSD", (r"\bssd\b",)),
+                ("Disco rigido", (r"\bdisco\s+rigido\b",)),
+                ("Pen USB", (r"\bpen\s*usb\b",)),
+                ("Cartao de memoria", (r"\bcartao\b",)),
+            )),
+        ]
+        for category, subcategory, family_patterns, type_rules in catalog_rules:
+            if not contains(*family_patterns):
+                continue
+            inferred_type = ""
+            for type_label, type_patterns in type_rules:
+                if contains(*type_patterns):
+                    inferred_type = type_label
+                    break
+            return result(category, subcategory, inferred_type)
+
+        if contains(r"\btinta\b", r"\besmalte\b", r"\bprimario\b", r"\bverniz\b", r"\bspray\b"):
+            coating_type = (
+                "Esmalte" if "esmalte" in text else
+                "Primario" if "primario" in text else
+                "Verniz" if "verniz" in text else
+                "Spray" if "spray" in text else
+                "Tinta tecnica"
+            )
+            return result("Tintas / Quimicos", "Tintas e revestimentos", coating_type)
+        if contains(r"\bdiluente\b", r"\bsolvente\b", r"\bacetona\b", r"\bdesengordurante\b"):
+            solvent_type = (
+                "Diluente" if "diluente" in text else
+                "Acetona" if "acetona" in text else
+                "Desengordurante" if "desengordurante" in text else
+                "Limpeza"
+            )
+            return result("Tintas / Quimicos", "Solventes e diluentes", solvent_type)
+        if contains(r"\bsilicone\b", r"\bcola\b", r"\bvedante\b", r"\btrava\s*roscas\b"):
+            adhesive_type = (
+                "Silicone" if "silicone" in text else
+                "Trava roscas" if contains(r"\btrava\s*roscas\b") else
+                "Vedante" if "vedante" in text else
+                "Cola"
+            )
+            return result("Tintas / Quimicos", "Adesivos e selantes", adhesive_type)
+        if contains(r"\bzincado\b", r"\bdecapante\b", r"\bpassivante\b", r"\banticorrosiv"):
+            treatment_type = (
+                "Zincado" if contains(r"\bzincado\b") else
+                "Decapante" if contains(r"\bdecapante\b") else
+                "Passivante" if contains(r"\bpassivante\b") else
+                "Anticorrosivo"
+            )
+            return result("Tintas / Quimicos", "Tratamento de superficie", treatment_type)
+
+        if contains(r"\brolamento\b"):
+            bearing_type = (
+                "Agulhas" if "agulh" in text else
+                "Rolos" if "rolo" in text else
+                "Flange" if "flange" in text else
+                "Esferas"
+            )
+            return result("Rolamentos & Transmissao", "Rolamentos", bearing_type)
+        if contains(r"\bcorrente\b"):
+            chain_type = "Dupla" if "dupla" in text else "Inox" if "inox" in text else "Simples"
+            return result("Rolamentos & Transmissao", "Correntes", chain_type)
+        if contains(r"\bpinhao\b", r"\bpolia\b", r"\bcorreia\b"):
+            transmission_type = "Pinhao" if "pinhao" in text else "Polia" if "polia" in text else "Correia"
+            return result("Rolamentos & Transmissao", "Pinhoes e polias", transmission_type)
+
+        # Raw material shapes only apply when no finished-product family above
+        # matched the description.
+        material_category = ""
+        if contains(r"\binox\b", r"\ba(?:isi)?\s*30[34]\b"):
+            material_category = "Inox"
+        elif contains(r"\baluminio\b"):
+            material_category = "Aluminio"
+        elif contains(r"\bferro\b", r"\bs235", r"\bs275", r"\bs355", r"\baco\b"):
+            material_category = "Ferro"
+        if material_category:
+            shape = ""
+            if contains(r"\bchapa\b"):
+                shape = "Chapa"
+            elif contains(r"\btubo\b"):
+                shape = "Tubo"
+            elif contains(r"\bperfil\b", r"\bcantoneira\b", r"\bupn\b", r"\bipe\b", r"\bhea\b", r"\bheb\b"):
+                shape = "Perfil"
+            elif contains(r"\bvarao\b"):
+                shape = "Varao"
+            if shape:
+                return result(material_category, shape, "", "Material e formato identificados na descrição")
+
+        # Technical plastics are evaluated last so words such as "nylon" in a
+        # lock nut do not override the finished-product family.
+        plastic_material = ""
+        if contains(r"\bpead\b"):
+            plastic_material = "PEAD"
+        elif contains(r"\bpvc\b"):
+            plastic_material = "PVC"
+        elif contains(r"\bptfe\b", r"\bteflon\b"):
+            plastic_material = "PTFE"
+        elif contains(r"\bpolicarbonato\b"):
+            plastic_material = "Policarbonato"
+        elif contains(r"\bpom\b"):
+            plastic_material = "POM"
+        elif contains(r"\bpeek\b"):
+            plastic_material = "PEEK"
+        elif contains(r"\bnylon\b"):
+            plastic_material = "Nylon"
+        if plastic_material:
+            plastic_shape = (
+                "Chapa" if contains(r"\bchapa\b", r"\bplaca\b") else
+                "Tubo" if contains(r"\btubo\b") else
+                "Varao" if contains(r"\bvarao\b", r"\bbarra\b") else ""
+            )
+            if plastic_shape:
+                return result("Plasticos Tecnicos", plastic_shape, plastic_material)
+
+        # Unknown objects are not silently discarded. The Copilot creates a
+        # conservative provisional entry that the user can correct and teach.
+        keyword = self._product_learning_keyword(description)
+        if keyword:
+            provisional_type = keyword.replace("-", " ").title()
+            return {
+                "categoria": "Outros",
+                "subcat": "Outros",
+                "tipo": provisional_type,
+                "dimensoes": dimensions,
+                "confidence": 0.42,
+                "reason": f"Termo novo detetado: “{keyword}”",
+                "learned": False,
+                "needs_learning": True,
+                "learning_keyword": keyword,
+            }
+        return empty
+
+    def product_copilot_analysis(self, description: str, current_code: str = "") -> dict[str, Any]:
+        """Combine classification, attribute extraction and duplicate checks."""
+
+        clean_description = str(description or "").strip()
+        suggestion = dict(self.product_catalog_suggestion(clean_description) or {})
+        attributes = _extract_product_attributes(clean_description)
+        normalized_description = _normalize_product_description(clean_description)
+        if str(suggestion.get("categoria", "") or "") == "Movimentacao":
+            caster_type = str(suggestion.get("tipo", "") or "")
+            caster_label = {
+                "Giratorio": "Rodízio giratório",
+                "Giratorio com travao total": "Rodízio giratório com travão total",
+                "Fixo": "Rodízio fixo",
+                "Roda avulsa": "Roda industrial",
+            }.get(caster_type, "Rodízio industrial")
+            parts = [caster_label]
+            if attributes.get("fabricante"):
+                parts.append(str(attributes["fabricante"]))
+            if attributes.get("modelo"):
+                parts.append(str(attributes["modelo"]))
+            if attributes.get("medida"):
+                parts.append(str(attributes["medida"]))
+            if attributes.get("cor"):
+                parts.append(str(attributes["cor"]))
+            normalized_description = " – ".join(parts)
+        current_key = str(current_code or "").strip().casefold()
+        similar: list[dict[str, Any]] = []
+        for product in list(self.ensure_data().get("produtos", []) or []):
+            code = str(product.get("codigo", "") or "").strip()
+            candidate = str(product.get("descricao", "") or "").strip()
+            if not candidate or (current_key and code.casefold() == current_key):
+                continue
+            score = _product_similarity(clean_description, candidate)
+            if score < 0.68:
+                continue
+            similar.append(
+                {
+                    "codigo": code,
+                    "descricao": candidate,
+                    "score": score,
+                    "percent": int(round(score * 100)),
+                }
+            )
+        similar.sort(key=lambda row: (-float(row.get("score", 0)), str(row.get("codigo", ""))))
+        confidence = float(suggestion.get("confidence", 0) or 0)
+        return {
+            **suggestion,
+            "descricao_normalizada": normalized_description,
+            "atributos": attributes,
+            "semelhantes": similar[:3],
+            "duplicate_warning": bool(similar and float(similar[0].get("score", 0)) >= 0.84),
+            "confidence_percent": int(round(confidence * 100)),
+            "fabricante": str(attributes.get("fabricante", "") or ""),
+            "modelo": str(attributes.get("modelo", "") or ""),
+            "engine": "local-rules-v2",
+        }
+
+    def product_ai_lookup(
+        self,
+        description: str,
+        *,
+        user_instruction: str = "",
+        previous_candidate: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Ask the optional LuGEST gateway for a source-backed identification."""
+
+        cfg = self._load_qt_config()
+        endpoint = str(
+            os.getenv("LUGEST_AI_ENDPOINT")
+            or cfg.get("product_ai_endpoint")
+            or ""
+        ).strip()
+        access_token = str(
+            os.getenv("LUGEST_AI_ACCESS_TOKEN")
+            or cfg.get("product_ai_access_token")
+            or ""
+        ).strip()
+        gemini_api_key = str(
+            os.getenv("LUGEST_GEMINI_API_KEY")
+            or os.getenv("GEMINI_API_KEY")
+            or ""
+        ).strip()
+        gemini_model = str(
+            os.getenv("LUGEST_GEMINI_MODEL")
+            or cfg.get("product_ai_gemini_model")
+            or "gemini-3.6-flash"
+        ).strip()
+        ollama_url = str(
+            os.getenv("LUGEST_OLLAMA_URL")
+            or cfg.get("product_ai_ollama_url")
+            or "http://127.0.0.1:11434"
+        ).strip()
+        ollama_model = str(
+            os.getenv("LUGEST_OLLAMA_MODEL")
+            or cfg.get("product_ai_ollama_model")
+            or "qwen3:4b"
+        ).strip()
+        try:
+            ai_timeout = float(
+                os.getenv("LUGEST_AI_TIMEOUT_SECONDS")
+                or cfg.get("product_ai_timeout_seconds")
+                or 45
+            )
+        except (TypeError, ValueError):
+            ai_timeout = 45.0
+        local_candidate = self.product_copilot_analysis(description)
+        taxonomy = self.product_taxonomy()
+        compact_taxonomy = {
+            "categories": [
+                {
+                    "label": row.get("label", ""),
+                    "subcategories": [
+                        {
+                            "label": sub.get("label", ""),
+                            "types": [
+                                (
+                                    item.get("label", "")
+                                    if isinstance(item, dict)
+                                    else str(item or "")
+                                )
+                                for item in list(sub.get("types", []) or [])
+                            ],
+                        }
+                        for sub in list(row.get("subcategories", []) or [])
+                    ],
+                }
+                for row in list(taxonomy.get("categories", []) or [])
+            ]
+        }
+        client = _RemoteProductAIClient(
+            endpoint,
+            access_token,
+            gemini_api_key=gemini_api_key,
+            gemini_model=gemini_model,
+            ollama_url=ollama_url,
+            ollama_model=ollama_model,
+            timeout_seconds=ai_timeout,
+        )
+        result = client.lookup(
+            description,
+            local_candidate=local_candidate,
+            taxonomy=compact_taxonomy,
+            locale="pt-PT",
+            user_instruction=user_instruction,
+            previous_candidate=previous_candidate,
+        )
+        result["local_candidate"] = local_candidate
+        return result
+
     def _product_resolve_catalog_fields(self, payload: dict[str, Any]) -> dict[str, str]:
         category_map, subcategory_map, type_map = self._product_taxonomy_nodes()
         raw_category = str(payload.get("categoria", payload.get("category", "")) or "").strip()
@@ -4387,7 +5919,15 @@ class LegacyBackend(
             raise ValueError("Codigo do produto em falta.")
         if not descricao:
             raise ValueError("Descricao do produto em falta.")
-        catalog_fields = self._product_resolve_catalog_fields(payload)
+        normalized_payload = dict(payload)
+        intelligence = self.product_copilot_analysis(descricao, code)
+        suggestion = intelligence
+        for field in ("categoria", "subcat", "tipo", "dimensoes"):
+            if not str(normalized_payload.get(field, "") or "").strip():
+                suggested_value = str(suggestion.get(field, "") or "").strip()
+                if suggested_value:
+                    normalized_payload[field] = suggested_value
+        catalog_fields = self._product_resolve_catalog_fields(normalized_payload)
         categoria = str(catalog_fields.get("categoria", "") or "").strip()
         tipo = str(catalog_fields.get("tipo", "") or "").strip()
         metros_unidade = self._parse_float(payload.get("metros_unidade", payload.get("metros", 0)), 0)
@@ -4403,7 +5943,7 @@ class LegacyBackend(
             "category_icon": str(catalog_fields.get("category_icon", "") or "").strip(),
             "category_badge": str(catalog_fields.get("category_badge", "") or "").strip(),
             "category_tone": str(catalog_fields.get("category_tone", "") or "").strip(),
-            "dimensoes": str(payload.get("dimensoes", "") or "").strip(),
+            "dimensoes": str(normalized_payload.get("dimensoes", "") or "").strip(),
             "comprimento": self._parse_float(payload.get("comprimento", 0), 0),
             "largura": self._parse_float(payload.get("largura", 0), 0),
             "espessura": self._parse_float(payload.get("espessura", 0), 0),
@@ -4419,6 +5959,13 @@ class LegacyBackend(
             "pvp1": self._parse_float(payload.get("pvp1", 0), 0),
             "pvp2": self._parse_float(payload.get("pvp2", 0), 0),
             "obs": str(payload.get("obs", "") or "").strip(),
+            "catalog_intelligence": {
+                "engine": str(intelligence.get("engine", "") or ""),
+                "confidence": round(float(intelligence.get("confidence", 0) or 0), 4),
+                "reason": str(intelligence.get("reason", "") or ""),
+                "attributes": dict(intelligence.get("atributos", {}) or {}),
+                "normalized_description": str(intelligence.get("descricao_normalizada", "") or ""),
+            },
         }
         if not prod["dimensoes"] and (prod["comprimento"] > 0 or prod["largura"] > 0 or prod["espessura"] > 0):
             prod["dimensoes"] = self._product_dimensoes(prod)

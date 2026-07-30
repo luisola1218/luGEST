@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,7 +30,10 @@ SCRIPTS = [
 
 
 def main() -> int:
-    for script in SCRIPTS:
+    started = time.perf_counter()
+    for index, script in enumerate(SCRIPTS, start=1):
+        script_started = time.perf_counter()
+        print(f"[{index:02d}/{len(SCRIPTS):02d}] {script}", flush=True)
         proc = subprocess.run([sys.executable, script], cwd=ROOT, text=True, capture_output=True)
         if proc.returncode != 0:
             sys.stdout.write(proc.stdout)
@@ -37,7 +41,10 @@ def main() -> int:
             raise SystemExit(proc.returncode)
         if proc.stdout.strip():
             print(proc.stdout.strip())
-    print("core-flows-ok")
+        elapsed = time.perf_counter() - script_started
+        print(f"  OK ({elapsed:.1f}s)", flush=True)
+    total = time.perf_counter() - started
+    print(f"core-flows-ok ({total:.1f}s)")
     return 0
 
 

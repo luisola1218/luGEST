@@ -3,9 +3,13 @@
 import os
 from pathlib import Path
 import re
-import unicodedata
 
-from PySide6.QtCore import Qt, QTimer
+from lugest_core.search import search_matches as _smart_search_matches
+from lugest_core.materials import (
+    detect_profile_designation as _detect_profile_designation,
+    profile_mass_tables as _profile_mass_tables,
+)
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -106,77 +110,11 @@ _PROFILE_MASS_KG_M: dict[str, dict[str, float]] = {
         "300": 40.5,
     },
 }
-
-
-def _grid_search_normalize(value: object) -> str:
-    text = unicodedata.normalize("NFKD", str(value or ""))
-    text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    text = text.casefold()
-    text = re.sub(r"(?<=\d),(?=\d)", ".", text)
-    text = re.sub(r"[^a-z0-9./]+", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _grid_numeric_key(value: object) -> str:
-    text = _grid_search_normalize(value).strip().strip("./")
-    if not re.fullmatch(r"\d+(?:\.\d+)?", text):
-        return ""
-    try:
-        number = float(text)
-    except Exception:
-        return ""
-    return f"{number:.4f}".rstrip("0").rstrip(".")
-
-
-def _grid_search_terms(value: object) -> list[str]:
-    return [term for term in _grid_search_normalize(value).split() if term]
-
-
-def _grid_search_bucket(values: list[object]) -> tuple[str, set[str]]:
-    normalized = _grid_search_normalize(" ".join(str(value or "") for value in values))
-    tokens = set(normalized.split())
-    expanded = set(tokens)
-    for token in tokens:
-        numeric = _grid_numeric_key(token)
-        if numeric:
-            expanded.add(numeric)
-        if "/" in token:
-            for part in token.split("/"):
-                part = part.strip()
-                if part:
-                    expanded.add(part)
-                    part_numeric = _grid_numeric_key(part)
-                    if part_numeric:
-                        expanded.add(part_numeric)
-    return normalized, expanded
-
-
-def _grid_search_matches(values: list[object], query: object) -> bool:
-    terms = _grid_search_terms(query)
-    if not terms:
-        return True
-    normalized, tokens = _grid_search_bucket(values)
-    for term in terms:
-        numeric = _grid_numeric_key(term)
-        if numeric:
-            if numeric not in tokens and term not in tokens:
-                return False
-            continue
-        if "/" in term:
-            term_parts = [part for part in term.split("/") if part]
-            if term_parts and all((_grid_numeric_key(part) or part) in tokens for part in term_parts):
-                continue
-        if term not in normalized:
-            return False
-    return True
+_PROFILE_MASS_KG_M = _profile_mass_tables()
 
 
 def _detect_profile_section(text: str) -> tuple[str, str]:
-    raw = str(text or "").upper()
-    match = re.search(r"\b(IPE|HEA|HEB|UPN|UPE)\s*[- ]?(\d{2,3})\b", raw)
-    if not match:
-        return "", ""
-    return match.group(1), match.group(2)
+    return _detect_profile_designation(text)
 
 
 def _material_family_options(backend) -> list[dict]:
@@ -674,13 +612,10 @@ class _HistoryDialog(QDialog):
         self._apply_filter()
 
     def _apply_filter(self) -> None:
-        query = self.filter_edit.text().strip().lower()
-        if query:
-            self.filtered_rows = [
-                row for row in self.all_rows if query in " ".join(str(value or "") for value in row.values()).lower()
-            ]
-        else:
-            self.filtered_rows = list(self.all_rows)
+        query = self.filter_edit.text().strip()
+        self.filtered_rows = [
+            row for row in self.all_rows if _smart_search_matches(row.values(), query)
+        ]
         self._set_rows(self.filtered_rows)
 
     def _set_rows(self, rows: list[dict[str, str]]) -> None:
@@ -718,6 +653,22 @@ class _HistoryDialog(QDialog):
             QMessageBox.critical(self, "Histórico", str(exc))
 
 
+class _MaterialAICommandThread(QThread):
+    completed = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, backend, command: str, parent=None) -> None:
+        super().__init__(parent)
+        self.backend = backend
+        self.command = str(command or "").strip()
+
+    def run(self) -> None:
+        try:
+            self.completed.emit(dict(self.backend.material_ai_command(self.command) or {}))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class _MaterialEditorDialog(QDialog):
     def __init__(self, backend, parent=None, record: dict | None = None, mode: str = "add") -> None:
         super().__init__(parent)
@@ -725,9 +676,16 @@ class _MaterialEditorDialog(QDialog):
         self._record = dict(record or {})
         self._mode = str(mode or "add").strip().lower()
         editing = self._mode == "edit"
-        self.setWindowTitle("Editar material" if editing else "Adicionar material")
+        assisted = self._mode == "ai"
+        self.setWindowTitle(
+            "Editar material"
+            if editing
+            else "Confirmar stock proposto pela IA"
+            if assisted
+            else "Adicionar material"
+        )
         self.setModal(True)
-        self.resize(980, 360)
+        self.resize(1080, 500)
         self.setStyleSheet(
             "QDialog { font-size: 12px; }"
             " QLabel { font-size: 12px; }"
@@ -738,15 +696,35 @@ class _MaterialEditorDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(10)
+        layout.setAlignment(Qt.AlignTop)
 
-        intro = QLabel(
-            "Confirma os dados do registo selecionado e guarda apenas no fim."
-            if editing
-            else "Novo registo de matéria-prima. O formulário abre sempre limpo para "
-            "evitar herdar o material atualmente selecionado."
-        )
+        if assisted:
+            confidence = int(round(float(self._record.get("_ai_confidence", 0) or 0) * 100))
+            missing = [str(value or "").strip() for value in list(self._record.get("missing_fields", []) or [])]
+            summary = str(self._record.get("_ai_summary", "") or "").strip()
+            intro_text = (
+                f"Proposta do Copiloto · confiança {confidence}%. "
+                "Revê os campos antes de criar; nada foi ainda gravado."
+            )
+            if summary:
+                intro_text += f"\n{summary}"
+            if missing:
+                intro_text += "\nCompleta antes de guardar: " + ", ".join(missing) + "."
+            intro = QLabel(intro_text)
+        else:
+            intro = QLabel(
+                "Confirma os dados do registo selecionado e guarda apenas no fim."
+                if editing
+                else "Novo registo de matéria-prima. O formulário abre sempre limpo para "
+                "evitar herdar o material atualmente selecionado."
+            )
         intro.setWordWrap(True)
         intro.setProperty("role", "muted")
+        intro.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        intro.setStyleSheet(
+            "background: #f4f6f4; border: 1px solid #d8ddd8; border-radius: 7px;"
+            "padding: 8px 10px; color: #526052;"
+        )
         layout.addWidget(intro)
 
         form_card = CardFrame()
@@ -762,6 +740,7 @@ class _MaterialEditorDialog(QDialog):
         self.material_combo = self._make_combo()
         self.material_family_combo = QComboBox()
         self.secao_tipo_combo = self._make_combo()
+        self.profile_size_combo = self._make_combo()
         self.espessura_combo = self._make_combo()
         self.local_combo = self._make_combo()
         self.lote_interno_edit = QLineEdit()
@@ -787,11 +766,18 @@ class _MaterialEditorDialog(QDialog):
         self.preco_compra_edit.setPlaceholderText("EUR/kg ou EUR/m")
         self.contorno_edit.setPlaceholderText("Opcional: 0,0; 1000,0; 900,400; 0,400")
         self.kg_m_edit.setPlaceholderText("Auto por tabela / fórmula")
+        self.profile_reference_label = QLabel("Seleciona a série e o tamanho nominal.")
+        self.profile_reference_label.setWordWrap(True)
+        self.profile_reference_label.setStyleSheet(
+            "background: #edf7e3; border: 1px solid #b9d98f; border-radius: 6px;"
+            "color: #243525; padding: 7px 9px; font-weight: 600;"
+        )
 
         for combo, placeholder in (
             (self.formato_combo, "Selecionar formato"),
             (self.material_combo, "Selecionar / escrever material"),
             (self.secao_tipo_combo, "Selecionar tipo / série"),
+            (self.profile_size_combo, "Selecionar tamanho nominal"),
             (self.espessura_combo, "Selecionar / escrever espessura"),
             (self.local_combo, "Selecionar / escrever local"),
         ):
@@ -804,6 +790,7 @@ class _MaterialEditorDialog(QDialog):
             ("Material", self.material_combo),
             ("Família", self.material_family_combo),
             ("Tipo secção", self.secao_tipo_combo),
+            ("Tamanho perfil", self.profile_size_combo),
             ("Espessura", self.espessura_combo),
             ("Lote interno", self.lote_interno_edit),
             ("Lote fornecedor", self.lote_edit),
@@ -824,8 +811,8 @@ class _MaterialEditorDialog(QDialog):
         self._field_labels: dict[str, QLabel] = {}
         self._field_widgets: dict[str, QWidget] = {}
         for index, (label_text, widget) in enumerate(fields):
-            row = index // 4
-            col = (index % 4) * 2
+            row = index // 3
+            col = (index % 3) * 2
             label = QLabel(label_text)
             label.setProperty("role", "muted")
             self._field_labels[label_text] = label
@@ -833,13 +820,21 @@ class _MaterialEditorDialog(QDialog):
             grid.addWidget(label, row, col)
             grid.addWidget(widget, row, col + 1)
         form_layout.addLayout(grid)
+        form_layout.addWidget(self.profile_reference_label)
         layout.addWidget(form_card)
 
         actions = QHBoxLayout()
         calc_btn = QPushButton("Calc. peso")
         calc_btn.setProperty("variant", "secondary")
         calc_btn.clicked.connect(self._open_weight_calculator)
-        save_btn = QPushButton("Guardar alterações" if editing else "Adicionar")
+        save_btn = QPushButton(
+            "Guardar alterações"
+            if editing
+            else "Criar lote confirmado"
+            if assisted
+            else "Adicionar"
+        )
+        save_btn.setProperty("variant", "success")
         save_btn.clicked.connect(self._accept_if_valid)
         cancel_btn = QPushButton("Cancelar")
         cancel_btn.setProperty("variant", "secondary")
@@ -850,7 +845,14 @@ class _MaterialEditorDialog(QDialog):
         actions.addWidget(cancel_btn)
         layout.addLayout(actions)
 
-        for combo in (self.formato_combo, self.material_combo, self.secao_tipo_combo, self.espessura_combo, self.local_combo):
+        for combo in (
+            self.formato_combo,
+            self.material_combo,
+            self.secao_tipo_combo,
+            self.profile_size_combo,
+            self.espessura_combo,
+            self.local_combo,
+        ):
             combo.currentTextChanged.connect(self._on_form_value_changed)
         self.material_family_combo.currentIndexChanged.connect(self._on_form_value_changed)
         for edit in (
@@ -880,6 +882,7 @@ class _MaterialEditorDialog(QDialog):
         combo.setEditable(True)
         combo.setInsertPolicy(QComboBox.NoInsert)
         combo.setMinimumContentsLength(10)
+        combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         return combo
 
     def _set_combo_values(self, combo: QComboBox, values: list[str], current_text: str = "") -> None:
@@ -890,40 +893,71 @@ class _MaterialEditorDialog(QDialog):
         combo.blockSignals(False)
 
     def _set_section_options(self, formato: str, current_value: str = "") -> None:
-        options = [
-            str(row.get("label", "") or "").strip()
+        rows = [
+            dict(row or {})
             for row in list(self.backend.material_section_options(formato) or [])
             if str(row.get("label", "") or "").strip()
         ]
-        self._set_combo_values(self.secao_tipo_combo, options, current_value)
+        selected = str(current_value or "").strip()
+        for row in rows:
+            if selected.upper() == str(row.get("key", "") or "").strip().upper():
+                selected = str(row.get("label", "") or "").strip()
+                break
+        self._set_combo_values(
+            self.secao_tipo_combo,
+            [str(row.get("label", "") or "").strip() for row in rows],
+            selected,
+        )
 
-    def _set_field_visible(self, key: str, visible: bool) -> None:
-        label = self._field_labels.get(key)
-        widget = self._field_widgets.get(key)
-        if label is not None:
-            label.setVisible(visible)
-        if widget is not None:
-            widget.setVisible(visible)
+    def _current_profile_series(self) -> str:
+        if self.formato_combo.currentText().strip().title() != "Perfil":
+            return ""
+        try:
+            preview = self.backend.material_geometry_preview(
+                {
+                    "formato": "Perfil",
+                    "secao_tipo": self.secao_tipo_combo.currentText().strip(),
+                    "material": self.material_combo.currentText().strip(),
+                }
+            )
+            return str(preview.get("secao_tipo", "") or "").strip().upper()
+        except Exception:
+            return ""
 
-    def _set_section_options(self, formato: str, current_value: str = "") -> None:
-        options = [
-            str(row.get("label", "") or "").strip()
-            for row in list(self.backend.material_section_options(formato) or [])
-            if str(row.get("label", "") or "").strip()
-        ]
-        self._set_combo_values(self.secao_tipo_combo, options, current_value)
+    def _sync_profile_sizes(self, requested: str = "") -> None:
+        series = self._current_profile_series()
+        sizes = list(self.backend.material_profile_size_options(series) or [])
+        current = str(requested or self.profile_size_combo.currentText() or "").strip()
+        if current not in sizes:
+            detected_series, detected_size = _detect_profile_section(
+                f"{series} {current} {self.altura_edit.text()}"
+            )
+            current = detected_size if detected_series == series and detected_size in sizes else ""
+        self._set_combo_values(self.profile_size_combo, sizes, current or (sizes[0] if sizes else ""))
 
-    def _set_field_visible(self, key: str, visible: bool) -> None:
-        label = self._field_labels.get(key)
-        widget = self._field_widgets.get(key)
-        if label is not None:
-            label.setVisible(visible)
-        if widget is not None:
-            widget.setVisible(visible)
-
-    def _set_section_options(self, formato: str, current_value: str = "") -> None:
-        options = [str(row.get("label", "") or "").strip() for row in list(self.backend.material_section_options(formato) or []) if str(row.get("label", "") or "").strip()]
-        self._set_combo_values(self.secao_tipo_combo, options, current_value)
+    def _refresh_profile_reference(self) -> None:
+        series = self._current_profile_series()
+        size = self.profile_size_combo.currentText().strip()
+        entry = dict(
+            self.backend.material_profile_entry(series, size, self.metros_edit.text()) or {}
+        )
+        if not entry:
+            self.profile_reference_label.setText(
+                "Secção manual: indica a altura nominal e o peso por metro."
+            )
+            return
+        dimensions: list[str] = []
+        for key, label in (("h", "h"), ("b", "b"), ("tw", "alma"), ("tf", "aba")):
+            if float(entry.get(key, 0) or 0) > 0:
+                dimensions.append(f"{label} {self.backend._fmt(entry[key])} mm")
+        weight = f"{self.backend._fmt(entry.get('kg_m', 0))} kg/m"
+        if float(entry.get("peso_unid", 0) or 0) > 0:
+            weight += f" · {self.backend._fmt(entry['peso_unid'])} kg/barra"
+        self.profile_reference_label.setText(
+            f"{entry.get('designation', f'{series} {size}')} · "
+            + " · ".join(dimensions)
+            + f"\n{weight} · {entry.get('standard', 'EN 10365')}"
+        )
 
     def _set_field_visible(self, key: str, visible: bool) -> None:
         label = self._field_labels.get(key)
@@ -955,6 +989,7 @@ class _MaterialEditorDialog(QDialog):
         self.material_combo.setCurrentText("")
         _set_material_family_combo(self.backend, self.material_family_combo, "")
         self._set_section_options("Chapa", "")
+        self.profile_size_combo.clear()
         self.espessura_combo.setCurrentText("")
         self.local_combo.setCurrentText("")
         for edit in (
@@ -987,7 +1022,7 @@ class _MaterialEditorDialog(QDialog):
         self.material_combo.setCurrentText(material)
         _set_material_family_combo(self.backend, self.material_family_combo, familia, material=material)
         self._set_section_options(formato, str(preview.get("secao_tipo", record.get("secao_tipo", "")) or "").strip())
-        self.secao_tipo_combo.setCurrentText(str(preview.get("secao_tipo", record.get("secao_tipo", "")) or "").strip())
+        self._sync_profile_sizes(str(preview.get("altura", record.get("altura", "")) or ""))
         self.espessura_combo.setCurrentText(str(record.get("espessura", "") or ""))
         self.lote_edit.setText(str(record.get("lote_fornecedor", "") or ""))
         self.lote_interno_edit.setText(str(record.get("lote_interno", "") or ""))
@@ -1007,6 +1042,12 @@ class _MaterialEditorDialog(QDialog):
         self._refresh_price_preview()
 
     def payload(self) -> dict[str, str]:
+        profile_size = (
+            self.profile_size_combo.currentText().strip()
+            if self._current_profile_series()
+            and list(self.backend.material_profile_size_options(self._current_profile_series()) or [])
+            else ""
+        )
         return {
             "formato": self.formato_combo.currentText().strip(),
             "material": self.material_combo.currentText().strip(),
@@ -1015,7 +1056,7 @@ class _MaterialEditorDialog(QDialog):
             "espessura": self.espessura_combo.currentText().strip(),
             "comprimento": self.comprimento_edit.text().strip(),
             "largura": self.largura_edit.text().strip(),
-            "altura": self.altura_edit.text().strip(),
+            "altura": profile_size or self.altura_edit.text().strip(),
             "diametro": self.diametro_edit.text().strip(),
             "contorno_points": self.contorno_edit.text().strip(),
             "metros": self.metros_edit.text().strip(),
@@ -1036,6 +1077,8 @@ class _MaterialEditorDialog(QDialog):
     def _refresh_form_state(self) -> None:
         formato = (self.formato_combo.currentText().strip() or "Chapa").title()
         self._set_section_options(formato, self.secao_tipo_combo.currentText().strip())
+        if formato == "Perfil":
+            self._sync_profile_sizes()
         preview = self.backend.material_geometry_preview(self.payload())
         secao_tipo = str(preview.get("secao_tipo", "") or "").strip()
         tube_round = formato == "Tubo" and secao_tipo == "redondo"
@@ -1098,13 +1141,17 @@ class _MaterialEditorDialog(QDialog):
         self.peso_edit.setPlaceholderText("Peso calculado automaticamente")
         self.kg_m_edit.setReadOnly(formato == "Tubo" or profile_catalog)
         self._set_field_visible("Tipo secção", formato in {"Tubo", "Perfil", "Cantoneira", "Barra"})
+        self._set_field_visible("Tamanho perfil", profile_catalog)
+        self.profile_reference_label.setVisible(formato == "Perfil")
+        self._set_field_visible("Espessura", not profile_catalog)
         self._set_field_visible("Comprimento", formato in {"Chapa", "Cantoneira", "Barra"} or (formato == "Tubo" and not tube_round))
         self._set_field_visible("Largura", formato in {"Chapa", "Cantoneira", "Barra"} or (formato == "Tubo" and not tube_round))
-        self._set_field_visible("Altura", formato == "Perfil")
+        self._set_field_visible("Altura", formato == "Perfil" and not profile_catalog)
         self._set_field_visible("Diâmetro", formato == "Tubo" and tube_round)
         self._set_field_visible("Contorno retalho", formato == "Chapa")
         self._set_field_visible("Metros", formato != "Chapa")
         self._set_field_visible("Kg/m", formato in {"Tubo", "Perfil", "Cantoneira", "Barra"})
+        self._refresh_profile_reference()
 
     def _refresh_price_preview(self) -> None:
         try:
@@ -1187,6 +1234,8 @@ class MaterialsPage(QWidget):
         self.backend = backend
         self.current_material_id = ""
         self._combo_keys = ("formato", "material", "material_familia", "espessura", "local")
+        self._columns_compact: bool | None = None
+        self._material_ai_thread: _MaterialAICommandThread | None = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(4, 4, 4, 4)
@@ -1295,6 +1344,26 @@ class MaterialsPage(QWidget):
         clear_filters_btn.clicked.connect(self._clear_stock_filters)
         filter_row.addWidget(clear_filters_btn)
         form_layout.addLayout(filter_row)
+
+        ai_row = QHBoxLayout()
+        ai_row.setSpacing(6)
+        ai_label = QLabel("COPILOTO DE STOCK")
+        ai_label.setStyleSheet("color: #456a13; font-size: 9px; font-weight: 800;")
+        self.material_ai_command_edit = QLineEdit()
+        self.material_ai_command_edit.setClearButtonEnabled(True)
+        self.material_ai_command_edit.setPlaceholderText(
+            "Ex.: Cria stock de chapa S235JR 15 mm, formato 3000x1500, "
+            "10 unidades, lote externo 9288X20029"
+        )
+        self.material_ai_command_edit.returnPressed.connect(self._prepare_material_with_ai)
+        self.material_ai_button = QPushButton("Preparar com IA")
+        self.material_ai_button.setProperty("variant", "success")
+        self.material_ai_button.setMinimumWidth(142)
+        self.material_ai_button.clicked.connect(self._prepare_material_with_ai)
+        ai_row.addWidget(ai_label)
+        ai_row.addWidget(self.material_ai_command_edit, 1)
+        ai_row.addWidget(self.material_ai_button)
+        form_layout.addLayout(ai_row)
 
         info_row = QHBoxLayout()
         info_row.setSpacing(10)
@@ -1531,6 +1600,7 @@ class MaterialsPage(QWidget):
             " gridline-color: #e1e3e0;"
             " selection-background-color: #eaf7da;"
             " selection-color: #26331d;"
+            " font-size: 11px;"
             "}"
             "QTableWidget::item:selected {"
             " background: #eaf7da;"
@@ -1543,6 +1613,7 @@ class MaterialsPage(QWidget):
             " color: white;"
             " padding: 8px 6px;"
             " border: 0;"
+            " font-size: 10px;"
             " font-weight: 700;"
             "}"
         )
@@ -1569,7 +1640,7 @@ class MaterialsPage(QWidget):
             ]
         )
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(30)
+        self.table.verticalHeader().setDefaultSectionSize(32)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -1578,7 +1649,7 @@ class MaterialsPage(QWidget):
         self.table.itemSelectionChanged.connect(self.on_selection_changed)
         self.table.itemDoubleClicked.connect(lambda *_args: self.edit_material())
         header = self.table.horizontalHeader()
-        header.setFixedHeight(34)
+        header.setFixedHeight(36)
         header.setStretchLastSection(False)
         header.setMinimumSectionSize(48)
         column_specs = [
@@ -1613,15 +1684,20 @@ class MaterialsPage(QWidget):
             if current_visual != visual_target:
                 header.moveSection(current_visual, visual_target)
         header.setSectionResizeMode(2, QHeaderView.Stretch)
-        for column, width in ((16, 76), (3, 118), (8, 76), (0, 100), (5, 54), (6, 58), (13, 68), (17, 94)):
+        self.table.setStyleSheet(
+            "QTableWidget { font-size: 12px; }"
+            " QHeaderView::section { font-size: 11px; font-weight: 800; padding: 5px 6px; }"
+        )
+        for column, width in ((16, 88), (3, 130), (8, 86), (0, 160), (5, 66), (6, 68), (13, 82), (17, 92)):
             header.setSectionResizeMode(column, QHeaderView.Interactive)
             header.resizeSection(column, width)
         table_layout.addWidget(self.table)
 
         inspector = CardFrame()
+        inspector.setObjectName("MaterialInspector")
         inspector.set_tone("default")
-        inspector.setMinimumWidth(390)
-        inspector.setMaximumWidth(560)
+        inspector.setMinimumWidth(480)
+        inspector.setMaximumWidth(680)
         inspector.setStyleSheet(
             "QLineEdit:disabled, QComboBox:disabled { background: #f8fbff; color: #0f172a; border: 1px solid #d6e3f3; }"
         )
@@ -1632,9 +1708,11 @@ class MaterialsPage(QWidget):
         inspector_heading = QVBoxLayout()
         inspector_heading.setSpacing(1)
         inspector_eyebrow = QLabel("MATÉRIA-PRIMA SELECIONADA")
-        inspector_eyebrow.setStyleSheet("color: #5b7088; font-size: 8px; font-weight: 700;")
+        inspector_eyebrow.setStyleSheet("color: #5b7088; font-size: 9px; font-weight: 700;")
         self.detail_title.setWordWrap(True)
+        self.detail_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
         self.detail_meta.setWordWrap(True)
+        self.detail_meta.setStyleSheet("font-size: 11px; color: #5b7088;")
         inspector_heading.addWidget(inspector_eyebrow)
         inspector_heading.addWidget(self.detail_title)
         inspector_heading.addWidget(self.detail_meta)
@@ -1651,8 +1729,8 @@ class MaterialsPage(QWidget):
         summary_strip.setFixedHeight(58)
         summary_strip.setStyleSheet(
             "QFrame#MaterialSummaryStrip { background: #f1f6fa; border: none; }"
-            "QLabel#MaterialSummaryLabel { color: #60758d; font-size: 8px; font-weight: 700; border: none; background: transparent; }"
-            "QLabel#MaterialSummaryValue { color: #10253d; font-size: 11px; font-weight: 800; border: none; background: transparent; }"
+            "QLabel#MaterialSummaryLabel { color: #60758d; font-size: 9px; font-weight: 700; border: none; background: transparent; }"
+            "QLabel#MaterialSummaryValue { color: #10253d; font-size: 12px; font-weight: 800; border: none; background: transparent; }"
         )
         summary_layout = QHBoxLayout(summary_strip)
         summary_layout.setContentsMargins(10, 6, 10, 6)
@@ -1685,7 +1763,7 @@ class MaterialsPage(QWidget):
         self.detail_tabs.setUsesScrollButtons(False)
         self.detail_tabs.setStyleSheet(
             "QTabWidget::pane { border: 1px solid #cbd8e5; background: #ffffff; top: -1px; }"
-            "QTabBar::tab { min-width: 92px; min-height: 30px; padding: 0 8px; color: #4a6179; font-size: 9px; font-weight: 700; }"
+            "QTabBar::tab { min-width: 104px; min-height: 32px; padding: 0 9px; color: #4a6179; font-size: 10px; font-weight: 700; }"
             "QTabBar::tab:selected { background: #ffffff; color: #087f83; border-bottom: 2px solid #08a6a6; }"
         )
         inspector_layout.addWidget(self.detail_tabs, 1)
@@ -1709,7 +1787,7 @@ class MaterialsPage(QWidget):
                 row = index // 2
                 column = index % 2
                 label = QLabel(label_text)
-                label.setStyleSheet("color: #5b7088; font-size: 8px; font-weight: 700;")
+                label.setStyleSheet("color: #5b7088; font-size: 9px; font-weight: 700;")
                 self._field_labels[label_text] = label
                 field_grid.addWidget(label, row * 2, column)
                 field_grid.addWidget(widget, row * 2 + 1, column)
@@ -1756,13 +1834,16 @@ class MaterialsPage(QWidget):
         self.detail_tabs.addTab(stock_page, "Stock e valor")
 
         workspace = QSplitter(Qt.Horizontal)
+        workspace.setObjectName("MaterialsWorkspace")
         workspace.setChildrenCollapsible(False)
         workspace.addWidget(table_card)
         workspace.addWidget(inspector)
-        workspace.setStretchFactor(0, 1)
-        workspace.setStretchFactor(1, 0)
-        workspace.setSizes([1400, 440])
+        workspace.setStretchFactor(0, 3)
+        workspace.setStretchFactor(1, 1)
+        workspace.setSizes([1320, 540])
+        workspace.splitterMoved.connect(lambda *_args: self._resize_material_columns())
         root.addWidget(workspace, 1)
+        QTimer.singleShot(0, self._resize_material_columns)
 
         for combo in (self.formato_combo, self.material_combo, self.secao_tipo_combo, self.espessura_combo, self.local_combo):
             combo.currentTextChanged.connect(self._on_form_value_changed)
@@ -1786,6 +1867,34 @@ class MaterialsPage(QWidget):
 
         self._set_preview_fields_enabled(False)
         self._set_form_defaults()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._resize_material_columns)
+
+    def _resize_material_columns(self) -> None:
+        if not hasattr(self, "table"):
+            return
+        viewport_width = self.table.viewport().width()
+        compact = viewport_width < 1150
+        if self._columns_compact is compact:
+            return
+        self._columns_compact = compact
+        # Logical columns currently visible:
+        # ID, Material, Dimensões, Formato, Lote interno, Esp., Qtd.,
+        # Disponível and Estado. Material remains the elastic column so the
+        # longest commercial designation stays readable.
+        widths = (
+            ((16, 76), (3, 104), (8, 74), (0, 132), (5, 56), (6, 58), (13, 68), (17, 80))
+            if compact
+            else ((16, 88), (3, 130), (8, 86), (0, 160), (5, 66), (6, 68), (13, 82), (17, 92))
+        )
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(2, QHeaderView.Interactive if compact else QHeaderView.Stretch)
+        if compact:
+            header.resizeSection(2, 425)
+        for column, width in widths:
+            header.resizeSection(column, width)
 
     def _make_combo(self) -> QComboBox:
         combo = QComboBox()
@@ -2460,6 +2569,60 @@ class MaterialsPage(QWidget):
         self.current_material_id = str(record.get("id", ""))
         self.refresh()
 
+    def _prepare_material_with_ai(self) -> None:
+        command = self.material_ai_command_edit.text().strip()
+        if not command:
+            QMessageBox.warning(
+                self,
+                "Copiloto de stock",
+                "Descreve primeiro o material, as dimensões e a quantidade que pretendes criar.",
+            )
+            self.material_ai_command_edit.setFocus()
+            return
+        if self._material_ai_thread is not None and self._material_ai_thread.isRunning():
+            return
+        self.material_ai_button.setEnabled(False)
+        self.material_ai_button.setText("A interpretar…")
+        worker = _MaterialAICommandThread(self.backend, command, self)
+        self._material_ai_thread = worker
+        worker.completed.connect(self._material_ai_completed)
+        worker.failed.connect(self._material_ai_failed)
+        worker.finished.connect(self._material_ai_finished)
+        worker.start()
+
+    def _material_ai_finished(self) -> None:
+        self.material_ai_button.setEnabled(True)
+        self.material_ai_button.setText("Preparar com IA")
+        worker = self._material_ai_thread
+        self._material_ai_thread = None
+        if worker is not None:
+            worker.deleteLater()
+
+    def _material_ai_failed(self, message: str) -> None:
+        QMessageBox.warning(
+            self,
+            "Copiloto de stock",
+            message or "Não foi possível interpretar o pedido.",
+        )
+
+    def _material_ai_completed(self, candidate: dict) -> None:
+        dialog = _MaterialEditorDialog(self.backend, self, record=candidate, mode="ai")
+        if dialog.exec() != QDialog.Accepted:
+            return
+        try:
+            record = self.backend.add_material(dialog.payload())
+        except Exception as exc:
+            QMessageBox.critical(self, "Criar stock", str(exc))
+            return
+        self.current_material_id = str(record.get("id", "") or "")
+        self.material_ai_command_edit.clear()
+        self.refresh()
+        QMessageBox.information(
+            self,
+            "Copiloto de stock",
+            f"Stock criado com sucesso: {self.current_material_id}.",
+        )
+
     def edit_material(self) -> None:
         material_id = self.current_material_id or self._selected_material_id()
         if not material_id:
@@ -2894,8 +3057,7 @@ class MaterialsPage(QWidget):
             sort_order = header_view.sortIndicatorOrder()
             table.setSortingEnabled(False)
             query = search_edit.text().strip()
-            all_rows = self.backend.material_rows("", in_stock_only=self.only_stock_check.isChecked())
-            rows = [payload for payload in all_rows if _grid_search_matches(searchable_values(payload), query)]
+            rows = self.backend.material_rows(query, in_stock_only=self.only_stock_check.isChecked())
             info.setText(f"{len(rows)} registos")
             table.setRowCount(len(rows))
             selected_row = -1
@@ -3176,4 +3338,3 @@ class MaterialsPage(QWidget):
         rows = self.backend.material_history_rows(material_id, limit=320)
         dlg = _HistoryDialog(title, rows, self.backend, self)
         dlg.exec()
-

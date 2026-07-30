@@ -33,7 +33,10 @@ WEAK_PASSWORDS = {
 
 TRASH_PATHS = [
     ROOT / "build",
+    ROOT / "build_qt_stable",
+    ROOT / "dist_qt_stable",
     ROOT / "__pycache__",
+    ROOT / "tmp",
     ROOT / "dist" / "lugest_trial.json",
     ROOT / ".pytest_cache",
     ROOT / ".mypy_cache",

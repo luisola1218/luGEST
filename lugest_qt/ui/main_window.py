@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QStyle,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QTextEdit,
     QToolButton,
     QVBoxLayout,
@@ -177,6 +178,12 @@ def _header_icon(kind: str) -> QIcon:
     if kind == "close":
         painter.drawLine(7, 7, 17, 17)
         painter.drawLine(17, 7, 7, 17)
+    elif kind == "copilot":
+        painter.drawRoundedRect(QRectF(4.5, 5, 15, 12), 4, 4)
+        painter.drawLine(8, 17, 6.5, 20)
+        painter.drawLine(8, 17, 11, 17)
+        painter.drawLine(9, 10.8, 15, 10.8)
+        painter.drawLine(9, 13.8, 13, 13.8)
     else:
         painter.drawArc(QRectF(5, 5, 14, 14), 35 * 16, 285 * 16)
         painter.drawLine(17, 5, 19, 9)
@@ -264,14 +271,20 @@ class MainWindow(QMainWindow):
 
         page_col = QVBoxLayout()
         page_col.setContentsMargins(0, 0, 0, 0)
-        page_col.setSpacing(2)
+        page_col.setSpacing(3)
         self.title_label = QLabel("Resumo")
-        self.title_label.setStyleSheet("font-size: 20px; font-weight: 900; color: #0f172a;")
+        self.title_label.setMinimumHeight(25)
+        self.title_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.title_label.setStyleSheet("font-size: 21px; font-weight: 900; color: #0f172a;")
         self.subtitle_label = QLabel("Base de trabalho pronta para testes.")
         self.subtitle_label.setProperty("role", "muted")
+        self.subtitle_label.setMinimumHeight(18)
+        self.subtitle_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.subtitle_label.setStyleSheet("font-size: 11px; color: #5b6675;")
         page_col.addWidget(self.title_label)
         page_col.addWidget(self.subtitle_label)
         shell_layout.addLayout(page_col, 1)
+        shell_layout.setAlignment(page_col, Qt.AlignVCenter)
 
         right_col = QHBoxLayout()
         right_col.setContentsMargins(0, 0, 0, 0)
@@ -434,11 +447,43 @@ class MainWindow(QMainWindow):
         pos_y = safe.y() + max(0, int((safe.height() - target_height) / 2))
         self.setGeometry(QRect(QPoint(pos_x, pos_y), QSize(target_width, target_height)))
 
+    def _stabilize_maximized_layout(self) -> None:
+        """Recalcula o primeiro layout sem retirar o estado maximizado.
+
+        No Windows, aplicar ``setGeometry`` imediatamente depois de
+        ``showMaximized`` deixa por vezes a área central com a geometria do
+        estado normal. Reativar os layouts depois da janela ter um handle
+        nativo produz o mesmo resultado correto de minimizar/maximizar, sem
+        alterar a posição escolhida pelo sistema operativo.
+        """
+        if self.isMinimized() or self._closing:
+            return
+        if not self.isMaximized():
+            self.showMaximized()
+        central = self.centralWidget()
+        if central is not None:
+            layout = central.layout()
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
+            central.updateGeometry()
+            central.update()
+        current_page = self.stack.currentWidget()
+        if current_page is not None:
+            current_page.updateGeometry()
+            current_page.update()
+        self.updateGeometry()
+        self.update()
+
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         if not self._screen_fitted:
             self._screen_fitted = True
-            QTimer.singleShot(0, self._fit_to_available_screen)
+            if self.isMaximized() or bool(self.windowState() & Qt.WindowMaximized):
+                QTimer.singleShot(0, self._stabilize_maximized_layout)
+                QTimer.singleShot(120, self._stabilize_maximized_layout)
+            else:
+                QTimer.singleShot(0, self._fit_to_available_screen)
 
     def _auto_check_updates(self) -> None:
         if self._update_check_thread is not None:
@@ -742,6 +787,10 @@ class MainWindow(QMainWindow):
                 if fallback:
                     self.show_page(fallback)
 
+    def _current_page_key(self) -> str:
+        current = self.stack.currentWidget()
+        return next((key for key, page in self.pages.items() if page is current), "")
+
     def _refresh_global_alerts(self, *, force: bool = False) -> None:
         if (
             not force
@@ -889,6 +938,27 @@ class MainWindow(QMainWindow):
         hint.setProperty("role", "muted")
         layout.addWidget(hint)
 
+        security_panel = QFrame()
+        security_panel.setObjectName("ExtrasSecurityPanel")
+        security_panel.setStyleSheet(
+            """
+            QFrame#ExtrasSecurityPanel {
+                background: #ffffff;
+                border: 1px solid #d6dbd7;
+                border-radius: 8px;
+            }
+            """
+        )
+        security_layout = QVBoxLayout(security_panel)
+        security_layout.setContentsMargins(10, 8, 10, 9)
+        security_layout.setSpacing(6)
+        security_title = QLabel("Segurança do Operador")
+        security_title.setStyleSheet("font-size: 12px; font-weight: 850; color: #26322b;")
+        security_layout.addWidget(security_title)
+        security_hint = QLabel("Password usada para autorizar baixas protegidas e opção de identificação do cliente.")
+        security_hint.setProperty("role", "muted")
+        security_hint.setWordWrap(True)
+        security_layout.addWidget(security_hint)
         form = QFormLayout()
         form.setHorizontalSpacing(12)
         form.setVerticalSpacing(8)
@@ -1006,40 +1076,122 @@ class MainWindow(QMainWindow):
             QLabel { font-size: 12px; }
             QLineEdit, QComboBox, QTableWidget { font-size: 12px; }
             QCheckBox { font-size: 12px; }
-            QPushButton { font-size: 12px; min-height: 34px; }
+            QPushButton { font-size: 12px; }
             """
         )
+
+        def prepare_admin_child(
+            child: QDialog,
+            *,
+            preferred_width: int = 1080,
+            preferred_height: int = 760,
+            maximize: bool = False,
+        ) -> None:
+            child.setWindowFlag(Qt.WindowMinimizeButtonHint, True)
+            child.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
+            child.setWindowFlag(Qt.WindowSystemMenuHint, True)
+            screen = child.screen() or self.screen() or QApplication.primaryScreen()
+            geometry = screen.availableGeometry() if screen is not None else QRect()
+            if not geometry.isNull():
+                if maximize:
+                    child.setGeometry(geometry)
+                    QTimer.singleShot(0, child.showMaximized)
+                else:
+                    width = min(max(child.minimumWidth(), preferred_width), max(640, geometry.width() - 32))
+                    height = min(max(child.minimumHeight(), preferred_height), max(520, geometry.height() - 32))
+                    child.resize(width, height)
+                    child.move(
+                        geometry.x() + max(0, (geometry.width() - width) // 2),
+                        geometry.y() + max(0, (geometry.height() - height) // 2),
+                    )
+            QTimer.singleShot(0, child.raise_)
+            QTimer.singleShot(0, child.activateWindow)
+
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
-        intro = QLabel("Configuracoes adicionais do desktop Qt e autorizacoes operacionais.")
+        extras_title = QLabel("Administração do sistema")
+        extras_title.setStyleSheet("font-size: 18px; font-weight: 900; color: #172033;")
+        layout.addWidget(extras_title)
+        intro = QLabel("Utilizadores, permissões, estrutura produtiva, identidade da empresa e manutenção do LuGEST.")
+        intro.setProperty("role", "muted")
         intro.setWordWrap(True)
         layout.addWidget(intro)
-        tools_row = QHBoxLayout()
+        tools_panel = QFrame()
+        tools_panel.setObjectName("ExtrasToolsPanel")
+        tools_panel.setStyleSheet(
+            """
+            QFrame#ExtrasToolsPanel {
+                background: #f1f3f1;
+                border: 1px solid #d4d8d4;
+                border-radius: 8px;
+            }
+            """
+        )
+        tools_panel_layout = QVBoxLayout(tools_panel)
+        tools_panel_layout.setContentsMargins(10, 8, 10, 9)
+        tools_panel_layout.setSpacing(6)
+        tools_caption = QLabel("FERRAMENTAS DE CONFIGURAÇÃO")
+        tools_caption.setStyleSheet("font-size: 9px; font-weight: 900; color: #4c5750;")
+        tools_panel_layout.addWidget(tools_caption)
+        tools_grid = QGridLayout()
+        tools_grid.setContentsMargins(0, 0, 0, 0)
+        tools_grid.setHorizontalSpacing(8)
+        tools_grid.setVerticalSpacing(7)
         company_btn = QPushButton("Empresa / PDFs")
         company_btn.setProperty("variant", "secondary")
-        tools_row.addWidget(company_btn)
-        workcenters_btn = QPushButton("Postos Trabalho")
+        workcenters_btn = QPushButton("Postos e máquinas")
         workcenters_btn.setProperty("variant", "secondary")
-        tools_row.addWidget(workcenters_btn)
-        operations_btn = QPushButton("Operacoes")
+        workcenters_btn.setToolTip("Organizar postos de trabalho e as máquinas ou recursos associados.")
+        operations_btn = QPushButton("Catálogo de operações")
         operations_btn.setProperty("variant", "secondary")
-        tools_row.addWidget(operations_btn)
+        operations_btn.setToolTip("Definir operações disponíveis e indicar quais entram no planeamento.")
         updates_btn = QPushButton("Atualizações")
         updates_btn.setProperty("variant", "secondary")
-        tools_row.addWidget(updates_btn)
-        info_btn = QPushButton("Inf. LuGEST")
+        info_btn = QPushButton("Informação LuGEST")
         info_btn.setProperty("variant", "secondary")
-        tools_row.addWidget(info_btn)
         trial_manage_allowed = bool(getattr(self.backend, "is_owner_session", lambda: False)())
         trial_btn = None
         if trial_manage_allowed:
-            trial_btn = QPushButton("Trial / Licenca")
+            trial_btn = QPushButton("Trial / licença")
             trial_btn.setProperty("variant", "secondary")
             trial_btn.setToolTip("Gestao de trial/licenca autorizada pela sessao OWNER.")
-            tools_row.addWidget(trial_btn)
-        tools_row.addStretch(1)
-        layout.addLayout(tools_row)
+        tool_buttons = tuple(
+            tool_button
+            for tool_button in (company_btn, workcenters_btn, operations_btn, updates_btn, info_btn, trial_btn)
+            if tool_button is not None
+        )
+        for index, tool_button in enumerate(tool_buttons):
+            if tool_button is None:
+                continue
+            tool_button.setMinimumWidth(150)
+            tool_button.setMaximumWidth(220)
+            tool_button.setFixedHeight(34)
+            tool_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            tools_grid.addWidget(tool_button, index // 3, index % 3)
+        for column in range(3):
+            tools_grid.setColumnMinimumWidth(column, 150)
+        tools_grid.setColumnStretch(3, 1)
+        tools_panel_layout.addLayout(tools_grid)
+        layout.addWidget(tools_panel)
+
+        security_panel = QFrame()
+        security_panel.setObjectName("ExtrasSecurityPanel")
+        security_panel.setStyleSheet(
+            """
+            QFrame#ExtrasSecurityPanel {
+                background: #ffffff;
+                border: 1px solid #d6dbd7;
+                border-radius: 8px;
+            }
+            """
+        )
+        security_layout = QVBoxLayout(security_panel)
+        security_layout.setContentsMargins(10, 8, 10, 9)
+        security_layout.setSpacing(6)
+        security_title = QLabel("Segurança operacional")
+        security_title.setStyleSheet("font-size: 12px; font-weight: 850; color: #26322b;")
+        security_layout.addWidget(security_title)
         form = QFormLayout()
         form.setHorizontalSpacing(12)
         form.setVerticalSpacing(8)
@@ -1054,9 +1206,10 @@ class MainWindow(QMainWindow):
         show_client_box.setChecked(bool(options.get("operator_show_client_name", True)))
         form.addRow("Password supervisor", supervisor_edit)
         form.addRow("", show_client_box)
-        layout.addLayout(form)
+        security_layout.addLayout(form)
+        layout.addWidget(security_panel)
 
-        users_title = QLabel("Utilizadores e permissoes")
+        users_title = QLabel("Utilizadores e permissões")
         users_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
         layout.addWidget(users_title)
         users_host = QWidget()
@@ -1064,6 +1217,23 @@ class MainWindow(QMainWindow):
         users_layout.setContentsMargins(0, 0, 0, 0)
         users_layout.setSpacing(12)
 
+        users_list_panel = QFrame()
+        users_list_panel.setObjectName("ExtrasUsersListPanel")
+        users_list_panel.setStyleSheet(
+            """
+            QFrame#ExtrasUsersListPanel {
+                background: #ffffff;
+                border: 1px solid #d6dbd7;
+                border-radius: 8px;
+            }
+            """
+        )
+        users_list_layout = QVBoxLayout(users_list_panel)
+        users_list_layout.setContentsMargins(9, 9, 9, 9)
+        users_list_layout.setSpacing(7)
+        users_list_title = QLabel("Utilizadores")
+        users_list_title.setStyleSheet("font-size: 13px; font-weight: 850; color: #26322b;")
+        users_list_layout.addWidget(users_list_title)
         users_table = QTableWidget(0, 4)
         users_table.setHorizontalHeaderLabels(["Utilizador", "Role", "Posto", "Ativo"])
         users_table.verticalHeader().setVisible(False)
@@ -1078,12 +1248,26 @@ class MainWindow(QMainWindow):
         users_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         users_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         users_table.setAlternatingRowColors(True)
-        users_layout.addWidget(users_table, 5)
+        users_list_layout.addWidget(users_table, 1)
+        users_layout.addWidget(users_list_panel, 5)
 
-        form_host = QWidget()
+        form_host = QFrame()
+        form_host.setObjectName("ExtrasUserEditorPanel")
+        form_host.setStyleSheet(
+            """
+            QFrame#ExtrasUserEditorPanel {
+                background: #f5f7f5;
+                border: 1px solid #d6dbd7;
+                border-radius: 8px;
+            }
+            """
+        )
         form_host_layout = QVBoxLayout(form_host)
-        form_host_layout.setContentsMargins(0, 0, 0, 0)
-        form_host_layout.setSpacing(10)
+        form_host_layout.setContentsMargins(11, 10, 11, 11)
+        form_host_layout.setSpacing(8)
+        user_editor_title = QLabel("Detalhe e permissões")
+        user_editor_title.setStyleSheet("font-size: 13px; font-weight: 850; color: #26322b;")
+        form_host_layout.addWidget(user_editor_title)
         user_form = QFormLayout()
         user_form.setHorizontalSpacing(12)
         user_form.setVerticalSpacing(8)
@@ -1094,6 +1278,7 @@ class MainWindow(QMainWindow):
         password_toggle = QPushButton("Mostrar")
         password_toggle.setProperty("variant", "secondary")
         password_toggle.setCheckable(True)
+        password_toggle.setFixedSize(78, 34)
         password_row = QWidget()
         password_row_layout = QHBoxLayout(password_row)
         password_row_layout.setContentsMargins(0, 0, 0, 0)
@@ -1115,7 +1300,7 @@ class MainWindow(QMainWindow):
         user_form.addRow("Posto", posto_combo)
         user_form.addRow("", active_box)
         form_host_layout.addLayout(user_form)
-        password_note = QLabel("Deixa a password em branco para manter a atual quando estiveres a editar.")
+        password_note = QLabel("Em edição, deixa a password vazia para manter a atual.")
         password_note.setProperty("role", "muted")
         password_note.setWordWrap(True)
         form_host_layout.addWidget(password_note)
@@ -1131,6 +1316,7 @@ class MainWindow(QMainWindow):
         preview_toggle = QPushButton("Ver")
         preview_toggle.setProperty("variant", "secondary")
         preview_toggle.setCheckable(True)
+        preview_toggle.setFixedSize(58, 34)
         preview_row = QWidget()
         preview_row_layout = QHBoxLayout(preview_row)
         preview_row_layout.setContentsMargins(0, 0, 0, 0)
@@ -1138,8 +1324,8 @@ class MainWindow(QMainWindow):
         preview_row_layout.addWidget(password_preview_edit, 1)
         preview_row_layout.addWidget(preview_toggle, 0)
         preview_note = QLabel(
-            "As passwords existentes não podem ser reveladas depois de gravadas, porque ficam guardadas em hash. "
-            "Aqui só aparece a última password que definiste nesta sessão de administração."
+            "Por segurança, passwords gravadas não são recuperáveis. "
+            "Só mostramos a última definida nesta sessão."
         )
         preview_note.setProperty("role", "muted")
         preview_note.setWordWrap(True)
@@ -1162,19 +1348,28 @@ class MainWindow(QMainWindow):
                 continue
             check = QCheckBox(label)
             permission_checks[key] = check
-            perms_grid.addWidget(check, index // 2, index % 2)
+            perms_grid.addWidget(check, index // 3, index % 3)
         form_host_layout.addLayout(perms_grid)
 
         user_actions = QHBoxLayout()
+        user_actions.setContentsMargins(0, 4, 0, 0)
+        user_actions.setSpacing(8)
         new_user_btn = QPushButton("Novo")
         new_user_btn.setProperty("variant", "secondary")
         save_user_btn = QPushButton("Guardar utilizador")
+        save_user_btn.setProperty("variant", "success")
         remove_user_btn = QPushButton("Remover utilizador")
         remove_user_btn.setProperty("variant", "danger")
+        for action_button in (new_user_btn, save_user_btn, remove_user_btn):
+            action_button.setFixedHeight(34)
+            action_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        new_user_btn.setFixedWidth(120)
+        save_user_btn.setFixedWidth(170)
+        remove_user_btn.setFixedWidth(180)
+        user_actions.addStretch(1)
         user_actions.addWidget(new_user_btn)
         user_actions.addWidget(save_user_btn)
         user_actions.addWidget(remove_user_btn)
-        user_actions.addStretch(1)
         form_host_layout.addLayout(user_actions)
         users_layout.addWidget(form_host, 6)
         layout.addWidget(users_host, 1)
@@ -1228,17 +1423,17 @@ class MainWindow(QMainWindow):
             brand_dialog = QDialog(dialog)
             brand_dialog.setWindowTitle("Empresa / PDFs")
             brand_dialog.setWindowFlags(brand_dialog.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
-            brand_dialog.setMinimumSize(1080, 760)
-            brand_dialog.resize(1180, 820)
+            brand_dialog.setMinimumSize(760, 560)
+            brand_dialog.resize(1180, 720)
             brand_layout = QVBoxLayout(brand_dialog)
             brand_layout.setContentsMargins(14, 14, 14, 14)
             brand_layout.setSpacing(12)
 
-            brand_form = QFormLayout()
+            brand_form = QGridLayout()
             brand_form.setHorizontalSpacing(12)
             brand_form.setVerticalSpacing(8)
             logo_edit = QLineEdit(str(data.get("logo_path", "") or "").strip())
-            use_default_logo_btn = QPushButton("Usar image (1)")
+            use_default_logo_btn = QPushButton("Usar logótipo")
             use_default_logo_btn.setProperty("variant", "secondary")
             browse_logo_btn = QPushButton("Procurar")
             browse_logo_btn.setProperty("variant", "secondary")
@@ -1274,15 +1469,31 @@ class MainWindow(QMainWindow):
             emit_carga_edit = QLineEdit(str(emit.get("local_carga", "") or "").strip())
             guia_serie_edit = QLineEdit(str(data.get("guia_serie_id", "") or "").strip())
             guia_validation_edit = QLineEdit(str(data.get("guia_validation_code", "") or "").strip())
-            brand_form.addRow("Logo", logo_row)
-            brand_form.addRow("Escala logo PDF", logo_scale_spin)
-            brand_form.addRow("Cor dos documentos", primary_row)
-            brand_form.addRow("Nome emitente", emit_name_edit)
-            brand_form.addRow("NIF", emit_nif_edit)
-            brand_form.addRow("Morada", emit_address_edit)
-            brand_form.addRow("Local carga", emit_carga_edit)
-            brand_form.addRow("Série guia", guia_serie_edit)
-            brand_form.addRow("Código AT/ATCUD", guia_validation_edit)
+            def brand_label(text: str) -> QLabel:
+                label = QLabel(text)
+                label.setStyleSheet("font-weight: 700; color: #3f4943;")
+                return label
+
+            brand_form.addWidget(brand_label("Logótipo"), 0, 0)
+            brand_form.addWidget(logo_row, 0, 1, 1, 3)
+            brand_form.addWidget(brand_label("Escala no PDF"), 1, 0)
+            brand_form.addWidget(logo_scale_spin, 1, 1)
+            brand_form.addWidget(brand_label("Cor dos documentos"), 1, 2)
+            brand_form.addWidget(primary_row, 1, 3)
+            brand_form.addWidget(brand_label("Nome do emitente"), 2, 0)
+            brand_form.addWidget(emit_name_edit, 2, 1)
+            brand_form.addWidget(brand_label("NIF"), 2, 2)
+            brand_form.addWidget(emit_nif_edit, 2, 3)
+            brand_form.addWidget(brand_label("Morada"), 3, 0)
+            brand_form.addWidget(emit_address_edit, 3, 1, 1, 3)
+            brand_form.addWidget(brand_label("Local de carga"), 4, 0)
+            brand_form.addWidget(emit_carga_edit, 4, 1)
+            brand_form.addWidget(brand_label("Série da guia"), 4, 2)
+            brand_form.addWidget(guia_serie_edit, 4, 3)
+            brand_form.addWidget(brand_label("Código AT/ATCUD"), 5, 0)
+            brand_form.addWidget(guia_validation_edit, 5, 1, 1, 3)
+            brand_form.setColumnStretch(1, 1)
+            brand_form.setColumnStretch(3, 1)
             brand_layout.addLayout(brand_form)
 
             rodape_title = QLabel("Rodape da empresa nos PDFs")
@@ -1292,6 +1503,7 @@ class MainWindow(QMainWindow):
             rodape_edit.setPlaceholderText("Uma linha por entrada do rodape.")
             rodape_edit.setPlainText("\n".join(str(v).strip() for v in list(data.get("empresa_info_rodape", []) or []) if str(v).strip()))
             rodape_edit.setMinimumHeight(120)
+            rodape_edit.setMaximumHeight(150)
             brand_layout.addWidget(rodape_edit)
 
             extra_title = QLabel("Informacao extra da guia / PDF")
@@ -1301,7 +1513,9 @@ class MainWindow(QMainWindow):
             extra_edit.setPlaceholderText("Linhas adicionais para guias e PDFs.")
             extra_edit.setPlainText("\n".join(str(v).strip() for v in list(data.get("guia_info_extra", []) or []) if str(v).strip()))
             extra_edit.setMinimumHeight(110)
+            extra_edit.setMaximumHeight(150)
             brand_layout.addWidget(extra_edit)
+            brand_layout.addStretch(1)
 
             def use_default_logo() -> None:
                 logo_edit.setText(str(self.backend.base_dir / "Logos" / "image (1).jpg"))
@@ -1345,6 +1559,7 @@ class MainWindow(QMainWindow):
             buttons_box.rejected.connect(brand_dialog.reject)
             brand_layout.addWidget(buttons_box)
 
+            prepare_admin_child(brand_dialog, preferred_width=1180, preferred_height=720)
             if brand_dialog.exec() != QDialog.Accepted:
                 return
             try:
@@ -1460,6 +1675,7 @@ class MainWindow(QMainWindow):
             buttons.rejected.connect(info_dialog.reject)
             buttons.accepted.connect(info_dialog.accept)
             info_layout.addWidget(buttons)
+            prepare_admin_child(info_dialog, preferred_width=980, preferred_height=720)
             info_dialog.exec()
 
         def open_trial_dialog() -> None:
@@ -1476,16 +1692,16 @@ class MainWindow(QMainWindow):
 
             trial_dialog = QDialog(dialog)
             trial_dialog.setWindowTitle("Trial / Licenca")
-            trial_dialog.setMinimumSize(860, 640)
+            trial_dialog.setMinimumSize(760, 560)
             trial_dialog.resize(920, 680)
             trial_layout = QVBoxLayout(trial_dialog)
             trial_layout.setContentsMargins(16, 16, 16, 16)
             trial_layout.setSpacing(12)
 
             intro = QLabel(
-                "Ativa um trial por empresa/equipamento. Quando o prazo terminar, "
-                "o sistema bloqueia novos acessos e apenas o login do proprietario "
-                "configurado no lugest.env pode voltar a autorizar."
+                "O trial fica associado à empresa e ao equipamento. Enquanto estiver ativo, "
+                "a aplicação valida obrigatoriamente a hora por HTTPS e trabalha com a hora "
+                "oficial de Portugal; alterar o relógio do computador não prolonga a licença."
             )
             intro.setWordWrap(True)
             trial_layout.addWidget(intro)
@@ -1531,10 +1747,18 @@ class MainWindow(QMainWindow):
             remaining_value = QLabel("-")
             last_success_value = QLabel("-")
             last_owner_value = QLabel("-")
+            online_time_value = QLabel("-")
+            online_time_value.setWordWrap(True)
+            portugal_time_value = QLabel("-")
+            time_source_value = QLabel("-")
+            time_source_value.setWordWrap(True)
             trial_form.addRow("Empresa", company_edit)
             trial_form.addRow("Duracao inicial", duration_spin)
             trial_form.addRow("Prolongar", extend_spin)
             trial_form.addRow("Estado", state_value)
+            trial_form.addRow("Validação online", online_time_value)
+            trial_form.addRow("Hora oficial Portugal", portugal_time_value)
+            trial_form.addRow("Fontes HTTPS", time_source_value)
             trial_form.addRow("Login proprietario", owner_value)
             trial_form.addRow("Equipamento atual", device_value)
             trial_form.addRow("Inicio", started_value)
@@ -1545,18 +1769,29 @@ class MainWindow(QMainWindow):
             trial_form.addRow("Notas", notes_edit)
             trial_layout.addLayout(trial_form)
 
-            actions_row = QHBoxLayout()
-            actions_row.setSpacing(10)
+            actions_row = QGridLayout()
+            actions_row.setContentsMargins(0, 0, 0, 0)
+            actions_row.setHorizontalSpacing(8)
+            actions_row.setVerticalSpacing(8)
+            validate_time_btn = QPushButton("Validar hora agora")
+            validate_time_btn.setProperty("variant", "secondary")
             activate_btn = QPushButton("Ativar / Reiniciar")
             activate_btn.setProperty("variant", "secondary")
             extend_btn = QPushButton("Prolongar trial")
             extend_btn.setProperty("variant", "secondary")
             disable_btn = QPushButton("Desativar")
             disable_btn.setProperty("variant", "danger")
-            actions_row.addWidget(activate_btn)
-            actions_row.addWidget(extend_btn)
-            actions_row.addWidget(disable_btn)
-            actions_row.addStretch(1)
+            for action_button in (validate_time_btn, activate_btn, extend_btn, disable_btn):
+                action_button.setMinimumWidth(0)
+                action_button.setMaximumWidth(180)
+                action_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            actions_row.addWidget(validate_time_btn, 0, 0)
+            actions_row.addWidget(activate_btn, 0, 1)
+            actions_row.addWidget(extend_btn, 0, 2)
+            actions_row.addWidget(disable_btn, 0, 3)
+            for column in range(4):
+                actions_row.setColumnStretch(column, 0)
+            actions_row.setColumnStretch(4, 1)
             trial_layout.addLayout(actions_row)
 
             buttons_box = QDialogButtonBox(QDialogButtonBox.Close)
@@ -1583,14 +1818,19 @@ class MainWindow(QMainWindow):
                     "disabled": "Desativado",
                     "invalid": "Invalido",
                     "device_mismatch": "Equipamento diferente",
+                    "time_unavailable": "Sem validação online",
+                    "time_rollback": "Regressão temporal detetada",
                 }
                 label = mapping.get(state, state or "-")
                 if bool(status.get("blocking", False)):
                     return f"{label} | bloqueado"
                 return label
 
-            def refresh_trial_status(sync_inputs: bool = True) -> dict:
-                status = dict(getter_trial() or {})
+            def refresh_trial_status(sync_inputs: bool = True, force_time: bool = False) -> dict:
+                try:
+                    status = dict(getter_trial(force=bool(force_time)) or {})
+                except TypeError:
+                    status = dict(getter_trial() or {})
                 blocking = bool(status.get("blocking", False))
                 status_card.setText(str(status.get("message", "") or "Sem informacao de licenciamento.").strip())
                 status_card.setStyleSheet(
@@ -1611,6 +1851,16 @@ class MainWindow(QMainWindow):
                     )
                 )
                 state_value.setText(describe_state(status))
+                if bool(status.get("online_time_required", False)):
+                    online_time_value.setText(
+                        "Validada por HTTPS"
+                        if bool(status.get("time_valid", False))
+                        else "Obrigatória · indisponível"
+                    )
+                else:
+                    online_time_value.setText("Será obrigatória quando o trial estiver ativo")
+                portugal_time_value.setText(format_dt(str(status.get("portugal_time", "") or "")))
+                time_source_value.setText(str(status.get("time_source", "") or "-").strip() or "-")
                 owner_name = str(status.get("owner_username", "") or "").strip()
                 if not owner_name:
                     owner_name = "-"
@@ -1619,7 +1869,9 @@ class MainWindow(QMainWindow):
                 owner_value.setText(owner_name)
                 device_value.setText(str(status.get("current_device_fingerprint", "") or "-").strip() or "-")
                 started_value.setText(format_dt(str(status.get("started_at", "") or "")))
-                expires_value.setText(format_dt(str(status.get("expires_at", "") or "")))
+                expires_value.setText(
+                    format_dt(str(status.get("expires_at_portugal", "") or status.get("expires_at", "") or ""))
+                )
                 days_remaining = status.get("days_remaining")
                 remaining_value.setText("-" if days_remaining is None else str(days_remaining))
                 last_success_value.setText(
@@ -1633,6 +1885,21 @@ class MainWindow(QMainWindow):
                     duration_spin.setValue(max(1, int(status.get("duration_days", 60) or 60)))
                     notes_edit.setPlainText(str(status.get("notes", "") or "").strip())
                 return status
+
+            def on_validate_time() -> None:
+                status = refresh_trial_status(sync_inputs=False, force_time=True)
+                if bool(status.get("time_valid", False)):
+                    QMessageBox.information(
+                        trial_dialog,
+                        "Hora oficial",
+                        "Hora de Portugal validada com sucesso através das fontes HTTPS.",
+                    )
+                else:
+                    QMessageBox.critical(
+                        trial_dialog,
+                        "Hora oficial",
+                        str(status.get("time_error", "") or "Não foi possível validar a hora online."),
+                    )
 
             def on_activate_trial() -> None:
                 company_name = company_edit.text().strip()
@@ -1681,10 +1948,12 @@ class MainWindow(QMainWindow):
                 refresh_trial_status(sync_inputs=True)
                 QMessageBox.information(trial_dialog, "Trial / Licenca", "Trial desativado.")
 
+            validate_time_btn.clicked.connect(on_validate_time)
             activate_btn.clicked.connect(on_activate_trial)
             extend_btn.clicked.connect(on_extend_trial)
             disable_btn.clicked.connect(on_disable_trial)
             refresh_trial_status(sync_inputs=True)
+            prepare_admin_child(trial_dialog, preferred_width=1040, preferred_height=760)
             trial_dialog.exec()
 
         def open_operations_dialog() -> None:
@@ -1695,28 +1964,98 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(dialog, "Operacoes", "Gestao de operacoes indisponivel.")
                 return
             op_dialog = QDialog(dialog)
-            op_dialog.setWindowTitle("Operacoes")
-            op_dialog.setMinimumSize(760, 520)
-            op_layout = QHBoxLayout(op_dialog)
+            op_dialog.setWindowTitle("Operações")
+            op_dialog.setMinimumSize(760, 560)
+            op_layout = QVBoxLayout(op_dialog)
             op_layout.setContentsMargins(14, 14, 14, 14)
             op_layout.setSpacing(12)
+
+            op_heading = QLabel("Catálogo de operações")
+            op_heading.setStyleSheet("font-size: 18px; font-weight: 900; color: #172033;")
+            op_layout.addWidget(op_heading)
+            op_intro = QLabel(
+                "Define as operações disponíveis no orçamento e indica quais entram no planeamento. "
+                "Seleciona uma linha para editar ou utiliza “Nova operação”."
+            )
+            op_intro.setProperty("role", "muted")
+            op_intro.setWordWrap(True)
+            op_layout.addWidget(op_intro)
+
+            op_workspace = QWidget()
+            op_workspace_layout = QHBoxLayout(op_workspace)
+            op_workspace_layout.setContentsMargins(0, 0, 0, 0)
+            op_workspace_layout.setSpacing(12)
+
+            catalog_panel = QFrame()
+            catalog_panel.setObjectName("ExtrasCatalogPanel")
+            catalog_panel.setStyleSheet(
+                """
+                QFrame#ExtrasCatalogPanel {
+                    background: #ffffff;
+                    border: 1px solid #d6dbd7;
+                    border-radius: 8px;
+                }
+                """
+            )
+            catalog_layout = QVBoxLayout(catalog_panel)
+            catalog_layout.setContentsMargins(10, 10, 10, 10)
+            catalog_layout.setSpacing(8)
+            catalog_header = QHBoxLayout()
+            catalog_title = QLabel("Operações existentes")
+            catalog_title.setStyleSheet("font-size: 13px; font-weight: 850; color: #26322b;")
+            operation_count_label = QLabel("0 operações")
+            operation_count_label.setProperty("role", "state_chip")
+            operation_count_label.setAlignment(Qt.AlignCenter)
+            catalog_header.addWidget(catalog_title)
+            catalog_header.addStretch(1)
+            catalog_header.addWidget(operation_count_label)
+            catalog_layout.addLayout(catalog_header)
+            operation_search_edit = QLineEdit()
+            operation_search_edit.setPlaceholderText("Pesquisar operação...")
+            operation_search_edit.setClearButtonEnabled(True)
+            catalog_layout.addWidget(operation_search_edit)
             table = QTableWidget(0, 3)
-            table.setHorizontalHeaderLabels(["Nome", "Ativa", "Planeavel"])
+            table.setHorizontalHeaderLabels(["Operação", "Ativa", "Planeável"])
             table.verticalHeader().setVisible(False)
+            table.verticalHeader().setDefaultSectionSize(32)
             table.setEditTriggers(QAbstractItemView.NoEditTriggers)
             table.setSelectionBehavior(QAbstractItemView.SelectRows)
             table.setSelectionMode(QAbstractItemView.SingleSelection)
+            table.setAlternatingRowColors(True)
             table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
             table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
             table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-            op_layout.addWidget(table, 3)
+            catalog_layout.addWidget(table, 1)
+            op_workspace_layout.addWidget(catalog_panel, 3)
 
-            side = QWidget()
+            side = QFrame()
+            side.setObjectName("ExtrasEditorPanel")
+            side.setStyleSheet(
+                """
+                QFrame#ExtrasEditorPanel {
+                    background: #f5f7f5;
+                    border: 1px solid #d6dbd7;
+                    border-radius: 8px;
+                }
+                """
+            )
             side_layout = QVBoxLayout(side)
-            side_layout.setContentsMargins(0, 0, 0, 0)
+            side_layout.setContentsMargins(12, 12, 12, 12)
+            side_layout.setSpacing(10)
+            editor_title = QLabel("Nova operação")
+            editor_title.setStyleSheet("font-size: 15px; font-weight: 900; color: #172033;")
+            side_layout.addWidget(editor_title)
+            editor_hint = QLabel(
+                "Uma operação pode existir apenas para orçamentação ou também ficar disponível no planeamento."
+            )
+            editor_hint.setProperty("role", "muted")
+            editor_hint.setWordWrap(True)
+            side_layout.addWidget(editor_hint)
             form = QFormLayout()
+            form.setHorizontalSpacing(10)
+            form.setVerticalSpacing(9)
             name_edit = QLineEdit()
-            name_edit.setPlaceholderText("Ex.: Laser, Quinagem, Desenho")
+            name_edit.setPlaceholderText("Ex.: Corte Laser, Quinagem, Desenho")
             active_box = QCheckBox("Ativa")
             active_box.setChecked(True)
             planeavel_box = QCheckBox("Entra no planeamento")
@@ -1724,23 +2063,49 @@ class MainWindow(QMainWindow):
             form.addRow("", active_box)
             form.addRow("", planeavel_box)
             side_layout.addLayout(form)
-            new_btn = QPushButton("Nova")
-            save_btn = QPushButton("Guardar")
+            operation_status_label = QLabel("Preenche os dados e guarda a nova operação.")
+            operation_status_label.setWordWrap(True)
+            operation_status_label.setStyleSheet(
+                "background: #ffffff; border: 1px solid #d9dfda; border-radius: 6px; "
+                "padding: 8px; color: #52605a; font-size: 10px;"
+            )
+            side_layout.addWidget(operation_status_label)
+            side_layout.addStretch(1)
+            editor_actions = QHBoxLayout()
+            editor_actions.setSpacing(7)
+            new_btn = QPushButton("Nova operação")
+            new_btn.setProperty("variant", "secondary")
+            save_btn = QPushButton("Guardar operação")
+            save_btn.setProperty("variant", "success")
             remove_btn = QPushButton("Remover")
             remove_btn.setProperty("variant", "danger")
-            side_layout.addWidget(new_btn)
-            side_layout.addWidget(save_btn)
-            side_layout.addWidget(remove_btn)
-            side_layout.addStretch(1)
+            for action_button in (new_btn, save_btn, remove_btn):
+                action_button.setMinimumWidth(0)
+                action_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                editor_actions.addWidget(action_button, 1)
+            side_layout.addLayout(editor_actions)
+            op_workspace_layout.addWidget(side, 2)
+            op_layout.addWidget(op_workspace, 1)
+
             close_buttons = QDialogButtonBox(QDialogButtonBox.Close)
             close_buttons.button(QDialogButtonBox.Close).setText("Fechar")
             close_buttons.rejected.connect(op_dialog.reject)
-            side_layout.addWidget(close_buttons)
-            op_layout.addWidget(side, 2)
+            op_layout.addWidget(close_buttons)
             current_name = {"value": ""}
 
             def refresh_operations(select_name: str = "") -> None:
                 rows = list(rows_getter() or [])
+                query = operation_search_edit.text().strip().casefold()
+                if query:
+                    rows = [
+                        row
+                        for row in rows
+                        if query in str(row.get("name", "") or "").strip().casefold()
+                    ]
+                operation_count_label.setText(
+                    f"{len(rows)} operação" if len(rows) == 1 else f"{len(rows)} operações"
+                )
+                table.blockSignals(True)
                 table.setRowCount(len(rows))
                 target = -1
                 for row_index, row in enumerate(rows):
@@ -1760,22 +2125,40 @@ class MainWindow(QMainWindow):
                     table.selectRow(target)
                 elif rows:
                     table.selectRow(0)
+                else:
+                    remove_btn.setEnabled(False)
+                table.blockSignals(False)
+                load_selected_operation()
 
             def load_selected_operation() -> None:
                 item = table.currentItem()
                 if item is None:
+                    remove_btn.setEnabled(False)
                     return
                 row = dict(table.item(item.row(), 0).data(Qt.UserRole) or {})
                 current_name["value"] = str(row.get("name", "") or "").strip()
                 name_edit.setText(current_name["value"])
                 active_box.setChecked(bool(row.get("active", True)))
                 planeavel_box.setChecked(bool(row.get("planeavel", False)))
+                editor_title.setText(f"Editar · {current_name['value']}")
+                operation_status_label.setText(
+                    "Operação ativa e disponível no planeamento."
+                    if active_box.isChecked() and planeavel_box.isChecked()
+                    else "Operação ativa apenas para utilização operacional."
+                    if active_box.isChecked()
+                    else "Operação inativa: permanece no histórico, mas deixa de estar disponível."
+                )
+                remove_btn.setEnabled(True)
 
             def clear_operation_form() -> None:
                 current_name["value"] = ""
+                table.clearSelection()
                 name_edit.setText("")
                 active_box.setChecked(True)
                 planeavel_box.setChecked(False)
+                editor_title.setText("Nova operação")
+                operation_status_label.setText("Preenche os dados e guarda a nova operação.")
+                remove_btn.setEnabled(False)
                 name_edit.setFocus()
 
             def save_operation() -> None:
@@ -1787,38 +2170,41 @@ class MainWindow(QMainWindow):
                         planeavel=planeavel_box.isChecked(),
                     )
                 except Exception as exc:
-                    QMessageBox.critical(op_dialog, "Operacoes", str(exc))
+                    QMessageBox.critical(op_dialog, "Operações", str(exc))
                     return
                 saved_name = str(row.get("name", "") or name_edit.text()).strip()
                 refresh_operations(saved_name)
-                QMessageBox.information(op_dialog, "Operacoes", "Operacao guardada com sucesso.")
+                operation_status_label.setText(f"Operação “{saved_name}” guardada com sucesso.")
 
             def remove_operation() -> None:
                 item = table.currentItem()
                 if item is None:
-                    QMessageBox.warning(op_dialog, "Operacoes", "Seleciona a operação que pretendes remover.")
+                    QMessageBox.warning(op_dialog, "Operações", "Seleciona a operação que pretendes remover.")
                     return
                 row = dict(table.item(item.row(), 0).data(Qt.UserRole) or {})
                 target_name = str(row.get("name", "") or "").strip()
                 if not target_name:
-                    QMessageBox.warning(op_dialog, "Operacoes", "Operação inválida.")
+                    QMessageBox.warning(op_dialog, "Operações", "Operação inválida.")
                     return
                 if QMessageBox.question(op_dialog, "Remover operação", f"Remover a operação '{target_name}'?") != QMessageBox.Yes:
                     return
                 try:
                     remover(target_name)
                 except Exception as exc:
-                    QMessageBox.critical(op_dialog, "Operacoes", str(exc))
+                    QMessageBox.critical(op_dialog, "Operações", str(exc))
                     return
                 refresh_operations("")
                 clear_operation_form()
-                QMessageBox.information(op_dialog, "Operacoes", "Operação removida com sucesso.")
+                operation_status_label.setText(f"Operação “{target_name}” removida.")
 
             table.itemSelectionChanged.connect(load_selected_operation)
             new_btn.clicked.connect(clear_operation_form)
             save_btn.clicked.connect(save_operation)
             remove_btn.clicked.connect(remove_operation)
+            operation_search_edit.textChanged.connect(lambda _text: refresh_operations(current_name["value"]))
+            table.itemDoubleClicked.connect(lambda *_args: name_edit.setFocus())
             refresh_operations("")
+            prepare_admin_child(op_dialog, preferred_width=1040, preferred_height=700)
             op_dialog.exec()
 
         def open_workcenters_dialog() -> None:
@@ -1844,16 +2230,20 @@ class MainWindow(QMainWindow):
                 return
 
             wc_dialog = QDialog(dialog)
-            wc_dialog.setWindowTitle("Postos de Trabalho")
-            wc_dialog.setMinimumSize(1120, 620)
+            wc_dialog.setWindowTitle("Postos de trabalho e máquinas")
+            wc_dialog.setMinimumSize(760, 560)
             wc_layout = QVBoxLayout(wc_dialog)
             wc_layout.setContentsMargins(14, 14, 14, 14)
             wc_layout.setSpacing(12)
 
+            wc_heading = QLabel("Estrutura produtiva")
+            wc_heading.setStyleSheet("font-size: 18px; font-weight: 900; color: #172033;")
+            wc_layout.addWidget(wc_heading)
             intro = QLabel(
-                "Organiza a estrutura da empresa por posto de trabalho e por maquina/recurso. "
-                "Exemplo: posto 'Corte Laser' com maquinas 'Maquina 3030', 'Maquina 5030' e 'Maquina 5040'."
+                "Filtra por operação, seleciona a estrutura pretendida e edita-a no painel lateral. "
+                "Cria primeiro o posto e só depois as máquinas ou recursos associados."
             )
+            intro.setProperty("role", "muted")
             intro.setWordWrap(True)
             wc_layout.addWidget(intro)
 
@@ -1862,29 +2252,33 @@ class MainWindow(QMainWindow):
             host_layout.setContentsMargins(0, 0, 0, 0)
             host_layout.setSpacing(12)
 
-            operation_panel = QWidget()
+            operation_panel = QFrame()
+            operation_panel.setObjectName("WorkcenterOperationPanel")
+            operation_panel.setStyleSheet(
+                """
+                QFrame#WorkcenterOperationPanel {
+                    background: #ffffff;
+                    border: 1px solid #d6dbd7;
+                    border-radius: 8px;
+                }
+                """
+            )
             operation_panel_layout = QVBoxLayout(operation_panel)
-            operation_panel_layout.setContentsMargins(0, 0, 0, 0)
+            operation_panel_layout.setContentsMargins(9, 9, 9, 9)
             operation_panel_layout.setSpacing(8)
-            operation_title = QLabel("Operacoes")
+            operation_title = QLabel("1. Filtrar operação")
             operation_title.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
             operation_panel_layout.addWidget(operation_title)
-            operation_hint = QLabel("Seleciona uma operacao para ver apenas os postos e maquinas associados.")
+            operation_hint = QLabel("Escolhe uma operação ou mantém “Todas” para consultar a estrutura completa.")
             operation_hint.setProperty("role", "muted")
             operation_hint.setWordWrap(True)
             operation_panel_layout.addWidget(operation_hint)
-            operations_filter_table = QTableWidget(0, 3)
-            operations_filter_table.setHorizontalHeaderLabels(["Operacao", "Ativa", "Plan."])
-            operations_filter_table.verticalHeader().setVisible(False)
-            operations_filter_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-            operations_filter_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-            operations_filter_table.setSelectionMode(QAbstractItemView.SingleSelection)
-            operations_filter_table.setAlternatingRowColors(True)
-            operations_filter_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-            operations_filter_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-            operations_filter_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-            operation_panel_layout.addWidget(operations_filter_table, 1)
-            host_layout.addWidget(operation_panel, 2)
+            operations_filter_combo = QComboBox()
+            operations_filter_combo.setMinimumHeight(32)
+            operations_filter_combo.setMaximumWidth(480)
+            operations_filter_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            operation_panel_layout.addWidget(operations_filter_combo)
+            wc_layout.addWidget(operation_panel)
 
             table_panel = QWidget()
             table_panel_layout = QVBoxLayout(table_panel)
@@ -1894,20 +2288,23 @@ class MainWindow(QMainWindow):
             table_tools = QHBoxLayout()
             table_tools.setContentsMargins(0, 0, 0, 0)
             table_tools.setSpacing(8)
-            table_hint = QLabel("Seleciona uma linha, edita à direita e guarda. Também podes eliminar a linha selecionada.")
+            table_hint = QLabel("2. Seleciona um posto ou máquina; os dados abrem automaticamente à direita.")
             table_hint.setProperty("role", "muted")
             table_tools.addWidget(table_hint, 1)
-            edit_selected_btn = QPushButton("Editar linha selecionada")
+            edit_selected_btn = QPushButton("Abrir edição")
             edit_selected_btn.setProperty("variant", "secondary")
             table_tools.addWidget(edit_selected_btn, 0)
-            remove_selected_btn = QPushButton("Eliminar linha selecionada")
+            remove_selected_btn = QPushButton("Eliminar")
             remove_selected_btn.setProperty("variant", "danger")
-            table_tools.addWidget(remove_selected_btn, 0)
+            remove_selected_btn.hide()
             table_panel_layout.addLayout(table_tools)
 
-            workcenters_table = QTableWidget(0, 9)
-            workcenters_table.setHorizontalHeaderLabels(["Tipo", "Nome", "Grupo", "Operacao", "Ativo", "Utiliz.", "Orc.", "Enc.", "Plan."])
+            workcenters_table = QTableWidget(0, 6)
+            workcenters_table.setHorizontalHeaderLabels(
+                ["Tipo", "Nome", "Posto pai", "Operação", "Estado", "Utilização"]
+            )
             workcenters_table.verticalHeader().setVisible(False)
+            workcenters_table.verticalHeader().setDefaultSectionSize(32)
             workcenters_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
             workcenters_table.setSelectionBehavior(QAbstractItemView.SelectRows)
             workcenters_table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -1917,31 +2314,72 @@ class MainWindow(QMainWindow):
             workcenters_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
             workcenters_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
             workcenters_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-            workcenters_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-            for column in range(4, 9):
-                workcenters_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeToContents)
+            workcenters_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+            workcenters_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+            workcenters_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
             table_panel_layout.addWidget(workcenters_table, 1)
-            host_layout.addWidget(table_panel, 5)
+            host_layout.addWidget(table_panel, 7)
 
-            side = QWidget()
+            side = QFrame()
+            side.setObjectName("WorkcenterEditorPanel")
+            side.setStyleSheet(
+                """
+                QFrame#WorkcenterEditorPanel {
+                    background: #f5f7f5;
+                    border: 1px solid #d6dbd7;
+                    border-radius: 8px;
+                }
+                """
+            )
             side_layout = QVBoxLayout(side)
-            side_layout.setContentsMargins(0, 0, 0, 0)
-            side_layout.setSpacing(10)
+            side_layout.setContentsMargins(10, 10, 10, 10)
+            side_layout.setSpacing(8)
 
-            side_title = QLabel("Gestao da estrutura")
+            side_title = QLabel("Editar estrutura")
             side_title.setStyleSheet("font-size: 15px; font-weight: 800; color: #0f172a;")
             side_layout.addWidget(side_title)
 
             side_note = QLabel(
-                "Primeiro defines o posto principal. Depois, se fizer sentido, adicionas as maquinas ou bancadas que trabalham dentro desse posto."
+                "1. Cria o posto principal.  2. Adiciona as máquinas ou recursos que trabalham nesse posto."
             )
             side_note.setProperty("role", "muted")
             side_note.setWordWrap(True)
             side_layout.addWidget(side_note)
 
-            group_header = QLabel("Posto de trabalho")
+            structure_tabs = QTabWidget()
+            structure_tabs.setDocumentMode(True)
+            structure_tabs.setStyleSheet(
+                """
+                QTabWidget::pane {
+                    border: 1px solid #d6dbd7;
+                    border-radius: 7px;
+                    background: #ffffff;
+                    top: -1px;
+                }
+                QTabBar::tab {
+                    min-height: 32px;
+                    min-width: 120px;
+                    padding: 4px 10px;
+                    border: 1px solid #d6dbd7;
+                    background: #edf0ed;
+                    color: #455149;
+                    font-weight: 800;
+                }
+                QTabBar::tab:selected {
+                    background: #ffffff;
+                    color: #17643a;
+                    border-bottom-color: #ffffff;
+                }
+                """
+            )
+
+            group_page = QWidget()
+            group_page_layout = QVBoxLayout(group_page)
+            group_page_layout.setContentsMargins(12, 12, 12, 12)
+            group_page_layout.setSpacing(9)
+            group_header = QLabel("Dados do posto")
             group_header.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
-            side_layout.addWidget(group_header)
+            group_page_layout.addWidget(group_header)
 
             group_form = QFormLayout()
             group_form.setHorizontalSpacing(12)
@@ -1954,11 +2392,11 @@ class MainWindow(QMainWindow):
             group_active_box = QCheckBox("Posto ativo")
             group_active_box.setChecked(True)
             group_form.addRow("Nome do posto", group_name_edit)
-            group_form.addRow("Operacao base", group_operation_combo)
+            group_form.addRow("Operação base", group_operation_combo)
             group_form.addRow("", group_active_box)
-            side_layout.addLayout(group_form)
+            group_page_layout.addLayout(group_form)
 
-            group_usage_label = QLabel("Novo posto sem utilizacao.")
+            group_usage_label = QLabel("Novo posto sem utilização.")
             group_usage_label.setWordWrap(True)
             group_usage_label.setStyleSheet(
                 """
@@ -1972,45 +2410,54 @@ class MainWindow(QMainWindow):
                 }
                 """
             )
-            side_layout.addWidget(group_usage_label)
+            group_page_layout.addWidget(group_usage_label)
 
             group_note = QLabel(
-                "Um posto pode existir sozinho. Se precisares de detalhe operacional, adicionas depois as maquinas ou bancadas por baixo."
+                "O posto representa a área principal de trabalho. Depois de o guardar, utiliza o separador Máquina / recurso."
             )
             group_note.setProperty("role", "muted")
             group_note.setWordWrap(True)
-            side_layout.addWidget(group_note)
+            group_page_layout.addWidget(group_note)
+            group_page_layout.addStretch(1)
 
             group_actions = QHBoxLayout()
-            group_actions.setSpacing(8)
+            group_actions.setSpacing(7)
             new_group_btn = QPushButton("Novo posto")
             new_group_btn.setProperty("variant", "secondary")
             save_group_btn = QPushButton("Guardar posto")
+            save_group_btn.setProperty("variant", "success")
             remove_group_btn = QPushButton("Remover posto")
             remove_group_btn.setProperty("variant", "danger")
-            group_actions.addWidget(new_group_btn)
-            group_actions.addWidget(save_group_btn)
-            group_actions.addWidget(remove_group_btn)
-            side_layout.addLayout(group_actions)
+            for action_button in (new_group_btn, save_group_btn, remove_group_btn):
+                action_button.setMaximumWidth(180)
+                action_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            group_actions.addWidget(new_group_btn, 1)
+            group_actions.addWidget(save_group_btn, 1)
+            group_actions.addWidget(remove_group_btn, 1)
+            group_page_layout.addLayout(group_actions)
 
-            machine_header = QLabel("Maquina / recurso")
-            machine_header.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a; margin-top: 8px;")
-            side_layout.addWidget(machine_header)
+            machine_page = QWidget()
+            machine_page_layout = QVBoxLayout(machine_page)
+            machine_page_layout.setContentsMargins(12, 12, 12, 12)
+            machine_page_layout.setSpacing(9)
+            machine_header = QLabel("Dados da máquina / recurso")
+            machine_header.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+            machine_page_layout.addWidget(machine_header)
 
             machine_form = QFormLayout()
             machine_form.setHorizontalSpacing(12)
             machine_form.setVerticalSpacing(8)
             machine_group_combo = QComboBox()
             machine_name_edit = QLineEdit()
-            machine_name_edit.setPlaceholderText("Ex.: Maquina 3030, Bancada 1, Serra 2")
+            machine_name_edit.setPlaceholderText("Ex.: Máquina 3030, Bancada 1, Serra 2")
             machine_active_box = QCheckBox("Recurso ativo")
             machine_active_box.setChecked(True)
             machine_form.addRow("Posto pai", machine_group_combo)
-            machine_form.addRow("Nome da maquina", machine_name_edit)
+            machine_form.addRow("Nome da máquina", machine_name_edit)
             machine_form.addRow("", machine_active_box)
-            side_layout.addLayout(machine_form)
+            machine_page_layout.addLayout(machine_form)
 
-            machine_usage_label = QLabel("Nova maquina sem utilizacao.")
+            machine_usage_label = QLabel("Nova máquina sem utilização.")
             machine_usage_label.setWordWrap(True)
             machine_usage_label.setStyleSheet(
                 """
@@ -2024,27 +2471,36 @@ class MainWindow(QMainWindow):
                 }
                 """
             )
-            side_layout.addWidget(machine_usage_label)
+            machine_page_layout.addWidget(machine_usage_label)
 
             machine_note = QLabel(
-                "A maquina fica ligada ao posto principal. Isto permite ter varias maquinas a trabalhar dentro do mesmo posto."
+                "Cada máquina fica ligada a um posto. É possível ter várias máquinas dentro da mesma operação."
             )
             machine_note.setProperty("role", "muted")
             machine_note.setWordWrap(True)
-            side_layout.addWidget(machine_note)
+            machine_page_layout.addWidget(machine_note)
+            machine_page_layout.addStretch(1)
 
             machine_actions = QHBoxLayout()
-            machine_actions.setSpacing(8)
-            new_machine_btn = QPushButton("Nova maquina")
+            machine_actions.setSpacing(7)
+            new_machine_btn = QPushButton("Nova máquina")
             new_machine_btn.setProperty("variant", "secondary")
-            save_machine_btn = QPushButton("Guardar maquina")
-            remove_machine_btn = QPushButton("Remover maquina")
+            save_machine_btn = QPushButton("Guardar máquina")
+            save_machine_btn.setProperty("variant", "success")
+            remove_machine_btn = QPushButton("Remover máquina")
             remove_machine_btn.setProperty("variant", "danger")
-            machine_actions.addWidget(new_machine_btn)
-            machine_actions.addWidget(save_machine_btn)
-            machine_actions.addWidget(remove_machine_btn)
-            side_layout.addLayout(machine_actions)
-            side_layout.addStretch(1)
+            for action_button in (new_machine_btn, save_machine_btn, remove_machine_btn):
+                action_button.setMaximumWidth(180)
+                action_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            machine_actions.addWidget(new_machine_btn, 1)
+            machine_actions.addWidget(save_machine_btn, 1)
+            machine_actions.addWidget(remove_machine_btn, 1)
+            machine_page_layout.addLayout(machine_actions)
+
+            structure_tabs.addTab(group_page, "1  Posto")
+            structure_tabs.addTab(machine_page, "2  Máquina")
+            structure_tabs.tabBar().setExpanding(True)
+            side_layout.addWidget(structure_tabs, 1)
             host_layout.addWidget(side, 4)
 
             wc_layout.addWidget(host, 1)
@@ -2082,35 +2538,28 @@ class MainWindow(QMainWindow):
                 machine_group_combo.blockSignals(False)
 
             def selected_operation_name() -> str:
-                item = operations_filter_table.currentItem()
-                if item is None:
-                    return ""
-                return str(operations_filter_table.item(item.row(), 0).data(Qt.UserRole) or "").strip()
+                return str(operations_filter_combo.currentData() or "").strip()
 
             def refresh_operation_filter(select_name: str = "") -> None:
                 rows = [{"name": "", "active": True, "planeavel": False}]
                 rows.extend(list(operation_rows_getter() or []))
                 target = str(select_name or current_operation_filter["value"] or "").strip()
-                operations_filter_table.blockSignals(True)
-                operations_filter_table.setRowCount(len(rows))
-                target_row = 0
+                operations_filter_combo.blockSignals(True)
+                operations_filter_combo.clear()
+                target_index = 0
                 for row_index, row in enumerate(rows):
                     name = str(row.get("name", "") or "").strip()
-                    values = [
-                        name or "Todas",
-                        "Sim" if bool(row.get("active", True)) else "Nao",
-                        "Sim" if bool(row.get("planeavel", False)) else "Nao",
-                    ]
-                    for col_index, value in enumerate(values):
-                        item = QTableWidgetItem(value)
-                        if col_index == 0:
-                            item.setData(Qt.UserRole, name)
-                        operations_filter_table.setItem(row_index, col_index, item)
+                    suffix = ""
+                    if name:
+                        suffix = " · Planeável" if bool(row.get("planeavel", False)) else " · Operacional"
+                        if not bool(row.get("active", True)):
+                            suffix = " · Inativa"
+                    operations_filter_combo.addItem((name or "Todas as operações") + suffix, name)
                     if target and name.casefold() == target.casefold():
-                        target_row = row_index
-                operations_filter_table.selectRow(target_row)
+                        target_index = row_index
+                operations_filter_combo.setCurrentIndex(target_index)
                 current_operation_filter["value"] = selected_operation_name()
-                operations_filter_table.blockSignals(False)
+                operations_filter_combo.blockSignals(False)
 
             def clear_group_form() -> None:
                 current_group["value"] = ""
@@ -2132,6 +2581,7 @@ class MainWindow(QMainWindow):
             def clear_workcenter_form() -> None:
                 clear_group_form()
                 clear_machine_form()
+                structure_tabs.setCurrentIndex(0)
                 workcenters_table.clearSelection()
                 edit_selected_btn.setEnabled(False)
                 remove_selected_btn.setEnabled(False)
@@ -2165,6 +2615,7 @@ class MainWindow(QMainWindow):
                 remove_selected_btn.setEnabled(True)
                 entry_type = str(row.get("entry_type", "") or "").strip()
                 if entry_type == "group":
+                    structure_tabs.setCurrentIndex(0)
                     current_group["value"] = str(row.get("name", "") or "").strip()
                     group_name_edit.setText(current_group["value"])
                     group_operation_combo.setCurrentText(str(row.get("operation", "") or "").strip())
@@ -2173,6 +2624,7 @@ class MainWindow(QMainWindow):
                     machine_group_combo.setCurrentText(current_group["value"])
                     clear_machine_form()
                     return
+                structure_tabs.setCurrentIndex(1)
                 current_machine["value"] = str(row.get("name", "") or "").strip()
                 machine_name_edit.setText(current_machine["value"])
                 machine_active_box.setChecked(bool(row.get("active", True)))
@@ -2204,9 +2656,10 @@ class MainWindow(QMainWindow):
                         if str(row.get("operation", "") or "").strip().casefold() == selected_op.casefold()
                     ]
                 refresh_group_options(machine_group_combo.currentText().strip())
+                workcenters_table.blockSignals(True)
                 workcenters_table.setRowCount(len(rows))
-                edit_selected_btn.setEnabled(bool(rows))
-                remove_selected_btn.setEnabled(bool(rows))
+                edit_selected_btn.setEnabled(False)
+                remove_selected_btn.setEnabled(False)
                 target_row = -1
                 for row_index, row in enumerate(rows):
                     values = [
@@ -2214,11 +2667,13 @@ class MainWindow(QMainWindow):
                         str(row.get("name", "") or "").strip(),
                         str(row.get("group", "") or "").strip() or "-",
                         str(row.get("operation", "") or "").strip() or "-",
-                        "Sim" if bool(row.get("active", True)) else "Nao",
-                        str(int(row.get("users", 0) or 0)),
-                        str(int(row.get("quotes", 0) or 0)),
-                        str(int(row.get("orders", 0) or 0)),
-                        str(int(row.get("planning", 0) or 0)),
+                        "Ativo" if bool(row.get("active", True)) else "Inativo",
+                        (
+                            f"U {int(row.get('users', 0) or 0)} · "
+                            f"ORC {int(row.get('quotes', 0) or 0)} · "
+                            f"ENC {int(row.get('orders', 0) or 0)} · "
+                            f"PLAN {int(row.get('planning', 0) or 0)}"
+                        ),
                     ]
                     for col_index, value in enumerate(values):
                         item = QTableWidgetItem(value)
@@ -2229,6 +2684,16 @@ class MainWindow(QMainWindow):
                                     "name": str(row.get("name", "") or "").strip(),
                                     "entry_type": str(row.get("entry_type", "") or "").strip(),
                                 },
+                            )
+                            item.setToolTip(
+                                "Posto principal" if str(row.get("entry_type", "") or "") == "group" else "Máquina / recurso"
+                            )
+                        elif col_index == 5:
+                            item.setToolTip(
+                                f"Utilizadores: {int(row.get('users', 0) or 0)}\n"
+                                f"Orçamentos: {int(row.get('quotes', 0) or 0)}\n"
+                                f"Encomendas: {int(row.get('orders', 0) or 0)}\n"
+                                f"Planeamento: {int(row.get('planning', 0) or 0)}"
                             )
                         workcenters_table.setItem(row_index, col_index, item)
                     if (
@@ -2243,6 +2708,8 @@ class MainWindow(QMainWindow):
                     workcenters_table.selectRow(0)
                 else:
                     clear_workcenter_form()
+                workcenters_table.blockSignals(False)
+                on_workcenter_selected()
 
             def on_workcenter_selected() -> None:
                 row = selected_workcenter_row()
@@ -2404,9 +2871,13 @@ class MainWindow(QMainWindow):
 
             workcenters_table.itemSelectionChanged.connect(on_workcenter_selected)
             workcenters_table.itemDoubleClicked.connect(lambda *_: edit_selected_workcenter_row())
-            operations_filter_table.itemSelectionChanged.connect(on_operation_filter_selected)
-            new_group_btn.clicked.connect(clear_group_form)
-            new_machine_btn.clicked.connect(clear_machine_form)
+            operations_filter_combo.currentIndexChanged.connect(on_operation_filter_selected)
+            new_group_btn.clicked.connect(
+                lambda: (structure_tabs.setCurrentIndex(0), clear_group_form())
+            )
+            new_machine_btn.clicked.connect(
+                lambda: (structure_tabs.setCurrentIndex(1), clear_machine_form())
+            )
             save_group_btn.clicked.connect(on_save_group)
             remove_group_btn.clicked.connect(on_remove_group)
             save_machine_btn.clicked.connect(on_save_machine)
@@ -2415,10 +2886,12 @@ class MainWindow(QMainWindow):
             remove_selected_btn.clicked.connect(remove_selected_workcenter_row)
             refresh_operation_filter("")
             refresh_workcenters("")
+            prepare_admin_child(wc_dialog, maximize=True)
             wc_dialog.exec()
 
         def clear_user_form() -> None:
             current_username["value"] = ""
+            user_editor_title.setText("Novo utilizador")
             username_edit.setText("")
             password_user_edit.setText("")
             password_toggle.setChecked(False)
@@ -2429,10 +2902,12 @@ class MainWindow(QMainWindow):
             active_box.setChecked(True)
             for key, check in permission_checks.items():
                 check.setChecked(key == "home")
+            remove_user_btn.setEnabled(False)
             update_password_preview("")
 
         def load_user_form(row: dict) -> None:
             current_username["value"] = str(row.get("username", "") or "").strip()
+            user_editor_title.setText(f"Editar · {current_username['value']}")
             username_edit.setText(current_username["value"])
             password_user_edit.setText("")
             password_toggle.setChecked(False)
@@ -2452,6 +2927,7 @@ class MainWindow(QMainWindow):
             else:
                 for check in permission_checks.values():
                     check.setChecked(True)
+            remove_user_btn.setEnabled(True)
             update_password_preview(current_username["value"])
 
         def refresh_users(select_username: str = "") -> None:
@@ -2555,9 +3031,12 @@ class MainWindow(QMainWindow):
         refresh_users("")
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Guardar e fechar")
+        buttons.button(QDialogButtonBox.Cancel).setText("Cancelar")
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
+        prepare_admin_child(dialog, maximize=True)
         if dialog.exec() != QDialog.Accepted:
             return
         supervisor_password = supervisor_edit.text().strip()

@@ -37,7 +37,7 @@ print("dependencias-ok")
 '@ | & $venvPython -
 
     & $venvPython -m PyInstaller lugest_qt.spec --noconfirm
-    & powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts\prepare_final_release.ps1')
+    & powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts\prepare_final_release.ps1') -Commercial
 }
 finally {
     Pop-Location
