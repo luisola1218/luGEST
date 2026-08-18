@@ -364,7 +364,7 @@ Write-Host "Confirma agora a ligacao MySQL em `$installRoot\lugest.env."
 Write-Host 'A instalacao foi efetuada no perfil do utilizador e nao exige privilegios de administrador.'
 if (-not `$NoPause) { Pause }
 "@
-Write-Utf8NoBomFile -Path (Join-Path $releaseRoot 'INSTALAR_LUISGEST.ps1') -Content $installer
+Write-Utf8NoBomFile -Path (Join-Path $releaseRoot 'INSTALAR_LUGEST.ps1') -Content $installer
 
 $ownerConfigurator = @'
 param(
@@ -599,7 +599,7 @@ $presentationReadme = @"
 ## Antes da demonstracao
 1. Importar `Base de Dados\mysql\IMPORTAR_NO_HEIDI.sql` numa instalacao MySQL limpa.
 2. Configurar `lugest.env` com o servidor, utilizador e password dedicados ao cliente.
-3. Executar `INSTALAR_LUISGEST.ps1` com PowerShell.
+3. Executar `INSTALAR_LUGEST.ps1` com PowerShell.
 4. Entrar com `admin / Trocar#Admin2026` e alterar imediatamente as passwords temporarias.
 5. Configurar logotipo, dados da empresa, operadores e parametros comerciais antes de usar em producao.
 
@@ -635,7 +635,7 @@ $trialGuide = @"
 # Ativacao segura do trial
 
 ## Primeira ativacao
-1. Instalar o luGEST com `INSTALAR_LUISGEST.ps1`.
+1. Instalar o luGEST com `INSTALAR_LUGEST.ps1`.
 2. Confirmar a ligacao MySQL no ficheiro `lugest.env` da pasta instalada (por omissao, `%LOCALAPPDATA%\luGEST`).
 3. Executar `CONFIGURAR_OWNER_TRIAL.ps1` nessa pasta.
 4. Definir um utilizador OWNER e uma password forte, diferente das contas normais.
@@ -669,7 +669,7 @@ Esta pasta contem a aplicacao desktop luGEST preparada para instalacao e validac
 
 ## O que interessa
 - luGEST.exe: aplicacao principal.
-- INSTALAR_LUISGEST.ps1: instala por omissao em `%LOCALAPPDATA%\luGEST`, sem exigir administrador; aceita outro destino com `-InstallRoot`.
+- INSTALAR_LUGEST.ps1: instala por omissao em `%LOCALAPPDATA%\luGEST`, sem exigir administrador; aceita outro destino com `-InstallRoot`.
 - DESINSTALAR_LUGEST.ps1: remove a aplicacao e preserva configuracao/dados locais em `Documentos\luGEST Backups`.
 - CONFIGURAR_OWNER_TRIAL.ps1: cria, depois da instalacao, as credenciais privadas para gerir o trial.
 - _internal: motor interno do executavel; nao apagar nem copiar o luGEST.exe sozinho.
@@ -681,7 +681,7 @@ Esta pasta contem a aplicacao desktop luGEST preparada para instalacao e validac
 - Documentacao: guias essenciais de instalacao e checklist.
 
 ## Como arrancar
-1. No cliente, clicar com botao direito em INSTALAR_LUISGEST.ps1 e escolher Executar com PowerShell.
+1. No cliente, clicar com botao direito em INSTALAR_LUGEST.ps1 e escolher Executar com PowerShell.
 2. Confirmar o ficheiro `lugest.env` na pasta instalada com os dados MySQL corretos.
 3. Executar `CONFIGURAR_OWNER_TRIAL.ps1` nessa pasta e guardar as credenciais OWNER em local seguro.
 4. Abrir pelo atalho luGEST, entrar como OWNER e ativar em Extras > Trial / licenca.
@@ -696,7 +696,7 @@ Esta pasta contem a aplicacao desktop luGEST preparada para instalacao e validac
 
 ## Notas
 - Os atalhos .bat foram removidos para reduzir confusao; a instalacao usa apenas PowerShell e depois arranca pelo atalho.
-- A pasta por omissao e do utilizador atual. Para escolher outra: `powershell -ExecutionPolicy Bypass -File .\INSTALAR_LUISGEST.ps1 -InstallRoot "D:\Aplicacoes\luGEST"`.
+- A pasta por omissao e do utilizador atual. Para escolher outra: `powershell -ExecutionPolicy Bypass -File .\INSTALAR_LUGEST.ps1 -InstallRoot "D:\Aplicacoes\luGEST"`.
 - Para instalar base nova no HeidiSQL, importar Base de Dados\mysql\IMPORTAR_NO_HEIDI.sql.
 "@
 Write-Utf8NoBomFile -Path (Join-Path $releaseRoot 'README.md') -Content $readme

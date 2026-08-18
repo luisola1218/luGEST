@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
-    QDateEdit,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -38,7 +37,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..widgets import CardFrame, FlexibleDecimalSpinBox as QDoubleSpinBox
+from ..widgets import CardFrame, ClickableDateEdit as QDateEdit, FlexibleDecimalSpinBox as QDoubleSpinBox
 from .partners_pages import SuppliersPage
 from .runtime_common import (
     apply_state_chip as _apply_state_chip,
@@ -335,7 +334,7 @@ class PurchaseNotesPage(QWidget):
         self.contact_edit.setPlaceholderText("Contacto ou email")
         self.delivery_edit = QDateEdit()
         self.delivery_edit.setCalendarPopup(True)
-        self.delivery_edit.setDisplayFormat("yyyy-MM-dd")
+        self.delivery_edit.setDisplayFormat("dd/MM/yyyy")
         self.delivery_edit.setMinimumDate(QDate(2000, 1, 1))
         self.delivery_edit.setDate(QDate.currentDate())
         self.created_at_edit = QLineEdit()
@@ -1276,11 +1275,11 @@ class PurchaseNotesPage(QWidget):
         obs_edit = QLineEdit(str(initial.get("obs", "") or ""))
         entrega_edit = QDateEdit()
         entrega_edit.setCalendarPopup(True)
-        entrega_edit.setDisplayFormat("yyyy-MM-dd")
+        entrega_edit.setDisplayFormat("dd/MM/yyyy")
         entrega_edit.setDate(_coerce_editor_qdate(str(initial.get("data_entrega", "") or ""), fallback_today=True))
         doc_edit = QDateEdit()
         doc_edit.setCalendarPopup(True)
-        doc_edit.setDisplayFormat("yyyy-MM-dd")
+        doc_edit.setDisplayFormat("dd/MM/yyyy")
         doc_edit.setDate(_coerce_editor_qdate(str(initial.get("data_documento", "") or ""), fallback_today=True))
         apply_lines_chk = QCheckBox("Aplicar aos registos de linhas já entregues")
         apply_lines_chk.setChecked(bool(initial.get("apply_to_lines", True)))
@@ -2022,11 +2021,11 @@ class PurchaseNotesPage(QWidget):
         dialog_layout.addWidget(scroll, 1)
         entrega_edit = QDateEdit()
         entrega_edit.setCalendarPopup(True)
-        entrega_edit.setDisplayFormat("yyyy-MM-dd")
+        entrega_edit.setDisplayFormat("dd/MM/yyyy")
         entrega_edit.setDate(QDate.currentDate())
         doc_edit = QDateEdit()
         doc_edit.setCalendarPopup(True)
-        doc_edit.setDisplayFormat("yyyy-MM-dd")
+        doc_edit.setDisplayFormat("dd/MM/yyyy")
         doc_edit.setDate(QDate.currentDate())
         title_edit = QLineEdit()
         type_combo = QComboBox()

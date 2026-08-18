@@ -157,6 +157,7 @@ CREATE TABLE IF NOT EXISTS `faturacao_registos` (
   `origem` varchar(30) DEFAULT NULL,
   `orcamento_numero` varchar(30) DEFAULT NULL,
   `encomenda_numero` varchar(30) DEFAULT NULL,
+  `servico_numero` varchar(30) DEFAULT NULL,
   `cliente_codigo` varchar(20) DEFAULT NULL,
   `cliente_nome` varchar(150) DEFAULT NULL,
   `data_venda` date DEFAULT NULL,
@@ -169,8 +170,37 @@ CREATE TABLE IF NOT EXISTS `faturacao_registos` (
   PRIMARY KEY (`numero`),
   KEY `idx_faturacao_registos_orc` (`orcamento_numero`),
   KEY `idx_faturacao_registos_enc` (`encomenda_numero`),
+  KEY `idx_faturacao_registos_servico` (`servico_numero`),
   KEY `idx_faturacao_registos_cliente` (`cliente_codigo`),
   KEY `idx_faturacao_registos_ano` (`ano`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+CREATE TABLE IF NOT EXISTS `servicos_diretos` (
+  `numero` varchar(30) NOT NULL,
+  `cliente_codigo` varchar(20) DEFAULT NULL,
+  `cliente_nome` varchar(150) DEFAULT NULL,
+  `data_servico` date DEFAULT NULL,
+  `data_vencimento` date DEFAULT NULL,
+  `estado` varchar(30) DEFAULT NULL,
+  `local_servico` varchar(255) DEFAULT NULL,
+  `responsavel` varchar(120) DEFAULT NULL,
+  `obs` text,
+  `subtotal` decimal(12,2) DEFAULT NULL,
+  `valor_iva` decimal(12,2) DEFAULT NULL,
+  `total` decimal(12,2) DEFAULT NULL,
+  `stock_consumido` tinyint(1) NOT NULL DEFAULT '0',
+  `faturacao_numero` varchar(30) DEFAULT NULL,
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  `confirmado_at` datetime DEFAULT NULL,
+  `anulado_at` datetime DEFAULT NULL,
+  `anulado_motivo` text,
+  `linhas_json` longtext,
+  PRIMARY KEY (`numero`),
+  KEY `idx_servicos_cliente` (`cliente_codigo`),
+  KEY `idx_servicos_estado` (`estado`),
+  KEY `idx_servicos_data` (`data_servico`),
+  KEY `idx_servicos_faturacao` (`faturacao_numero`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 CREATE TABLE IF NOT EXISTS `fornecedores` (

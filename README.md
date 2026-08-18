@@ -39,6 +39,7 @@ LUGEST_DB_NAME=lugest
 ```text
 main.py                         entrada desktop atual
 lugest_qt/                      UI Qt, paginas e bridge da aplicacao
+impulse_mobile_app/             app Flutter LuGEST Field para servicos no terreno
 lugest_core/                    logica de dominio reutilizavel
 lugest_infra/                   infraestrutura, storage e PDF
 lugest_desktop/legacy/          codigo historico ainda usado pelo Qt
@@ -56,6 +57,9 @@ backups/                        copias locais, fora do Git
 - [Manual de operacao](docs/manual/MANUAL_OPERACAO_LUISGEST_PROFISSIONAL.md)
 - [Guia de arranque Qt local](docs/install/GUIA_ARRANQUE_QT_LOCAL.md)
 - [Plano de faturacao](docs/plans/FATURACAO_PLAN.md)
+- [Arquitetura mobile de servicos](docs/plans/MOBILE_SERVICES_ARCHITECTURE.md)
+- [Auditoria da base de dados](docs/plans/DATABASE_AUDIT_2026-08-18.md)
+- [Auditoria técnica do sistema](docs/plans/SYSTEM_AUDIT_2026-08-18.md)
 - [Plano de conjuntos e montagem](docs/plans/CONJUNTOS_MONTAGEM_PLAN.md)
 - [Estrutura recomendada](docs/architecture/PROJECT_STRUCTURE.md)
 - [Base de dados MySQL](mysql/README.md)

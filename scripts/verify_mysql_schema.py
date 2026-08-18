@@ -45,7 +45,8 @@ REQUIRED = {
     "notas_encomenda_documentos": {"ne_numero", "tipo", "titulo", "caminho", "guia", "fatura", "data_entrega", "data_documento"},
     "expedicoes": {"numero", "encomenda_numero", "estado"},
     "expedicao_linhas": {"expedicao_numero", "ref_interna", "qtd"},
-    "faturacao_registos": {"numero", "orcamento_numero", "encomenda_numero", "cliente_codigo", "data_venda", "data_vencimento"},
+    "servicos_diretos": {"numero", "cliente_codigo", "data_servico", "data_vencimento", "estado", "total", "linhas_json"},
+    "faturacao_registos": {"numero", "orcamento_numero", "encomenda_numero", "servico_numero", "cliente_codigo", "data_venda", "data_vencimento"},
     "faturacao_faturas": {
         "registo_numero",
         "documento_id",

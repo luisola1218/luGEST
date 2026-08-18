@@ -1925,10 +1925,10 @@ class ProductsPage(QWidget):
 
     def _refresh_price_labels(self) -> None:
         try:
-            detail = self.backend._product_normalize_payload(self._payload())
+            detail = self.backend.product_price_preview(self._payload())
             preco_unid = float(detail.get("preco_unid", 0) or 0)
             qty = float(detail.get("qty", 0) or 0)
-            unit = str(detail.get("unid", "UN") or "UN").strip() or "UN"
+            unit = str(detail.get("unit", "UN") or "UN").strip() or "UN"
             self.price_unit_label.setText(self._fmt_eur(preco_unid))
             self.stock_value_label.setText(self._fmt_eur(preco_unid * qty))
             self.inspector_qty_label.setText(f"{qty:,.2f} {unit}".replace(",", "X").replace(".", ",").replace("X", "."))
@@ -2023,8 +2023,10 @@ class ProductsPage(QWidget):
         else:
             self.moves_summary_label.setText("Sem entregas a operador no período selecionado.")
 
-    def _filtered_product_rows(self, query: str = "") -> list[dict]:
-        rows = self.backend.product_rows("", in_stock_only=self.only_stock_check.isChecked())
+    def _filtered_product_rows(self, query: str = "", source_rows: list[dict] | None = None) -> list[dict]:
+        rows = list(source_rows) if source_rows is not None else self.backend.product_rows("", in_stock_only=False)
+        if self.only_stock_check.isChecked():
+            rows = [row for row in rows if float(row.get("available_qty", 0) or 0) > 0]
         category_filter = self._filter_combo_text(self.filter_category_combo)
         subcat_filter = self._filter_combo_text(self.filter_subcat_combo)
         type_filter = self._filter_combo_text(self.filter_type_combo)
@@ -2293,7 +2295,7 @@ class ProductsPage(QWidget):
     def refresh(self) -> None:
         self._load_presets()
         portfolio_rows = self.backend.product_rows("", in_stock_only=False)
-        rows = self._filtered_product_rows(self.filter_edit.text().strip())
+        rows = self._filtered_product_rows(self.filter_edit.text().strip(), portfolio_rows)
         products_in_stock = sum(1 for row in portfolio_rows if float(row.get("qty", 0) or 0) > 0)
         portfolio_value = sum(float(row.get("valor_stock", 0) or 0) for row in portfolio_rows)
         self.total_products_label.setText(str(len(portfolio_rows)))

@@ -60,6 +60,7 @@ from .legacy_runtime import load_legacy_runtime
 from .bridge_mixins import (
     BillingBridgeMixin,
     DashboardBridgeMixin,
+    DirectServicesBridgeMixin,
     PlanningBridgeMixin,
     PurchasingBridgeMixin,
     QuotesBridgeMixin,
@@ -362,6 +363,7 @@ class _ValueHolder:
 
 
 class LegacyBackend(
+    DirectServicesBridgeMixin,
     BillingBridgeMixin,
     PurchasingBridgeMixin,
     QuotesBridgeMixin,
@@ -388,14 +390,26 @@ class LegacyBackend(
         self.data: dict[str, Any] | None = None
         self._base_data_snapshot: dict[str, Any] | None = None
         self._data_loaded_at = 0.0
+        self._data_cache_generation = 0
         self._reload_cache_ttl_sec = self._env_float("LUGEST_RELOAD_CACHE_TTL_SEC", 30.0, minimum=0.0, maximum=300.0)
         self._op_mysql_ops_status_cache: dict[tuple[str, str], tuple[float, list[dict[str, Any]]]] = {}
         self._op_mysql_ops_status_ttl_sec = self._env_float("LUGEST_OPERATOR_OPS_STATUS_TTL_SEC", 2.0, minimum=0.0, maximum=30.0)
         self._trial_status_cache: dict[str, Any] | None = None
         self._trial_status_loaded_at = 0.0
-        self._trial_status_cache_ttl_sec = 5.0
+        self._trial_status_cache_ttl_sec = self._env_float(
+            "LUGEST_TRIAL_STATUS_CACHE_TTL_SEC",
+            60.0,
+            minimum=5.0,
+            maximum=600.0,
+        )
         self.user: dict[str, Any] | None = None
         self._qt_config_cache: dict[str, Any] | None = None
+        self._product_taxonomy_nodes_cache: tuple[
+            dict[str, Any],
+            dict[tuple[str, str], dict[str, Any]],
+            dict[tuple[str, str, str], dict[str, Any]],
+        ] | None = None
+        self._operation_catalog_cache: tuple[int, list[dict[str, Any]]] | None = None
 
     def _env_float(self, name: str, default: float, *, minimum: float | None = None, maximum: float | None = None) -> float:
         try:
@@ -629,8 +643,11 @@ class LegacyBackend(
         self.data = data
         self._base_data_snapshot = self._clone_data(data)
         self._data_loaded_at = time.time()
+        self._data_cache_generation += 1
+        self._operation_catalog_cache = None
         try:
             self.desktop_main._RUNTIME_DATA_REF = self.data
+            self.desktop_main._LATEST_RUNTIME_DATA = self.data
         except Exception:
             pass
         return data
@@ -672,6 +689,7 @@ class LegacyBackend(
             "expedicoes": "numero",
             "transportes": "numero",
             "faturacao_registos": "numero",
+            "servicos_diretos": "numero",
             "quality_nonconformities": "id",
             "quality_documents": "id",
             "workcenter_catalog": "id",
@@ -947,6 +965,27 @@ class LegacyBackend(
             return self.data
         return self._replace_data_cache(self.desktop_main.load_data())
 
+    def data_cache_needs_reload(self, *, max_age_sec: float | None = None) -> bool:
+        ttl = self._reload_cache_ttl_sec if max_age_sec is None else max(0.0, float(max_age_sec or 0.0))
+        return not (
+            isinstance(self.data, dict)
+            and ttl > 0
+            and self._data_loaded_at > 0
+            and (time.time() - self._data_loaded_at) <= ttl
+        )
+
+    def data_cache_generation(self) -> int:
+        return int(self._data_cache_generation)
+
+    def load_data_snapshot(self) -> dict[str, Any]:
+        return self.desktop_main.load_data()
+
+    def apply_data_snapshot(self, data: dict[str, Any], *, expected_generation: int) -> bool:
+        if int(expected_generation) != self._data_cache_generation:
+            return False
+        self._replace_data_cache(data)
+        return True
+
     def save_runtime_state(self) -> dict[str, Any]:
         return {
             "async_enabled": bool(getattr(self.desktop_main, "_ASYNC_SAVE_ENABLED", False)),
@@ -1050,6 +1089,7 @@ class LegacyBackend(
     def _save_qt_config(self, payload: dict[str, Any]) -> dict[str, Any]:
         clean = dict(payload or {})
         self._qt_config_cache = dict(clean)
+        self._product_taxonomy_nodes_cache = None
         try:
             self._qt_config_path().write_text(json.dumps(clean, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception:
@@ -1415,16 +1455,11 @@ class LegacyBackend(
         return "Password incorreta."
 
     def authenticate(self, username: str, password: str) -> dict[str, Any]:
-        data = self.desktop_main.load_data()
+        data = self.reload(force=False)
         owner_session = self.desktop_main.ensure_trial_login_session(username, password, allow_owner=True)
         if isinstance(owner_session, dict):
             merged = dict(owner_session)
             self.user = merged
-            self.data = data
-            try:
-                self.desktop_main._RUNTIME_DATA_REF = self.data
-            except Exception:
-                pass
             return self.user
         user = self.desktop_main.authenticate_local_user(data, username, password)
         if user is None:
@@ -1440,11 +1475,6 @@ class LegacyBackend(
         merged["active"] = bool(profile.get("active", True))
         merged["menu_permissions"] = dict(profile.get("menu_permissions", {}) or {})
         self.user = merged
-        self.data = data
-        try:
-            self.desktop_main._RUNTIME_DATA_REF = self.data
-        except Exception:
-            pass
         try:
             self.desktop_main.touch_trial_success(str(merged.get("username", "") or "").strip(), owner=False)
         except Exception:
@@ -1794,9 +1824,14 @@ class LegacyBackend(
         os.startfile(str(target))
         return target
 
-    def _normalize_storage_paths_for_save(self) -> None:
+    def _normalize_storage_paths_for_save(self, changed_keys: list[str] | None = None) -> None:
         data = self.ensure_data()
         digest_cache: dict[str, str] = {}
+        selected_keys = {
+            str(key or "")
+            for key in list(changed_keys or [])
+            if str(key or "") and not str(key or "").startswith("__")
+        }
 
         def normalize_drawings(node: Any) -> None:
             if isinstance(node, dict):
@@ -1881,9 +1916,14 @@ class LegacyBackend(
                 for item in node:
                     normalize_drawings(item)
 
-        normalize_drawings(data)
+        if changed_keys is None:
+            normalize_drawings(data)
+        else:
+            for key in selected_keys:
+                normalize_drawings(data.get(key))
 
-        for note in list(data.get("notas_encomenda", []) or []):
+        notes = data.get("notas_encomenda", []) if changed_keys is None or "notas_encomenda" in selected_keys else []
+        for note in list(notes or []):
             if not isinstance(note, dict):
                 continue
             note["fatura_caminho_ultima"] = self._store_shared_file(
@@ -1901,7 +1941,8 @@ class LegacyBackend(
                         preferred_name=self._file_reference_name(row.get("caminho", ""), row.get("titulo", "") or "documento"),
                     )
 
-        for record in list(data.get("faturacao", []) or []):
+        billing_rows = data.get("faturacao", []) if changed_keys is None or "faturacao" in selected_keys else []
+        for record in list(billing_rows or []):
             if not isinstance(record, dict):
                 continue
             for invoice in list(record.get("faturas", []) or []):
@@ -1968,10 +2009,15 @@ class LegacyBackend(
         return event
 
     def _save(self, force: bool = False, audit: bool = True, blocking: bool = False) -> None:
-        self._normalize_storage_paths_for_save()
         async_enabled = bool(getattr(self.desktop_main, "_ASYNC_SAVE_ENABLED", False))
+        current = self.ensure_data()
+        initial_changed = self._changed_data_buckets(current, self._base_data_snapshot)
+        if not initial_changed and not force:
+            return
+        if initial_changed:
+            self._normalize_storage_paths_for_save(initial_changed)
         if async_enabled:
-            payload = self.ensure_data()
+            payload = current
             _changed = self._changed_data_buckets(payload, self._base_data_snapshot)
         else:
             payload, _changed = self._merge_latest_for_save()
@@ -4966,6 +5012,9 @@ class LegacyBackend(
         return taxonomy
 
     def _product_taxonomy_nodes(self) -> tuple[dict[str, Any], dict[tuple[str, str], dict[str, Any]], dict[tuple[str, str, str], dict[str, Any]]]:
+        cached = getattr(self, "_product_taxonomy_nodes_cache", None)
+        if cached is not None:
+            return cached
         category_map: dict[str, Any] = {}
         subcategory_map: dict[tuple[str, str], dict[str, Any]] = {}
         type_map: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -4983,7 +5032,8 @@ class LegacyBackend(
                     clean_type = str(type_label or "").strip()
                     if clean_type:
                         type_map[(category_label.casefold(), sub_label.casefold(), clean_type.casefold())] = {"label": clean_type}
-        return category_map, subcategory_map, type_map
+        self._product_taxonomy_nodes_cache = (category_map, subcategory_map, type_map)
+        return self._product_taxonomy_nodes_cache
 
     def product_catalog_options(self, category: str = "", subcategory: str = "") -> dict[str, Any]:
         taxonomy = self.product_taxonomy()
@@ -5885,7 +5935,7 @@ class LegacyBackend(
         type_row = type_map.get((category_label.casefold(), subcategory_label.casefold(), raw_type.casefold())) if category_label and subcategory_label and raw_type else None
         type_label = str((type_row or {}).get("label", raw_type) or "").strip()
         type_id = self._product_catalog_slug(f"{subcategory_id or category_id}-{type_label}", "tipo") if type_label else ""
-        category_meta = dict(self.product_catalog_options().get("category_meta", {}) or {}).get(category_label, {})
+        category_meta = dict(category_row or {})
         return {
             "categoria": category_label,
             "category_id": category_id,
@@ -5900,6 +5950,19 @@ class LegacyBackend(
 
     def product_next_code(self) -> str:
         return str(self.desktop_main.peek_next_produto_numero(self.ensure_data()))
+
+    def product_price_preview(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Calcula os indicadores editáveis sem executar classificação inteligente."""
+        product = dict(payload or {})
+        quantity = self._parse_float(product.get("qty", product.get("quantidade", 0)), 0)
+        unit = str(product.get("unid", "UN") or "UN").strip() or "UN"
+        unit_price = self._parse_float(self.desktop_main.produto_preco_unitario(product), 0)
+        return {
+            "preco_unid": round(unit_price, 4),
+            "qty": quantity,
+            "unit": unit,
+            "valor_stock": round(unit_price * quantity, 2),
+        }
 
     def _product_dimensoes(self, prod: dict[str, Any]) -> str:
         dim = str(prod.get("dimensoes", "") or "").strip()
@@ -6868,6 +6931,12 @@ class LegacyBackend(
         ]
 
     def operation_catalog_rows(self) -> list[dict[str, Any]]:
+        cached = getattr(self, "_operation_catalog_cache", None)
+        generation_now = int(getattr(self, "_data_cache_generation", 0))
+        if cached is not None:
+            generation, cached_rows = cached
+            if generation == generation_now:
+                return [dict(row) for row in cached_rows]
         data = self.ensure_data()
         raw_rows = list(data.get("operations_catalog", []) or [])
         seed_rows = self._default_operation_catalog()
@@ -6900,6 +6969,10 @@ class LegacyBackend(
             key=lambda row: (order_index.get(str(row.get("name", "")).casefold(), 999), str(row.get("name", "")).casefold()),
         )
         data["operations_catalog"] = cleaned
+        self._operation_catalog_cache = (
+            generation_now,
+            [dict(row) for row in cleaned],
+        )
         return [dict(row) for row in cleaned]
 
     def operation_catalog_options(self, *, include_inactive: bool = False, planeavel_only: bool = False) -> list[str]:
@@ -16764,6 +16837,7 @@ class LegacyBackend(
             {"key": "stock_dashboard", "label": "Dashboard"},
             {"key": "materials", "label": "Matéria-Prima"},
             {"key": "products", "label": "Produtos"},
+            {"key": "direct_services", "label": "Serviços"},
             {"key": "clients", "label": "Clientes"},
             {"key": "suppliers", "label": "Fornecedores"},
             {"key": "orders", "label": "Encomendas"},

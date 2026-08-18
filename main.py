@@ -659,6 +659,7 @@ DEFAULT_DATA = {
     "produtos": [],
     "notas_encomenda": [],
     "expedicoes": [],
+    "servicos_diretos": [],
     "faturacao": [],
     "at_series": [],
     "exp_seq": 1,
@@ -770,6 +771,36 @@ def _repair_mojibake_structure(value):
     if isinstance(value, str):
         return _repair_mojibake_text(value)
     return value
+
+
+def _structure_needs_mojibake_repair(value):
+    """Deteta texto danificado sem reconstruir toda a estrutura saudável."""
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, dict):
+            pending.extend(current.keys())
+            pending.extend(current.values())
+        elif isinstance(current, list):
+            pending.extend(current)
+        elif isinstance(current, str):
+            if (
+                "Ã" in current
+                or "Â" in current
+                or "â" in current
+                or "€" in current
+                or "™" in current
+                or "œ" in current
+                or "ž" in current
+                or "Ÿ" in current
+                or "\u00a0" in current
+            ):
+                # Símbolos como € e palavras válidas em maiúsculas (por exemplo,
+                # "SÃO") não são necessariamente mojibake. Só reconstruímos a
+                # árvore quando a reparação realmente altera algum texto.
+                if _repair_mojibake_text(current) != current:
+                    return True
+    return False
 
 
 def _normalize_role_name(value):
@@ -1719,6 +1750,38 @@ def _mysql_sync_relational_schema(cur, data):
             """
         )
         tables.add("transportes_tarifarios")
+    if "servicos_diretos" not in tables:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS servicos_diretos (
+                numero VARCHAR(30) PRIMARY KEY,
+                cliente_codigo VARCHAR(20) NULL,
+                cliente_nome VARCHAR(150) NULL,
+                data_servico DATE NULL,
+                data_vencimento DATE NULL,
+                estado VARCHAR(30) NULL,
+                local_servico VARCHAR(255) NULL,
+                responsavel VARCHAR(120) NULL,
+                obs TEXT NULL,
+                subtotal DECIMAL(12,2) NULL,
+                valor_iva DECIMAL(12,2) NULL,
+                total DECIMAL(12,2) NULL,
+                stock_consumido TINYINT(1) NOT NULL DEFAULT 0,
+                faturacao_numero VARCHAR(30) NULL,
+                created_at DATETIME NULL,
+                updated_at DATETIME NULL,
+                confirmado_at DATETIME NULL,
+                anulado_at DATETIME NULL,
+                anulado_motivo TEXT NULL,
+                linhas_json LONGTEXT NULL,
+                INDEX idx_servicos_cliente (cliente_codigo),
+                INDEX idx_servicos_estado (estado),
+                INDEX idx_servicos_data (data_servico),
+                INDEX idx_servicos_faturacao (faturacao_numero)
+            )
+            """
+        )
+        tables.add("servicos_diretos")
     if "faturacao_registos" not in tables:
         cur.execute(
             """
@@ -1728,6 +1791,7 @@ def _mysql_sync_relational_schema(cur, data):
                 origem VARCHAR(30) NULL,
                 orcamento_numero VARCHAR(30) NULL,
                 encomenda_numero VARCHAR(30) NULL,
+                servico_numero VARCHAR(30) NULL,
                 cliente_codigo VARCHAR(20) NULL,
                 cliente_nome VARCHAR(150) NULL,
                 data_venda DATE NULL,
@@ -2950,11 +3014,39 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "encomenda_montagem_itens", "consumed_by", "VARCHAR(120) NULL")
         _mysql_ensure_index(cur, "encomenda_montagem_itens", "idx_enc_montagem_num_ord", "`encomenda_numero`, `linha_ordem`")
         _mysql_ensure_index(cur, "encomenda_montagem_itens", "idx_enc_montagem_estado", "`estado`")
+    if "servicos_diretos" in tables:
+        for name, definition in {
+            "cliente_codigo": "VARCHAR(20) NULL",
+            "cliente_nome": "VARCHAR(150) NULL",
+            "data_servico": "DATE NULL",
+            "data_vencimento": "DATE NULL",
+            "estado": "VARCHAR(30) NULL",
+            "local_servico": "VARCHAR(255) NULL",
+            "responsavel": "VARCHAR(120) NULL",
+            "obs": "TEXT NULL",
+            "subtotal": "DECIMAL(12,2) NULL",
+            "valor_iva": "DECIMAL(12,2) NULL",
+            "total": "DECIMAL(12,2) NULL",
+            "stock_consumido": "TINYINT(1) NOT NULL DEFAULT 0",
+            "faturacao_numero": "VARCHAR(30) NULL",
+            "created_at": "DATETIME NULL",
+            "updated_at": "DATETIME NULL",
+            "confirmado_at": "DATETIME NULL",
+            "anulado_at": "DATETIME NULL",
+            "anulado_motivo": "TEXT NULL",
+            "linhas_json": "LONGTEXT NULL",
+        }.items():
+            _mysql_ensure_column(cur, "servicos_diretos", name, definition)
+        _mysql_ensure_index(cur, "servicos_diretos", "idx_servicos_cliente", "`cliente_codigo`")
+        _mysql_ensure_index(cur, "servicos_diretos", "idx_servicos_estado", "`estado`")
+        _mysql_ensure_index(cur, "servicos_diretos", "idx_servicos_data", "`data_servico`")
+        _mysql_ensure_index(cur, "servicos_diretos", "idx_servicos_faturacao", "`faturacao_numero`")
     if "faturacao_registos" in tables:
         _mysql_ensure_column(cur, "faturacao_registos", "ano", "INT NULL")
         _mysql_ensure_column(cur, "faturacao_registos", "origem", "VARCHAR(30) NULL")
         _mysql_ensure_column(cur, "faturacao_registos", "orcamento_numero", "VARCHAR(30) NULL")
         _mysql_ensure_column(cur, "faturacao_registos", "encomenda_numero", "VARCHAR(30) NULL")
+        _mysql_ensure_column(cur, "faturacao_registos", "servico_numero", "VARCHAR(30) NULL")
         _mysql_ensure_column(cur, "faturacao_registos", "cliente_codigo", "VARCHAR(20) NULL")
         _mysql_ensure_column(cur, "faturacao_registos", "cliente_nome", "VARCHAR(150) NULL")
         _mysql_ensure_column(cur, "faturacao_registos", "data_venda", "DATE NULL")
@@ -2966,6 +3058,7 @@ def _mysql_sync_relational_schema(cur, data):
         _mysql_ensure_column(cur, "faturacao_registos", "updated_at", "DATETIME NULL")
         _mysql_ensure_index(cur, "faturacao_registos", "idx_faturacao_registos_orc", "`orcamento_numero`")
         _mysql_ensure_index(cur, "faturacao_registos", "idx_faturacao_registos_enc", "`encomenda_numero`")
+        _mysql_ensure_index(cur, "faturacao_registos", "idx_faturacao_registos_servico", "`servico_numero`")
         _mysql_ensure_index(cur, "faturacao_registos", "idx_faturacao_registos_cliente", "`cliente_codigo`")
         _mysql_ensure_index(cur, "faturacao_registos", "idx_faturacao_registos_ano", "`ano`")
     if "faturacao_faturas" in tables:
@@ -3110,6 +3203,7 @@ def _mysql_sync_relational_schema(cur, data):
         "faturacao_pagamentos",
         "faturacao_faturas",
         "faturacao_registos",
+        "servicos_diretos",
         "at_series",
         "orc_referencias_historico",
         "conjuntos_modelo_itens",
@@ -4476,6 +4570,46 @@ def _mysql_sync_relational_schema(cur, data):
                 ),
             )
 
+    if "servicos_diretos" in tables:
+        for service in list(data.get("servicos_diretos", []) or []):
+            if not isinstance(service, dict):
+                continue
+            numero = _clip(service.get("numero"), 30)
+            if not numero:
+                continue
+            cur.execute(
+                """
+                INSERT INTO servicos_diretos (
+                    numero, cliente_codigo, cliente_nome, data_servico, data_vencimento, estado,
+                    local_servico, responsavel, obs, subtotal, valor_iva, total, stock_consumido,
+                    faturacao_numero, created_at, updated_at, confirmado_at, anulado_at,
+                    anulado_motivo, linhas_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    numero,
+                    _clip(service.get("cliente_codigo"), 20),
+                    _clip(service.get("cliente_nome"), 150),
+                    _to_mysql_date(service.get("data_servico")),
+                    _to_mysql_date(service.get("data_vencimento")),
+                    _clip(service.get("estado"), 30),
+                    _clip(service.get("local_servico"), 255),
+                    _clip(service.get("responsavel"), 120),
+                    service.get("obs"),
+                    _to_num(service.get("subtotal")),
+                    _to_num(service.get("valor_iva")),
+                    _to_num(service.get("total")),
+                    1 if _to_bool(service.get("stock_consumido", False)) else 0,
+                    _clip(service.get("faturacao_numero"), 30),
+                    _to_mysql_datetime(service.get("created_at")),
+                    _to_mysql_datetime(service.get("updated_at")),
+                    _to_mysql_datetime(service.get("confirmado_at")),
+                    _to_mysql_datetime(service.get("anulado_at")),
+                    service.get("anulado_motivo"),
+                    json.dumps(list(service.get("linhas", []) or []), ensure_ascii=False, default=str),
+                ),
+            )
+
     if "faturacao_registos" in tables:
         for reg in list(data.get("faturacao", []) or []):
             if not isinstance(reg, dict):
@@ -4486,9 +4620,9 @@ def _mysql_sync_relational_schema(cur, data):
             cur.execute(
                 """
                 INSERT INTO faturacao_registos (
-                    numero, ano, origem, orcamento_numero, encomenda_numero, cliente_codigo, cliente_nome,
+                    numero, ano, origem, orcamento_numero, encomenda_numero, servico_numero, cliente_codigo, cliente_nome,
                     data_venda, data_vencimento, valor_venda_manual, estado_pagamento_manual, obs, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     reg_num,
@@ -4496,6 +4630,7 @@ def _mysql_sync_relational_schema(cur, data):
                     _clip(reg.get("origem"), 30),
                     _clip(reg.get("orcamento_numero"), 30),
                     _clip(reg.get("encomenda_numero"), 30),
+                    _clip(reg.get("servico_numero"), 30),
                     _clip(reg.get("cliente_codigo"), 20),
                     _clip(reg.get("cliente_nome"), 150),
                     _to_mysql_date(reg.get("data_venda")),
@@ -6169,6 +6304,41 @@ def _mysql_load_relational_data():
                         }
                     )
 
+            for row in fetch_all("servicos_diretos", "data_servico, numero"):
+                numero = str(row.get("numero", "") or "").strip()
+                if not numero:
+                    continue
+                try:
+                    linhas = json.loads(str(row.get("linhas_json", "") or "[]"))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    linhas = []
+                if not isinstance(linhas, list):
+                    linhas = []
+                data["servicos_diretos"].append(
+                    {
+                        "numero": numero,
+                        "cliente_codigo": str(row.get("cliente_codigo", "") or "").strip(),
+                        "cliente_nome": str(row.get("cliente_nome", "") or "").strip(),
+                        "data_servico": _db_to_iso(row.get("data_servico"))[:10],
+                        "data_vencimento": _db_to_iso(row.get("data_vencimento"))[:10],
+                        "estado": str(row.get("estado", "") or "Rascunho").strip(),
+                        "local_servico": str(row.get("local_servico", "") or "").strip(),
+                        "responsavel": str(row.get("responsavel", "") or "").strip(),
+                        "obs": str(row.get("obs", "") or "").strip(),
+                        "subtotal": _to_num(row.get("subtotal")) or 0.0,
+                        "valor_iva": _to_num(row.get("valor_iva")) or 0.0,
+                        "total": _to_num(row.get("total")) or 0.0,
+                        "stock_consumido": bool(_to_num(row.get("stock_consumido")) or 0),
+                        "faturacao_numero": str(row.get("faturacao_numero", "") or "").strip(),
+                        "created_at": _db_to_iso(row.get("created_at")),
+                        "updated_at": _db_to_iso(row.get("updated_at")),
+                        "confirmado_at": _db_to_iso(row.get("confirmado_at")),
+                        "anulado_at": _db_to_iso(row.get("anulado_at")),
+                        "anulado_motivo": str(row.get("anulado_motivo", "") or "").strip(),
+                        "linhas": linhas,
+                    }
+                )
+
             for row in fetch_all("faturacao_registos", "numero"):
                 reg_num = str(row.get("numero", "") or "").strip()
                 if not reg_num:
@@ -6179,6 +6349,7 @@ def _mysql_load_relational_data():
                         "origem": str(row.get("origem", "") or "").strip(),
                         "orcamento_numero": str(row.get("orcamento_numero", "") or "").strip(),
                         "encomenda_numero": str(row.get("encomenda_numero", "") or "").strip(),
+                        "servico_numero": str(row.get("servico_numero", "") or "").strip(),
                         "cliente_codigo": str(row.get("cliente_codigo", "") or "").strip(),
                         "cliente_nome": str(row.get("cliente_nome", "") or "").strip(),
                         "data_venda": _db_to_iso(row.get("data_venda"))[:10],
@@ -8165,7 +8336,8 @@ def load_data():
         data = _mysql_load_relational_data()
     except Exception as ex:
         raise RuntimeError(format_mysql_runtime_error(ex, action="carregar dados da base MySQL"))
-    data = _repair_mojibake_structure(data)
+    if _structure_needs_mojibake_repair(data):
+        data = _repair_mojibake_structure(data)
     if not isinstance(data, dict):
         data = _copy_default_data()
     migration_required = False
@@ -8552,8 +8724,7 @@ def _async_save_worker_loop():
                 try:
                     if conn is None:
                         conn = _mysql_connect()
-                    snap = _snapshot_for_save(payload)
-                    _mysql_save_relational_data(snap if snap is not None else payload, conn=conn)
+                    _mysql_save_relational_data(payload, conn=conn)
                     with _ASYNC_SAVE_LOCK:
                         _LAST_SAVE_TS = time.monotonic()
                         if fp:
@@ -8598,8 +8769,9 @@ def _start_async_save_worker():
 
 def _queue_async_save(data, fp="", token=0):
     global _ASYNC_SAVE_PENDING_DATA, _ASYNC_SAVE_PENDING_FP, _ASYNC_SAVE_PENDING_TOKEN
+    snapshot = _snapshot_for_save(data)
     with _ASYNC_SAVE_LOCK:
-        _ASYNC_SAVE_PENDING_DATA = data
+        _ASYNC_SAVE_PENDING_DATA = snapshot
         _ASYNC_SAVE_PENDING_FP = str(fp or "")
         _ASYNC_SAVE_PENDING_TOKEN = int(token or 0)
     _ASYNC_SAVE_EVENT.set()

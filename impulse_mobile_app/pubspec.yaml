@@ -1,0 +1,33 @@
+name: lugest_field
+description: Aplicação móvel LuGEST para profissionais e serviços no terreno.
+publish_to: "none"
+version: 0.3.0+4
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  crypto: ^3.0.7
+  flutter:
+    sdk: flutter
+  flutter_secure_storage: ^10.3.1
+  http: ^1.5.0
+  image_picker: ^1.2.3
+  path_provider: ^2.1.6
+  shared_preferences: ^2.5.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter:
+  uses-material-design: true
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  image_path: "assets/lugest_symbol.png"
+  adaptive_icon_background: "#F4F5F2"
+  adaptive_icon_foreground: "assets/lugest_symbol.png"
+  min_sdk_android: 21

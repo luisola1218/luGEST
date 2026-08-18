@@ -20,6 +20,9 @@ generated/
 backups/
 output/
 tmp/
+mobile_gateway_data/
+reports/*.prof
+reports/stress/
 
 # Logs and runtime files
 *.log

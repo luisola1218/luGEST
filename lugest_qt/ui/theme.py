@@ -102,8 +102,11 @@ def polish_table_selection(table: QTableView) -> None:
     if bool(table.property("_lugest_uniform_selection")):
         return
     table.setProperty("_lugest_uniform_selection", True)
+    if table.property("workspaceTable") is None:
+        table.setProperty("workspaceTable", "true")
     table.setSelectionBehavior(QAbstractItemView.SelectRows)
     table.setAlternatingRowColors(True)
+    table.setWordWrap(False)
     header = table.horizontalHeader()
     if header is not None:
         header.setHighlightSections(False)
@@ -219,7 +222,7 @@ def apply_theme(app: QApplication, branding: dict) -> None:
             border: 1px solid #c6d2e0;
             border-radius: 24px;
         }}
-        QLineEdit, QComboBox, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox {{
+        QLineEdit, QComboBox, QDateEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox {{
             background: #ffffff;
             border: 1px solid #c9cdca;
             border-radius: 4px;
@@ -227,8 +230,24 @@ def apply_theme(app: QApplication, branding: dict) -> None:
             selection-background-color: {selection_fill};
             selection-color: {selection_text};
         }}
-        QLineEdit:focus, QComboBox:focus, QTextEdit:focus, QPlainTextEdit:focus {{
+        QLineEdit:focus, QComboBox:focus, QDateEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {{
             border: 2px solid #7ed321;
+        }}
+        QDateEdit[clickCalendar="true"] {{
+            padding-right: 38px;
+        }}
+        QDateEdit[clickCalendar="true"]::drop-down {{
+            subcontrol-origin: padding;
+            subcontrol-position: top right;
+            width: 34px;
+            background: #eef8e2;
+            border: none;
+            border-left: 1px solid #b9d994;
+            border-top-right-radius: 4px;
+            border-bottom-right-radius: 4px;
+        }}
+        QDateEdit[clickCalendar="true"]::drop-down:hover {{
+            background: #dff1c8;
         }}
         QPushButton {{
             background: #444744;
@@ -466,7 +485,7 @@ def apply_theme(app: QApplication, branding: dict) -> None:
             color: {selection_text};
             border: 1px solid {selection_border};
         }}
-        QTableWidget[workspaceTable="true"] {{
+        QTableView[workspaceTable="true"] {{
             background: #ffffff;
             alternate-background-color: #f7f7f5;
             border: 1px solid #cfd3cf;
@@ -474,22 +493,22 @@ def apply_theme(app: QApplication, branding: dict) -> None:
             gridline-color: transparent;
             outline: 0;
         }}
-        QTableWidget[workspaceTable="true"]::item {{
+        QTableView[workspaceTable="true"]::item {{
             padding: 5px 7px;
             border: 0;
             border-bottom: 1px solid #e4e5e3;
         }}
-        QTableWidget[workspaceTable="true"]::item:hover {{
+        QTableView[workspaceTable="true"]::item:hover {{
             background: #f0f5ea;
         }}
-        QTableWidget[workspaceTable="true"]::item:selected {{
+        QTableView[workspaceTable="true"]::item:selected {{
             background: {selection_fill_soft};
             color: {selection_text};
             border: 0;
             border-left: 3px solid {selection_border};
             border-bottom: 1px solid #d8e6c9;
         }}
-        QTableWidget[workspaceTable="true"] QHeaderView::section {{
+        QTableView[workspaceTable="true"] QHeaderView::section {{
             background: #444744;
             color: #ffffff;
             border: 0;

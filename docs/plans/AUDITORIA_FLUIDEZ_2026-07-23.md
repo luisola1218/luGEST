@@ -254,3 +254,94 @@ Estas alteracoes so devem avancar quando os dados reais justificarem o custo:
 Conclusao desta revisao: nao foi encontrado um gargalo geral que justificasse
 threads adicionais, paginacao antecipada ou reescrita das grelhas atuais. Essas
 alteracoes aumentariam complexidade sem ganho mensuravel na base comercial atual.
+
+## Revisao 2026.08.04 - cobertura integral, base de dados e interacao global
+
+### Medicao real
+
+- A matriz automatica cobre agora os 21 menus disponiveis, incluindo Servicos,
+  Pulse, Diagnostico e Avarias; o ensaio falha se um novo menu ficar sem medicao.
+- Carga inicial dos dados: 0,179 s.
+- Pagina fria mais lenta: 0,431 s.
+- Navegacao quente mais lenta: 0,055 s.
+- Nenhum menu atingiu o limite de 0,150 s definido para navegacao ja carregada.
+- A arquitetura continua a criar paginas apenas quando sao abertas e a
+  atualizacao automatica respeita formularios em edicao.
+
+### Base de dados e integridade
+
+- O esquema MySQL unico contem todas as tabelas e colunas obrigatorias.
+- Os metadados foram validados em servidores com nomes de tabelas sensiveis e
+  nao sensiveis a maiusculas/minusculas.
+- A auditoria de dados nao encontrou stock negativo ou reservado acima do
+  fisico, referencias/OPP/OF duplicadas, totais de notas incoerentes, blocos de
+  planeamento orfaos ou expedicoes sem origem.
+- `pip check` nao encontrou dependencias quebradas e a compilacao validou todos
+  os modulos Python do projeto.
+- A auditoria de seguranca terminou com zero problemas altos e zero medios. O
+  pacote comercial e gerado sem credenciais OWNER e sem dados da base de
+  desenvolvimento.
+
+### Interacao e apresentacao
+
+- Todas as tabelas atuais e futuras recebem o mesmo cabecalho cinza, linhas
+  alternadas, selecao verde integral, hover discreto e grelha limpa.
+- A selecao e sempre feita por linha completa; o texto nao quebra dentro das
+  celulas e os cabecalhos deixam de mudar visualmente quando selecionados.
+- As caixas de selecao abrem ao clicar em qualquer zona. Nas caixas editaveis, o
+  clique preserva o cursor e permite escrever imediatamente, sem obrigar a usar
+  a seta lateral.
+- O teste de inteligencia do catalogo passou a verificar tambem abertura por
+  clique, foco de escrita e preenchimento imediato.
+
+### Decisao tecnica
+
+Nao foi aplicada paginacao, virtualizacao ou paralelismo indiscriminado: com os
+tempos medidos, essas mudancas aumentariam o risco do piloto sem ganho visivel.
+Mantem-se como gatilho para o futuro mais de 1.000 linhas visiveis ou percentil
+95 acima de 700 ms num posto ligado ao servidor real.
+
+## Revisao 2026.08.18 - remocao de bloqueios e conflitos
+
+### Resultado medido
+
+- Referencia antes desta revisao: carga inicial 0,198 s, pagina fria ate 0,476 s,
+  navegacao quente ate 0,059 s e recarga de dados expirados a bloquear a interface
+  durante 0,191 s.
+- Resultado final: carga inicial 0,154 s, pagina fria ate 0,252 s, navegacao
+  quente ate 0,011 s e despacho da recarga expirada em 0,009 s.
+- Uma gravacao sem qualquer alteracao termina agora em 6 a 8 ms e deixa de
+  percorrer anexos, desenhos e todos os caminhos de armazenamento.
+
+### Alteracoes aplicadas
+
+- A leitura MySQL quando o cache expira passou para um worker. A pagina apresenta
+  imediatamente os dados existentes e recebe a nova fotografia da base sem
+  bloquear o clique, com controlo de geracao para nunca substituir uma gravacao
+  mais recente.
+- Login, paginas Runtime, Pulse, Operador e Avarias passaram a reutilizar a mesma
+  fotografia de dados em memoria, eliminando leituras completas duplicadas.
+- Produtos deixou de carregar a lista duas vezes e de executar o classificador
+  inteligente em cada alteracao visual dos campos de preco.
+- Taxonomia de produtos e catalogo de operacoes passaram a ter cache invalidado
+  quando os dados ou a configuracao mudam.
+- A imagem de marca e aparada por acesso direto ao buffer e pre-escalada uma unica
+  vez, em vez de consultar e redimensionar cada pixel durante a pintura.
+- A fila de gravacao recebe uma fotografia imutavel no momento do pedido. Isto
+  remove a corrida em que uma edicao posterior podia alterar dados que o worker
+  ainda nao tinha começado a guardar.
+- O antigo identificador de menu `home` encaminha para o Dashboard. O teste sem
+  ecrã deixa de esconder erros de abertura atras de uma caixa modal invisivel.
+
+### Validacao e base de dados
+
+- Passaram: compilacao Python, smoke test Qt, matriz dos 20 menus, esquema MySQL,
+  inteligencia do catalogo, `pip check`, integridade funcional e auditoria SQL em
+  transacao apenas de leitura.
+- A auditoria encontrou zero duplicados, orfaos, totais negativos, JSON invalido,
+  stock incoerente ou referencias de producao duplicadas.
+- Nao foram apagados nem corrigidos registos e nao foi alterado o esquema durante
+  esta revisao de desempenho.
+- Divida tecnica identificada: 52 tabelas usam `utf8_general_ci`; apenas 3 usam
+  `utf8mb4`. A conversao deve ser feita numa manutencao propria, com backup e
+  ensaio, porque nao e necessaria para a fluidez e altera estruturalmente a base.

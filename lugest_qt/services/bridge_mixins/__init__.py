@@ -2,6 +2,7 @@
 
 from .billing import BillingBridgeMixin
 from .dashboards import DashboardBridgeMixin
+from .direct_services import DirectServicesBridgeMixin
 from .planning import PlanningBridgeMixin
 from .purchasing import PurchasingBridgeMixin
 from .quotes import QuotesBridgeMixin
@@ -11,6 +12,7 @@ from .transport import TransportBridgeMixin
 __all__ = [
     "BillingBridgeMixin",
     "DashboardBridgeMixin",
+    "DirectServicesBridgeMixin",
     "PlanningBridgeMixin",
     "PurchasingBridgeMixin",
     "QuotesBridgeMixin",

@@ -26,17 +26,26 @@ class BillingBridgeMixin:
             None,
         )
 
-    def _billing_find_source_record(self, orcamento_numero: str = "", encomenda_numero: str = "") -> dict[str, Any] | None:
+    def _billing_find_source_record(
+        self,
+        orcamento_numero: str = "",
+        encomenda_numero: str = "",
+        servico_numero: str = "",
+    ) -> dict[str, Any] | None:
         orc_num = str(orcamento_numero or "").strip()
         enc_num = str(encomenda_numero or "").strip()
+        srv_num = str(servico_numero or "").strip()
         for row in self._billing_records():
             if not isinstance(row, dict):
                 continue
             row_orc = str(row.get("orcamento_numero", "") or "").strip()
             row_enc = str(row.get("encomenda_numero", "") or "").strip()
+            row_srv = str(row.get("servico_numero", "") or "").strip()
             if orc_num and row_orc == orc_num:
                 return row
             if enc_num and row_enc == enc_num:
+                return row
+            if srv_num and row_srv == srv_num:
                 return row
         return None
 
@@ -76,6 +85,22 @@ class BillingBridgeMixin:
 
     def _billing_order_by_number(self, numero: str) -> dict[str, Any] | None:
         return self.get_encomenda_by_numero(str(numero or "").strip())
+
+    def _billing_service_by_number(self, numero: str) -> dict[str, Any] | None:
+        target = str(numero or "").strip()
+        if not target:
+            return None
+        finder = getattr(self, "_direct_service_find", None)
+        if callable(finder):
+            return finder(target)
+        return next(
+            (
+                row
+                for row in list(self.ensure_data().get("servicos_diretos", []) or [])
+                if str((row or {}).get("numero", "") or "").strip() == target
+            ),
+            None,
+        )
 
     def _billing_quote_is_sold(self, quote: dict[str, Any]) -> bool:
         estado = self.desktop_main.norm_text((quote or {}).get("estado", ""))
@@ -618,6 +643,43 @@ class BillingBridgeMixin:
             "lines": lines,
         }
 
+    def _billing_service_source(self, service: dict[str, Any]) -> dict[str, Any]:
+        lines: list[dict[str, Any]] = []
+        default_iva = 23.0
+        for row in list((service or {}).get("linhas", []) or []):
+            qty = round(self._parse_float(row.get("qty", 0), 0), 3)
+            if qty <= 0:
+                continue
+            unit_price = round(self._parse_float(row.get("unit_price", 0), 0), 4)
+            iva_perc = round(self._parse_float(row.get("iva_perc", default_iva), default_iva), 2)
+            subtotal = round(qty * unit_price, 2)
+            tax_value = round(subtotal * iva_perc / 100.0, 2)
+            reference = str(row.get("ref", "") or row.get("id", "") or "SERVICO").strip()
+            lines.append(
+                {
+                    "reference": reference or "SERVICO",
+                    "description": str(row.get("description", "") or reference or "Serviço").strip(),
+                    "quantity": qty,
+                    "unit": str(row.get("unit", "") or "UN").strip() or "UN",
+                    "unit_price": unit_price,
+                    "iva_perc": iva_perc,
+                    "subtotal": subtotal,
+                    "valor_iva": tax_value,
+                    "total": round(subtotal + tax_value, 2),
+                    "ref_interna": reference,
+                    "ref_externa": "",
+                    "peca_id": "",
+                }
+            )
+        first_rate = round(self._parse_float((lines[0] if lines else {}).get("iva_perc", default_iva), default_iva), 2)
+        return {
+            "iva_perc": first_rate,
+            "subtotal": round(sum(self._parse_float(row.get("subtotal", 0), 0) for row in lines), 2),
+            "valor_iva": round(sum(self._parse_float(row.get("valor_iva", 0), 0) for row in lines), 2),
+            "total": round(sum(self._parse_float(row.get("total", 0), 0) for row in lines), 2),
+            "lines": lines,
+        }
+
     def _billing_apply_guide_filter(self, lines: list[dict[str, Any]], guide_number: str) -> list[dict[str, Any]]:
         guide_num = str(guide_number or "").strip()
         if not guide_num:
@@ -677,12 +739,15 @@ class BillingBridgeMixin:
         record: dict[str, Any],
         quote: dict[str, Any] | None = None,
         order: dict[str, Any] | None = None,
+        service: dict[str, Any] | None = None,
         guide_number: str = "",
     ) -> dict[str, Any]:
         if isinstance(quote, dict):
             source = self._billing_quote_source(quote)
         elif isinstance(order, dict):
             source = self._billing_order_source(order)
+        elif isinstance(service, dict):
+            source = self._billing_service_source(service)
         else:
             source = {"iva_perc": 23.0, "subtotal": 0.0, "valor_iva": 0.0, "total": 0.0, "lines": []}
         source["lines"] = self._billing_apply_guide_filter(list(source.get("lines", []) or []), guide_number)
@@ -750,14 +815,17 @@ class BillingBridgeMixin:
                 return document
         quote_num = str(record.get("orcamento_numero", "") or "").strip()
         order_num = str(record.get("encomenda_numero", "") or "").strip()
+        service_num = str(record.get("servico_numero", "") or "").strip()
         quote = self._billing_quote_by_number(quote_num) if quote_num else None
         order = self._billing_order_by_number(order_num) if order_num else None
+        service = self._billing_service_by_number(service_num) if service_num else None
         client = self._billing_client_snapshot(quote=quote, order=order, record=record)
         issuer = dict(getattr(self.desktop_main, "get_guia_emitente_info", lambda: {})() or {})
         source = self._billing_source_snapshot(
             record=record,
             quote=quote,
             order=order,
+            service=service,
             guide_number=str(invoice.get("guia_numero", "") or "").strip(),
         )
         lines = list(source.get("lines", []) or [])
@@ -842,6 +910,7 @@ class BillingBridgeMixin:
                 "registo": reg_num,
                 "orcamento": quote_num,
                 "encomenda": order_num,
+                "servico": service_num,
                 "guia": str(invoice.get("guia_numero", "") or "").strip(),
             },
             "subtotal": totals["subtotal"],
@@ -1194,15 +1263,19 @@ class BillingBridgeMixin:
         source_type: str,
         quote: dict[str, Any] | None = None,
         order: dict[str, Any] | None = None,
+        service: dict[str, Any] | None = None,
         record: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         rec = dict(record or {})
         quote_num = str((quote or {}).get("numero", "") or rec.get("orcamento_numero", "") or "").strip()
         order_num = str((order or {}).get("numero", "") or rec.get("encomenda_numero", "") or "").strip()
+        service_num = str((service or {}).get("numero", "") or rec.get("servico_numero", "") or "").strip()
         if order is None and order_num:
             order = self._billing_order_by_number(order_num)
         if quote is None and quote_num:
             quote = self._billing_quote_by_number(quote_num)
+        if service is None and service_num:
+            service = self._billing_service_by_number(service_num)
         client = self._billing_client_info(quote=quote, order=order, record=rec)
         if isinstance(order, dict):
             try:
@@ -1210,6 +1283,8 @@ class BillingBridgeMixin:
             except Exception:
                 pass
         sale_total = self._billing_record_sale_total(rec, quote)
+        if sale_total <= 0 and isinstance(service, dict):
+            sale_total = round(self._parse_float(service.get("total", 0), 0), 2)
         invoices_total = round(sum(self._parse_float(row.get("valor_total", 0), 0) for row in self._billing_active_invoices(rec)), 2)
         payments_total = round(sum(self._parse_float(row.get("valor", 0), 0) for row in self._billing_effective_payments(rec)), 2)
         balance = round(max(0.0, invoices_total - payments_total), 2)
@@ -1220,6 +1295,7 @@ class BillingBridgeMixin:
             str(rec.get("data_venda", "") or "").strip()[:10]
             or str((quote or {}).get("data", "") or "").strip()[:10]
             or str((order or {}).get("data_criacao", "") or "").strip()[:10]
+            or str((service or {}).get("data_servico", "") or "").strip()[:10]
         )
         year = sale_date[:4] if len(sale_date) >= 4 and sale_date[:4].isdigit() else str(self.desktop_main.datetime.now().year)
         latest_invoice = ""
@@ -1235,19 +1311,38 @@ class BillingBridgeMixin:
             )
             latest_invoice = str(ordered_invoices[0].get("numero_fatura", "") or "").strip()
             latest_invoice_date = str(ordered_invoices[0].get("data_emissao", "") or "").strip()[:10]
-        source_label = "Orçamento vendido" if source_type == "quote" else ("Encomenda direta" if source_type == "order" else "Registo manual")
+        source_label = (
+            "Orçamento vendido"
+            if source_type == "quote"
+            else "Encomenda direta"
+            if source_type == "order"
+            else "Serviço direto"
+            if source_type == "service"
+            else "Registo manual"
+        )
+        source_number = (
+            quote_num
+            if source_type == "quote"
+            else order_num
+            if source_type == "order"
+            else service_num
+            if source_type == "service"
+            else str(rec.get("numero", "") or "").strip()
+        )
+        operational_status = "Não aplicável" if source_type == "service" else "Sem encomenda"
         return {
             "record_number": str(rec.get("numero", "") or "").strip(),
             "source_type": source_type,
-            "source_number": quote_num if source_type == "quote" else (order_num or str(rec.get("numero", "") or "").strip()),
+            "source_number": source_number,
             "orcamento_numero": quote_num,
             "encomenda_numero": order_num,
+            "servico_numero": service_num,
             "cliente": client.get("label", "-") or "-",
             "cliente_codigo": client.get("codigo", ""),
             "cliente_nome": client.get("nome", ""),
             "origem": source_label,
-            "estado_encomenda": str((order or {}).get("estado", "") or ("Sem encomenda" if quote_num else "Sem encomenda")).strip() or "Sem encomenda",
-            "estado_expedicao": str((order or {}).get("estado_expedicao", "") or ("Sem encomenda" if quote_num else "Sem encomenda")).strip() or "Sem encomenda",
+            "estado_encomenda": str((order or {}).get("estado", "") or operational_status).strip() or operational_status,
+            "estado_expedicao": str((order or {}).get("estado_expedicao", "") or operational_status).strip() or operational_status,
             "estado_faturacao": invoice_status,
             "estado_pagamento": payment_status,
             "vendido": sale_total,
@@ -1323,16 +1418,47 @@ class BillingBridgeMixin:
             row = self._billing_build_row(source_type="order", order=order, record=record)
             append_row(row, f"order:{order_num}")
 
+        for service in list(data.get("servicos_diretos", []) or []):
+            if not isinstance(service, dict):
+                continue
+            state = self.desktop_main.norm_text(service.get("estado", ""))
+            if state not in {"confirmado", "faturado"}:
+                continue
+            service_num = str(service.get("numero", "") or "").strip()
+            if not service_num:
+                continue
+            record = self._billing_find_source_record("", "", service_num)
+            row = self._billing_build_row(source_type="service", service=service, record=record)
+            append_row(row, f"service:{service_num}")
+
         for record_num, record in records.items():
             quote_num = str(record.get("orcamento_numero", "") or "").strip()
             order_num = str(record.get("encomenda_numero", "") or "").strip()
-            key = f"quote:{quote_num}" if quote_num else (f"order:{order_num}" if order_num else f"record:{record_num}")
+            service_num = str(record.get("servico_numero", "") or "").strip()
+            key = (
+                f"quote:{quote_num}"
+                if quote_num
+                else f"order:{order_num}"
+                if order_num
+                else f"service:{service_num}"
+                if service_num
+                else f"record:{record_num}"
+            )
             if key in seen_keys:
                 continue
             row = self._billing_build_row(
-                source_type="record" if not quote_num and not order_num else ("quote" if quote_num else "order"),
+                source_type=(
+                    "quote"
+                    if quote_num
+                    else "order"
+                    if order_num
+                    else "service"
+                    if service_num
+                    else "record"
+                ),
                 quote=self._billing_quote_by_number(quote_num) if quote_num else None,
                 order=self._billing_order_by_number(order_num) if order_num else None,
+                service=self._billing_service_by_number(service_num) if service_num else None,
                 record=record,
             )
             append_row(row, key)
@@ -1341,7 +1467,7 @@ class BillingBridgeMixin:
             key=lambda item: (
                 str(item.get("data_venda", "") or "0000-00-00"),
                 str(item.get("record_number", "") or ""),
-                str(item.get("orcamento_numero", "") or item.get("encomenda_numero", "") or ""),
+                str(item.get("orcamento_numero", "") or item.get("encomenda_numero", "") or item.get("servico_numero", "") or ""),
             ),
             reverse=True,
         )
@@ -1371,38 +1497,51 @@ class BillingBridgeMixin:
         source_number_txt = str(source_number or "").strip()
         quote = self._billing_quote_by_number(source_number_txt) if source_type_txt == "quote" else None
         order = self._billing_order_by_number(source_number_txt) if source_type_txt == "order" else None
+        service = self._billing_service_by_number(source_number_txt) if source_type_txt == "service" else None
         if quote is None and source_type_txt == "quote":
             raise ValueError("Orçamento não encontrado.")
         if order is None and source_type_txt == "order":
             raise ValueError("Encomenda não encontrada.")
+        if service is None and source_type_txt == "service":
+            raise ValueError("Serviço direto não encontrado.")
         if quote is not None and not self._billing_quote_is_sold(quote):
             raise ValueError("O orçamento ainda não está marcado como vendido/aprovado.")
+        if service is not None and self.desktop_main.norm_text(service.get("estado", "")) not in {"confirmado", "faturado"}:
+            raise ValueError("Confirme o serviço direto antes de o enviar para faturação.")
         order_num = str((quote or {}).get("numero_encomenda", "") or (order or {}).get("numero", "") or "").strip()
         quote_num = str((quote or {}).get("numero", "") or (order or {}).get("numero_orcamento", "") or "").strip()
-        existing = self._billing_find_source_record(quote_num, order_num)
+        service_num = str((service or {}).get("numero", "") or "").strip()
+        existing = self._billing_find_source_record(quote_num, order_num, service_num)
         if existing is not None:
             return existing
-        client = self._billing_client_info(quote=quote, order=order)
+        service_record = {
+            "cliente_codigo": str((service or {}).get("cliente_codigo", "") or "").strip(),
+            "cliente_nome": str((service or {}).get("cliente_nome", "") or "").strip(),
+        }
+        client = self._billing_client_info(quote=quote, order=order, record=service_record if service else None)
         sale_date = (
             str((quote or {}).get("data", "") or "").strip()[:10]
             or str((order or {}).get("data_criacao", "") or "").strip()[:10]
+            or str((service or {}).get("data_servico", "") or "").strip()[:10]
             or str(self.desktop_main.now_iso())[:10]
         )
-        due_date = ""
-        try:
-            due_date = (datetime.strptime(sale_date, "%Y-%m-%d") + timedelta(days=30)).strftime("%Y-%m-%d")
-        except Exception:
-            due_date = ""
+        due_date = str((service or {}).get("data_vencimento", "") or "").strip()[:10]
+        if not due_date:
+            try:
+                due_date = (datetime.strptime(sale_date, "%Y-%m-%d") + timedelta(days=30)).strftime("%Y-%m-%d")
+            except Exception:
+                due_date = ""
         record = {
             "numero": self._billing_next_number(),
-            "origem": "Orçamento" if quote_num else "Encomenda",
+            "origem": "Orçamento" if quote_num else ("Encomenda" if order_num else "Serviço direto"),
             "orcamento_numero": quote_num,
             "encomenda_numero": order_num,
+            "servico_numero": service_num,
             "cliente_codigo": client.get("codigo", ""),
             "cliente_nome": client.get("nome", ""),
             "data_venda": sale_date,
             "data_vencimento": due_date,
-            "valor_venda_manual": 0.0,
+            "valor_venda_manual": round(self._parse_float((service or {}).get("total", 0), 0), 2) if service else 0.0,
             "estado_pagamento_manual": "",
             "obs": "",
             "created_at": self.desktop_main.now_iso(),
@@ -1427,8 +1566,10 @@ class BillingBridgeMixin:
             raise ValueError("Registo de faturação não encontrado.")
         quote_num = str(record.get("orcamento_numero", "") or "").strip()
         order_num = str(record.get("encomenda_numero", "") or "").strip()
+        service_num = str(record.get("servico_numero", "") or "").strip()
         quote = self._billing_quote_by_number(quote_num) if quote_num else None
         order = self._billing_order_by_number(order_num) if order_num else None
+        service = self._billing_service_by_number(service_num) if service_num else None
         quote, order = self._billing_sync_record_source(record, quote=quote, order=order, persist=True)
         quote_num = str(record.get("orcamento_numero", "") or "").strip()
         order_num = str(record.get("encomenda_numero", "") or "").strip()
@@ -1498,6 +1639,7 @@ class BillingBridgeMixin:
             "origem": str(record.get("origem", "") or "").strip(),
             "orcamento_numero": quote_num,
             "encomenda_numero": order_num,
+            "servico_numero": service_num,
             "cliente_codigo": client.get("codigo", ""),
             "cliente_nome": client.get("nome", ""),
             "cliente_label": client.get("label", "-") or "-",
@@ -1520,8 +1662,8 @@ class BillingBridgeMixin:
             "saldo": balance,
             "por_faturar": round(max(0.0, sold_total - invoices_total), 2),
             "obs": str(record.get("obs", "") or "").strip(),
-            "order_status": str((order or {}).get("estado", "") or "Sem encomenda").strip() or "Sem encomenda",
-            "shipping_status": str((order or {}).get("estado_expedicao", "") or "Sem encomenda").strip() or "Sem encomenda",
+            "order_status": str((order or {}).get("estado", "") or ("Não aplicável" if service else "Sem encomenda")).strip() or "Sem encomenda",
+            "shipping_status": str((order or {}).get("estado_expedicao", "") or ("Não aplicável" if service else "Sem encomenda")).strip() or "Sem encomenda",
             "quote_status": str((quote or {}).get("estado", "") or "").strip(),
             "guide_count": len(guides),
             "last_guide": str((guides[0] if guides else {}).get("numero", "") or "").strip(),
@@ -1586,6 +1728,14 @@ class BillingBridgeMixin:
         if len(filtered) == len(rows):
             raise ValueError("Registo de faturação não encontrado.")
         self.ensure_data()["faturacao"] = filtered
+        service_num = str(record.get("servico_numero", "") or "").strip()
+        if service_num:
+            service = self._billing_service_by_number(service_num)
+            if isinstance(service, dict):
+                service["faturacao_numero"] = ""
+                if str(service.get("estado", "") or "").strip() == "Faturado":
+                    service["estado"] = "Confirmado"
+                service["updated_at"] = self.desktop_main.now_iso()
         self._save(force=True)
 
     def billing_add_invoice(self, numero: str, payload: dict[str, Any]) -> dict[str, Any]:

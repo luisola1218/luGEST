@@ -7,7 +7,7 @@ import sys
 import time
 
 from PySide6.QtCore import QObject, QPoint, QRect, QRectF, QSize, QProcess, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -41,10 +41,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .pages.home_page import HomePage
 from .pages.avarias_page import AvariasPage
 from .pages.billing_page import BillingPage
 from .pages.diagnostics_page import DiagnosticsPage
+from .pages.direct_services_page import DirectServicesPage
 from .pages.material_assistant_page import MaterialAssistantPage
 from .pages.materials_page import MaterialsPage
 from .pages.operator_page import OperatorPage
@@ -83,6 +83,26 @@ class _UpdateCheckWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class _BackendReloadWorker(QObject):
+    finished = Signal(dict, int)
+    failed = Signal(str, int)
+
+    def __init__(self, backend, generation: int) -> None:
+        super().__init__()
+        self.backend = backend
+        self.generation = int(generation)
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            loader = getattr(self.backend, "load_data_snapshot", None)
+            if not callable(loader):
+                raise RuntimeError("O backend não suporta atualização assíncrona.")
+            self.finished.emit(dict(loader() or {}), self.generation)
+        except Exception as exc:
+            self.failed.emit(str(exc), self.generation)
+
+
 class _BrandMark(QWidget):
     """Wordmark oficial, aparado automaticamente para remover margens brancas."""
 
@@ -90,7 +110,12 @@ class _BrandMark(QWidget):
 
     def __init__(self, logo_path=None, parent=None, *, width: int = 286, height: int = 48) -> None:
         super().__init__(parent)
-        self._logo = self._load_trimmed_logo(logo_path)
+        self._logo = self._load_trimmed_logo(logo_path).scaled(
+            width,
+            height,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
         self.setFixedSize(width, height)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
 
@@ -111,15 +136,25 @@ class _BrandMark(QWidget):
         original = QPixmap(cache_key)
         if original.isNull():
             return QPixmap()
-        preview = original.scaled(760, 430, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        image = preview.toImage()
+        preview = original.scaled(620, 220, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        image = preview.toImage().convertToFormat(QImage.Format_RGBA8888)
         left, top = image.width(), image.height()
         right = bottom = -1
+        pixels = image.constBits()
+        stride = image.bytesPerLine()
+        width = image.width()
         # Ignora o fundo branco e a compressao muito ligeira em redor do logotipo.
         for y in range(image.height()):
-            for x in range(image.width()):
-                color = image.pixelColor(x, y)
-                if color.alpha() > 20 and min(color.red(), color.green(), color.blue()) < 242:
+            row_offset = y * stride
+            for x in range(width):
+                offset = row_offset + (x * 4)
+                red, green, blue, alpha = (
+                    pixels[offset],
+                    pixels[offset + 1],
+                    pixels[offset + 2],
+                    pixels[offset + 3],
+                )
+                if alpha > 20 and (red < 242 or green < 242 or blue < 242):
                     left = min(left, x)
                     right = max(right, x)
                     top = min(top, y)
@@ -144,10 +179,9 @@ class _BrandMark(QWidget):
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         if not self._logo.isNull():
-            target = self._logo.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            x = (self.width() - target.width()) // 2
-            y = (self.height() - target.height()) // 2
-            painter.drawPixmap(x, y, target)
+            x = (self.width() - self._logo.width()) // 2
+            y = (self.height() - self._logo.height()) // 2
+            painter.drawPixmap(x, y, self._logo)
             return
 
         # Fallback limpo para instalações onde o recurso externo não exista.
@@ -212,12 +246,13 @@ class MainWindow(QMainWindow):
         self._pending_page_refresh_key = ""
         self._update_check_thread: QThread | None = None
         self._update_check_worker: _UpdateCheckWorker | None = None
+        self._backend_reload_thread: QThread | None = None
+        self._backend_reload_worker: _BackendReloadWorker | None = None
         self._page_refresh_timer = QTimer(self)
         self._page_refresh_timer.setSingleShot(True)
         self._page_refresh_timer.timeout.connect(self._run_pending_page_refresh)
         self._suppressed_scheduled_refresh_keys: set[str] = set()
         self.page_factories = {
-            "home": lambda: HomePage(self.backend),
             "stock_dashboard": lambda: StockDashboardPage(self.backend),
             "pulse": lambda: PulsePage(self.runtime_service, self.backend),
             "operator": lambda: OperatorPage(self.runtime_service, self.backend),
@@ -228,6 +263,7 @@ class MainWindow(QMainWindow):
             "billing": lambda: BillingPage(self.backend),
             "materials": lambda: MaterialsPage(self.backend),
             "products": lambda: ProductsPage(self.backend),
+            "direct_services": lambda: DirectServicesPage(self.backend),
             "clients": lambda: ClientsPage(self.backend),
             "suppliers": lambda: SuppliersPage(self.backend),
             "orders": lambda: OrdersPage(self.backend),
@@ -354,19 +390,20 @@ class MainWindow(QMainWindow):
         for key, label in (
             ("stock_dashboard", "Dashboard"),
             ("pulse", "Pulse"),
+            ("clients", "Clientes"),
+            ("quotes", "Orçamentos"),
+            ("direct_services", "Serviços"),
+            ("billing", "Faturação"),
+            ("orders", "Encomendas"),
             ("materials", "Matéria-Prima"),
             ("products", "Produtos"),
-            ("clients", "Clientes"),
             ("suppliers", "Fornecedores"),
-            ("orders", "Encomendas"),
-            ("quotes", "Orçamentos"),
             ("planning", "Planeamento"),
             ("transportes", "Transportes"),
             ("material_assistant", "Assistente MP"),
             ("operator", "Operador"),
             ("opp", "OPP"),
             ("shipping", "Expedição"),
-            ("billing", "Faturação"),
             ("purchase_notes", "Notas Encomenda"),
             ("quality", "Qualidade"),
             ("diagnostics", "Diagnóstico"),
@@ -536,6 +573,74 @@ class MainWindow(QMainWindow):
         self._clear_auto_update_worker()
         return True
 
+    def _start_backend_reload(self) -> bool:
+        if self._backend_reload_thread is not None:
+            return False
+        generation_getter = getattr(self.backend, "data_cache_generation", None)
+        generation = int(generation_getter() if callable(generation_getter) else 0)
+        thread = QThread(self)
+        worker = _BackendReloadWorker(self.backend, generation)
+        worker.moveToThread(thread)
+        self._backend_reload_thread = thread
+        self._backend_reload_worker = worker
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._apply_backend_reload_result)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(self._handle_backend_reload_error)
+        worker.failed.connect(thread.quit)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(self._clear_backend_reload_worker)
+        thread.finished.connect(thread.deleteLater)
+        self.status_label.setText("A atualizar dados...")
+        thread.start()
+        return True
+
+    @Slot(dict, int)
+    def _apply_backend_reload_result(self, data: dict, generation: int) -> None:
+        applier = getattr(self.backend, "apply_data_snapshot", None)
+        if not callable(applier) or not bool(applier(data, expected_generation=generation)):
+            self.status_label.setText("Dados locais preservados")
+            return
+        self._alerts_loaded_at = 0.0
+        current = self.stack.currentWidget()
+        if current is None or self._closing:
+            return
+        can_auto_refresh = getattr(current, "can_auto_refresh", None)
+        if callable(can_auto_refresh) and not bool(can_auto_refresh()):
+            self.status_label.setText("Dados atualizados; edição preservada")
+            return
+        try:
+            refresh = getattr(current, "refresh", None)
+            if callable(refresh):
+                refresh()
+            self._refresh_global_alerts(force=False)
+            self._poll_save_runtime_state()
+            self.status_label.setText("Atualizado agora")
+        except Exception:
+            self.status_label.setText("Dados atualizados")
+
+    @Slot(str, int)
+    def _handle_backend_reload_error(self, _message: str, _generation: int) -> None:
+        if not self._closing:
+            self.status_label.setText("Sem ligação; dados locais mantidos")
+
+    @Slot()
+    def _clear_backend_reload_worker(self) -> None:
+        self._backend_reload_thread = None
+        self._backend_reload_worker = None
+
+    def _wait_for_backend_reload_worker(self, timeout_ms: int = 15000) -> bool:
+        thread = self._backend_reload_thread
+        if thread is None:
+            return True
+        if thread.isRunning():
+            thread.quit()
+            if not thread.wait(max(0, int(timeout_ms))):
+                return False
+        self._clear_backend_reload_worker()
+        return True
+
     def _ensure_page(self, key: str) -> QWidget:
         if key in self.pages:
             return self.pages[key]
@@ -546,6 +651,10 @@ class MainWindow(QMainWindow):
         return page
 
     def show_page(self, key: str) -> None:
+        # Compatibilidade com perfis/atalhos antigos: o antigo Resumo foi
+        # consolidado no painel de stock e já não deve criar uma página extra.
+        if key == "home":
+            key = "stock_dashboard"
         if key not in self._allowed_page_keys():
             fallback = self._default_page_key()
             if not fallback:
@@ -555,6 +664,9 @@ class MainWindow(QMainWindow):
             page = self._ensure_page(key)
         except Exception as exc:
             self.status_label.setText("Erro ao abrir menu")
+            app = QApplication.instance()
+            if app is not None and bool(app.property("lugest_smoke_test")):
+                raise RuntimeError(f"Nao foi possivel abrir o menu '{key}': {exc}") from exc
             QMessageBox.critical(self, "Abrir menu", f"Nao foi possivel abrir este menu:\n{exc}")
             return
         self.stack.setCurrentWidget(page)
@@ -601,11 +713,20 @@ class MainWindow(QMainWindow):
                 self.status_label.setText("Edicao ativa")
                 return
             if bool(getattr(current, "uses_backend_reload", False)):
+                if force and self._backend_reload_thread is not None:
+                    self.status_label.setText("Atualizacao em curso")
+                    return
                 if not self._prepare_backend_reload(force=force):
                     if force:
                         return
-                else:
+                elif force:
                     self.backend.reload(force=force)
+                else:
+                    needs_reload = getattr(self.backend, "data_cache_needs_reload", None)
+                    if callable(needs_reload) and bool(needs_reload()):
+                        self._start_backend_reload()
+                        if background:
+                            return
             refresh = getattr(current, "refresh", None)
             if callable(refresh):
                 refresh()
@@ -842,6 +963,13 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Atualizações", "A verificação de atualizações ainda está a terminar. Tenta fechar novamente dentro de alguns segundos.")
                 event.ignore()
                 return
+            if not self._wait_for_backend_reload_worker(timeout_ms=15000):
+                self.auto_refresh.start()
+                self.save_monitor.start()
+                self._closing = False
+                QMessageBox.warning(self, "Atualização", "A leitura da base de dados ainda está a terminar. Tenta fechar novamente dentro de alguns segundos.")
+                event.ignore()
+                return
             if not self._finalize_save_pipeline(context="antes de fechar a aplicacao", timeout_sec=20.0, interactive=True):
                 self.auto_refresh.start()
                 self.save_monitor.start()
@@ -873,6 +1001,12 @@ class MainWindow(QMainWindow):
                 self.save_monitor.start()
                 self._logout_in_progress = False
                 QMessageBox.warning(self, "Atualizações", "A verificação de atualizações ainda está a terminar. Tenta novamente dentro de alguns segundos.")
+                return
+            if not self._wait_for_backend_reload_worker(timeout_ms=15000):
+                self.auto_refresh.start()
+                self.save_monitor.start()
+                self._logout_in_progress = False
+                QMessageBox.warning(self, "Atualização", "A leitura da base de dados ainda está a terminar. Tenta novamente dentro de alguns segundos.")
                 return
             if not self._finalize_save_pipeline(context="antes de terminar a sessao", timeout_sec=15.0, interactive=True):
                 self.auto_refresh.start()

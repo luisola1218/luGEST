@@ -6,7 +6,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QDateEdit,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -20,14 +19,21 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStackedWidget,
+    QTabWidget,
     QTableWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
-from ..widgets import CardFrame, FlexibleDecimalSpinBox as QDoubleSpinBox, StatCard
+from ..widgets import (
+    CardFrame,
+    ClickableDateEdit as QDateEdit,
+    FlexibleDecimalSpinBox as QDoubleSpinBox,
+    StatCard,
+)
 from .runtime_common import (
     apply_state_chip as _apply_state_chip,
     cap_width as _cap_width,
@@ -76,10 +82,18 @@ class BillingPage(QWidget):
         filters_layout.setContentsMargins(14, 10, 14, 10)
         filters_layout.setHorizontalSpacing(8)
         filters_layout.setVerticalSpacing(4)
+        filters_title = QLabel("Controlo de vendas e recebimentos")
+        filters_title.setStyleSheet("font-size: 16px; font-weight: 900; color: #30343b;")
+        workflow_label = QLabel("VENDA  →  FATURA  →  RECEBIMENTO")
+        workflow_label.setAlignment(Qt.AlignCenter)
+        workflow_label.setStyleSheet(
+            "background: #edf8e3; color: #315d12; border: 1px solid #9fce70; "
+            "border-radius: 3px; padding: 6px 12px; font-size: 10px; font-weight: 800;"
+        )
         self.filter_edit = QComboBox()
         self.filter_edit.setEditable(True)
         self.filter_edit.setInsertPolicy(QComboBox.NoInsert)
-        self.filter_edit.lineEdit().setPlaceholderText("Filtrar por registo, orçamento, encomenda, cliente ou fatura")
+        self.filter_edit.lineEdit().setPlaceholderText("Filtrar por registo, origem, serviço, cliente ou fatura")
         self.filter_edit.lineEdit().textChanged.connect(self.refresh)
         self.state_combo = QComboBox()
         self.state_combo.addItems(["Ativas", "Por faturar", "Por cobrar", "Pagas", "Atrasadas", "Todas"])
@@ -91,13 +105,15 @@ class BillingPage(QWidget):
         self.remove_btn = QPushButton("Remover registo")
         self.remove_btn.setProperty("variant", "danger")
         self.remove_btn.clicked.connect(self._remove_selected)
-        filters_layout.addWidget(QLabel("Pesquisa"), 0, 0)
-        filters_layout.addWidget(QLabel("Estado"), 0, 1)
-        filters_layout.addWidget(QLabel("Ano"), 0, 2)
-        filters_layout.addWidget(QLabel("Ações"), 0, 3)
-        filters_layout.addWidget(self.filter_edit, 1, 0)
-        filters_layout.addWidget(self.state_combo, 1, 1)
-        filters_layout.addWidget(self.year_combo, 1, 2)
+        filters_layout.addWidget(filters_title, 0, 0, 1, 3)
+        filters_layout.addWidget(workflow_label, 0, 3)
+        filters_layout.addWidget(QLabel("Pesquisa"), 1, 0)
+        filters_layout.addWidget(QLabel("Estado"), 1, 1)
+        filters_layout.addWidget(QLabel("Ano"), 1, 2)
+        filters_layout.addWidget(QLabel("Ações"), 1, 3)
+        filters_layout.addWidget(self.filter_edit, 2, 0)
+        filters_layout.addWidget(self.state_combo, 2, 1)
+        filters_layout.addWidget(self.year_combo, 2, 2)
         actions_host = QWidget()
         actions_layout = QHBoxLayout(actions_host)
         actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -107,47 +123,65 @@ class BillingPage(QWidget):
             button.setMinimumWidth(width)
             actions_layout.addWidget(button)
         actions_layout.addStretch(1)
-        filters_layout.addWidget(actions_host, 1, 3)
+        filters_layout.addWidget(actions_host, 2, 3)
         filters_layout.setColumnStretch(0, 4)
         filters_layout.setColumnStretch(1, 2)
         filters_layout.setColumnStretch(2, 2)
         filters_layout.setColumnStretch(3, 4)
-        filters.setMaximumHeight(86)
+        filters.setMaximumHeight(118)
         list_layout.addWidget(filters)
 
         cards_host = QWidget()
-        cards_layout = QGridLayout(cards_host)
+        cards_layout = QHBoxLayout(cards_host)
         cards_layout.setContentsMargins(0, 0, 0, 0)
-        cards_layout.setHorizontalSpacing(12)
-        cards_layout.setVerticalSpacing(12)
-        self.cards = [StatCard(title) for title in ("Vendido", "Faturado", "Recebido", "Saldo", "Atrasos", "Abertos")]
-        for index, card in enumerate(self.cards):
-            cards_layout.addWidget(card, index // 3, index % 3)
+        cards_layout.setSpacing(12)
+        self.cards = [StatCard(title) for title in ("Vendido", "Faturado", "Recebido", "Por cobrar")]
+        for card in self.cards:
+            cards_layout.addWidget(card)
         list_layout.addWidget(cards_host)
 
         table_card = CardFrame()
+        table_card.set_tone("default")
         table_layout = QVBoxLayout(table_card)
         table_layout.setContentsMargins(16, 14, 16, 14)
         table_layout.setSpacing(10)
-        table_title = QLabel("Registos de Faturação")
+        table_head = QHBoxLayout()
+        table_head.setContentsMargins(0, 0, 0, 0)
+        table_title = QLabel("Vendas e faturação")
         table_title.setStyleSheet("font-size: 18px; font-weight: 800; color: #0f172a;")
-        self.table = QTableWidget(0, 11)
+        self.table_count_label = QLabel("0 registos")
+        self.table_count_label.setProperty("role", "muted")
+        table_head.addWidget(table_title)
+        table_head.addStretch(1)
+        for text, background, color in (
+            ("POR FATURAR", "#eceeeb", "#4b504c"),
+            ("POR COBRAR", "#fff7e8", "#8a5a12"),
+            ("PAGO", "#edf8e3", "#315d12"),
+        ):
+            legend = QLabel(text)
+            legend.setStyleSheet(
+                f"background: {background}; color: {color}; border: 1px solid #d0d4d0; "
+                "border-radius: 3px; padding: 4px 8px; font-size: 9px; font-weight: 800;"
+            )
+            table_head.addWidget(legend)
+        table_head.addWidget(self.table_count_label)
+        self.table = QTableWidget(0, 10)
         self.table.setHorizontalHeaderLabels(
-            ["Registo", "Orçamento", "Encomenda", "Cliente", "Produção", "Expedição", "Faturação", "Pagamento", "Vendido", "Faturado", "Saldo"]
+            ["Registo", "Origem", "Cliente", "Data", "Faturação", "Pagamento", "Próxima ação", "Vendido", "Faturado", "Em aberto"]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        _configure_table(self.table, stretch=(3,), contents=(0, 1, 2, 4, 5, 6, 7, 8, 9, 10))
+        _configure_table(self.table, stretch=(2,), contents=(0, 1, 3, 4, 5, 6, 7, 8, 9))
         header = self.table.horizontalHeader()
-        for col, width in ((0, 116), (1, 118), (2, 118), (4, 112), (5, 112), (8, 92), (9, 92), (10, 92)):
+        for col, width in ((0, 116), (1, 176), (3, 94), (4, 112), (5, 108), (6, 142), (7, 94), (8, 94), (9, 102)):
             header.setSectionResizeMode(col, QHeaderView.Interactive)
             header.resizeSection(col, width)
-        header.setSectionResizeMode(3, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.itemSelectionChanged.connect(self._sync_list_buttons)
         self.table.itemDoubleClicked.connect(lambda *_args: self._open_selected())
-        table_layout.addWidget(table_title)
+        table_layout.addLayout(table_head)
         table_layout.addWidget(self.table)
         list_layout.addWidget(table_card, 1)
 
@@ -157,6 +191,7 @@ class BillingPage(QWidget):
         detail_outer.setSpacing(0)
         self.detail_scroll = QScrollArea()
         self.detail_scroll.setWidgetResizable(True)
+        self.detail_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         detail_outer.addWidget(self.detail_scroll)
         self.detail_host = QWidget()
         self.detail_scroll.setWidget(self.detail_host)
@@ -165,6 +200,7 @@ class BillingPage(QWidget):
         detail_layout.setSpacing(10)
 
         actions_card = CardFrame()
+        actions_card.set_tone("info")
         actions_layout = QHBoxLayout(actions_card)
         actions_layout.setContentsMargins(14, 10, 14, 10)
         actions_layout.setSpacing(8)
@@ -172,35 +208,21 @@ class BillingPage(QWidget):
         back_btn.setProperty("variant", "secondary")
         back_btn.clicked.connect(self._show_list)
         save_btn = QPushButton("Guardar")
+        save_btn.setProperty("variant", "success")
         save_btn.clicked.connect(self._save_record)
         delete_btn = QPushButton("Remover")
         delete_btn.setProperty("variant", "danger")
         delete_btn.clicked.connect(self._remove_current)
-        add_invoice_btn = QPushButton("Adicionar fatura")
-        add_invoice_btn.clicked.connect(self._add_invoice)
-        generate_invoice_btn = QPushButton("Gerar PDF fatura")
-        generate_invoice_btn.clicked.connect(self._generate_invoice_pdf)
-        edit_invoice_btn = QPushButton("Editar fatura")
-        edit_invoice_btn.setProperty("variant", "secondary")
-        edit_invoice_btn.clicked.connect(self._edit_invoice)
-        add_payment_btn = QPushButton("Adicionar pagamento")
-        add_payment_btn.clicked.connect(self._add_payment)
-        edit_payment_btn = QPushButton("Editar pagamento")
-        edit_payment_btn.setProperty("variant", "secondary")
-        edit_payment_btn.clicked.connect(self._edit_payment)
         for button, width in (
             (back_btn, 126),
             (save_btn, 100),
             (delete_btn, 112),
-            (add_invoice_btn, 144),
-            (generate_invoice_btn, 154),
-            (edit_invoice_btn, 126),
-            (add_payment_btn, 160),
-            (edit_payment_btn, 142),
         ):
             button.setMinimumWidth(width)
-            actions_layout.addWidget(button)
+        actions_layout.addWidget(back_btn)
         actions_layout.addStretch(1)
+        actions_layout.addWidget(save_btn)
+        actions_layout.addWidget(delete_btn)
         detail_layout.addWidget(actions_card)
 
         self.header_card = CardFrame()
@@ -222,17 +244,50 @@ class BillingPage(QWidget):
         header_top.addWidget(self.invoice_status_chip, 0, Qt.AlignTop)
         header_top.addWidget(self.payment_status_chip, 0, Qt.AlignTop)
         header_layout.addLayout(header_top)
+        self.next_action_label = QLabel("Próxima ação · selecione um registo")
+        self.next_action_label.setWordWrap(True)
+        self.next_action_label.setStyleSheet(
+            "background: #f5f6f4; color: #454946; border: 1px solid #d5d8d4; "
+            "border-radius: 4px; padding: 8px 10px; font-weight: 800;"
+        )
+        header_layout.addWidget(self.next_action_label)
         detail_layout.addWidget(self.header_card)
 
-        info_split = QHBoxLayout()
+        self.detail_tabs = QTabWidget()
+        self.detail_tabs.setDocumentMode(True)
+        self.detail_tabs.setMinimumHeight(430)
+        self.overview_tab = QWidget()
+        self.invoices_tab = QWidget()
+        self.payments_tab = QWidget()
+        self.fiscal_tab = QWidget()
+        overview_layout = QVBoxLayout(self.overview_tab)
+        overview_layout.setContentsMargins(8, 10, 8, 8)
+        overview_layout.setSpacing(10)
+        invoices_layout = QVBoxLayout(self.invoices_tab)
+        invoices_layout.setContentsMargins(8, 10, 8, 8)
+        payments_layout = QVBoxLayout(self.payments_tab)
+        payments_layout.setContentsMargins(8, 10, 8, 8)
+        fiscal_layout = QVBoxLayout(self.fiscal_tab)
+        fiscal_layout.setContentsMargins(8, 10, 8, 8)
+        self.detail_tabs.addTab(self.overview_tab, "Visão geral")
+        self.detail_tabs.addTab(self.invoices_tab, "Faturas · 0")
+        self.detail_tabs.addTab(self.payments_tab, "Recebimentos · 0")
+        self.detail_tabs.addTab(self.fiscal_tab, "Fiscal / AT")
+
+        info_split = QGridLayout()
+        info_split.setContentsMargins(0, 0, 0, 0)
         info_split.setSpacing(10)
 
         self.source_card = CardFrame()
+        self.source_card.set_tone("info")
         source_layout = QVBoxLayout(self.source_card)
         source_layout.setContentsMargins(12, 10, 12, 10)
         source_layout.setSpacing(8)
         source_title = QLabel("Origem da Venda")
-        source_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        source_title.setStyleSheet(
+            "background: #454946; color: white; border-radius: 3px; padding: 7px 9px; "
+            "font-size: 13px; font-weight: 900;"
+        )
         source_layout.addWidget(source_title)
         source_form = QFormLayout()
         source_form.setContentsMargins(0, 0, 0, 0)
@@ -240,20 +295,26 @@ class BillingPage(QWidget):
         source_form.setVerticalSpacing(6)
         self.quote_label = QLabel("-")
         self.order_label = QLabel("-")
+        self.service_label = QLabel("-")
         self.client_label = QLabel("-")
         self.guide_label = QLabel("-")
         source_form.addRow("Orçamento", self.quote_label)
         source_form.addRow("Encomenda", self.order_label)
+        source_form.addRow("Serviço direto", self.service_label)
         source_form.addRow("Cliente", self.client_label)
         source_form.addRow("Última guia", self.guide_label)
         source_layout.addLayout(source_form)
 
         self.order_state_card = CardFrame()
+        self.order_state_card.set_tone("success")
         order_state_layout = QVBoxLayout(self.order_state_card)
         order_state_layout.setContentsMargins(12, 10, 12, 10)
         order_state_layout.setSpacing(8)
         order_state_title = QLabel("Estado Operacional")
-        order_state_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        order_state_title.setStyleSheet(
+            "background: #70c51a; color: #1d350b; border-radius: 3px; padding: 7px 9px; "
+            "font-size: 13px; font-weight: 900;"
+        )
         order_state_layout.addWidget(order_state_title)
         order_state_form = QFormLayout()
         order_state_form.setContentsMargins(0, 0, 0, 0)
@@ -266,18 +327,22 @@ class BillingPage(QWidget):
         order_state_layout.addLayout(order_state_form)
 
         self.control_card = CardFrame()
+        self.control_card.set_tone("default")
         control_layout = QVBoxLayout(self.control_card)
         control_layout.setContentsMargins(12, 10, 12, 10)
         control_layout.setSpacing(8)
         control_title = QLabel("Cobrança")
-        control_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        control_title.setStyleSheet(
+            "background: #e8ebe8; color: #30343b; border-left: 4px solid #6f7771; "
+            "padding: 7px 9px; font-size: 13px; font-weight: 900;"
+        )
         control_layout.addWidget(control_title)
         self.sale_date_edit = QDateEdit()
         self.sale_date_edit.setCalendarPopup(True)
-        self.sale_date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.sale_date_edit.setDisplayFormat("dd/MM/yyyy")
         self.due_date_edit = QDateEdit()
         self.due_date_edit.setCalendarPopup(True)
-        self.due_date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.due_date_edit.setDisplayFormat("dd/MM/yyyy")
         self.manual_value_spin = QDoubleSpinBox()
         self.manual_value_spin.setRange(0.0, 100000000.0)
         self.manual_value_spin.setDecimals(2)
@@ -292,21 +357,40 @@ class BillingPage(QWidget):
         control_form.addRow("Vencimento", self.due_date_edit)
         control_form.addRow("Valor manual", self.manual_value_spin)
         control_form.addRow("Estado cobrança", self.payment_override_combo)
-        control_layout.addLayout(control_form)
         self.notes_edit = QTextEdit()
-        self.notes_edit.setMinimumHeight(80)
+        self.notes_edit.setMinimumHeight(74)
         self.notes_edit.setPlaceholderText("Observações internas da faturação, cobrança e documentação.")
-        control_layout.addWidget(self.notes_edit)
+        control_body = QHBoxLayout()
+        control_body.setContentsMargins(0, 0, 0, 0)
+        control_body.setSpacing(14)
+        control_body.addLayout(control_form, 2)
+        notes_col = QVBoxLayout()
+        notes_col.setContentsMargins(0, 0, 0, 0)
+        notes_col.setSpacing(4)
+        notes_col.addWidget(QLabel("Observações internas"))
+        notes_col.addWidget(self.notes_edit, 1)
+        control_body.addLayout(notes_col, 3)
+        control_layout.addLayout(control_body)
 
-        for widget in (self.source_card, self.order_state_card, self.control_card):
-            info_split.addWidget(widget, 1)
-        detail_layout.addLayout(info_split)
+        info_split.addWidget(self.source_card, 0, 0)
+        info_split.addWidget(self.order_state_card, 0, 1)
+        info_split.addWidget(self.control_card, 1, 0, 1, 2)
+        info_split.setColumnStretch(0, 3)
+        info_split.setColumnStretch(1, 2)
+        overview_layout.addLayout(info_split)
 
         summary_card = CardFrame()
+        summary_card.set_tone("success")
         summary_layout = QGridLayout(summary_card)
         summary_layout.setContentsMargins(12, 10, 12, 10)
         summary_layout.setHorizontalSpacing(12)
         summary_layout.setVerticalSpacing(6)
+        summary_title = QLabel("Resumo financeiro")
+        summary_title.setStyleSheet("font-size: 17px; font-weight: 900; color: #315d12;")
+        summary_hint = QLabel("Leitura imediata do valor vendido, faturado e ainda por cobrar.")
+        summary_hint.setProperty("role", "muted")
+        summary_layout.addWidget(summary_title, 0, 0, 1, 6)
+        summary_layout.addWidget(summary_hint, 1, 0, 1, 6)
         self.summary_labels: dict[str, QLabel] = {}
         for row_index, (key, text) in enumerate(
             (
@@ -321,8 +405,12 @@ class BillingPage(QWidget):
             label = QLabel(text)
             value = QLabel("-")
             value.setProperty("role", "field_value_strong" if key == "balance" else "field_value")
-            summary_layout.addWidget(label, row_index // 3, (row_index % 3) * 2)
-            summary_layout.addWidget(value, row_index // 3, (row_index % 3) * 2 + 1)
+            value.setStyleSheet(
+                "font-size: 17px; font-weight: 900; color: #0f5132;" if key == "balance"
+                else "font-size: 15px; font-weight: 800; color: #172b3f;"
+            )
+            summary_layout.addWidget(label, 2 + row_index // 3, (row_index % 3) * 2)
+            summary_layout.addWidget(value, 2 + row_index // 3, (row_index % 3) * 2 + 1)
             self.summary_labels[key] = value
         detail_layout.addWidget(summary_card)
 
@@ -330,6 +418,7 @@ class BillingPage(QWidget):
         identity_split.setSpacing(10)
 
         self.customer_card = CardFrame()
+        self.customer_card.set_tone("default")
         customer_layout = QVBoxLayout(self.customer_card)
         customer_layout.setContentsMargins(12, 10, 12, 10)
         customer_layout.setSpacing(8)
@@ -354,6 +443,7 @@ class BillingPage(QWidget):
         customer_layout.addLayout(customer_form)
 
         self.issuer_card = CardFrame()
+        self.issuer_card.set_tone("default")
         issuer_layout = QVBoxLayout(self.issuer_card)
         issuer_layout.setContentsMargins(12, 10, 12, 10)
         issuer_layout.setSpacing(8)
@@ -374,6 +464,7 @@ class BillingPage(QWidget):
         issuer_layout.addLayout(issuer_form)
 
         self.document_card = CardFrame()
+        self.document_card.set_tone("info")
         document_layout = QVBoxLayout(self.document_card)
         document_layout.setContentsMargins(12, 10, 12, 10)
         document_layout.setSpacing(8)
@@ -437,19 +528,23 @@ class BillingPage(QWidget):
         fiscal_actions.addStretch(1)
         document_layout.addLayout(fiscal_actions)
 
-        for widget in (self.customer_card, self.issuer_card, self.document_card):
+        for widget in (self.customer_card, self.issuer_card):
             identity_split.addWidget(widget, 1)
-        detail_layout.addLayout(identity_split)
+        overview_layout.addLayout(identity_split)
+        overview_layout.addStretch(1)
+        fiscal_layout.addWidget(self.document_card)
+        fiscal_layout.addStretch(1)
 
         self.invoice_table = QTableWidget(0, 13)
-        self.invoice_table.setHorizontalHeaderLabels(["Número", "Série", "ATCUD", "Guia", "Emissão", "Venc.", "Base", "IVA", "Total", "Saldo", "Estado"])
         self.invoice_table.verticalHeader().setVisible(False)
         self.invoice_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.invoice_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.invoice_table.setMinimumWidth(0)
+        self.invoice_table.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+        self.invoice_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.invoice_table.setHorizontalHeaderLabels(
             ["N. legal", "Serie", "ATCUD", "Guia", "Emissao", "Venc.", "Base", "IVA", "Total", "Saldo", "Estado", "Origem", "Comunicacao"]
         )
-        _configure_table(self.invoice_table, contents=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10))
         _configure_table(self.invoice_table, stretch=(0, 2), contents=(1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12))
         self.invoice_table.setMinimumHeight(_table_visible_height(self.invoice_table, 5, extra=12))
         invoice_header = self.invoice_table.horizontalHeader()
@@ -468,6 +563,9 @@ class BillingPage(QWidget):
         self.payment_table.verticalHeader().setVisible(False)
         self.payment_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.payment_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.payment_table.setMinimumWidth(0)
+        self.payment_table.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+        self.payment_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         _configure_table(self.payment_table, stretch=(1, 3, 5), contents=(0, 2, 4))
         self.payment_table.setMinimumHeight(_table_visible_height(self.payment_table, 4, extra=12))
         payment_header = self.payment_table.horizontalHeader()
@@ -477,6 +575,12 @@ class BillingPage(QWidget):
         self.payment_table.itemSelectionChanged.connect(self._sync_detail_buttons)
         self.payment_table.itemDoubleClicked.connect(lambda *_args: self._edit_payment())
 
+        self.invoice_add_btn = QPushButton("Adicionar fatura")
+        self.invoice_add_btn.setProperty("variant", "success")
+        self.invoice_add_btn.clicked.connect(self._add_invoice)
+        self.invoice_edit_btn = QPushButton("Editar")
+        self.invoice_edit_btn.setProperty("variant", "secondary")
+        self.invoice_edit_btn.clicked.connect(self._edit_invoice)
         self.invoice_generate_btn = QPushButton("Gerar PDF")
         self.invoice_generate_btn.clicked.connect(self._generate_invoice_pdf)
         self.invoice_open_btn = QPushButton("Abrir ficheiro")
@@ -485,6 +589,12 @@ class BillingPage(QWidget):
         self.invoice_remove_btn = QPushButton("Anular")
         self.invoice_remove_btn.setProperty("variant", "danger")
         self.invoice_remove_btn.clicked.connect(self._remove_invoice)
+        self.payment_add_btn = QPushButton("Adicionar pagamento")
+        self.payment_add_btn.setProperty("variant", "success")
+        self.payment_add_btn.clicked.connect(self._add_payment)
+        self.payment_edit_btn = QPushButton("Editar")
+        self.payment_edit_btn.setProperty("variant", "secondary")
+        self.payment_edit_btn.clicked.connect(self._edit_payment)
         self.payment_open_btn = QPushButton("Abrir comprovativo")
         self.payment_open_btn.setProperty("variant", "secondary")
         self.payment_open_btn.clicked.connect(self._open_selected_payment_file)
@@ -492,8 +602,21 @@ class BillingPage(QWidget):
         self.payment_remove_btn.setProperty("variant", "danger")
         self.payment_remove_btn.clicked.connect(self._remove_payment)
 
-        detail_layout.addWidget(self._wrap_table("Faturas Associadas", self.invoice_table, self.invoice_generate_btn, self.invoice_open_btn, self.invoice_remove_btn))
-        detail_layout.addWidget(self._wrap_table("Pagamentos / Comprovativos", self.payment_table, self.payment_open_btn, self.payment_remove_btn))
+        invoices_layout.addWidget(
+            self._wrap_table(
+                "Faturas associadas", self.invoice_table, self.invoice_add_btn, self.invoice_edit_btn,
+                self.invoice_generate_btn, self.invoice_open_btn, self.invoice_remove_btn,
+            ),
+            1,
+        )
+        payments_layout.addWidget(
+            self._wrap_table(
+                "Pagamentos e comprovativos", self.payment_table, self.payment_add_btn,
+                self.payment_edit_btn, self.payment_open_btn, self.payment_remove_btn,
+            ),
+            1,
+        )
+        detail_layout.addWidget(self.detail_tabs, 1)
 
         self.view_stack.addWidget(self.list_page)
         self.view_stack.addWidget(self.detail_page)
@@ -502,19 +625,61 @@ class BillingPage(QWidget):
 
     def _wrap_table(self, title_text: str, table: QTableWidget, *buttons: QPushButton) -> CardFrame:
         card = CardFrame()
+        card.set_tone("success" if title_text.startswith("Pagamentos") else "default")
+        card.setMinimumWidth(0)
+        card.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(10)
-        actions = QHBoxLayout()
         title = QLabel(title_text)
-        title.setStyleSheet("font-size: 16px; font-weight: 800; color: #0f172a;")
-        actions.addWidget(title)
-        actions.addStretch(1)
+        title.setStyleSheet(
+            "font-size: 16px; font-weight: 900; color: #315d12;" if title_text.startswith("Pagamentos")
+            else "font-size: 16px; font-weight: 900; color: #30343b;"
+        )
+        layout.addWidget(title)
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(6)
         for button in buttons:
+            button.setProperty("compact", "true")
             actions.addWidget(button)
+        actions.addStretch(1)
         layout.addLayout(actions)
         layout.addWidget(table)
         return card
+
+    @staticmethod
+    def _next_action_text(values: dict) -> str:
+        if not str(values.get("record_number", "") or values.get("numero", "") or "").strip():
+            return "Abrir registo"
+        payment_state = str(values.get("estado_pagamento", "") or "").strip().lower()
+        invoice_state = str(values.get("estado_faturacao", "") or "").strip().lower()
+        sold = float(values.get("vendido", values.get("valor_venda", 0)) or 0)
+        invoiced = float(values.get("faturado", values.get("valor_faturado", 0)) or 0)
+        uninvoiced = float(values.get("por_faturar", max(0.0, sold - invoiced)) or 0)
+        balance = float(values.get("saldo", 0) or 0)
+        if "atras" in payment_state:
+            return "Cobrar em atraso"
+        if uninvoiced > 0.009 or "por fatur" in invoice_state or not invoice_state:
+            return "Emitir fatura"
+        if balance > 0.009:
+            return "Registar recebimento"
+        return "Concluído"
+
+    def _update_next_action(self, detail: dict) -> None:
+        action = self._next_action_text(detail)
+        palette = {
+            "Cobrar em atraso": ("#fff1ef", "#9f241a", "#e5aea7"),
+            "Emitir fatura": ("#eef4fb", "#244c73", "#b8cce1"),
+            "Registar recebimento": ("#fff8eb", "#8a5a12", "#e4c37f"),
+            "Concluído": ("#eef9df", "#315d12", "#b9d994"),
+        }
+        background, color, border = palette.get(action, ("#f5f6f4", "#454946", "#d5d8d4"))
+        self.next_action_label.setText(f"Próxima ação · {action}")
+        self.next_action_label.setStyleSheet(
+            f"background: {background}; color: {color}; border: 1px solid {border}; "
+            "border-radius: 4px; padding: 8px 10px; font-weight: 900;"
+        )
 
     def can_auto_refresh(self) -> bool:
         return self.view_stack.currentWidget() is self.list_page
@@ -527,9 +692,11 @@ class BillingPage(QWidget):
             (_fmt_eur(dashboard.get("sold_total", 0)), "Total vendido", "info"),
             (_fmt_eur(dashboard.get("invoiced_total", 0)), "Total faturado", "success"),
             (_fmt_eur(dashboard.get("received_total", 0)), "Total recebido", "success"),
-            (_fmt_eur(dashboard.get("balance_total", 0)), "Saldo em aberto", "warning" if float(dashboard.get("balance_total", 0) or 0) > 0 else "default"),
-            (str(int(dashboard.get("overdue_count", 0) or 0)), "Faturas em atraso", "danger" if int(dashboard.get("overdue_count", 0) or 0) > 0 else "default"),
-            (str(int(dashboard.get("open_payment_count", 0) or 0)), "Registos a cobrar", "warning" if int(dashboard.get("open_payment_count", 0) or 0) > 0 else "default"),
+            (
+                _fmt_eur(dashboard.get("balance_total", 0)),
+                f"{int(dashboard.get('open_payment_count', 0) or 0)} registo(s) · {int(dashboard.get('overdue_count', 0) or 0)} em atraso",
+                "warning" if float(dashboard.get("balance_total", 0) or 0) > 0 else "default",
+            ),
         )
         for card, (value, subtitle, tone) in zip(self.cards, card_payloads):
             card.set_data(value, subtitle)
@@ -544,12 +711,16 @@ class BillingPage(QWidget):
         self.year_combo.setCurrentText(current_year if current_year in year_values else year_values[0])
         self.year_combo.blockSignals(False)
         self.rows = self.backend.billing_rows(current_filter, self.state_combo.currentText(), self.year_combo.currentText() or "Todos")
+        self.table_count_label.setText(f"{len(self.rows)} registo(s)")
         self.filter_edit.blockSignals(True)
         if self.filter_edit.count() == 0:
             self.filter_edit.addItem("")
         known = {self.filter_edit.itemText(i) for i in range(self.filter_edit.count())}
         for row in self.rows:
-            for value in (row.get("record_number", ""), row.get("orcamento_numero", ""), row.get("encomenda_numero", "")):
+            for value in (
+                row.get("record_number", ""), row.get("source_number", ""), row.get("orcamento_numero", ""),
+                row.get("encomenda_numero", ""), row.get("servico_numero", ""),
+            ):
                 if value and value not in known:
                     self.filter_edit.addItem(str(value))
                     known.add(str(value))
@@ -560,24 +731,23 @@ class BillingPage(QWidget):
             [
                 [
                     row.get("record_number", "-") or "-",
-                    row.get("orcamento_numero", "-") or "-",
-                    row.get("encomenda_numero", "-") or "-",
+                    f"{row.get('origem', '-') or '-'} · {row.get('source_number', '-') or '-'}",
                     row.get("cliente", "-") or "-",
-                    row.get("estado_encomenda", "-") or "-",
-                    row.get("estado_expedicao", "-") or "-",
+                    row.get("data_venda", "-") or "-",
                     row.get("estado_faturacao", "-") or "-",
                     row.get("estado_pagamento", "-") or "-",
+                    self._next_action_text(row),
                     _fmt_eur(row.get("vendido", 0)),
                     _fmt_eur(row.get("faturado", 0)),
                     _fmt_eur(row.get("saldo", 0)),
                 ]
                 for row in self.rows
             ],
-            align_center_from=4,
+            align_center_from=3,
         )
         for row_index, row in enumerate(self.rows):
             _paint_table_row(self.table, row_index, str(row.get("estado_pagamento", "") or row.get("estado_faturacao", "") or ""))
-            for col in (8, 9, 10):
+            for col in (7, 8, 9):
                 item = self.table.item(row_index, col)
                 if item is not None:
                     item.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
@@ -641,9 +811,13 @@ class BillingPage(QWidget):
         invoice = self._selected_invoice()
         payment = self._selected_payment()
         selected_invoice_void = bool(invoice) and ("anulad" in str(invoice.get("estado", "") or "").strip().lower() or bool(invoice.get("anulada")))
+        self.invoice_add_btn.setEnabled(bool(self.current_number))
+        self.invoice_edit_btn.setEnabled(bool(invoice) and not selected_invoice_void)
         self.invoice_generate_btn.setEnabled(bool(self.current_number))
         self.invoice_open_btn.setEnabled(bool(str(invoice.get("caminho", "") or "").strip()))
         self.invoice_remove_btn.setEnabled(bool(invoice) and not selected_invoice_void)
+        self.payment_add_btn.setEnabled(bool(self.current_number))
+        self.payment_edit_btn.setEnabled(bool(payment))
         self.payment_open_btn.setEnabled(bool(str(payment.get("caminho_comprovativo", "") or "").strip()))
         self.payment_remove_btn.setEnabled(bool(payment))
         self.export_saft_btn.setEnabled(bool(self.current_number))
@@ -664,6 +838,7 @@ class BillingPage(QWidget):
         self.source_label.setText("Sem origem")
         self.quote_label.setText("-")
         self.order_label.setText("-")
+        self.service_label.setText("-")
         self.client_label.setText("-")
         self.guide_label.setText("-")
         self.customer_name_label.setText("-")
@@ -689,6 +864,14 @@ class BillingPage(QWidget):
         self.fiscal_comm_file_label.setText("-")
         self.fiscal_comm_file_label.setToolTip("")
         self.fiscal_file_label.setText("Ultimo lote AT: -")
+        self.next_action_label.setText("Próxima ação · selecione um registo")
+        self.next_action_label.setStyleSheet(
+            "background: #f5f6f4; color: #454946; border: 1px solid #d5d8d4; "
+            "border-radius: 4px; padding: 8px 10px; font-weight: 800;"
+        )
+        self.detail_tabs.setTabText(1, "Faturas · 0")
+        self.detail_tabs.setTabText(2, "Recebimentos · 0")
+        self.detail_tabs.setCurrentIndex(0)
         self.sale_date_edit.setDate(_coerce_editor_qdate("", fallback_today=True))
         self.due_date_edit.setDate(_coerce_editor_qdate("", fallback_today=True))
         self.manual_value_spin.setValue(0.0)
@@ -713,6 +896,7 @@ class BillingPage(QWidget):
         self.source_label.setText(f"{origem_txt} | Venda {str(detail.get('data_venda', '') or '-').strip() or '-'}")
         self.quote_label.setText(str(detail.get("orcamento_numero", "") or "-") or "-")
         self.order_label.setText(str(detail.get("encomenda_numero", "") or "-") or "-")
+        self.service_label.setText(str(detail.get("servico_numero", "") or "-") or "-")
         self.client_label.setText(str(detail.get("cliente_label", "") or "-") or "-")
         self.guide_label.setText(str(detail.get("last_guide", "") or "-") or "-")
         self.customer_name_label.setText(str(detail.get("cliente_nome", "") or "-") or "-")
@@ -745,7 +929,12 @@ class BillingPage(QWidget):
         self.summary_labels["received"].setText(_fmt_eur(detail.get("valor_recebido", 0)))
         self.summary_labels["balance"].setText(_fmt_eur(detail.get("saldo", 0)))
         self.summary_labels["uninvoiced"].setText(_fmt_eur(detail.get("por_faturar", 0)))
-        self.summary_labels["invoice_count"].setText(str(len(list(detail.get("invoices", []) or []))))
+        invoices = list(detail.get("invoices", []) or [])
+        payments = list(detail.get("payments", []) or [])
+        self.summary_labels["invoice_count"].setText(str(len(invoices)))
+        self.detail_tabs.setTabText(1, f"Faturas · {len(invoices)}")
+        self.detail_tabs.setTabText(2, f"Recebimentos · {len(payments)}")
+        self._update_next_action(detail)
         _fill_table(
             self.invoice_table,
             [
@@ -764,11 +953,11 @@ class BillingPage(QWidget):
                     row.get("source_billing", "-"),
                     row.get("communication_status", "-"),
                 ]
-                for row in list(detail.get("invoices", []) or [])
+                for row in invoices
             ],
             align_center_from=1,
         )
-        for row_index, row in enumerate(list(detail.get("invoices", []) or [])):
+        for row_index, row in enumerate(invoices):
             _paint_table_row(self.invoice_table, row_index, str(row.get("estado", "") or ""))
             for col in (6, 7, 8, 9):
                 item = self.invoice_table.item(row_index, col)
@@ -789,11 +978,11 @@ class BillingPage(QWidget):
                     _fmt_eur(row.get("valor", 0)),
                     row.get("titulo_comprovativo", "-") or ("Anexo" if str(row.get("caminho_comprovativo", "") or "").strip() else "-"),
                 ]
-                for row in list(detail.get("payments", []) or [])
+                for row in payments
             ],
             align_center_from=0,
         )
-        for row_index, row in enumerate(list(detail.get("payments", []) or [])):
+        for row_index, row in enumerate(payments):
             _paint_table_row(self.payment_table, row_index, str(detail.get("estado_pagamento", "") or ""))
             item = self.payment_table.item(row_index, 4)
             if item is not None:
@@ -943,11 +1132,11 @@ class BillingPage(QWidget):
             guide_combo.addItem(current_guide, current_guide)
         issue_edit = QDateEdit()
         issue_edit.setCalendarPopup(True)
-        issue_edit.setDisplayFormat("yyyy-MM-dd")
+        issue_edit.setDisplayFormat("dd/MM/yyyy")
         issue_edit.setDate(_coerce_editor_qdate(str(row.get("data_emissao", "") or ""), fallback_today=True))
         due_edit = QDateEdit()
         due_edit.setCalendarPopup(True)
-        due_edit.setDisplayFormat("yyyy-MM-dd")
+        due_edit.setDisplayFormat("dd/MM/yyyy")
         due_edit.setDate(_coerce_editor_qdate(str(row.get("data_vencimento", "") or ""), fallback_today=True))
         amount_spin = QDoubleSpinBox()
         amount_spin.setRange(0.0, 100000000.0)
@@ -1028,7 +1217,7 @@ class BillingPage(QWidget):
             invoice_combo.setCurrentIndex(index)
         date_edit = QDateEdit()
         date_edit.setCalendarPopup(True)
-        date_edit.setDisplayFormat("yyyy-MM-dd")
+        date_edit.setDisplayFormat("dd/MM/yyyy")
         date_edit.setDate(_coerce_editor_qdate(str(row.get("data_pagamento", "") or ""), fallback_today=True))
         amount_spin = QDoubleSpinBox()
         amount_spin.setRange(0.0, 100000000.0)

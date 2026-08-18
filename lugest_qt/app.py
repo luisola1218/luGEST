@@ -9,7 +9,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject
+from PySide6.QtCore import QEvent, QObject, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QLineEdit, QMessageBox
 
@@ -40,11 +40,17 @@ class _FullSurfaceComboFilter(QObject):
             combo = watched.parentWidget()
             if isinstance(combo, QComboBox) and combo.isEnabled():
                 watched.setFocus()
-                combo.showPopup()
-                # Editable selectors remain searchable: the popup receives
-                # keyboard navigation while the edit keeps its current text
-                # and can be focused again by typing/clicking.
-                return True
+                # Do not consume the click in editable selectors.  The caret
+                # must still move naturally so the user can immediately type;
+                # opening on the next event-loop pass keeps the full-surface
+                # behaviour without fighting QLineEdit's mouse handling.
+                def open_editable_popup() -> None:
+                    if combo.isEnabled() and combo.isVisible():
+                        combo.showPopup()
+                        watched.setFocus()
+
+                QTimer.singleShot(0, open_editable_popup)
+                return False
         return False
 
 
@@ -230,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     if cli.smoke_test:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication([args[0], *qt_args])
+    app.setProperty("lugest_smoke_test", bool(cli.smoke_test))
     combo_click_filter = _FullSurfaceComboFilter(app)
     app.installEventFilter(combo_click_filter)
     app._full_surface_combo_filter = combo_click_filter

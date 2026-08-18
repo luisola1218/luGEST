@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDateEdit,
     QFrame,
     QFileDialog,
     QFormLayout,
@@ -71,7 +70,7 @@ from .laser_quote_dialogs import (
 )
 from .materials_page import _MaterialEditorDialog
 from lugest_core.cad.profile_analysis import analyze_profile_cut_features, render_step_preview_image
-from ..widgets import CardFrame, FlexibleDecimalSpinBox as QDoubleSpinBox, StatCard
+from ..widgets import CardFrame, ClickableDateEdit as QDateEdit, FlexibleDecimalSpinBox as QDoubleSpinBox, StatCard
 from .runtime_common import (
     apply_state_chip as _apply_state_chip,
     cap_width as _cap_width,
@@ -9667,7 +9666,7 @@ class TransportsPage(QWidget):
         numero_label = QLabel(str(initial.get("numero", "(nova)") or "(nova)"))
         data_edit = QDateEdit()
         data_edit.setCalendarPopup(True)
-        data_edit.setDisplayFormat("yyyy-MM-dd")
+        data_edit.setDisplayFormat("dd/MM/yyyy")
         raw_date = str(initial.get("data_planeada", "") or "").strip()
         qdate = QDate.fromString(raw_date, "yyyy-MM-dd") if raw_date else QDate.currentDate()
         if not qdate.isValid():
@@ -9942,7 +9941,7 @@ class TransportsPage(QWidget):
         raw_time = raw_dt.split("T", 1)[1] if "T" in raw_dt else ""
         date_edit = QDateEdit()
         date_edit.setCalendarPopup(True)
-        date_edit.setDisplayFormat("yyyy-MM-dd")
+        date_edit.setDisplayFormat("dd/MM/yyyy")
         qdate = QDate.fromString(raw_date, "yyyy-MM-dd") if raw_date else QDate.currentDate()
         if not qdate.isValid():
             qdate = QDate.currentDate()
@@ -9968,7 +9967,7 @@ class TransportsPage(QWidget):
         raw_pod_time = raw_pod_dt.split("T", 1)[1] if "T" in raw_pod_dt else ""
         pod_date_edit = QDateEdit()
         pod_date_edit.setCalendarPopup(True)
-        pod_date_edit.setDisplayFormat("yyyy-MM-dd")
+        pod_date_edit.setDisplayFormat("dd/MM/yyyy")
         pod_qdate = QDate.fromString(raw_pod_date, "yyyy-MM-dd") if raw_pod_date else QDate.currentDate()
         if not pod_qdate.isValid():
             pod_qdate = QDate.currentDate()

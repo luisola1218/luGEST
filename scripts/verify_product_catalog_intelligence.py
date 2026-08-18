@@ -338,6 +338,13 @@ def main() -> int:
     QTest.mouseClick(click_combo.lineEdit(), Qt.LeftButton)
     app.processEvents()
     assert click_combo.popup_count == 1
+    assert click_combo.lineEdit().hasFocus()
+    click_combo.lineEdit().selectAll()
+    QTest.keyClicks(click_combo.lineEdit(), "Torx")
+    app.processEvents()
+    # The editable list may complete the typed prefix to the existing option;
+    # either way the click kept the field ready for immediate text entry.
+    assert click_combo.lineEdit().text().startswith("Torx")
     click_combo.close()
 
     page = ProductsPage(backend)

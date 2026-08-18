@@ -2,8 +2,44 @@ from __future__ import annotations
 
 import re
 
+from PySide6.QtCore import QPoint, QTimer, Qt
 from PySide6.QtGui import QValidator
-from PySide6.QtWidgets import QDoubleSpinBox, QFrame, QLabel, QVBoxLayout
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QDateEdit, QDoubleSpinBox, QFrame, QLabel, QVBoxLayout
+
+
+class ClickableDateEdit(QDateEdit):
+    """Date editor whose complete surface opens the native calendar popup."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._forwarding_calendar_click = False
+        self.setCalendarPopup(True)
+        self.setDisplayFormat("dd/MM/yyyy")
+        self.setProperty("clickCalendar", "true")
+        self.setToolTip("Clique em qualquer zona do campo para escolher a data.")
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        super().mousePressEvent(event)
+        if (
+            event.button() == Qt.LeftButton
+            and self.isEnabled()
+            and not self.isReadOnly()
+            and self.calendarPopup()
+            and not self._forwarding_calendar_click
+            and event.position().x() < self.width() - 30
+        ):
+            QTimer.singleShot(0, self._open_calendar_from_field)
+
+    def _open_calendar_from_field(self) -> None:
+        if self._forwarding_calendar_click or self.calendarWidget().isVisible():
+            return
+        self._forwarding_calendar_click = True
+        try:
+            arrow_point = QPoint(max(1, self.width() - 14), max(1, self.height() // 2))
+            QTest.mouseClick(self, Qt.LeftButton, Qt.NoModifier, arrow_point)
+        finally:
+            self._forwarding_calendar_click = False
 
 
 class FlexibleDecimalSpinBox(QDoubleSpinBox):
