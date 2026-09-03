@@ -3,7 +3,7 @@
 import unicodedata
 
 from PySide6.QtCore import QEvent, QObject, QSize
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QPushButton, QStyle, QTableView, QWidget
 
 
@@ -27,11 +27,10 @@ QPushButton:disabled {
 """
 _UNIFORM_TABLE_SELECTION = """
 QTableView::item:selected {
-    background: #eaf7da;
-    color: #26331d;
+    background: #f1f8eb;
+    color: #2e4028;
     border: 0;
-    border-left: 3px solid #7ed321;
-    border-bottom: 1px solid #d8e6c9;
+    border-bottom: 1px solid #d8e8ca;
 }
 """
 
@@ -143,10 +142,12 @@ def apply_theme(app: QApplication, branding: dict) -> None:
     primary_color = QColor(primary)
     primary_luminance = (primary_color.red() * 0.299) + (primary_color.green() * 0.587) + (primary_color.blue() * 0.114)
     primary_text = "#0b1f33" if primary_luminance >= 165 else "#ffffff"
-    selection_fill = "#eaf7da"
-    selection_fill_soft = "#eaf7da"
-    selection_border = "#7ed321"
-    selection_text = "#26331d"
+    selection_fill = "#edf7e5"
+    selection_fill_soft = "#f1f8eb"
+    selection_text = "#2e4028"
+    interface_font = QFont("Segoe UI", 10)
+    interface_font.setStyleStrategy(QFont.PreferAntialias | QFont.PreferQuality)
+    app.setFont(interface_font)
     palette = QPalette()
     palette.setColor(QPalette.Window, QColor("#f1f2f0"))
     palette.setColor(QPalette.WindowText, QColor("#30343b"))
@@ -181,8 +182,8 @@ def apply_theme(app: QApplication, branding: dict) -> None:
             border: 1px solid #cfd3cf;
         }}
         QFrame#Card[tone="success"], QFrame#Panel[tone="success"] {{
-            background: #f0f8e7;
-            border: 1px solid #b9d994;
+            background: #f7faf6;
+            border: 1px solid #cdd8c8;
         }}
         QFrame#Card[tone="warning"], QFrame#Panel[tone="warning"] {{
             background: #fff8eb;
@@ -231,7 +232,7 @@ def apply_theme(app: QApplication, branding: dict) -> None:
             selection-color: {selection_text};
         }}
         QLineEdit:focus, QComboBox:focus, QDateEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {{
-            border: 2px solid #7ed321;
+            border: 2px solid #71889b;
         }}
         QDateEdit[clickCalendar="true"] {{
             padding-right: 38px;
@@ -421,9 +422,9 @@ def apply_theme(app: QApplication, branding: dict) -> None:
             border: 1px solid #c9cdca;
         }}
         QToolButton[nav="true"]:checked {{
-            background: #eaf7da;
-            border: 1px solid #7ed321;
-            color: #2f4f18;
+            background: #edf2f4;
+            border: 1px solid #aab5bf;
+            color: #26313b;
         }}
         QLabel[role="muted"] {{
             color: #6b706f;
@@ -483,7 +484,8 @@ def apply_theme(app: QApplication, branding: dict) -> None:
         }}
         QTableWidget::item:selected {{
             color: {selection_text};
-            border: 1px solid {selection_border};
+            border: 0;
+            border-bottom: 1px solid #d8e8ca;
         }}
         QTableView[workspaceTable="true"] {{
             background: #ffffff;
@@ -499,14 +501,13 @@ def apply_theme(app: QApplication, branding: dict) -> None:
             border-bottom: 1px solid #e4e5e3;
         }}
         QTableView[workspaceTable="true"]::item:hover {{
-            background: #f0f5ea;
+            background: #f6faf2;
         }}
         QTableView[workspaceTable="true"]::item:selected {{
             background: {selection_fill_soft};
             color: {selection_text};
             border: 0;
-            border-left: 3px solid {selection_border};
-            border-bottom: 1px solid #d8e6c9;
+            border-bottom: 1px solid #d8e8ca;
         }}
         QTableView[workspaceTable="true"] QHeaderView::section {{
             background: #444744;

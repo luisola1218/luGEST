@@ -5,7 +5,7 @@
 
 -- Opcional: para reiniciar tudo, descomenta a linha seguinte.
 -- DROP DATABASE IF EXISTS `lugest`;
-CREATE DATABASE IF NOT EXISTS `lugest` CHARACTER SET utf8 COLLATE utf8_general_ci;
+CREATE DATABASE IF NOT EXISTS `lugest` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE `lugest`;
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS=0;
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS `app_config` (
   `cvalue` longtext,
   `updated_at` datetime DEFAULT NULL,
   PRIMARY KEY (`ckey`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `app_counters` (
   `ckey` varchar(80) NOT NULL,
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS `at_series` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_at_series_doc_serie` (`doc_type`,`serie_id`),
   KEY `idx_at_series_doc_serie` (`doc_type`,`serie_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `categories` (
   `id` varchar(80) NOT NULL,
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS `categories` (
   `badge` varchar(60) DEFAULT NULL,
   `updated_at` datetime DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `clientes` (
   `codigo` varchar(20) NOT NULL,
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS `clientes` (
   `latitude` varchar(32) DEFAULT NULL,
   `longitude` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`codigo`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `conjuntos` (
   `codigo` varchar(40) NOT NULL,
@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS `conjuntos` (
   `precos_atualizados_em` datetime DEFAULT NULL,
   PRIMARY KEY (`codigo`),
   KEY `idx_conjuntos_param` (`param_codigo`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `conjuntos_modelo` (
   `codigo` varchar(40) NOT NULL,
@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS `conjuntos_modelo` (
   `ficha_tecnica_json` longtext,
   PRIMARY KEY (`codigo`),
   KEY `idx_conjuntos_modelo_param` (`param_codigo`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `expedicoes` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS `expedicoes` (
   KEY `idx_expedicoes_serie_seq` (`serie_id`,`seq_num`),
   KEY `idx_expedicoes_atcud` (`atcud`),
   KEY `idx_expedicoes_ano` (`ano`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `faturacao_registos` (
   `numero` varchar(30) NOT NULL,
@@ -173,7 +173,7 @@ CREATE TABLE IF NOT EXISTS `faturacao_registos` (
   KEY `idx_faturacao_registos_servico` (`servico_numero`),
   KEY `idx_faturacao_registos_cliente` (`cliente_codigo`),
   KEY `idx_faturacao_registos_ano` (`ano`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `servicos_diretos` (
   `numero` varchar(30) NOT NULL,
@@ -201,7 +201,7 @@ CREATE TABLE IF NOT EXISTS `servicos_diretos` (
   KEY `idx_servicos_estado` (`estado`),
   KEY `idx_servicos_data` (`data_servico`),
   KEY `idx_servicos_faturacao` (`faturacao_numero`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `fornecedores` (
   `id` varchar(20) NOT NULL,
@@ -222,7 +222,7 @@ CREATE TABLE IF NOT EXISTS `fornecedores` (
   PRIMARY KEY (`id`),
   KEY `idx_fornecedores_nome` (`nome`),
   KEY `idx_fornecedores_nif` (`nif`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `inventory_scan_codes` (
   `scan_code` varchar(96) NOT NULL,
@@ -231,7 +231,7 @@ CREATE TABLE IF NOT EXISTS `inventory_scan_codes` (
   `updated_at` datetime DEFAULT NULL,
   PRIMARY KEY (`scan_code`),
   UNIQUE KEY `uq_inventory_scan_entity` (`entity_type`,`entity_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `materiais` (
   `id` varchar(20) NOT NULL,
@@ -279,7 +279,7 @@ CREATE TABLE IF NOT EXISTS `materiais` (
   `quality_return_document_id` varchar(30) DEFAULT NULL,
   `lote_interno` varchar(100) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `ne_linhas_historico` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -299,7 +299,7 @@ CREATE TABLE IF NOT EXISTS `ne_linhas_historico` (
   KEY `idx_ne_linhas_hist_created_at` (`created_at`),
   KEY `idx_ne_linhas_hist_evento` (`evento`),
   KEY `idx_ne_linhas_hist_guia` (`guia_numero`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `op_eventos` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -321,7 +321,7 @@ CREATE TABLE IF NOT EXISTS `op_eventos` (
   KEY `idx_op_eventos_enc` (`encomenda_numero`),
   KEY `idx_op_eventos_peca` (`peca_id`),
   KEY `idx_op_eventos_operador` (`operador`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `op_paragens` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -344,14 +344,14 @@ CREATE TABLE IF NOT EXISTS `op_paragens` (
   KEY `idx_op_paragens_causa` (`causa`),
   KEY `idx_op_paragens_enc` (`encomenda_numero`),
   KEY `idx_op_paragens_peca` (`peca_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `operadores` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `nome` varchar(120) NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_operadores_nome` (`nome`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `orc_nesting_studies` (
   `quote_number` varchar(80) NOT NULL,
@@ -361,7 +361,7 @@ CREATE TABLE IF NOT EXISTS `orc_nesting_studies` (
   `created_at` datetime DEFAULT NULL,
   `updated_at` datetime DEFAULT NULL,
   PRIMARY KEY (`quote_number`,`group_key`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `orc_referencias_historico` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -387,14 +387,14 @@ CREATE TABLE IF NOT EXISTS `orc_referencias_historico` (
   UNIQUE KEY `uq_orc_ref_externa` (`ref_externa`),
   KEY `idx_orc_ref_interna` (`ref_interna`),
   KEY `idx_orc_ref_updated_at` (`updated_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `orcamentistas` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `nome` varchar(120) NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_orcamentistas_nome` (`nome`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `peca_operacoes_execucao` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -414,7 +414,7 @@ CREATE TABLE IF NOT EXISTS `peca_operacoes_execucao` (
   KEY `idx_poe_enc` (`encomenda_numero`),
   KEY `idx_poe_estado` (`estado`),
   KEY `idx_poe_operador` (`operador_atual`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `plano` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -435,7 +435,7 @@ CREATE TABLE IF NOT EXISTS `plano` (
   KEY `idx_plano_data_inicio` (`data_planeada`,`inicio`),
   KEY `idx_plano_enc` (`encomenda_numero`),
   KEY `idx_plano_ano` (`ano`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `plano_hist` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -459,7 +459,7 @@ CREATE TABLE IF NOT EXISTS `plano_hist` (
   KEY `idx_plano_hist_enc` (`encomenda_numero`),
   KEY `idx_plano_hist_data` (`data_planeada`,`inicio`),
   KEY `idx_plano_hist_ano` (`ano`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `product_documents` (
   `id` varchar(80) NOT NULL,
@@ -472,7 +472,7 @@ CREATE TABLE IF NOT EXISTS `product_documents` (
   `updated_at` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_product_documents_codigo` (`produto_codigo`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `product_types` (
   `id` varchar(80) NOT NULL,
@@ -481,7 +481,7 @@ CREATE TABLE IF NOT EXISTS `product_types` (
   `updated_at` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_product_types_subcategory` (`subcategory_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `produtos` (
   `codigo` varchar(20) NOT NULL,
@@ -509,7 +509,7 @@ CREATE TABLE IF NOT EXISTS `produtos` (
   `subcategory_id` varchar(80) DEFAULT NULL,
   `type_id` varchar(80) DEFAULT NULL,
   PRIMARY KEY (`codigo`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `produtos_mov` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -528,7 +528,7 @@ CREATE TABLE IF NOT EXISTS `produtos_mov` (
   KEY `idx_prod_mov_data` (`data`),
   KEY `idx_prod_mov_operador` (`operador`),
   KEY `idx_prod_mov_codigo` (`codigo`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `quality_audit_log` (
   `id` varchar(80) NOT NULL,
@@ -543,7 +543,7 @@ CREATE TABLE IF NOT EXISTS `quality_audit_log` (
   PRIMARY KEY (`id`),
   KEY `idx_quality_audit_created` (`created_at`),
   KEY `idx_quality_audit_entity` (`entity_type`,`entity_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `quality_documents` (
   `id` varchar(30) NOT NULL,
@@ -566,7 +566,7 @@ CREATE TABLE IF NOT EXISTS `quality_documents` (
   KEY `idx_quality_doc_entidade` (`entidade_tipo`,`entidade_id`),
   KEY `idx_quality_doc_tipo` (`tipo`),
   KEY `idx_quality_doc_estado` (`estado`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `quality_nonconformities` (
   `id` varchar(30) NOT NULL,
@@ -607,7 +607,7 @@ CREATE TABLE IF NOT EXISTS `quality_nonconformities` (
   KEY `idx_quality_nc_estado` (`estado`),
   KEY `idx_quality_nc_entidade` (`entidade_tipo`,`entidade_id`),
   KEY `idx_quality_nc_referencia` (`referencia`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `schema_migrations` (
   `id` bigint(20) NOT NULL AUTO_INCREMENT,
@@ -627,7 +627,7 @@ CREATE TABLE IF NOT EXISTS `stock_log` (
   `detalhes` text,
   `operador` varchar(120) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `subcategories` (
   `id` varchar(80) NOT NULL,
@@ -636,7 +636,7 @@ CREATE TABLE IF NOT EXISTS `subcategories` (
   `updated_at` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_subcategories_category` (`category_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `transportes` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -675,7 +675,7 @@ CREATE TABLE IF NOT EXISTS `transportes` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `numero` (`numero`),
   KEY `idx_transportes_data_estado` (`data_planeada`,`estado`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `transportes_tarifarios` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -691,7 +691,7 @@ CREATE TABLE IF NOT EXISTS `transportes_tarifarios` (
   `observacoes` text,
   PRIMARY KEY (`id`),
   KEY `idx_transportes_tarifarios_carrier_zone` (`transportadora_id`,`zona`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `users` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -700,7 +700,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `role` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `username` (`username`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `encomendas` (
   `numero` varchar(30) NOT NULL,
@@ -735,7 +735,7 @@ CREATE TABLE IF NOT EXISTS `encomendas` (
   KEY `idx_encomendas_estado` (`estado`),
   KEY `idx_encomendas_ano` (`ano`),
   CONSTRAINT `encomendas_ibfk_1` FOREIGN KEY (`cliente_codigo`) REFERENCES `clientes` (`codigo`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `orcamentos` (
   `numero` varchar(30) NOT NULL,
@@ -772,7 +772,7 @@ CREATE TABLE IF NOT EXISTS `orcamentos` (
   KEY `idx_orcamentos_estado` (`estado`),
   KEY `idx_orcamentos_ano` (`ano`),
   CONSTRAINT `orcamentos_ibfk_1` FOREIGN KEY (`cliente_codigo`) REFERENCES `clientes` (`codigo`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `conjuntos_itens` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -794,7 +794,7 @@ CREATE TABLE IF NOT EXISTS `conjuntos_itens` (
   PRIMARY KEY (`id`),
   KEY `idx_conjuntos_codigo_ord` (`conjunto_codigo`,`linha_ordem`),
   CONSTRAINT `conjuntos_itens_ibfk_1` FOREIGN KEY (`conjunto_codigo`) REFERENCES `conjuntos` (`codigo`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `conjuntos_modelo_itens` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -816,7 +816,7 @@ CREATE TABLE IF NOT EXISTS `conjuntos_modelo_itens` (
   PRIMARY KEY (`id`),
   KEY `idx_conjuntos_itens_codigo_ord` (`conjunto_codigo`,`linha_ordem`),
   CONSTRAINT `conjuntos_modelo_itens_ibfk_1` FOREIGN KEY (`conjunto_codigo`) REFERENCES `conjuntos_modelo` (`codigo`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `expedicao_linhas` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -836,7 +836,7 @@ CREATE TABLE IF NOT EXISTS `expedicao_linhas` (
   KEY `idx_expedicao_linhas_peca_id` (`peca_id`),
   CONSTRAINT `expedicao_linhas_ibfk_1` FOREIGN KEY (`expedicao_numero`) REFERENCES `expedicoes` (`numero`) ON DELETE CASCADE,
   CONSTRAINT `fk_expedicao_linhas_expedicoes` FOREIGN KEY (`expedicao_numero`) REFERENCES `expedicoes` (`numero`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `faturacao_faturas` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -886,7 +886,7 @@ CREATE TABLE IF NOT EXISTS `faturacao_faturas` (
   KEY `idx_fat_faturas_legal` (`legal_invoice_no`),
   KEY `idx_fat_faturas_comm` (`communication_status`),
   CONSTRAINT `faturacao_faturas_ibfk_1` FOREIGN KEY (`registo_numero`) REFERENCES `faturacao_registos` (`numero`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `faturacao_pagamentos` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -906,7 +906,7 @@ CREATE TABLE IF NOT EXISTS `faturacao_pagamentos` (
   KEY `idx_fat_pag_fatura` (`fatura_documento_id`),
   KEY `idx_fat_pag_data` (`data_pagamento`),
   CONSTRAINT `faturacao_pagamentos_ibfk_1` FOREIGN KEY (`registo_numero`) REFERENCES `faturacao_registos` (`numero`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `notas_encomenda` (
   `numero` varchar(30) NOT NULL,
@@ -932,7 +932,7 @@ CREATE TABLE IF NOT EXISTS `notas_encomenda` (
   KEY `fornecedor_id` (`fornecedor_id`),
   KEY `idx_ne_ano` (`ano`),
   CONSTRAINT `notas_encomenda_ibfk_1` FOREIGN KEY (`fornecedor_id`) REFERENCES `fornecedores` (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `transportes_paragens` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -968,7 +968,7 @@ CREATE TABLE IF NOT EXISTS `transportes_paragens` (
   KEY `idx_transportes_paragens_num_ord` (`transporte_numero`,`ordem`),
   KEY `idx_transportes_paragens_enc` (`encomenda_numero`),
   CONSTRAINT `transportes_paragens_ibfk_1` FOREIGN KEY (`transporte_numero`) REFERENCES `transportes` (`numero`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `encomenda_espessuras` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -988,7 +988,7 @@ CREATE TABLE IF NOT EXISTS `encomenda_espessuras` (
   KEY `idx_enc_esp_num` (`encomenda_numero`),
   CONSTRAINT `encomenda_espessuras_ibfk_1` FOREIGN KEY (`encomenda_numero`) REFERENCES `encomendas` (`numero`) ON DELETE CASCADE,
   CONSTRAINT `fk_enc_esp_encomenda` FOREIGN KEY (`encomenda_numero`) REFERENCES `encomendas` (`numero`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `encomenda_montagem_itens` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -1013,7 +1013,7 @@ CREATE TABLE IF NOT EXISTS `encomenda_montagem_itens` (
   KEY `idx_enc_montagem_num_ord` (`encomenda_numero`,`linha_ordem`),
   KEY `idx_enc_montagem_estado` (`estado`),
   CONSTRAINT `encomenda_montagem_itens_ibfk_1` FOREIGN KEY (`encomenda_numero`) REFERENCES `encomendas` (`numero`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `encomenda_reservas` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -1027,7 +1027,7 @@ CREATE TABLE IF NOT EXISTS `encomenda_reservas` (
   KEY `idx_enc_res_num` (`encomenda_numero`),
   KEY `idx_enc_res_mat_esp` (`material`,`espessura`),
   CONSTRAINT `encomenda_reservas_ibfk_1` FOREIGN KEY (`encomenda_numero`) REFERENCES `encomendas` (`numero`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `pecas` (
   `id` varchar(30) NOT NULL,
@@ -1069,7 +1069,7 @@ CREATE TABLE IF NOT EXISTS `pecas` (
   KEY `idx_pecas_estado` (`estado`),
   KEY `idx_pecas_ref_interna` (`ref_interna`),
   CONSTRAINT `pecas_ibfk_1` FOREIGN KEY (`encomenda_numero`) REFERENCES `encomendas` (`numero`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `orcamento_linhas` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -1101,7 +1101,7 @@ CREATE TABLE IF NOT EXISTS `orcamento_linhas` (
   PRIMARY KEY (`id`),
   KEY `idx_orcamento_linhas_orcamento_numero` (`orcamento_numero`),
   CONSTRAINT `orcamento_linhas_ibfk_1` FOREIGN KEY (`orcamento_numero`) REFERENCES `orcamentos` (`numero`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `notas_encomenda_documentos` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -1118,7 +1118,7 @@ CREATE TABLE IF NOT EXISTS `notas_encomenda_documentos` (
   PRIMARY KEY (`id`),
   KEY `idx_ne_docs_num` (`ne_numero`),
   CONSTRAINT `fk_ne_documentos_ne` FOREIGN KEY (`ne_numero`) REFERENCES `notas_encomenda` (`numero`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `notas_encomenda_entregas` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -1132,7 +1132,7 @@ CREATE TABLE IF NOT EXISTS `notas_encomenda_entregas` (
   PRIMARY KEY (`id`),
   KEY `idx_ne_entregas_num` (`ne_numero`),
   CONSTRAINT `fk_ne_entregas_ne` FOREIGN KEY (`ne_numero`) REFERENCES `notas_encomenda` (`numero`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `notas_encomenda_linha_entregas` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -1158,7 +1158,7 @@ CREATE TABLE IF NOT EXISTS `notas_encomenda_linha_entregas` (
   PRIMARY KEY (`id`),
   KEY `idx_ne_linha_entregas_num_ord` (`ne_numero`,`linha_ordem`),
   CONSTRAINT `fk_ne_linha_entregas_ne` FOREIGN KEY (`ne_numero`) REFERENCES `notas_encomenda` (`numero`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `notas_encomenda_linhas` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
@@ -1207,7 +1207,7 @@ CREATE TABLE IF NOT EXISTS `notas_encomenda_linhas` (
   KEY `idx_notas_encomenda_linhas_ne_numero` (`ne_numero`),
   KEY `idx_ne_linhas_num_ord` (`ne_numero`,`linha_ordem`),
   CONSTRAINT `notas_encomenda_linhas_ibfk_1` FOREIGN KEY (`ne_numero`) REFERENCES `notas_encomenda` (`numero`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS=1;
 

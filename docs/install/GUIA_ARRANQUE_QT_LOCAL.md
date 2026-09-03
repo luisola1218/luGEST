@@ -10,6 +10,9 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-qt.txt
 ```
 
+Em preparação de release ou ao reproduzir um erro de cliente, instalar antes
+`requirements-qt.lock.txt` para usar exatamente as versões validadas.
+
 ## Ativar e arrancar
 
 ```powershell
@@ -30,21 +33,16 @@ Se a `.venv` local nao existir ou estiver incompleta, use explicitamente:
 .\.venv\Scripts\python.exe main.py
 ```
 
-## Batch oficial
+## Arranque recomendado no desenvolvimento
 
-O arranque recomendado em Windows continua a ser:
+Na raiz do projeto:
 
 ```powershell
-.\arrancar_lugest_qt.bat
+.\.venv\Scripts\python.exe main.py
 ```
 
-Ordem de prioridade:
+O ficheiro `main.py` valida a configuração MySQL e mantém compatibilidade com as
+rotas legacy ainda em migração. A entrada Qt real está em `lugest_qt/app.py`.
 
-1. `.venv\Scripts\python.exe main.py`
-2. `dist_qt_stable\lugest_qt\lugest_qt.exe`
-3. `dist\lugest_qt\lugest_qt.exe`
-4. `dist\main.exe`
-5. `main.exe`
-6. `py main.py`
-
-Se a `.venv` existir mas estiver incompleta, o batch para e mostra o comando de instalacao em vez de cair num traceback.
+Em cliente deve ser usado o atalho criado pelo instalador do pacote comercial;
+não se arranca a partir da pasta de desenvolvimento nem se copia apenas o EXE.

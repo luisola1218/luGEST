@@ -15,6 +15,8 @@ import main
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = BASE_DIR / "lugest.sql"
+TARGET_CHARSET = "utf8mb4"
+TARGET_COLLATION = "utf8mb4_unicode_ci"
 
 STARTER_USERS = [
     ("admin", "Trocar#Admin2026", "Admin"),
@@ -140,6 +142,14 @@ def _show_create_table(cur, table_name: str) -> str:
     statement = str(create_sql).strip().rstrip(";")
     statement = re.sub(r"^CREATE TABLE\s+`", "CREATE TABLE IF NOT EXISTS `", statement, count=1, flags=re.IGNORECASE)
     statement = re.sub(r"\sAUTO_INCREMENT=\d+\b", "", statement)
+    # The current development database may still contain historical utf8mb3
+    # tables.  A canonical installer must never reproduce that limitation.
+    statement = re.sub(r"\bDEFAULT CHARSET=utf8(?:mb3)?\b", f"DEFAULT CHARSET={TARGET_CHARSET}", statement, flags=re.IGNORECASE)
+    statement = re.sub(r"\bCOLLATE=utf8(?:mb3)?_[A-Za-z0-9_]+\b", f"COLLATE={TARGET_COLLATION}", statement, flags=re.IGNORECASE)
+    if re.search(rf"\bDEFAULT CHARSET={TARGET_CHARSET}\b", statement, flags=re.IGNORECASE) and not re.search(
+        rf"\bCOLLATE={TARGET_COLLATION}\b", statement, flags=re.IGNORECASE
+    ):
+        statement += f" COLLATE={TARGET_COLLATION}"
     return statement + ";"
 
 
@@ -147,7 +157,7 @@ def export_schema(output_path: Path) -> Path:
     conn = main._mysql_connect()
     try:
         with conn.cursor() as cur:
-            charset, collation = _database_options(cur)
+            _source_charset, _source_collation = _database_options(cur)
             tables = _table_names(cur)
             deps = _dependencies(cur, tables)
             ordered_tables = _topological_order(tables, deps)
@@ -163,7 +173,7 @@ def export_schema(output_path: Path) -> Path:
         "",
         "-- Opcional: para reiniciar tudo, descomenta a linha seguinte.",
         "-- DROP DATABASE IF EXISTS `lugest`;",
-        f"CREATE DATABASE IF NOT EXISTS `lugest` CHARACTER SET {charset} COLLATE {collation};",
+        f"CREATE DATABASE IF NOT EXISTS `lugest` CHARACTER SET {TARGET_CHARSET} COLLATE {TARGET_COLLATION};",
         "USE `lugest`;",
         "SET NAMES utf8mb4;",
         "SET FOREIGN_KEY_CHECKS=0;",

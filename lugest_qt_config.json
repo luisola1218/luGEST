@@ -1643,7 +1643,7 @@
         "materials": {
           "Aco carbono": {
             "density_kg_m3": 7874.0,
-            "default_gas": "Nitrogenio",
+            "default_gas": "Oxigenio",
             "gases": {
               "Oxigenio": {
                 "rows": [
@@ -2661,9 +2661,9 @@
         "material_catalog": {
           "Aco carbono": {
             "S235JR": {
-              "price_per_kg": 1.2,
+              "price_per_kg": 1.0,
               "density_kg_m3": 7850.0,
-              "scrap_credit_per_kg": 1.1
+              "scrap_credit_per_kg": 0.95
             },
             "S275JR": {
               "price_per_kg": 0.95,
@@ -2729,6 +2729,16 @@
               "price_per_kg": 0.95,
               "density_kg_m3": 7850.0,
               "scrap_credit_per_kg": 0.9
+            },
+            "Chapa Gota 6+2": {
+              "price_per_kg": 1.1,
+              "scrap_credit_per_kg": 1.05,
+              "density_kg_m3": 78500.0
+            },
+            "Chapa Gota 8+2": {
+              "price_per_kg": 1.1,
+              "scrap_credit_per_kg": 1.05,
+              "density_kg_m3": 7850.0
             },
             "DX51D": {
               "price_per_kg": 1.0,
@@ -2867,6 +2877,8 @@
         "S355JOW",
         "HARDOX 400",
         "HARDOX 450",
+        "Chapa Gota 6+2",
+        "Chapa Gota 8+2",
         "DX51D",
         "HARDOX",
         "S235JR 2MM",

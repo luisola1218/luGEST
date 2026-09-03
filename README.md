@@ -18,6 +18,11 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m lugest_qt.app
 ```
 
+Para reproduzir exatamente o ambiente já validado para build/release, usar
+`requirements-qt.lock.txt`. O ficheiro `requirements-qt.txt` mantém intervalos
+compatíveis para desenvolvimento; o lock só é atualizado depois da porta de
+qualidade completa.
+
 Para criar o ambiente local:
 
 ```text
@@ -67,11 +72,18 @@ backups/                        copias locais, fora do Git
 ## Verificacoes
 
 ```powershell
+.\scripts\verify_project.ps1 -SafeOnly
 .\.venv\Scripts\python.exe scripts\verify_laser_quote_engine.py
 .\.venv\Scripts\python.exe scripts\verify_conjuntos_montagem_flow.py
 .\.venv\Scripts\python.exe scripts\verify_purchase_flow.py
 powershell -ExecutionPolicy Bypass -File scripts\verify_project.ps1
 ```
+
+`-SafeOnly` compila o projeto e executa verificações isoladas de dependências,
+segurança, licenciamento, laser, nesting e controlos Qt sem escrever na base de
+dados. Para uma auditoria explícita da base em modo só de leitura, acrescenta
+`-ReadOnlyDatabaseAudit`. Os fluxos completos só devem ser executados numa base
+de testes ou com autorização consciente através de `-AllowRemoteDatabase`.
 
 ## Notas de manutencao
 
@@ -81,3 +93,6 @@ powershell -ExecutionPolicy Bypass -File scripts\verify_project.ps1
   Devem desaparecer quando nao houver imports externos dependentes deles.
 - `runtime_pages.py` e `main_bridge.py` sao os proximos candidatos a divisao
   por modulo: orcamentos, compras, stock, operador, faturacao e laser.
+- O licenciamento comercial tem uma base assinada e testável em
+  `lugest_core/licensing`, mas ainda não bloqueia o produto: os planos, módulos,
+  postos e tolerância offline têm de ser decididos antes da integração.

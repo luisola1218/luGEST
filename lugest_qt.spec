@@ -25,12 +25,25 @@ a = Analysis(
         ('logo.jpg', '.'),
         ('Logos/logo.png', 'Logos'),
         ('Logos/lg.png', 'Logos'),
+        ('assets/ui', 'assets/ui'),
     ],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # The transport page already falls back to the external browser when
+    # QtWebEngine is unavailable.  Excluding the QML/WebEngine stack keeps the
+    # commercial workstation package hundreds of MB smaller.
+    excludes=[
+        'PySide6.QtWebEngineWidgets',
+        'PySide6.QtWebEngineCore',
+        'PySide6.QtWebEngineQuick',
+        'PySide6.QtWebChannel',
+        'PySide6.QtQml',
+        'PySide6.QtQuick',
+        'PySide6.QtQuickWidgets',
+        'PySide6.QtPositioning',
+    ],
     noarchive=False,
     optimize=0,
 )

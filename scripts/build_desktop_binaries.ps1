@@ -9,6 +9,11 @@ if (-not (Test-Path $venvPython)) {
 
 Write-Host "A usar Python de build: $venvPython"
 
+& $venvPython (Join-Path $repoRoot 'scripts\verify_locked_dependencies.py')
+if ($LASTEXITCODE -ne 0) {
+    throw "A .venv nao corresponde a requirements-qt.lock.txt. Reinstala o ambiente validado antes do build."
+}
+
 & $venvPython -c "import PySide6, sys; print(sys.executable); print(PySide6.__file__)"
 if ($LASTEXITCODE -ne 0) {
     throw "A .venv nao tem PySide6 funcional. Instala primeiro os requisitos Qt."

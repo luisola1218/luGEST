@@ -1,6 +1,6 @@
 # Prontidao Comercial LuisGEST
 
-Versao auditada: 2026.07.23.13
+Versao auditada: 2026.09.03.1
 
 ## Estado tecnico
 
@@ -10,12 +10,21 @@ Versao auditada: 2026.07.23.13
 - Auditoria de seguranca sem ocorrencias altas ou medias.
 - Matéria-Prima, Produtos e Notas de Encomenda usam o mesmo padrão de carteira,
   catálogo e inspetor, validado a partir de 1180 x 760 sem scroll horizontal.
-- Matriz automatizada de fluxos, integridade, MySQL, PDFs e desempenho concluída
-  sem falhas na versão indicada.
+- Matriz automatizada segura de compilação, dependências, arquitetura,
+  segurança, licenciamento, schema, cálculo laser, nesting e controlos de
+  orçamentos concluída sem falhas na versão indicada.
+- Dependências Python bloqueadas por versões exatas e verificadas antes de cada
+  build comercial.
+- Diagnóstico de exceções e eventos de execução isolado da interface e com
+  rotação de ficheiros.
+- Fundação de licenciamento por assinatura Ed25519 criada, ainda sem bloquear a
+  aplicação enquanto não forem aprovadas as regras comerciais.
+- Build Windows otimizado validado com 1229 ficheiros e cerca de 232,2 MB; mapas
+  abrem no navegador externo para evitar distribuir o motor WebEngine completo.
 
 ## Utilizacao recomendada nesta fase
 
-O pacote esta apto para demonstracao e piloto controlado em cliente, com backup e acompanhamento tecnico.
+O pacote esta apto para demonstracao e piloto controlado em cliente, com backup e acompanhamento tecnico. A ativação de licenças comerciais e uma migração de charset na base existente continuam deliberadamente pendentes.
 
 ## Fechos externos antes de venda geral
 

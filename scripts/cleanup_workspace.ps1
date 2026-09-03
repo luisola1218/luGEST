@@ -7,6 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$repoRootFull = [System.IO.Path]::GetFullPath($repoRoot).TrimEnd('\') + '\'
 $removed = New-Object System.Collections.Generic.List[string]
 $found = New-Object System.Collections.Generic.List[string]
 
@@ -15,48 +16,44 @@ function Remove-PathSafe {
         [string]$PathToRemove
     )
 
-    if (-not (Test-Path $PathToRemove)) {
+    $resolvedPath = [System.IO.Path]::GetFullPath($PathToRemove)
+    if (-not $resolvedPath.StartsWith($repoRootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "A limpeza recusou um caminho fora do projeto: $resolvedPath"
+    }
+    if (-not (Test-Path -LiteralPath $resolvedPath)) {
         return
     }
 
-    $found.Add($PathToRemove) | Out-Null
+    $found.Add($resolvedPath) | Out-Null
     if ($DryRun) {
         return
     }
 
-    Remove-Item $PathToRemove -Recurse -Force -ErrorAction SilentlyContinue
-    if (-not (Test-Path $PathToRemove)) {
-        $removed.Add($PathToRemove) | Out-Null
+    Remove-Item -LiteralPath $resolvedPath -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not (Test-Path -LiteralPath $resolvedPath)) {
+        $removed.Add($resolvedPath) | Out-Null
     }
 }
 
+$cachePaths = @(
+    'build',
+    'build_qt_stable',
+    '.pytest_cache',
+    '.mypy_cache',
+    '.ruff_cache',
+    'impulse_mobile_app\.dart_tool',
+    'impulse_mobile_app\build',
+    'impulse_mobile_app\android\.gradle',
+    'impulse_mobile_app\android\.kotlin'
+)
+
+# A execução normal também é deliberadamente conservadora. Distribuições,
+# backups, dados gerados e estado local nunca são tratados como cache.
 $pathsToRemove = if ($TempOnly) {
     @('tmp', '__pycache__')
 }
-elseif ($CachesOnly) {
-    @('build', 'build_qt_stable', 'dist_qt_stable', '.pytest_cache', '.mypy_cache', '.ruff_cache')
-}
 else {
-    @(
-        'backups',
-        'build',
-        'build_qt_stable',
-        'dist',
-        'dist_qt_stable',
-        'generated',
-        'dist\lugest_trial.json',
-        'lugest_runtime_state.json',
-        'lugest_supplier_seq.json',
-        'lugest_transport_seq.json',
-        'lugest_trial.json',
-        '.cad312',
-        '.pytest_cache',
-        '.mypy_cache',
-        '.ruff_cache',
-        '.idea',
-        'previews',
-        'tmp'
-    )
+    $cachePaths
 }
 
 foreach ($relativePath in $pathsToRemove) {

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -86,6 +87,36 @@ def _table_number_item(value: Any, digits: int = 2) -> QTableWidgetItem:
     item = QTableWidgetItem(_fmt_num(value, digits))
     item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
     return item
+
+
+class _ReadableTableCellDelegate(QStyledItemDelegate):
+    """Compact editor that remains fully visible inside a table row."""
+
+    def createEditor(self, parent, option, index):  # type: ignore[override]
+        editor = super().createEditor(parent, option, index)
+        if isinstance(editor, QLineEdit):
+            editor.setObjectName("SubtypeCellEditor")
+            editor.setMinimumHeight(0)
+            editor.setMaximumHeight(16777215)
+            editor.setAlignment(Qt.AlignLeft if index.column() == 0 else Qt.AlignCenter)
+            editor.setStyleSheet(
+                "QLineEdit#SubtypeCellEditor {"
+                " background: #ffffff; color: #101828; border: 2px solid #78ad48;"
+                " border-radius: 3px; margin: 0; padding: 0 7px;"
+                " font-family: 'Segoe UI'; font-size: 11px; font-weight: 600;"
+                " selection-background-color: #dcefd0; selection-color: #101828;"
+                "}"
+            )
+        return editor
+
+    def setEditorData(self, editor, index) -> None:  # type: ignore[override]
+        super().setEditorData(editor, index)
+        if isinstance(editor, QLineEdit):
+            editor.selectAll()
+
+    def updateEditorGeometry(self, editor, option, index) -> None:  # type: ignore[override]
+        del index
+        editor.setGeometry(option.rect.adjusted(2, 2, -2, -2))
 
 
 def _table_text_item(value: Any) -> QTableWidgetItem:
@@ -451,6 +482,7 @@ class MaterialSubtypeCatalogDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setItemDelegate(_ReadableTableCellDelegate(self.table))
         self.table.setEditTriggers(
             QAbstractItemView.SelectedClicked
             | QAbstractItemView.DoubleClicked
@@ -458,9 +490,13 @@ class MaterialSubtypeCatalogDialog(QDialog):
             | QAbstractItemView.AnyKeyPressed
         )
         self.table.setStyleSheet(
-            "QTableWidget { alternate-background-color: #f7f9fc; gridline-color: #c9d7e8; }"
+            "QTableWidget { color: #1b2b3d; alternate-background-color: #f7f9fc; gridline-color: #c9d7e8; }"
+            "QTableWidget::item { padding: 2px 8px; }"
+            "QTableWidget::item:selected { background: #edf7e5; color: #263b22; }"
             "QHeaderView::section { min-height: 30px; padding: 5px 7px; font-weight: 700; }"
         )
+        self.table.verticalHeader().setDefaultSectionSize(38)
+        self.table.verticalHeader().setMinimumSectionSize(38)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         for section in (1, 2, 3, 4, 5):
@@ -516,7 +552,7 @@ class MaterialSubtypeCatalogDialog(QDialog):
             self.table.setItem(row_index, 3, _table_number_item(payload.get("price_per_kg", self.fallback_price_per_kg), 3))
             self.table.setItem(row_index, 4, _table_number_item(payload.get("density_kg_m3", 0.0), 1))
             self.table.setItem(row_index, 5, _table_number_item(payload.get("scrap_credit_per_kg", self.fallback_scrap_credit_per_kg), 3))
-            self.table.setRowHeight(row_index, 34)
+            self.table.setRowHeight(row_index, 38)
         self._apply_filter()
 
     def _add_row(self) -> None:
@@ -528,6 +564,7 @@ class MaterialSubtypeCatalogDialog(QDialog):
         self.table.setItem(row_index, 3, _table_number_item(self.fallback_price_per_kg, 3))
         self.table.setItem(row_index, 4, _table_number_item(0.0, 1))
         self.table.setItem(row_index, 5, _table_number_item(self.fallback_scrap_credit_per_kg, 3))
+        self.table.setRowHeight(row_index, 38)
         self.table.setCurrentCell(row_index, 0)
         item = self.table.item(row_index, 0)
         if item is not None:
@@ -1533,7 +1570,14 @@ class LaserSettingsDialog(QDialog):
 
 
 class LaserQuoteDialog(QDialog):
-    def __init__(self, backend, parent=None, *, default_machine: str = "") -> None:
+    def __init__(
+        self,
+        backend,
+        parent=None,
+        *,
+        default_machine: str = "",
+        initial_line: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowFlags(self.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
         self.setSizeGripEnabled(True)
@@ -1541,7 +1585,7 @@ class LaserQuoteDialog(QDialog):
         self.settings = dict(self.backend.laser_quote_settings() or {})
         self.analysis: dict[str, Any] = {}
         self.line_payload: dict[str, Any] = {}
-        self.setWindowTitle("Peca Unit. DXF/DWG")
+        self.setWindowTitle("Editar peça DXF/DWG" if initial_line else "Peça unitária DXF/DWG")
         self.resize(1120, 860)
 
         root = QVBoxLayout(self)
@@ -1726,6 +1770,74 @@ class LaserQuoteDialog(QDialog):
         self.material_combo.currentTextChanged.connect(self._refresh_subtypes)
         self.file_edit.textChanged.connect(self._prefill_from_file)
         self._refresh_materials()
+        if initial_line:
+            self._apply_initial_line(dict(initial_line or {}))
+
+    @staticmethod
+    def _initial_number(value: object, fallback: float = 0.0) -> float:
+        try:
+            return float(str(value or fallback).replace(" ", "").replace(",", "."))
+        except (TypeError, ValueError):
+            return float(fallback)
+
+    def _apply_initial_line(self, line: dict[str, Any]) -> None:
+        snapshot = dict(line.get("laser_snapshot", {}) or {})
+        snapshot_machine = dict(snapshot.get("machine", {}) or {})
+        snapshot_commercial = dict(snapshot.get("commercial", {}) or {})
+        snapshot_material = dict(snapshot.get("material", {}) or {})
+        snapshot_cutting = dict(snapshot.get("cutting", {}) or {})
+
+        machine_name = str(
+            line.get("laser_machine", "")
+            or line.get("machine", "")
+            or snapshot_machine.get("name", "")
+        ).strip()
+        if machine_name and self.machine_combo.findText(machine_name, Qt.MatchFixedString) >= 0:
+            self.machine_combo.setCurrentText(machine_name)
+        commercial_name = str(
+            line.get("commercial_profile", "")
+            or line.get("commercial", "")
+            or snapshot_commercial.get("name", "")
+        ).strip()
+        if commercial_name and self.commercial_combo.findText(commercial_name, Qt.MatchFixedString) >= 0:
+            self.commercial_combo.setCurrentText(commercial_name)
+
+        material_family = str(
+            line.get("material_family", "")
+            or snapshot_material.get("family", "")
+            or _guess_material_family(str(line.get("material", "") or ""))
+        ).strip()
+        display_family = _display_material_family(material_family) or material_family
+        if display_family:
+            self.material_combo.setCurrentText(display_family)
+        material_subtype = str(
+            line.get("material_subtype", "")
+            or snapshot_material.get("subtype", "")
+            or line.get("material", "")
+        ).strip()
+        if material_subtype:
+            self.subtype_combo.setCurrentText(material_subtype)
+        gas_name = str(line.get("gas", "") or snapshot_cutting.get("gas", "")).strip()
+        if gas_name:
+            self.gas_combo.setCurrentText(gas_name)
+
+        self.description_edit.setText(str(line.get("descricao", "") or "").strip())
+        self.ref_ext_edit.setText(str(line.get("ref_externa", "") or "").strip())
+        self.file_edit.setText(str(line.get("desenho", "") or "").strip())
+        thickness = self._initial_number(
+            line.get("espessura", snapshot_cutting.get("thickness_mm", 0)),
+            self.thickness_spin.value(),
+        )
+        self.thickness_spin.setValue(max(self.thickness_spin.minimum(), thickness))
+        quantity = self._initial_number(line.get("qtd", 1), 1)
+        self.quantity_spin.setValue(max(1, int(round(quantity))))
+        operation_text = str(line.get("operacao", "") or "").casefold()
+        self.marking_check.setChecked("marca" in operation_text or "quinagem" in operation_text)
+        self.defilm_check.setChecked("defilm" in operation_text)
+        self.customer_material_check.setChecked(
+            bool(line.get("material_supplied_by_client", False) or line.get("material_fornecido_cliente", False))
+        )
+        self.line_payload = dict(line)
 
     def _refresh_materials(self) -> None:
         current_material = _display_material_family(self.material_combo.currentText().strip()) or self.material_combo.currentText().strip()
@@ -1819,6 +1931,7 @@ class LaserQuoteDialog(QDialog):
     def _apply_analysis(self, result: dict[str, Any]) -> None:
         self.analysis = dict(result or {})
         self.line_payload = dict(self.analysis.get("line_suggestion", {}) or {})
+        self.line_payload["laser_source_mode"] = "unit"
         metrics = dict(self.analysis.get("metrics", {}) or {})
         bbox = dict(dict(self.analysis.get("geometry", {}) or {}).get("bbox_mm", {}) or {})
         times = dict(self.analysis.get("times", {}) or {})

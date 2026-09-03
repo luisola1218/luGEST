@@ -5,7 +5,6 @@ import csv
 import hashlib
 import json
 import os
-import platform
 import re
 import subprocess
 import sys
@@ -13,7 +12,6 @@ import tempfile
 import threading
 import time
 import unicodedata
-import uuid
 import webbrowser
 import base64
 import hmac
@@ -39,6 +37,7 @@ from lugest_core.licensing.trusted_time import (
     portugal_datetime,
     trusted_time_snapshot,
 )
+from lugest_core.licensing.device import current_machine_fingerprint as _core_machine_fingerprint
 from lugest_infra.storage import files as lugest_storage
 
 # UI mode: auto | ttk | custom
@@ -7863,16 +7862,9 @@ def _store_transport_sequence_next(data, next_n):
 
 
 def current_machine_fingerprint():
-    raw = "|".join(
-        [
-            str(platform.system() or "").strip().lower(),
-            str(platform.machine() or "").strip().lower(),
-            str(platform.node() or os.environ.get("COMPUTERNAME", "") or "").strip().lower(),
-            str(uuid.getnode() or "").strip().lower(),
-        ]
-    )
-    digest = hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest().upper()
-    return f"{digest[:4]}-{digest[4:8]}-{digest[8:12]}-{digest[12:16]}"
+    """Compatibility wrapper for the licensing-domain implementation."""
+
+    return _core_machine_fingerprint()
 
 
 def trial_owner_username():

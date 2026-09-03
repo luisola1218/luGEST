@@ -75,6 +75,7 @@ def smart_sort_key(value: object) -> tuple[int, object]:
 
 def fill_table(table: QTableWidget, rows: list[list[str]], align_center_from: int = 0) -> None:
     sorting_was_enabled = table.isSortingEnabled()
+    updates_were_enabled = table.updatesEnabled()
     table.setUpdatesEnabled(False)
     try:
         table.setSortingEnabled(False)
@@ -89,7 +90,7 @@ def fill_table(table: QTableWidget, rows: list[list[str]], align_center_from: in
     finally:
         if table.isSortingEnabled() != sorting_was_enabled:
             table.setSortingEnabled(sorting_was_enabled)
-        table.setUpdatesEnabled(True)
+        table.setUpdatesEnabled(updates_were_enabled)
 
 
 def state_visual(state: str) -> dict[str, str]:

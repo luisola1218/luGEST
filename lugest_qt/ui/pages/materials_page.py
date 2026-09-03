@@ -42,6 +42,34 @@ from PySide6.QtWidgets import (
 from ..widgets import CardFrame, FlexibleDecimalSpinBox as QDoubleSpinBox
 
 
+def _numeric_sort_value(value: object) -> tuple[int, float]:
+    text = re.sub(r"[^0-9,.-]", "", str(value or "").strip())
+    if not text or text in {"-", ".", ","}:
+        return (1, 0.0)
+    if "," in text and "." in text:
+        if text.rfind(",") > text.rfind("."):
+            text = text.replace(".", "").replace(",", ".")
+        else:
+            text = text.replace(",", "")
+    else:
+        text = text.replace(",", ".")
+    try:
+        return (0, float(text))
+    except ValueError:
+        return (1, 0.0)
+
+
+class _NumericTableWidgetItem(QTableWidgetItem):
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self._numeric_sort_key = _numeric_sort_value(text)
+
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        if isinstance(other, _NumericTableWidgetItem):
+            return self._numeric_sort_key < other._numeric_sort_key
+        return super().__lt__(other)
+
+
 _PROFILE_MASS_KG_M: dict[str, dict[str, float]] = {
     "IPE": {
         "80": 6.0,
@@ -1652,6 +1680,10 @@ class MaterialsPage(QWidget):
         header.setFixedHeight(36)
         header.setStretchLastSection(False)
         header.setMinimumSectionSize(48)
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(True)
+        header.setSortIndicator(5, Qt.AscendingOrder)
+        header.setToolTip("Clique numa coluna para ordenar; clique novamente para inverter a ordem.")
         column_specs = [
             (0, QHeaderView.Interactive, 134),  # Lote interno
             (1, QHeaderView.Interactive, 130),  # Lote fornecedor
@@ -2288,11 +2320,15 @@ class MaterialsPage(QWidget):
     def _set_filter_combo_values(self, combo: QComboBox, values: list[str], current_text: str = "Todos") -> None:
         all_label = str(combo.property("allLabel") or "Todos")
         current = str(current_text or combo.currentText() or all_label).strip() or all_label
-        ordered = [all_label]
-        for value in values:
-            text = str(value or "").strip()
-            if text and text not in ordered:
-                ordered.append(text)
+        unique_values = {str(value or "").strip() for value in values if str(value or "").strip()}
+        if combo is self.thickness_filter_combo:
+            sorted_values = sorted(
+                unique_values,
+                key=lambda text: (*_numeric_sort_value(text), text.casefold()),
+            )
+        else:
+            sorted_values = sorted(unique_values, key=lambda text: text.casefold())
+        ordered = [all_label, *sorted_values]
         combo.blockSignals(True)
         combo.clear()
         combo.addItems(ordered)
@@ -2450,6 +2486,9 @@ class MaterialsPage(QWidget):
         rows = self._filter_material_payload_rows(all_rows)
         selected_id = self.current_material_id or self._selected_material_id()
         self.table_count_label.setText(f"{len(rows)} de {len(all_rows)} registos")
+        header = self.table.horizontalHeader()
+        sort_column = header.sortIndicatorSection()
+        sort_order = header.sortIndicatorOrder()
         self.table.setSortingEnabled(False)
         self.table.setUpdatesEnabled(False)
         self.table.setRowCount(len(rows))
@@ -2479,8 +2518,13 @@ class MaterialsPage(QWidget):
                 values["id"],
                 state_label,
             ]
+            numeric_columns = {4, 5, 6, 7, 9, 10, 11, 12, 13}
             for col_index, value in enumerate(columns):
-                item = QTableWidgetItem(str(value))
+                item = (
+                    _NumericTableWidgetItem(str(value))
+                    if col_index in numeric_columns
+                    else QTableWidgetItem(str(value))
+                )
                 item.setToolTip(str(value))
                 if col_index not in (0, 1, 2, 14, 15, 16):
                     item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
@@ -2497,6 +2541,8 @@ class MaterialsPage(QWidget):
                     zero_item.setForeground(QBrush(QColor("#b45f06")))
         self.table.setUpdatesEnabled(True)
         self.table.setSortingEnabled(True)
+        if 0 <= sort_column < self.table.columnCount():
+            self.table.sortItems(sort_column, sort_order)
 
         if selected_id:
             for row_index in range(self.table.rowCount()):

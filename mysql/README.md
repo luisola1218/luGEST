@@ -9,6 +9,11 @@
 - utilizadores iniciais mínimos para uma instalação nova;
 - listas base de operador e orçamentista.
 
+Todas as instalações novas usam `utf8mb4` com `utf8mb4_unicode_ci`. O exportador
+normaliza automaticamente tabelas históricas para não voltar a gerar schemas em
+`utf8mb3`. Esta normalização do ficheiro de instalação não altera uma base já
+existente.
+
 Os antigos schemas parciais e `patch_*.sql` foram consolidados neste ficheiro. Não é
 necessário importar vários SQL por ordem.
 
@@ -47,6 +52,19 @@ powershell -ExecutionPolicy Bypass -File .\validate_lugest_mysql.ps1 `
   -Database lugest
 ```
 
+## Atualizações de bases existentes
+
+As alterações incrementais vivem em `mysql/migrations/` e são planeadas pelo
+runner versionado:
+
+```powershell
+.\.venv\Scripts\python.exe .\mysql\migrate_lugest_mysql.py
+```
+
+Sem `--apply`, o comando é apenas de leitura. A aplicação exige um caminho de
+backup existente e regista checksum e responsável em `schema_migrations`. Consulta
+`mysql/migrations/README.md` antes de criar ou aplicar uma migração.
+
 ## Backup e reposição
 
 Antes de qualquer alteração numa instalação existente:
@@ -63,6 +81,8 @@ powershell -ExecutionPolicy Bypass -File .\restore_lugest_mysql.ps1
 
 O `lugest.sql` destina-se sobretudo a instalações novas. Uma base de cliente com
 dados deve ser sempre salvaguardada antes de uma atualização da aplicação.
+Conversões de charset em bases existentes exigem backup validado, espaço livre e
+janela de manutenção; não devem ser executadas automaticamente pelo desktop.
 
 ## Gerar novamente o SQL canónico
 

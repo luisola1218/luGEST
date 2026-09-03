@@ -1,4 +1,4 @@
-# Estrutura recomendada do projeto
+# Estrutura do projeto e regras de evolução
 
 Estado atual: a aplicacao ja tem separacao parcial em `lugest_core`,
 `lugest_infra`, `lugest_desktop/legacy` e `lugest_qt`, mas ainda existem dois
@@ -54,6 +54,49 @@ lugest/
   mixins pequenos de `lugest_qt/services/bridge_mixins`.
 - Novas chamadas externas ao backend Qt devem importar `LegacyBackend` de
   `lugest_qt.services.legacy_backend`, nao de `main_bridge.py`.
+
+## Direção das dependências
+
+```text
+lugest_qt  --------------------->  lugest_core
+    |                                  ^
+    +---------->  lugest_infra  -------+
+    |
+    +---------->  lugest_desktop/legacy (compatibilidade temporária)
+```
+
+- `lugest_core` não importa Qt, desktop legacy ou infraestrutura.
+- `lugest_infra` não importa Qt nem desktop legacy.
+- `lugest_qt` coordena interface e adaptadores, sem colocar regras de negócio em
+  widgets novos.
+- `lugest_desktop/legacy` é uma fronteira de compatibilidade, não o destino de
+  novas funcionalidades.
+- `scripts/verify_architecture_boundaries.py` impede regressões nestas regras.
+
+## Organização de runtime
+
+- Diagnóstico e crash logging vivem em `lugest_infra/diagnostics`; a UI apenas
+  emite eventos.
+- Tokens comerciais vivem em `lugest_infra/licensing`, separados da base do
+  cliente e de `lugest_qt_config.json`.
+- O build comercial não inclui Qt WebEngine/QML: o módulo de Transportes usa o
+  fallback já existente para abrir rotas no navegador do posto. Isto reduz o
+  pacote sem retirar funções operacionais.
+- Regras e formato de licença vivem em `lugest_core/licensing`, sem dependência
+  da interface ou do MySQL.
+- Configurações locais, segredos e estado não devem tornar-se módulos de domínio.
+
+## Qualidade antes de alterar estrutura
+
+Executar primeiro:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\verify_project.ps1 -SafeOnly
+```
+
+Esta porta de qualidade não escreve na base configurada. Os testes funcionais
+completos só podem correr numa base de testes ou quando a base remota foi
+explicitamente autorizada.
 
 ## Proximos refactors recomendados
 

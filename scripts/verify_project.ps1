@@ -1,7 +1,9 @@
 param(
     [switch]$SkipCompile,
     [switch]$SkipCoreFlows,
-    [switch]$AllowRemoteDatabase
+    [switch]$AllowRemoteDatabase,
+    [switch]$SafeOnly,
+    [switch]$ReadOnlyDatabaseAudit
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,7 +20,20 @@ else {
 
 Write-Host "Python: $python" -ForegroundColor Cyan
 
-if (-not $SkipCoreFlows -and -not $AllowRemoteDatabase) {
+function Invoke-Checked {
+    param(
+        [string]$Label,
+        [string[]]$CommandArgs
+    )
+
+    Write-Host $Label -ForegroundColor Cyan
+    & $python @CommandArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Label falhou com codigo $LASTEXITCODE."
+    }
+}
+
+if (-not $SafeOnly -and -not $SkipCoreFlows -and -not $AllowRemoteDatabase) {
     $envFile = Join-Path $repoRoot 'lugest.env'
     if (Test-Path -LiteralPath $envFile) {
         $hostLine = Get-Content -LiteralPath $envFile |
@@ -37,7 +52,6 @@ if (-not $SkipCoreFlows -and -not $AllowRemoteDatabase) {
 if (-not $SkipCompile) {
     Write-Host "A compilar ficheiros Python..." -ForegroundColor Cyan
     $compileScript = @'
-import py_compile
 from pathlib import Path
 
 excluded = {
@@ -60,7 +74,8 @@ files = [
 errors = []
 for path in files:
     try:
-        py_compile.compile(str(path), doraise=True)
+        source = path.read_text(encoding="utf-8-sig")
+        compile(source, str(path), "exec", dont_inherit=True)
     except Exception as exc:
         errors.append((str(path), exc))
 
@@ -72,14 +87,42 @@ if errors:
 print(f"Compiled {len(files)} Python files")
 '@
     $compileScript | & $python -
+    if ($LASTEXITCODE -ne 0) {
+        throw "A compilacao Python falhou com codigo $LASTEXITCODE."
+    }
 }
 
-if (-not $SkipCoreFlows) {
-    Write-Host "A correr fluxos principais..." -ForegroundColor Cyan
-    & $python (Join-Path $repoRoot 'scripts\verify_core_flows.py')
+if ($SafeOnly) {
+    Write-Host "A validar dependencias instaladas..." -ForegroundColor Cyan
+    & $python -m pip check
+    if ($LASTEXITCODE -ne 0) {
+        throw "A validacao de dependencias falhou com codigo $LASTEXITCODE."
+    }
 
-    Write-Host "A correr performance Qt..." -ForegroundColor Cyan
-    & $python (Join-Path $repoRoot 'scripts\verify_qt_performance.py')
+    $safeScripts = @(
+        'scripts\security_audit.py',
+        'scripts\verify_architecture_boundaries.py',
+        'scripts\verify_locked_dependencies.py',
+        'scripts\verify_runtime_diagnostics.py',
+        'scripts\verify_license_foundation.py',
+        'scripts\verify_mysql_schema_definition.py',
+        'scripts\verify_migration_framework.py',
+        'scripts\verify_laser_quote_engine.py',
+        'scripts\verify_laser_nesting_flow.py',
+        'scripts\verify_quote_ui_controls.py'
+    )
+    foreach ($relativeScript in $safeScripts) {
+        Invoke-Checked -Label "A correr $relativeScript..." -CommandArgs @((Join-Path $repoRoot $relativeScript))
+    }
+}
+elseif (-not $SkipCoreFlows) {
+    Invoke-Checked -Label "A correr fluxos principais..." -CommandArgs @((Join-Path $repoRoot 'scripts\verify_core_flows.py'))
+
+    Invoke-Checked -Label "A correr performance Qt..." -CommandArgs @((Join-Path $repoRoot 'scripts\verify_qt_performance.py'))
+}
+
+if ($ReadOnlyDatabaseAudit) {
+    Invoke-Checked -Label "A auditar a base de dados em modo apenas de leitura..." -CommandArgs @((Join-Path $repoRoot 'scripts\audit_database_readonly.py'))
 }
 
 Write-Host "Verificacao concluida." -ForegroundColor Green

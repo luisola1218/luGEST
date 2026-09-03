@@ -13541,58 +13541,64 @@ class LegacyOrdersPage(OrdersPage):
             if widget is not None and widget not in preserved:
                 widget.deleteLater()
 
-        layout.setContentsMargins(12, 7, 12, 7)
+        layout.setContentsMargins(14, 9, 14, 9)
         layout.setHorizontalSpacing(0)
         layout.setVerticalSpacing(0)
         host = QWidget()
         host_layout = QVBoxLayout(host)
         host_layout.setContentsMargins(0, 0, 0, 0)
-        host_layout.setSpacing(4)
+        host_layout.setSpacing(7)
 
         identity_row = QHBoxLayout()
-        identity_row.setSpacing(12)
+        identity_row.setSpacing(16)
         identity = QVBoxLayout()
-        identity.setSpacing(0)
-        eyebrow = QLabel("ORDEM DE FABRICO")
-        eyebrow.setStyleSheet("font-size: 8px; font-weight: 800; color: #087f83;")
-        self.info_of.setStyleSheet("font-size: 16px; font-weight: 900; color: #10253d;")
+        identity.setSpacing(2)
+        identity_heading = QHBoxLayout()
+        identity_heading.setContentsMargins(0, 0, 0, 0)
+        identity_heading.setSpacing(8)
+        eyebrow = QLabel("RESUMO DA ORDEM")
+        eyebrow.setStyleSheet("font-size: 10px; font-weight: 700; color: #52708d; letter-spacing: 0.3px;")
+        identity_heading.addWidget(eyebrow)
+        identity_heading.addStretch(1)
+        identity.addLayout(identity_heading)
+        self.info_of.setStyleSheet("font-family: 'Segoe UI Semibold'; font-size: 18px; font-weight: 600; color: #10253d;")
         order_number_row = QHBoxLayout()
         order_number_row.setContentsMargins(0, 0, 0, 0)
-        order_number_row.setSpacing(5)
+        order_number_row.setSpacing(7)
         order_number_label = QLabel("Encomenda")
         order_number_label.setProperty("role", "muted")
-        self.info_numero.setStyleSheet("font-size: 10px; font-weight: 800; color: #475f78;")
+        order_number_label.setStyleSheet("font-size: 10px; color: #60758d;")
+        self.info_numero.setStyleSheet("font-size: 11px; font-weight: 700; color: #334e68;")
         order_number_row.addWidget(order_number_label)
         order_number_row.addWidget(self.info_numero)
         order_number_row.addStretch(1)
-        identity.addWidget(eyebrow)
         identity.addWidget(self.info_of)
         identity.addLayout(order_number_row)
-        identity_row.addLayout(identity, 1)
+        identity_row.addLayout(identity, 2)
 
         client_block = QVBoxLayout()
-        client_block.setSpacing(1)
-        client_label = QLabel("CLIENTE / REFERÊNCIA")
-        client_label.setStyleSheet("font-size: 8px; font-weight: 800; color: #60758d;")
-        self.info_cliente.setStyleSheet("font-size: 11px; font-weight: 800; color: #10253d;")
-        self.info_nota.setStyleSheet("font-size: 9px; color: #516981;")
+        client_block.setSpacing(2)
+        client_label = QLabel("CLIENTE E REFERÊNCIA")
+        client_label.setStyleSheet("font-size: 10px; font-weight: 700; color: #52708d; letter-spacing: 0.2px;")
+        self.info_cliente.setStyleSheet("font-family: 'Segoe UI Semibold'; font-size: 12px; font-weight: 600; color: #10253d;")
+        self.info_nota.setStyleSheet("font-size: 10px; color: #516981;")
         client_block.addWidget(client_label)
         client_block.addWidget(self.info_cliente)
         client_block.addWidget(self.info_nota)
-        identity_row.addLayout(client_block, 2)
-        identity_row.addWidget(self.info_estado, 0, Qt.AlignTop)
+        identity_row.addLayout(client_block, 3)
+        identity_row.addWidget(self.info_estado, 0, Qt.AlignVCenter)
         host_layout.addLayout(identity_row)
 
         metrics_frame = QFrame()
         metrics_frame.setObjectName("OrderOverviewMetrics")
         metrics_frame.setStyleSheet(
-            "QFrame#OrderOverviewMetrics { background: #f7fafc; border: 1px solid #d3deea; }"
-            "QLabel#OrderMetricLabel { color: #60758d; font-size: 8px; font-weight: 800; }"
-            "QLabel#OrderMetricValue { color: #10253d; font-size: 12px; font-weight: 900; }"
+            "QFrame#OrderOverviewMetrics { background: #f8fafc; border: 1px solid #d5e0ea; border-radius: 6px; }"
+            "QLabel#OrderMetricLabel { color: #60758d; font-size: 9px; font-weight: 700; }"
+            "QLabel#OrderMetricValue { color: #10253d; font-family: 'Segoe UI Semibold'; font-size: 12px; font-weight: 600; }"
         )
         metrics_layout = QHBoxLayout(metrics_frame)
-        metrics_layout.setContentsMargins(10, 3, 10, 3)
-        metrics_layout.setSpacing(16)
+        metrics_layout.setContentsMargins(12, 5, 12, 5)
+        metrics_layout.setSpacing(20)
 
         def add_metric(label_text: str, value_widget: QLabel) -> None:
             metric = QWidget()
@@ -13620,50 +13626,63 @@ class LegacyOrdersPage(OrdersPage):
         self.order_progress_bar.setFixedSize(150, 10)
         self.order_progress_bar.setStyleSheet(
             "QProgressBar { background: #e6edf5; border: 0; border-radius: 5px; }"
-            "QProgressBar::chunk { background: #0aa6a6; border-radius: 5px; }"
+            "QProgressBar::chunk { background: #86bc55; border-radius: 5px; }"
         )
         metrics_layout.addWidget(self.order_progress_bar, 0, Qt.AlignVCenter)
         host_layout.addWidget(metrics_frame)
 
-        logistics = QGridLayout()
-        logistics.setContentsMargins(2, 0, 2, 0)
-        logistics.setHorizontalSpacing(18)
-        logistics.setVerticalSpacing(1)
-        logistics_fields = (
-            ("Transporte", self.info_transporte, 0, 0),
-            ("Transportadora", self.info_transportadora, 0, 1),
-            ("Destino", self.info_descarga, 0, 2),
-            ("Carga", self.info_carga, 2, 0),
-            ("Viagem", self.info_viagem, 2, 1),
-            ("Custos logísticos", self.info_custos, 2, 2),
+        logistics_frame = QFrame()
+        logistics_frame.setObjectName("OrderLogistics")
+        logistics_frame.setStyleSheet(
+            "QFrame#OrderLogistics { background: #ffffff; border: 1px solid #dce4eb; border-radius: 6px; }"
+            "QFrame#OrderLogistics QWidget { background: transparent; border: 0; }"
         )
-        for title, value, row, column in logistics_fields:
-            label = QLabel(title.upper())
-            label.setStyleSheet("font-size: 8px; font-weight: 800; color: #60758d;")
-            value.setStyleSheet("font-size: 9px; color: #29445f;")
-            value.setMinimumWidth(0)
-            value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-            logistics.addWidget(label, row, column)
-            logistics.addWidget(value, row + 1, column)
-            logistics.setColumnStretch(column, 1)
-        host_layout.addLayout(logistics)
+        logistics_layout = QHBoxLayout(logistics_frame)
+        logistics_layout.setContentsMargins(12, 6, 12, 6)
+        logistics_layout.setSpacing(24)
+
+        def add_logistics_group(
+            title_text: str,
+            primary_value: QLabel,
+            secondary_value: QLabel,
+        ) -> None:
+            group = QWidget()
+            group_layout = QVBoxLayout(group)
+            group_layout.setContentsMargins(0, 0, 0, 0)
+            group_layout.setSpacing(1)
+            label = QLabel(title_text.upper())
+            label.setStyleSheet("font-size: 9px; font-weight: 700; color: #60758d; letter-spacing: 0.2px;")
+            primary_value.setStyleSheet("font-size: 10px; font-weight: 600; color: #29445f;")
+            secondary_value.setStyleSheet("font-size: 10px; color: #52677d;")
+            for value in (primary_value, secondary_value):
+                value.setMinimumWidth(0)
+                value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            group_layout.addWidget(label)
+            group_layout.addWidget(primary_value)
+            group_layout.addWidget(secondary_value)
+            logistics_layout.addWidget(group, 1)
+
+        add_logistics_group("Transporte", self.info_transporte, self.info_transportadora)
+        add_logistics_group("Destino e carga", self.info_descarga, self.info_carga)
+        add_logistics_group("Viagem e custos", self.info_viagem, self.info_custos)
+        host_layout.addWidget(logistics_frame)
 
         reservation_frame = QFrame()
         reservation_frame.setObjectName("OrderReservationStrip")
         reservation_frame.setStyleSheet(
-            "QFrame#OrderReservationStrip { background: #f2f8fb; border: 1px solid #c8d9e7; }"
+            "QFrame#OrderReservationStrip { background: #f5f9f1; border: 1px solid #d4e3c7; border-radius: 6px; }"
         )
         reservation_layout = QHBoxLayout(reservation_frame)
-        reservation_layout.setContentsMargins(10, 3, 8, 3)
-        reservation_layout.setSpacing(8)
+        reservation_layout.setContentsMargins(12, 5, 8, 5)
+        reservation_layout.setSpacing(10)
         reservation_text = QVBoxLayout()
-        reservation_text.setSpacing(0)
+        reservation_text.setSpacing(1)
         reservation_title = QLabel("MATERIAL CATIVADO")
-        reservation_title.setStyleSheet("font-size: 8px; font-weight: 800; color: #087f83;")
+        reservation_title.setStyleSheet("font-size: 9px; font-weight: 700; color: #527444; letter-spacing: 0.2px;")
         reservation_summary = QHBoxLayout()
         reservation_summary.setSpacing(8)
-        self.info_chapa.setStyleSheet("font-size: 10px; font-weight: 800; color: #10253d;")
-        self.info_reservas.setStyleSheet("font-size: 9px; color: #516981;")
+        self.info_chapa.setStyleSheet("font-size: 10px; font-weight: 700; color: #294126;")
+        self.info_reservas.setStyleSheet("font-size: 10px; color: #52677d;")
         reservation_summary.addWidget(self.info_chapa)
         reservation_summary.addWidget(self.info_reservas, 1)
         reservation_text.addWidget(reservation_title)
@@ -13675,8 +13694,8 @@ class LegacyOrdersPage(OrdersPage):
         host_layout.addWidget(reservation_frame)
 
         layout.addWidget(host, 0, 0, 1, 6)
-        self.info_card.setMinimumHeight(175)
-        self.info_card.setMaximumHeight(190)
+        self.info_card.setMinimumHeight(218)
+        self.info_card.setMaximumHeight(236)
         self._sync_order_overview()
 
     def _sync_order_overview(self) -> None:
@@ -14963,6 +14982,21 @@ class QuotesPage(QWidget):
     page_subtitle = "Lista de orçamentos primeiro e detalhe apenas quando abres o registo."
     uses_backend_reload = True
 
+    LINE_COL_MARK = 0
+    LINE_COL_TYPE = 1
+    LINE_COL_REFERENCE = 2
+    LINE_COL_EXTERNAL_REFERENCE = 3
+    LINE_COL_DESCRIPTION = 4
+    LINE_COL_MATERIAL = 5
+    LINE_COL_UNIT = 6
+    LINE_COL_OPERATION = 7
+    LINE_COL_TIME = 8
+    LINE_COL_QUANTITY = 9
+    LINE_COL_PRICE = 10
+    LINE_COL_DISCOUNTED_PRICE = 11
+    LINE_COL_TOTAL = 12
+    LINE_COL_ASSEMBLY = 13
+
     def __init__(self, backend, parent=None) -> None:
         super().__init__(parent)
         self.backend = backend
@@ -15163,6 +15197,14 @@ class QuotesPage(QWidget):
         self.quote_detail_scroll.setFrameShape(QFrame.NoFrame)
         self.quote_detail_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.quote_detail_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.quote_detail_scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: 0; }"
+            "QScrollBar:vertical { width: 12px; background: #eef1ee; border: 0; margin: 2px; }"
+            "QScrollBar::handle:vertical { min-height: 36px; background: #a6aea8; border-radius: 5px; }"
+            "QScrollBar::handle:vertical:hover { background: #858e87; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
+        )
         detail_outer.addWidget(self.quote_detail_scroll)
         self.quote_detail_host = QWidget()
         self.quote_detail_scroll.setWidget(self.quote_detail_host)
@@ -15435,10 +15477,10 @@ class QuotesPage(QWidget):
         total_caption = QLabel("TOTAL DA PROPOSTA")
         total_caption.setProperty("role", "muted")
         total_caption.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        total_caption.setStyleSheet("font-size: 8px; font-weight: 900;")
+        total_caption.setStyleSheet("font-family: 'Segoe UI Semibold'; font-size: 10px; font-weight: 600; letter-spacing: 0.2px;")
         self.header_total_label = QLabel("0,00 EUR")
         self.header_total_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.header_total_label.setStyleSheet("font-size: 18px; font-weight: 900; color: #17643a;")
+        self.header_total_label.setStyleSheet("font-family: 'Segoe UI Semibold'; font-size: 20px; font-weight: 600; color: #155e3b;")
         total_block.addWidget(total_caption)
         total_block.addWidget(self.header_total_label)
         self.state_chip = QLabel("-")
@@ -16214,17 +16256,21 @@ class QuotesPage(QWidget):
         summary_layout.addStretch(1)
         lines_card = CardFrame()
         lines_card.set_tone("default")
+        lines_card.setObjectName("QuoteReferencesCard")
+        lines_card.setStyleSheet(
+            "QFrame#QuoteReferencesCard { background: #ffffff; border: 1px solid #d5ddd3; border-radius: 8px; }"
+        )
         lines_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.quote_lines_card = lines_card
         lines_layout = QVBoxLayout(lines_card)
-        lines_layout.setContentsMargins(12, 10, 12, 10)
-        lines_layout.setSpacing(4)
+        lines_layout.setContentsMargins(14, 12, 14, 12)
+        lines_layout.setSpacing(7)
         line_actions = QVBoxLayout()
         line_actions.setSpacing(4)
         line_title_row = QHBoxLayout()
         line_title_row.setSpacing(8)
         lines_title = QLabel("Referências do orçamento")
-        lines_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #0f172a;")
+        lines_title.setStyleSheet("font-family: 'Segoe UI Semibold'; font-size: 14px; font-weight: 600; color: #172b3f;")
         add_line_btn = QPushButton("Adicionar linha")
         add_line_btn.clicked.connect(self._add_line)
         laser_batch_btn = QPushButton("Lote DXF/DWG")
@@ -16270,12 +16316,17 @@ class QuotesPage(QWidget):
         remove_line_btn = QPushButton("Remover linha")
         remove_line_btn.setProperty("variant", "danger")
         remove_line_btn.clicked.connect(self._remove_line)
+        remove_line_btn.setToolTip("Remove as linhas marcadas; se nenhuma estiver marcada, remove a selecao atual.")
+        self.remove_quote_lines_btn = remove_line_btn
         open_draw_btn = QPushButton("Ver desenho")
         open_draw_btn.setProperty("variant", "secondary")
         open_draw_btn.clicked.connect(self._open_line_drawing)
         laser_nesting_btn.setToolTip("Abrir o estudo de nesting das linhas laser do orçamento.")
         line_title_row.addWidget(lines_title)
         line_title_row.addStretch(1)
+        remove_line_btn.setMinimumWidth(132)
+        remove_line_btn.setMinimumHeight(28)
+        line_title_row.addWidget(remove_line_btn)
         self.line_count_label = QLabel("0 linhas")
         self.line_count_label.setProperty("role", "state_chip")
         self.line_count_label.setAlignment(Qt.AlignCenter)
@@ -16292,7 +16343,7 @@ class QuotesPage(QWidget):
         line_actions.addWidget(self.nesting_bridge_label)
         line_tools_tabs = QTabWidget()
         line_tools_tabs.setDocumentMode(True)
-        line_tools_tabs.setMaximumHeight(126)
+        line_tools_tabs.setMaximumHeight(132)
         line_tools_tabs.setStyleSheet(
             """
             QTabWidget::pane {
@@ -16330,8 +16381,8 @@ class QuotesPage(QWidget):
             for index, button in enumerate(buttons):
                 button.setProperty("compact", "true")
                 button.setMinimumWidth(0)
-                button.setMinimumHeight(26)
-                button.setMaximumHeight(28)
+                button.setMinimumHeight(28)
+                button.setMaximumHeight(30)
                 button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 tab_layout.addWidget(button, index // column_count, index % column_count)
             for column_index in range(column_count):
@@ -16377,16 +16428,17 @@ class QuotesPage(QWidget):
             check_weight_btn,
         ):
             button.setProperty("compact", "true")
-        self.lines_table = QTableWidget(0, 13)
-        self.lines_table.setHorizontalHeaderLabels(["Tipo", "Ref./Cod.", "Ref. Ext.", "Descricao", "Material/Produto", "Esp./Unid", "Operacao", "Tempo", "Qtd", "Preco", "Preco c/ desc.", "Total", "Conjunto"])
+        self.lines_table = QTableWidget(0, 14)
+        self.lines_table.setHorizontalHeaderLabels(["Apagar", "Tipo", "Ref./Cód.", "Ref. ext.", "Descrição", "Material/Produto", "Esp./Unid.", "Operação", "Tempo", "Qtd.", "Preço", "Preço c/ desc.", "Total", "Conjunto"])
         self.lines_table.verticalHeader().setVisible(False)
         self.lines_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.lines_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.lines_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.lines_table.setAlternatingRowColors(True)
         self.lines_table.setStyleSheet(
-            "QTableWidget { font-size: 9px; }"
-            " QHeaderView::section { font-size: 9px; padding: 4px 5px; font-weight: 700; }"
+            "QTableWidget { font-family: 'Segoe UI'; font-size: 10px; }"
+            " QTableWidget::indicator { width: 18px; height: 18px; }"
+            " QHeaderView::section { font-family: 'Segoe UI Semibold'; font-size: 10px; padding: 5px 5px; font-weight: 600; }"
             " QScrollBar:vertical { background: #eceeeb; width: 14px; margin: 0; border-left: 1px solid #cfd3cf; }"
             " QScrollBar::handle:vertical { background: #8f9691; min-height: 28px; border-radius: 6px; margin: 2px; }"
             " QScrollBar::handle:vertical:hover { background: #747b76; }"
@@ -16399,30 +16451,37 @@ class QuotesPage(QWidget):
         for column in range(self.lines_table.columnCount()):
             header_item = self.lines_table.horizontalHeaderItem(column)
             if header_item is not None:
-                header_item.setToolTip("Clique para ordenar; clique novamente para inverter.")
+                header_item.setToolTip(
+                    "Clique para marcar ou desmarcar todas as linhas."
+                    if column == self.LINE_COL_MARK
+                    else "Clique para ordenar; clique novamente para inverter."
+                )
         self._quote_lines_sort_section = -1
         self._quote_lines_sort_order = Qt.AscendingOrder
         self.lines_table.horizontalHeader().sectionClicked.connect(self._handle_quote_lines_sort)
-        self.lines_table.verticalHeader().setDefaultSectionSize(24)
-        self.lines_table.setMinimumHeight(380)
+        self.lines_table.verticalHeader().setDefaultSectionSize(30)
+        self.lines_table.verticalHeader().setMinimumSectionSize(30)
+        self.lines_table.horizontalHeader().setMinimumHeight(34)
+        self.lines_table.setMinimumHeight(280)
         self.lines_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.lines_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         _set_table_columns(
             self.lines_table,
             [
-                (0, "fixed", 92),
-                (1, "fixed", 104),
-                (2, "fixed", 132),
-                (3, "stretch", 0),
-                (4, "stretch", 0),
-                (5, "fixed", 72),
-                (6, "fixed", 104),
-                (7, "fixed", 68),
-                (8, "fixed", 50),
-                (9, "fixed", 76),
-                (10, "fixed", 88),
-                (11, "fixed", 84),
-                (12, "fixed", 84),
+                (self.LINE_COL_MARK, "fixed", 58),
+                (self.LINE_COL_TYPE, "fixed", 92),
+                (self.LINE_COL_REFERENCE, "fixed", 104),
+                (self.LINE_COL_EXTERNAL_REFERENCE, "fixed", 132),
+                (self.LINE_COL_DESCRIPTION, "stretch", 0),
+                (self.LINE_COL_MATERIAL, "stretch", 0),
+                (self.LINE_COL_UNIT, "fixed", 72),
+                (self.LINE_COL_OPERATION, "fixed", 104),
+                (self.LINE_COL_TIME, "fixed", 68),
+                (self.LINE_COL_QUANTITY, "fixed", 58),
+                (self.LINE_COL_PRICE, "fixed", 76),
+                (self.LINE_COL_DISCOUNTED_PRICE, "fixed", 88),
+                (self.LINE_COL_TOTAL, "fixed", 84),
+                (self.LINE_COL_ASSEMBLY, "fixed", 84),
             ],
         )
         line_actions_host = QWidget()
@@ -16432,8 +16491,7 @@ class QuotesPage(QWidget):
         line_actions_host_layout.setSpacing(4)
         line_actions_host_layout.addLayout(line_actions)
         lines_layout.addWidget(line_actions_host, 0, Qt.AlignTop)
-        lines_layout.addWidget(self.lines_table, 0, Qt.AlignTop)
-        lines_layout.addStretch(1)
+        lines_layout.addWidget(self.lines_table, 1)
         selected_line_footer = QFrame()
         selected_line_footer.setObjectName("QuoteSelectedLineFooter")
         selected_line_footer.setStyleSheet(
@@ -16467,7 +16525,6 @@ class QuotesPage(QWidget):
             open_draw_btn,
             prepare_line_btn,
             check_weight_btn,
-            remove_line_btn,
         )
         for selected_action in self.quote_selected_line_buttons:
             selected_action.setMinimumWidth(118)
@@ -16478,6 +16535,7 @@ class QuotesPage(QWidget):
             selected_line_footer_layout.addWidget(selected_action, 1)
         lines_layout.addWidget(selected_line_footer, 0)
         self.lines_table.itemSelectionChanged.connect(self._sync_quote_selected_line_actions)
+        self.lines_table.itemChanged.connect(self._handle_quote_line_item_changed)
         self._sync_quote_selected_line_actions()
         inspector_tabs = QTabWidget()
         inspector_tabs.setDocumentMode(True)
@@ -16592,7 +16650,7 @@ class QuotesPage(QWidget):
         inspector_host_layout.addLayout(inspector_command_row)
         inspector_host_layout.addWidget(inspector_tabs, 1)
 
-        lines_card.setMinimumHeight(620)
+        lines_card.setMinimumHeight(500)
         lines_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         workspace_split = QSplitter(Qt.Horizontal)
         workspace_split.setChildrenCollapsible(False)
@@ -16612,7 +16670,7 @@ class QuotesPage(QWidget):
         self.quote_inspector_btn.setMaximumHeight(26)
         self.quote_inspector_btn.clicked.connect(self._toggle_quote_inspector)
         line_title_row.insertWidget(max(0, line_title_row.count() - 1), self.quote_inspector_btn)
-        workspace_split.setMinimumHeight(620)
+        workspace_split.setMinimumHeight(500)
         detail_layout.addWidget(workspace_split, 1)
 
         self.view_stack.addWidget(self.list_page)
@@ -16789,13 +16847,50 @@ class QuotesPage(QWidget):
         single = self._selected_line_index()
         return [single] if single >= 0 else []
 
+    def _checked_line_indexes(self) -> list[int]:
+        indexes: set[int] = set()
+        for visual_row in range(self.lines_table.rowCount()):
+            item = self.lines_table.item(visual_row, self.LINE_COL_MARK)
+            if item is None or item.checkState() != Qt.Checked:
+                continue
+            source_index = item.data(Qt.UserRole)
+            if isinstance(source_index, int) and 0 <= source_index < len(self.line_rows):
+                indexes.add(source_index)
+        return sorted(indexes)
+
+    def _handle_quote_line_item_changed(self, item: QTableWidgetItem) -> None:
+        if bool(getattr(self, "_rendering_quote_lines", False)):
+            return
+        if item is not None and item.column() == self.LINE_COL_MARK:
+            self._sync_quote_selected_line_actions()
+
+    def _select_quote_line_source_index(self, source_index: int) -> None:
+        for visual_row in range(self.lines_table.rowCount()):
+            item = self.lines_table.item(visual_row, self.LINE_COL_MARK)
+            if item is not None and item.data(Qt.UserRole) == source_index:
+                self.lines_table.selectRow(visual_row)
+                return
+
     def _sync_quote_selected_line_actions(self) -> None:
         indexes = self._selected_line_indexes() if hasattr(self, "lines_table") else []
+        checked_indexes = self._checked_line_indexes() if hasattr(self, "lines_table") else []
         has_selection = bool(indexes)
         for button in getattr(self, "quote_selected_line_buttons", ()):
             button.setEnabled(has_selection)
+        remove_button = getattr(self, "remove_quote_lines_btn", None)
+        removal_count = len(checked_indexes or indexes)
+        if isinstance(remove_button, QPushButton):
+            remove_button.setEnabled(removal_count > 0)
+            remove_button.setText("Remover linha" if removal_count <= 1 else f"Remover {removal_count} linhas")
         caption = getattr(self, "quote_selected_line_caption", None)
         if not isinstance(caption, QLabel):
+            return
+        if checked_indexes:
+            caption.setText(
+                "1 LINHA MARCADA PARA REMOVER"
+                if len(checked_indexes) == 1
+                else f"{len(checked_indexes)} LINHAS MARCADAS PARA REMOVER"
+            )
             return
         if not indexes:
             caption.setText("SELECIONA UMA LINHA")
@@ -16823,9 +16918,24 @@ class QuotesPage(QWidget):
             row.get("total_desconto", row.get("total", 0)),
             row.get("conjunto_nome", ""),
         )
-        return _smart_sort_key(values[max(0, min(section, len(values) - 1))])
+        data_section = max(0, int(section) - 1)
+        return _smart_sort_key(values[max(0, min(data_section, len(values) - 1))])
 
     def _handle_quote_lines_sort(self, section: int) -> None:
+        if section == self.LINE_COL_MARK:
+            real_items = [
+                self.lines_table.item(row, self.LINE_COL_MARK)
+                for row in range(self.lines_table.rowCount())
+                if isinstance(self.lines_table.item(row, self.LINE_COL_MARK), QTableWidgetItem)
+                and isinstance(self.lines_table.item(row, self.LINE_COL_MARK).data(Qt.UserRole), int)
+            ]
+            mark_all = bool(real_items) and not all(item.checkState() == Qt.Checked for item in real_items)
+            self._rendering_quote_lines = True
+            for item in real_items:
+                item.setCheckState(Qt.Checked if mark_all else Qt.Unchecked)
+            self._rendering_quote_lines = False
+            self._sync_quote_selected_line_actions()
+            return
         if self._quote_lines_sort_section == section:
             self._quote_lines_sort_order = (
                 Qt.DescendingOrder
@@ -17282,6 +17392,11 @@ class QuotesPage(QWidget):
         return groups
 
     def _render_quote_lines(self) -> None:
+        checked_source_indexes = (
+            set(self._checked_line_indexes())
+            if hasattr(self, "lines_table") and not bool(getattr(self, "_rendering_quote_lines", False))
+            else set()
+        )
         subtotal = 0.0
         subtotal_base = 0.0
         bridge = dict(getattr(self, "nesting_bridge_data", {}) or {})
@@ -17322,10 +17437,15 @@ class QuotesPage(QWidget):
                 key=lambda indexed_row: self._quote_line_sort_value(indexed_row[1], sort_section),
                 reverse=reverse,
             )
+        self._rendering_quote_lines = True
+        previous_signal_state = self.lines_table.blockSignals(True)
+        updates_were_enabled = self.lines_table.updatesEnabled()
+        self.lines_table.setUpdatesEnabled(False)
         _fill_table(
             self.lines_table,
             [
                 [
+                    "",
                     self._quote_line_type_label(row),
                     self._quote_line_primary_ref(row),
                     row.get("ref_externa", "-") or "-",
@@ -17342,13 +17462,19 @@ class QuotesPage(QWidget):
                 ]
                 for _source_index, row in display_rows
             ],
-            align_center_from=5,
+            align_center_from=self.LINE_COL_UNIT,
         )
         for visual_row, (source_index, _row) in enumerate(display_rows):
             for col_index in range(self.lines_table.columnCount()):
                 item = self.lines_table.item(visual_row, col_index)
                 if item is not None:
                     item.setData(Qt.UserRole, source_index)
+            mark_item = self.lines_table.item(visual_row, self.LINE_COL_MARK)
+            if mark_item is not None:
+                mark_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
+                mark_item.setCheckState(Qt.Checked if source_index in checked_source_indexes else Qt.Unchecked)
+                mark_item.setTextAlignment(int(Qt.AlignCenter | Qt.AlignVCenter))
+                mark_item.setToolTip("Marca esta linha para a remover do orçamento.")
         for _ in range(2):
             spacer_row = self.lines_table.rowCount()
             self.lines_table.insertRow(spacer_row)
@@ -17362,7 +17488,7 @@ class QuotesPage(QWidget):
         for row_index, (_source_index, row) in enumerate(display_rows):
             subtotal += float(row.get("total", 0) or 0)
             _paint_table_row(self.lines_table, row_index, "Preparacao")
-            for col_index in (9, 10, 11):
+            for col_index in (self.LINE_COL_PRICE, self.LINE_COL_DISCOUNTED_PRICE, self.LINE_COL_TOTAL):
                 item = self.lines_table.item(row_index, col_index)
                 if item is not None:
                     item.setTextAlignment(int(Qt.AlignRight | Qt.AlignVCenter))
@@ -17436,7 +17562,7 @@ class QuotesPage(QWidget):
             if bridge_row:
                 adjusted_total = float(bridge_row.get("adjusted_quote_total_eur", 0) or 0.0)
                 current_total = float(row.get("total_desconto", row.get("total", 0)) or 0.0)
-                total_item = self.lines_table.item(row_index, 11)
+                total_item = self.lines_table.item(row_index, self.LINE_COL_TOTAL)
                 if total_item is not None and adjusted_total > 0:
                     if current_total + 0.009 < adjusted_total:
                         total_item.setBackground(QBrush(QColor("#fff8eb")))
@@ -17447,6 +17573,9 @@ class QuotesPage(QWidget):
                     else:
                         total_item.setBackground(QBrush(QColor("#fef3c7")))
                         total_item.setForeground(QBrush(QColor("#92400e")))
+        self.lines_table.blockSignals(previous_signal_state)
+        self.lines_table.setUpdatesEnabled(updates_were_enabled)
+        self._rendering_quote_lines = False
         discount_mode = self._quote_discount_mode()
         discount_value = round(sum(float(row.get("desconto_aplicado", 0) or 0) for row in self.line_rows), 2)
         subtotal_discounted = round(sum(float(row.get("total_desconto", row.get("total", 0)) or 0) for row in self.line_rows), 2)
@@ -17502,13 +17631,14 @@ class QuotesPage(QWidget):
             self.discount_breakdown_label.setText("Desconto aplicado a todas as linhas do orçamento. O transporte mantém-se fora do desconto.")
         else:
             self.discount_breakdown_label.setText("Sem desconto global aplicado.")
-        visible_rows = min(max(16, len(self.line_rows) + 3), 20)
-        target_height = _table_visible_height(self.lines_table, visible_rows, extra=18)
-        self.lines_table.setMinimumHeight(target_height)
-        self.lines_table.setMaximumHeight(target_height)
+        # A tabela ocupa apenas o espaço disponível no cartão e faz o seu próprio
+        # scroll. Assim, o rodapé de ações e o limite inferior do cartão ficam
+        # sempre visíveis, independentemente do número de referências.
+        self.lines_table.setMinimumHeight(280)
+        self.lines_table.setMaximumHeight(16777215)
         if hasattr(self, "quote_lines_card"):
-            actions_height = 226
-            self.quote_lines_card.setMinimumHeight(target_height + actions_height)
+            self.quote_lines_card.setMinimumHeight(500)
+        self._sync_quote_selected_line_actions()
 
     def _load_quote(self, numero: str) -> None:
         detail = self.backend.orc_detail(numero)
@@ -21333,16 +21463,19 @@ class QuotesPage(QWidget):
         def _line_kind_for_shortcut(line: dict) -> str:
             operation = str(line.get("operacao", "") or "").strip().lower()
             unit_txt = str(line.get("produto_unid", "") or "").strip().lower()
-            if "corte laser" in operation or unit_txt == "h":
+            if unit_txt == "h" and "corte laser" not in operation:
                 return "labor"
             return self._assembly_item_kind_from_line(line)
 
-        def _add_lines_from_shortcut(lines: list[dict]) -> None:
+        def _add_lines_from_shortcut(lines: list[dict], *, laser_batch_id: str = "") -> None:
             added = 0
             for row in list(lines or []):
                 if not isinstance(row, dict) or not row:
                     continue
                 line = dict(row)
+                if laser_batch_id:
+                    line["laser_source_mode"] = "batch"
+                    line["laser_batch_id"] = laser_batch_id
                 kind = _line_kind_for_shortcut(line)
                 total_cost = round(float(line.get("qtd", 0) or 0) * float(line.get("preco_unit", 0) or 0), 2)
                 items.append(
@@ -21367,7 +21500,10 @@ class QuotesPage(QWidget):
             if batch_dialog.exec() != QDialog.Accepted:
                 return
             result = dict(batch_dialog.result_payload() or {})
-            _add_lines_from_shortcut([dict(row or {}) for row in list(result.get("lines", []) or []) if dict(row or {})])
+            _add_lines_from_shortcut(
+                [dict(row or {}) for row in list(result.get("lines", []) or []) if dict(row or {})],
+                laser_batch_id=str(batch_dialog.batch_id or "").strip(),
+            )
 
         def _add_step_igs_to_assembly() -> None:
             lines = self._open_profile_step_igs_quote_builder(return_lines=True, parent=dialog)
@@ -21386,6 +21522,28 @@ class QuotesPage(QWidget):
                 return
             current = dict(items[index] or {})
             try:
+                current_line = dict(current.get("line") or current)
+                if self._quote_line_is_laser_2d(current_line):
+                    batch_id = str(current_line.get("laser_batch_id", "") or "").strip()
+                    batch_indexes = [
+                        row_index
+                        for row_index, candidate in enumerate(items)
+                        if batch_id
+                        and str(dict(candidate.get("line") or candidate).get("laser_batch_id", "") or "").strip() == batch_id
+                    ] or [index]
+                    source_lines = [dict(items[row_index].get("line") or items[row_index]) for row_index in batch_indexes]
+                    edited_lines = self._edit_laser_batch_lines(source_lines, parent=dialog)
+                    if edited_lines is None:
+                        return
+                    insert_at = min(batch_indexes)
+                    for row_index in sorted(batch_indexes, reverse=True):
+                        del items[row_index]
+                    for offset, edited_line in enumerate(edited_lines):
+                        items.insert(insert_at + offset, self._wrap_assembly_item(edited_line))
+                    _render_items()
+                    if edited_lines:
+                        table.selectRow(insert_at)
+                    return
                 payload = _open_editor_for(str(current.get("kind", "") or ""), current)
             except Exception as exc:
                 QMessageBox.critical(dialog, "Conjunto", str(exc))
@@ -23447,7 +23605,30 @@ class QuotesPage(QWidget):
                 QMessageBox.warning(dialog, "Conjuntos", "Seleciona um item.")
                 return
             current = dict(items[index] or {})
-            payload = self._open_assembly_item_editor(self._assembly_item_kind_from_line(current), current, parent=dialog)
+            current_line = dict(current.get("line") or current)
+            if self._quote_line_is_laser_2d(current_line):
+                batch_id = str(current_line.get("laser_batch_id", "") or "").strip()
+                batch_indexes = [
+                    row_index
+                    for row_index, candidate in enumerate(items)
+                    if batch_id
+                    and str(dict(candidate.get("line") or candidate).get("laser_batch_id", "") or "").strip() == batch_id
+                ] or [index]
+                source_lines = [dict(items[row_index].get("line") or items[row_index]) for row_index in batch_indexes]
+                edited_lines = self._edit_laser_batch_lines(source_lines, parent=dialog)
+                if edited_lines is None:
+                    return
+                insert_at = min(batch_indexes)
+                for row_index in sorted(batch_indexes, reverse=True):
+                    del items[row_index]
+                for offset, edited_line in enumerate(edited_lines):
+                    items.insert(insert_at + offset, self._wrap_assembly_item(edited_line))
+                render_items()
+                if edited_lines:
+                    items_table.selectRow(insert_at)
+                return
+            else:
+                payload = self._open_assembly_item_editor(self._assembly_item_kind_from_line(current), current, parent=dialog)
             if payload is None:
                 return
             items[index] = payload
@@ -24125,7 +24306,7 @@ class QuotesPage(QWidget):
 
         self._render_quote_lines()
         if selected_indexes:
-            self.lines_table.selectRow(selected_indexes[0])
+            self._select_quote_line_source_index(selected_indexes[0])
         QMessageBox.information(
             self,
             "Conjuntos",
@@ -24191,6 +24372,172 @@ class QuotesPage(QWidget):
     def _configure_operation_profiles(self) -> None:
         _open_operation_cost_profiles_dialog(self, self.backend)
 
+    def _resolve_laser_edit_source(self, row: dict) -> dict:
+        source = dict(row or {})
+        drawing = str(source.get("desenho", "") or "").strip()
+        if Path(drawing).suffix.casefold() in {".dxf", ".dwg"}:
+            return source
+        finder = getattr(self.backend, "_conjunto_find_quote_source", None)
+        if not callable(finder):
+            return source
+        try:
+            quote_line, quote_number = finder(source, str(source.get("conjunto_codigo", "") or "").strip())
+        except Exception:
+            return source
+        if not isinstance(quote_line, dict):
+            return source
+        resolved = dict(source)
+        for key, value in dict(quote_line or {}).items():
+            if key not in resolved or resolved.get(key) in (None, "", [], {}):
+                resolved[key] = value
+        if quote_number and not str(resolved.get("source_quote_number", "") or "").strip():
+            resolved["source_quote_number"] = str(quote_number).strip()
+        return resolved
+
+    def _quote_line_is_laser_2d(self, row: dict | None) -> bool:
+        line = dict(row or {})
+        if not self.backend.desktop_main.orc_line_is_piece(line):
+            return False
+        operation = str(line.get("operacao", "") or "").casefold()
+        has_laser = bool(line.get("laser_base_active", False) or "laser" in operation)
+        if not has_laser:
+            return False
+        if str(line.get("laser_source_mode", "") or "").strip().casefold() == "batch":
+            return True
+        if str(line.get("laser_batch_id", "") or "").strip():
+            return True
+        drawing = str(line.get("desenho", "") or "").strip()
+        suffix = Path(drawing).suffix.casefold()
+        return suffix in {".dxf", ".dwg"}
+
+    def _edit_laser_batch_lines(
+        self,
+        rows: list[dict],
+        *,
+        parent: QWidget | None = None,
+    ) -> list[dict] | None:
+        source_lines = [self._resolve_laser_edit_source(dict(row or {})) for row in rows if isinstance(row, dict)]
+        if not source_lines:
+            return None
+        batch_dialog = LaserBatchQuoteDialog(
+            self.backend,
+            parent if isinstance(parent, QWidget) else self,
+            default_machine=(
+                str(source_lines[0].get("laser_machine", source_lines[0].get("machine", "")) or "").strip()
+                or self.workcenter_combo.currentText().strip()
+            ),
+            initial_lines=source_lines,
+        )
+        if batch_dialog.exec() != QDialog.Accepted:
+            return None
+        result = dict(batch_dialog.result_payload() or {})
+        edited = [dict(row or {}) for row in list(result.get("lines", []) or []) if isinstance(row, dict) and row]
+        if not edited:
+            return None
+
+        def identity(line: dict) -> tuple[str, str]:
+            return (
+                str(line.get("desenho", "") or "").strip().replace("\\", "/").casefold(),
+                str(line.get("ref_externa", "") or "").strip().casefold(),
+            )
+
+        by_identity = {identity(source): source for source in source_lines}
+        batch_id = str(batch_dialog.batch_id or "").strip()
+        merged_lines: list[dict] = []
+        preserved_keys = (
+            "conjunto_codigo",
+            "conjunto_nome",
+            "conjunto_param_codigo",
+            "grupo_uuid",
+            "ficha_tecnica",
+            "source_quote_number",
+            "source_ref_externa",
+            "pricing_source",
+            "pricing_source_ref",
+        )
+        for line in edited:
+            source = by_identity.get(identity(line), {})
+            merged = {**source, **line}
+            for key in preserved_keys:
+                if key not in line and key in source:
+                    merged[key] = source[key]
+            merged["laser_source_mode"] = "batch"
+            merged["laser_batch_id"] = batch_id
+            merged_lines.append(merged)
+        return merged_lines
+
+    def _edit_laser_2d_line(self, row: dict, *, parent: QWidget | None = None) -> dict | None:
+        source = self._resolve_laser_edit_source(dict(row or {}))
+        dialog = LaserQuoteDialog(
+            self.backend,
+            parent if isinstance(parent, QWidget) else self,
+            default_machine=(
+                str(source.get("laser_machine", source.get("machine", "")) or "").strip()
+                or self.workcenter_combo.currentText().strip()
+            ),
+            initial_line=source,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        result = dict(dialog.result_payload() or {})
+        laser_line = dict(result.get("line", {}) or {})
+        if not laser_line:
+            return None
+
+        merged = {**source, **laser_line}
+        try:
+            source_operations = list(
+                self.backend.quote_parse_operacoes_lista(
+                    source.get("operacoes_lista", source.get("operacao", ""))
+                )
+                or []
+            )
+            laser_operations = list(
+                self.backend.quote_parse_operacoes_lista(laser_line.get("operacao", "Corte Laser"))
+                or []
+            )
+        except Exception:
+            source_operations = [part.strip() for part in str(source.get("operacao", "") or "").split("+") if part.strip()]
+            laser_operations = [part.strip() for part in str(laser_line.get("operacao", "Corte Laser") or "").split("+") if part.strip()]
+
+        def is_laser_component(name: object) -> bool:
+            normalized = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode().casefold()
+            return any(token in normalized for token in ("laser", "marcacao", "defilm"))
+
+        extra_operations = [name for name in source_operations if not is_laser_component(name)]
+        combined_operations: list[str] = []
+        for name in [*laser_operations, *extra_operations]:
+            clean = str(name or "").strip()
+            if clean and clean.casefold() not in {item.casefold() for item in combined_operations}:
+                combined_operations.append(clean)
+
+        extra_times = {
+            str(key): float(value or 0)
+            for key, value in dict(source.get("tempos_operacao", {}) or {}).items()
+            if not is_laser_component(key)
+        }
+        extra_costs = {
+            str(key): float(value or 0)
+            for key, value in dict(source.get("custos_operacao", {}) or {}).items()
+            if not is_laser_component(key)
+        }
+        laser_time = float(laser_line.get("tempo_peca_min", 0) or 0)
+        laser_price = float(laser_line.get("preco_unit", 0) or 0)
+        merged["operacao"] = " + ".join(combined_operations or ["Corte Laser"])
+        merged["operacoes_lista"] = combined_operations or ["Corte Laser"]
+        merged["tempo_peca_min"] = round(laser_time + sum(extra_times.values()), 4)
+        merged["preco_unit"] = round(laser_price + sum(extra_costs.values()), 4)
+        merged["total"] = round(float(merged.get("qtd", 0) or 0) * float(merged["preco_unit"]), 2)
+        merged["laser_base_active"] = True
+        merged["laser_base_tempo_unit"] = round(laser_time, 4)
+        merged["laser_base_preco_unit"] = round(laser_price, 4)
+        merged["tempos_operacao"] = extra_times
+        merged["custos_operacao"] = extra_costs
+        for key in ("desenho_pdf", "desenhos_pdf", "ficheiros", "conjunto_codigo", "conjunto_nome", "grupo_uuid"):
+            if key not in laser_line and key in source:
+                merged[key] = source[key]
+        return merged
+
     def _add_laser_line(self) -> None:
         dialog = LaserQuoteDialog(
             self.backend,
@@ -24235,13 +24582,7 @@ class QuotesPage(QWidget):
         self._render_quote_lines()
 
     def _open_laser_nesting(self) -> None:
-        selected_indexes = sorted(
-            {
-                item.row()
-                for item in self.lines_table.selectedItems()
-                if item is not None and 0 <= item.row() < len(self.line_rows)
-            }
-        )
+        selected_indexes = self._selected_line_indexes()
         candidate_rows = [dict(self.line_rows[index] or {}) for index in selected_indexes] if selected_indexes else [dict(row or {}) for row in self.line_rows]
         laser_rows = [
             row
@@ -25111,12 +25452,39 @@ class QuotesPage(QWidget):
             QMessageBox.warning(self, "Orçamentos", "Seleciona uma linha.")
             return
         try:
-            payload = self._line_dialog(self.line_rows[index])
+            current = dict(self.line_rows[index] or {})
+            batch_id = str(current.get("laser_batch_id", "") or "").strip()
+            is_saved_batch = (
+                str(current.get("laser_source_mode", "") or "").strip().casefold() == "batch"
+                or bool(batch_id)
+            )
+            if self._quote_line_is_laser_2d(current) and is_saved_batch:
+                batch_indexes = [
+                    row_index
+                    for row_index, line in enumerate(self.line_rows)
+                    if batch_id
+                    and str(dict(line or {}).get("laser_batch_id", "") or "").strip() == batch_id
+                ] or [index]
+                edited_lines = self._edit_laser_batch_lines(
+                    [dict(self.line_rows[row_index] or {}) for row_index in batch_indexes]
+                )
+                if edited_lines is None:
+                    return
+                insert_at = min(batch_indexes)
+                for row_index in sorted(batch_indexes, reverse=True):
+                    del self.line_rows[row_index]
+                for offset, edited_line in enumerate(edited_lines):
+                    self.line_rows.insert(insert_at + offset, edited_line)
+                self._render_quote_lines()
+                if edited_lines:
+                    self._select_quote_line_source_index(insert_at)
+                return
+            payload = self._edit_laser_2d_line(current) if self._quote_line_is_laser_2d(current) else self._line_dialog(current)
             if payload is None:
                 return
             self.line_rows[index] = payload
             self._render_quote_lines()
-            self.lines_table.selectRow(index)
+            self._select_quote_line_source_index(index)
         except Exception as exc:
             QMessageBox.critical(self, "Orçamentos", str(exc))
 
@@ -25138,7 +25506,7 @@ class QuotesPage(QWidget):
             return
         self.line_rows[index] = payload
         self._render_quote_lines()
-        self.lines_table.selectRow(index)
+        self._select_quote_line_source_index(index)
         drawing_ready = bool(str(payload.get("desenho", "") or "").strip())
         ops_ready = bool(str(payload.get("operacao", "") or "").strip())
         if drawing_ready and ops_ready:
@@ -25155,12 +25523,45 @@ class QuotesPage(QWidget):
             )
 
     def _remove_line(self) -> None:
-        index = self._selected_line_index()
-        if index < 0:
-            QMessageBox.warning(self, "Orçamentos", "Seleciona uma linha.")
+        indexes = self._checked_line_indexes() or self._selected_line_indexes()
+        if not indexes:
+            QMessageBox.warning(self, "Orçamentos", "Marca ou seleciona pelo menos uma linha.")
             return
-        del self.line_rows[index]
+        references = [
+            self._quote_line_primary_ref(dict(self.line_rows[index] or {}))
+            for index in indexes
+            if 0 <= index < len(self.line_rows)
+        ]
+        count = len(indexes)
+        detail = ", ".join(reference for reference in references[:3] if reference and reference != "-")
+        if len(references) > 3:
+            detail += f" e mais {len(references) - 3}"
+        answer = QMessageBox.question(
+            self,
+            "Remover linhas do orçamento",
+            (
+                f"Remover {count} linha{'s' if count != 1 else ''} do orçamento atual?"
+                + (f"\n\n{detail}" if detail else "")
+                + "\n\nEsta alteração só fica definitiva quando guardares o orçamento."
+            ),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._rendering_quote_lines = True
+        for visual_row in range(self.lines_table.rowCount()):
+            item = self.lines_table.item(visual_row, self.LINE_COL_MARK)
+            if item is not None and item.flags() & Qt.ItemIsUserCheckable:
+                item.setCheckState(Qt.Unchecked)
+        self._rendering_quote_lines = False
+        next_source_index = min(indexes)
+        for index in sorted(indexes, reverse=True):
+            if 0 <= index < len(self.line_rows):
+                del self.line_rows[index]
         self._render_quote_lines()
+        if self.line_rows:
+            self._select_quote_line_source_index(min(next_source_index, len(self.line_rows) - 1))
 
     def _open_line_drawing(self) -> None:
         index = self._selected_line_index()

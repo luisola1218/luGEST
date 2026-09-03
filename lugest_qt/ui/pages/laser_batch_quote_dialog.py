@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -39,6 +40,10 @@ from .laser_quote_dialogs import (
     _spin,
 )
 
+_UI_ASSET_DIR = Path(__file__).resolve().parents[3] / "assets" / "ui"
+_SPIN_ARROW_UP = (_UI_ASSET_DIR / "spin-chevron-up.svg").as_posix()
+_SPIN_ARROW_DOWN = (_UI_ASSET_DIR / "spin-chevron-down.svg").as_posix()
+
 
 class LaserBatchQuoteDialog(QDialog):
     COL_FILE = 0
@@ -56,18 +61,40 @@ class LaserBatchQuoteDialog(QDialog):
     COL_UNIT_PRICE = 12
     COL_TOTAL = 13
 
-    def __init__(self, backend, parent=None, *, default_machine: str = "") -> None:
+    def __init__(
+        self,
+        backend,
+        parent=None,
+        *,
+        default_machine: str = "",
+        initial_lines: list[dict[str, Any]] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowFlags(self.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
         self.setSizeGripEnabled(True)
         self.backend = backend
         self.settings = dict(self.backend.laser_quote_settings() or {})
+        initial_rows = [dict(row or {}) for row in list(initial_lines or []) if isinstance(row, dict)]
+        self.batch_id = next(
+            (
+                str(row.get("laser_batch_id", "") or "").strip()
+                for row in initial_rows
+                if str(row.get("laser_batch_id", "") or "").strip()
+            ),
+            "",
+        )
+        if not self.batch_id:
+            try:
+                self.batch_id = self.backend.desktop_main.uuid.uuid4().hex[:12].upper()
+            except Exception:
+                self.batch_id = str(id(self))
         self.line_payloads: list[dict[str, Any]] = []
         self.summary: dict[str, Any] = {}
         self.pdf_matches: dict[str, list[str]] = {}
-        self.setWindowTitle("Lote DXF/DWG")
+        self.setWindowTitle("Editar lote DXF/DWG" if initial_lines else "Lote DXF/DWG")
         self.resize(1340, 860)
-        self.setMinimumWidth(1240)
+        self.setMinimumSize(1180, 720)
+        self._initial_maximize_scheduled = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -95,41 +122,53 @@ class LaserBatchQuoteDialog(QDialog):
         self.thickness_combo.setToolTip(
             "Lista apenas espessuras configuradas para o subtipo e para a tabela de corte selecionada."
         )
-        self.marking_check = QCheckBox("Contar linhas de marcacao/quinagem")
+        self.marking_check = QCheckBox("Contar linhas de marcação/quinagem")
         self.marking_check.setToolTip(
             "As linhas cinzentas ou tracejadas nunca sao tratadas como corte nem como furo. "
             "Ativa apenas se o laser tiver de executar fisicamente essa marcacao."
         )
         self.defilm_check = QCheckBox("Contar defilm")
-        self.customer_material_check = QCheckBox("Material do cliente (sem materia-prima)")
-        self.customer_material_check.setToolTip("Mantem corte/tempo/processo, mas retira o custo de materia-prima do lote orcamentado.")
+        self.customer_material_check = QCheckBox("Material do cliente (sem matéria-prima)")
+        self.customer_material_check.setToolTip("Mantém corte/tempo/processo, mas retira o custo de matéria-prima do lote orçamentado.")
         config_btn = QPushButton("Configurar perfis e tabelas")
         config_btn.setProperty("variant", "secondary")
-        config_btn.setToolTip("Abre a configuracao mantendo a maquina, perfil, material, subtipo e gas atuais.")
+        config_btn.setToolTip("Abre a configuração mantendo a máquina, perfil, material, subtipo e gás atuais.")
         config_btn.clicked.connect(self._configure_profiles)
-        top_layout.addWidget(QLabel("Maquina"), 0, 0)
-        top_layout.addWidget(QLabel("Perfil comercial"), 0, 1)
-        top_layout.addWidget(QLabel("Material"), 0, 2)
-        top_layout.addWidget(QLabel("Subtipo"), 0, 3)
-        top_layout.addWidget(QLabel("Gas"), 0, 4)
-        top_layout.addWidget(self.machine_combo, 1, 0)
-        top_layout.addWidget(self.commercial_combo, 1, 1)
-        top_layout.addWidget(self.material_combo, 1, 2)
-        top_layout.addWidget(self.subtype_combo, 1, 3)
-        top_layout.addWidget(self.gas_combo, 1, 4)
-        top_layout.addWidget(QLabel("Espessura (mm)"), 2, 0)
-        top_layout.addWidget(self.marking_check, 2, 2)
-        top_layout.addWidget(self.defilm_check, 2, 3)
-        top_layout.addWidget(self.customer_material_check, 2, 4)
-        top_layout.addWidget(self.thickness_combo, 3, 0)
-        top_layout.addWidget(config_btn, 3, 2, 1, 2)
+        laser_config_title = QLabel("Configuração do corte laser")
+        laser_config_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        top_layout.addWidget(laser_config_title, 0, 0, 1, 4)
+        top_layout.addWidget(config_btn, 0, 4, 1, 1)
+        top_layout.addWidget(QLabel("Máquina"), 1, 0)
+        top_layout.addWidget(QLabel("Perfil comercial"), 1, 1)
+        top_layout.addWidget(QLabel("Material"), 1, 2)
+        top_layout.addWidget(QLabel("Subtipo"), 1, 3)
+        top_layout.addWidget(QLabel("Gás"), 1, 4)
+        top_layout.addWidget(self.machine_combo, 2, 0)
+        top_layout.addWidget(self.commercial_combo, 2, 1)
+        top_layout.addWidget(self.material_combo, 2, 2)
+        top_layout.addWidget(self.subtype_combo, 2, 3)
+        top_layout.addWidget(self.gas_combo, 2, 4)
+        top_layout.addWidget(QLabel("Espessura (mm)"), 3, 0)
+        options_label = QLabel("Opções de cálculo")
+        options_label.setProperty("role", "muted")
+        top_layout.addWidget(options_label, 3, 1, 1, 4)
+        top_layout.addWidget(self.thickness_combo, 4, 0)
+        options_host = QWidget()
+        options_layout = QHBoxLayout(options_host)
+        options_layout.setContentsMargins(0, 0, 0, 0)
+        options_layout.setSpacing(22)
+        options_layout.addWidget(self.marking_check)
+        options_layout.addWidget(self.defilm_check)
+        options_layout.addWidget(self.customer_material_check)
+        options_layout.addStretch(1)
+        top_layout.addWidget(options_host, 4, 1, 1, 4)
         self.thickness_source_label = QLabel("Seleciona material, subtipo e gas para listar as espessuras.")
         self.thickness_source_label.setProperty("role", "muted")
         click_help = QLabel("Dica: clica em qualquer zona da caixa para abrir a lista.")
         click_help.setProperty("role", "muted")
         click_help.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        top_layout.addWidget(self.thickness_source_label, 4, 0, 1, 2)
-        top_layout.addWidget(click_help, 4, 2, 1, 3)
+        top_layout.addWidget(self.thickness_source_label, 5, 0, 1, 2)
+        top_layout.addWidget(click_help, 5, 2, 1, 3)
         root.addWidget(top_card)
 
         batch_card = CardFrame()
@@ -137,9 +176,9 @@ class LaserBatchQuoteDialog(QDialog):
         batch_layout.setContentsMargins(12, 10, 12, 10)
         batch_layout.setSpacing(8)
         batch_header = QHBoxLayout()
-        batch_title = QLabel("Pecas do lote")
+        batch_title = QLabel("Peças do lote")
         batch_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
-        self.batch_info_label = QLabel("Seleciona varios DXF/DWG da mesma espessura e preenche as quantidades.")
+        self.batch_info_label = QLabel("Seleciona vários DXF/DWG da mesma espessura e preenche as quantidades.")
         self.batch_info_label.setProperty("role", "muted")
         batch_header.addWidget(batch_title)
         batch_header.addStretch(1)
@@ -149,27 +188,44 @@ class LaserBatchQuoteDialog(QDialog):
         self.batch_table.setHorizontalHeaderLabels(
             [
                 "Ficheiro",
-                "Descricao",
+                "Descrição",
                 "Ref. externa",
                 "Qtd",
                 "Atravancamento",
-                "Area liquida",
-                "Peso liq.",
+                "Área líquida",
+                "Peso líq.",
                 "Geometria",
-                "Operacoes",
+                "Operações",
                 "Tempo ops",
-                "Preco ops",
+                "Preço ops",
                 "Tempo",
-                "Preco unit.",
+                "Preço unit.",
                 "Total",
             ]
         )
         self.batch_table.setStyleSheet(
             "QTableWidget { font-size: 11px; }"
             "QHeaderView::section { font-size: 11px; padding: 6px 6px; }"
-            "QPushButton { font-size: 9px; padding: 3px 5px; min-height: 24px; }"
+            "QSpinBox#BatchQuantityEditor { color: #0f172a; background: #ffffff; border: 1px solid #aebba5; "
+            "border-radius: 5px; font-size: 12px; font-weight: 700; margin: 5px 6px; padding: 0 24px 0 7px; "
+            "selection-background-color: #dbeafe; selection-color: #0f172a; }"
+            "QSpinBox#BatchQuantityEditor:focus { border: 2px solid #82b94b; }"
+            "QSpinBox#BatchQuantityEditor::up-button { subcontrol-origin: border; subcontrol-position: top right; "
+            "width: 22px; background: #eef5e8; border-left: 1px solid #c7d5bd; border-bottom: 1px solid #d5dfce; "
+            "border-top-right-radius: 4px; }"
+            "QSpinBox#BatchQuantityEditor::down-button { subcontrol-origin: border; subcontrol-position: bottom right; "
+            "width: 22px; background: #eef5e8; border-left: 1px solid #c7d5bd; border-top: 1px solid #d5dfce; "
+            "border-bottom-right-radius: 4px; }"
+            "QSpinBox#BatchQuantityEditor::up-button:hover, QSpinBox#BatchQuantityEditor::down-button:hover { background: #dfeeda; }"
+            f"QSpinBox#BatchQuantityEditor::up-arrow {{ image: url(\"{_SPIN_ARROW_UP}\"); width: 10px; height: 6px; }}"
+            f"QSpinBox#BatchQuantityEditor::down-arrow {{ image: url(\"{_SPIN_ARROW_DOWN}\"); width: 10px; height: 6px; }}"
+            "QPushButton#BatchOperationButton { color: #314527; background: #f5faef; border: 1px solid #c5d9b4; "
+            "border-radius: 5px; font-size: 10px; font-weight: 600; margin: 5px 6px; padding: 0 8px; }"
+            "QPushButton#BatchOperationButton:hover { background: #edf7e5; border-color: #a8c78e; }"
         )
         self.batch_table.verticalHeader().setVisible(False)
+        self.batch_table.verticalHeader().setDefaultSectionSize(46)
+        self.batch_table.verticalHeader().setMinimumSectionSize(46)
         self.batch_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.batch_table.setEditTriggers(
             QAbstractItemView.DoubleClicked
@@ -182,12 +238,12 @@ class LaserBatchQuoteDialog(QDialog):
         batch_header_view.setSectionResizeMode(self.COL_DESCRIPTION, QHeaderView.Stretch)
         batch_header_view.setSectionResizeMode(self.COL_REFERENCE, QHeaderView.Stretch)
         for col_index, width in (
-            (self.COL_QUANTITY, 46),
+            (self.COL_QUANTITY, 106),
             (self.COL_BBOX, 118),
             (self.COL_AREA, 82),
             (self.COL_WEIGHT, 76),
-            (self.COL_GEOMETRY_STATUS, 78),
-            (self.COL_OPERATIONS, 174),
+            (self.COL_GEOMETRY_STATUS, 96),
+            (self.COL_OPERATIONS, 184),
             (self.COL_OPERATIONS_TIME, 78),
             (self.COL_OPERATIONS_PRICE, 82),
             (self.COL_TIME, 74),
@@ -203,7 +259,8 @@ class LaserBatchQuoteDialog(QDialog):
         self.add_pdfs_btn.setProperty("variant", "secondary")
         self.add_pdfs_btn.setToolTip("Associa PDFs aos desenhos CAD quando o nome do PDF coincide com o nome do DXF/DWG.")
         self.remove_files_btn = QPushButton("Remover selecionada")
-        self.remove_files_btn.setProperty("variant", "secondary")
+        self.remove_files_btn.setProperty("variant", "danger")
+        self.remove_files_btn.setToolTip("Remove do lote as linhas selecionadas na tabela.")
         self.clear_files_btn = QPushButton("Limpar lote")
         self.clear_files_btn.setProperty("variant", "danger")
         batch_actions.addWidget(self.add_files_btn)
@@ -219,6 +276,7 @@ class LaserBatchQuoteDialog(QDialog):
         root.addLayout(bottom)
 
         summary_card = CardFrame()
+        summary_card.setMaximumHeight(205)
         summary_layout = QGridLayout(summary_card)
         summary_layout.setContentsMargins(12, 10, 12, 10)
         summary_layout.setHorizontalSpacing(10)
@@ -227,11 +285,11 @@ class LaserBatchQuoteDialog(QDialog):
         for row_index, (key, title) in enumerate(
             (
                 ("files", "Ficheiros"),
-                ("pieces", "Pecas"),
-                ("weight", "Peso liquido"),
+                ("pieces", "Peças"),
+                ("weight", "Peso líquido"),
                 ("time", "Tempo total"),
-                ("unit", "Preco medio"),
-                ("total", "Preco total"),
+                ("unit", "Preço médio"),
+                ("total", "Preço total"),
             )
         ):
             label_title = QLabel(title)
@@ -244,10 +302,11 @@ class LaserBatchQuoteDialog(QDialog):
         bottom.addWidget(summary_card, 2)
 
         warning_card = CardFrame()
+        warning_card.setMaximumHeight(205)
         warning_layout = QVBoxLayout(warning_card)
         warning_layout.setContentsMargins(12, 10, 12, 10)
         warning_layout.setSpacing(6)
-        warning_title = QLabel("Alertas e observacoes")
+        warning_title = QLabel("Alertas e observações")
         warning_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
         self.warning_edit = QTextEdit()
         self.warning_edit.setReadOnly(True)
@@ -257,7 +316,7 @@ class LaserBatchQuoteDialog(QDialog):
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
-        self.analyze_btn = QPushButton("Orcamentar lote")
+        self.analyze_btn = QPushButton("Orçamentar lote")
         self.analyze_btn.clicked.connect(self._analyze)
         actions.addWidget(self.analyze_btn)
         actions.addStretch(1)
@@ -291,7 +350,16 @@ class LaserBatchQuoteDialog(QDialog):
         self.defilm_check.toggled.connect(lambda _checked: self._invalidate_analysis())
         self.customer_material_check.toggled.connect(lambda _checked: self._invalidate_analysis())
         self._refresh_materials()
+        if initial_rows:
+            self._apply_initial_lines(initial_rows)
         self._sync_buttons()
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        if self._initial_maximize_scheduled:
+            return
+        self._initial_maximize_scheduled = True
+        QTimer.singleShot(0, self.showMaximized)
 
     @staticmethod
     def _replace_combo_options(
@@ -481,7 +549,7 @@ class LaserBatchQuoteDialog(QDialog):
         self.thickness_combo.blockSignals(False)
         if values:
             self.thickness_source_label.setText(
-                f"{len(values)} espessura(s) disponivel(eis) na configuracao deste subtipo."
+                f"{len(values)} espessura(s) disponível(eis) na configuração deste subtipo."
             )
         else:
             self.thickness_source_label.setText(
@@ -493,6 +561,208 @@ class LaserBatchQuoteDialog(QDialog):
             return max(0.0, float(self.thickness_combo.currentData() or 0.0))
         except Exception:
             return 0.0
+
+    @staticmethod
+    def _initial_number(value: object, fallback: float = 0.0) -> float:
+        try:
+            return float(str(value if value not in (None, "") else fallback).replace(" ", "").replace(",", "."))
+        except (TypeError, ValueError):
+            return float(fallback)
+
+    @staticmethod
+    def _select_combo_text(combo: QComboBox, value: object) -> bool:
+        wanted = str(value or "").strip()
+        if not wanted:
+            return False
+        index = combo.findText(wanted, Qt.MatchFixedString)
+        if index < 0:
+            folded = wanted.casefold()
+            index = next(
+                (row for row in range(combo.count()) if combo.itemText(row).strip().casefold() == folded),
+                -1,
+            )
+        if index < 0:
+            return False
+        combo.setCurrentIndex(index)
+        return True
+
+    @staticmethod
+    def _is_laser_base_operation(value: object) -> bool:
+        normalized = str(value or "").strip().casefold()
+        return any(token in normalized for token in ("laser", "marca", "defilm"))
+
+    def _apply_initial_lines(self, lines: list[dict[str, Any]]) -> None:
+        rows = [dict(row or {}) for row in lines if isinstance(row, dict) and dict(row or {})]
+        if not rows:
+            return
+        first = rows[0]
+        snapshot = dict(first.get("laser_snapshot", {}) or {})
+        snapshot_machine = dict(snapshot.get("machine", {}) or {})
+        snapshot_commercial = dict(snapshot.get("commercial", {}) or {})
+        snapshot_material = dict(snapshot.get("material", {}) or {})
+        snapshot_cutting = dict(snapshot.get("cutting", {}) or {})
+
+        machine = str(
+            first.get("laser_machine", "")
+            or first.get("machine", "")
+            or snapshot_machine.get("name", "")
+        ).strip()
+        if self._select_combo_text(self.machine_combo, machine):
+            self._refresh_materials(reset_selection=True)
+        commercial = str(
+            first.get("commercial_profile", "")
+            or first.get("commercial", "")
+            or snapshot_commercial.get("name", "")
+        ).strip()
+        self._select_combo_text(self.commercial_combo, commercial)
+
+        material_family = str(
+            first.get("material_family", "")
+            or snapshot_material.get("family", "")
+            or _guess_material_family(str(first.get("material", "") or ""))
+        ).strip()
+        display_family = _display_material_family(material_family) or material_family
+        self._select_combo_text(self.material_combo, display_family)
+        self._refresh_subtypes(reset_selection=True)
+
+        subtype = str(
+            first.get("material_subtype", "")
+            or snapshot_material.get("subtype", "")
+            or first.get("material", "")
+        ).strip()
+        self._select_combo_text(self.subtype_combo, subtype)
+        self._refresh_gases(reset_selection=True)
+        gas = str(first.get("gas", "") or snapshot_cutting.get("gas", "")).strip()
+        gas_selected = self._select_combo_text(self.gas_combo, gas)
+        if not gas_selected and self.gas_combo.count() > 0:
+            self.gas_combo.setCurrentIndex(0)
+        self._refresh_thicknesses(reset_selection=True)
+
+        thickness = self._initial_number(
+            first.get("espessura", snapshot_cutting.get("thickness_mm", 0)),
+            0.0,
+        )
+        for index in range(self.thickness_combo.count()):
+            if abs(float(self.thickness_combo.itemData(index) or 0.0) - thickness) <= 1e-6:
+                self.thickness_combo.setCurrentIndex(index)
+                break
+        if self.thickness_combo.currentIndex() < 0 and self.thickness_combo.count() == 1:
+            self.thickness_combo.setCurrentIndex(0)
+
+        operation_text = " + ".join(str(row.get("operacao", "") or "") for row in rows).casefold()
+        self.marking_check.setChecked("marca" in operation_text or "quinagem" in operation_text)
+        self.defilm_check.setChecked("defilm" in operation_text)
+        self.customer_material_check.setChecked(
+            any(
+                bool(row.get("material_supplied_by_client", False) or row.get("material_fornecido_cliente", False))
+                for row in rows
+            )
+        )
+
+        previous_signal_state = self.batch_table.blockSignals(True)
+        updates_were_enabled = self.batch_table.updatesEnabled()
+        self.batch_table.setUpdatesEnabled(False)
+        for line in rows:
+            self._append_initial_line(line)
+        self.batch_table.blockSignals(previous_signal_state)
+        self.batch_table.setUpdatesEnabled(updates_were_enabled)
+        self.line_payloads = []
+        self.summary = {}
+        self._clear_summary()
+
+    def _append_initial_line(self, line: dict[str, Any]) -> None:
+        path = str(line.get("desenho", "") or "").strip()
+        file_name, suggested_description, suggested_ref = self._suggest_from_path(path)
+        description = str(line.get("descricao", "") or suggested_description).strip()
+        reference = str(line.get("ref_externa", "") or suggested_ref).strip()
+        if not file_name:
+            file_name = reference or description or "Desenho DXF/DWG"
+
+        row_index = self.batch_table.rowCount()
+        self.batch_table.insertRow(row_index)
+        file_item = self._make_item(file_name, editable=False)
+        file_item.setData(Qt.UserRole, path)
+        file_item.setToolTip(path or "Caminho do desenho não disponível no registo.")
+        self.batch_table.setItem(row_index, self.COL_FILE, file_item)
+        self.batch_table.setItem(row_index, self.COL_DESCRIPTION, self._make_item(description))
+        self.batch_table.setItem(row_index, self.COL_REFERENCE, self._make_item(reference))
+        quantity_spin = self._make_quantity_spin(max(1, int(round(self._initial_number(line.get("qtd", 1), 1)))))
+        self.batch_table.setCellWidget(
+            row_index,
+            self.COL_QUANTITY,
+            quantity_spin,
+        )
+        self._set_result_cell(
+            row_index,
+            self.COL_BBOX,
+            (
+                f"{_fmt_num(self._initial_number(line.get('largura_mm', 0)), 1)} x "
+                f"{_fmt_num(self._initial_number(line.get('altura_mm', 0)), 1)}"
+                if self._initial_number(line.get("largura_mm", 0)) > 0
+                and self._initial_number(line.get("altura_mm", 0)) > 0
+                else "-"
+            ),
+        )
+        area = self._initial_number(line.get("net_area_m2", line.get("area_m2", 0)))
+        weight = self._initial_number(line.get("net_mass_kg", line.get("peso_unid", 0)))
+        self._set_result_cell(row_index, self.COL_AREA, f"{_fmt_num(area, 4)} m2" if area > 0 else "-")
+        self._set_result_cell(row_index, self.COL_WEIGHT, f"{_fmt_num(weight, 3)} kg" if weight > 0 else "-")
+        self._set_result_cell(row_index, self.COL_GEOMETRY_STATUS, "CARREGADA" if path else "SEM FICHEIRO")
+
+        operations_button = QPushButton("Corte Laser")
+        operations_button.setObjectName("BatchOperationButton")
+        operations_button.setProperty("variant", "secondary")
+        operations_button.clicked.connect(self._edit_sender_operations)
+        self.batch_table.setCellWidget(
+            row_index,
+            self.COL_OPERATIONS,
+            operations_button,
+        )
+        extra_details = [
+            dict(detail or {})
+            for detail in list(line.get("operacoes_detalhe", []) or [])
+            if isinstance(detail, dict)
+            and not self._is_laser_base_operation(detail.get("nome", ""))
+        ]
+        extra_names = {
+            str(detail.get("nome", "") or "").strip()
+            for detail in extra_details
+            if str(detail.get("nome", "") or "").strip()
+        }
+        times = {
+            str(key): self._initial_number(value)
+            for key, value in dict(line.get("tempos_operacao", {}) or {}).items()
+            if str(key or "").strip() in extra_names
+        }
+        costs = {
+            str(key): self._initial_number(value)
+            for key, value in dict(line.get("custos_operacao", {}) or {}).items()
+            if str(key or "").strip() in extra_names
+        }
+        self._set_row_operation_meta(
+            row_index,
+            {
+                "operacoes_detalhe": extra_details,
+                "tempos_operacao": times,
+                "custos_operacao": costs,
+                "tempo_ops_unit": round(sum(times.values()), 4),
+                "preco_ops_unit": round(sum(costs.values()), 4),
+                "quote_cost_snapshot": dict(line.get("quote_cost_snapshot", {}) or {}),
+            },
+        )
+        quantity = self._row_quantity(row_index)
+        unit_time = self._initial_number(line.get("tempo_peca_min", 0))
+        unit_price = self._initial_number(line.get("preco_unit", 0))
+        self._set_result_cell(row_index, self.COL_TIME, f"{_fmt_num(unit_time * quantity, 2)} min" if unit_time > 0 else "-")
+        self._set_result_cell(row_index, self.COL_UNIT_PRICE, _fmt_eur(unit_price) if unit_price > 0 else "-")
+        self._set_result_cell(row_index, self.COL_TOTAL, _fmt_eur(unit_price * quantity) if unit_price > 0 else "-")
+        pdfs = [str(value or "").strip() for value in list(line.get("desenhos_pdf", []) or []) if str(value or "").strip()]
+        primary_pdf = str(line.get("desenho_pdf", "") or "").strip()
+        if primary_pdf and primary_pdf not in pdfs:
+            pdfs.insert(0, primary_pdf)
+        if path and pdfs:
+            self.pdf_matches[path] = pdfs
+            self._refresh_row_file_tooltip(row_index)
 
     def _configure_profiles(self) -> None:
         current_machine = self.machine_combo.currentText().strip()
@@ -536,7 +806,10 @@ class LaserBatchQuoteDialog(QDialog):
     def _edit_sender_operations(self) -> None:
         sender = self.sender()
         for row_index in range(self.batch_table.rowCount()):
-            if self.batch_table.cellWidget(row_index, self.COL_OPERATIONS) is sender:
+            cell_widget = self.batch_table.cellWidget(row_index, self.COL_OPERATIONS)
+            if cell_widget is sender or (
+                cell_widget is not None and cell_widget.findChild(QPushButton, "BatchOperationButton") is sender
+            ):
                 self._edit_row_operations(row_index)
                 return
 
@@ -551,7 +824,12 @@ class LaserBatchQuoteDialog(QDialog):
         ]
         names = ["Corte Laser"] + [name for name in extra_names if name != "Corte Laser"]
         label = " + ".join(names)
-        button = self.batch_table.cellWidget(row_index, self.COL_OPERATIONS)
+        cell_widget = self.batch_table.cellWidget(row_index, self.COL_OPERATIONS)
+        button = (
+            cell_widget
+            if isinstance(cell_widget, QPushButton)
+            else cell_widget.findChild(QPushButton, "BatchOperationButton") if cell_widget is not None else None
+        )
         if isinstance(button, QPushButton):
             button.setText(label if len(label) <= 36 else label[:33] + "...")
             button.setToolTip(label)
@@ -637,22 +915,24 @@ class LaserBatchQuoteDialog(QDialog):
         meta = self._row_operation_meta(row_index)
         selected_map = {str(row.get("nome", "") or "").strip(): dict(row or {}) for row in list(meta.get("operacoes_detalhe", []) or [])}
         dialog = QDialog(self)
-        dialog.setWindowTitle("Operacoes da peca")
-        dialog.resize(1240, 560)
-        dialog.setMinimumSize(1040, 500)
+        dialog.setWindowTitle("Operações adicionais da peça")
+        dialog.resize(1120, 600)
+        dialog.setMinimumSize(960, 520)
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
         info = QLabel(
-            "Define aqui as operacoes extra desta linha. Corte Laser continua a ser calculado pelo DXF; "
-            "estas linhas somam tempo e preco por unidade. Clica no nome ou no tipo de quantidade para ativar a linha."
+            "Seleciona apenas as operações que esta peça precisa depois do corte laser. "
+            "O corte continua a ser calculado automaticamente pelo DXF/DWG."
         )
         info.setWordWrap(True)
         info.setProperty("role", "muted")
         layout.addWidget(info)
 
-        table = QTableWidget(0, 9)
-        table.setHorizontalHeaderLabels(["Usar", "Operacao", "Modo", "Tipo qtd.", "Qtd/peca", "Setup", "Tempo base", "EUR/h", "Fixo/manual"])
+        table = QTableWidget(0, 8)
+        table.setHorizontalHeaderLabels(
+            ["Usar", "Operação", "Cálculo", "Qtd./peça", "Setup (min)", "Tempo/peça", "EUR/h", "Custo fixo"]
+        )
         table.setAlternatingRowColors(True)
         table.verticalHeader().setVisible(False)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -667,17 +947,32 @@ class LaserBatchQuoteDialog(QDialog):
             "  gridline-color: #c9d7e8;"
             "}"
             "QHeaderView::section {"
-            "  min-height: 30px;"
-            "  padding: 5px 7px;"
+            "  min-height: 32px;"
+            "  padding: 6px 7px;"
             "  font-weight: 700;"
             "}"
-            "QComboBox, QDoubleSpinBox { min-height: 28px; }"
+            "QComboBox, QDoubleSpinBox { margin: 5px 4px; padding: 0 6px; border: 1px solid #c4ced8; "
+            "  border-radius: 4px; background: #ffffff; }"
+            "QComboBox:disabled, QDoubleSpinBox:disabled { background: #f3f5f7; color: #8491a1; }"
+            "QDoubleSpinBox { padding-right: 25px; }"
+            "QDoubleSpinBox::up-button { subcontrol-origin: border; subcontrol-position: top right; width: 22px; "
+            "  background: #f0f4ed; border-left: 1px solid #c5d0bd; border-bottom: 1px solid #d8dfd3; "
+            "  border-top-right-radius: 4px; }"
+            "QDoubleSpinBox::down-button { subcontrol-origin: border; subcontrol-position: bottom right; width: 22px; "
+            "  background: #f0f4ed; border-left: 1px solid #c5d0bd; border-top: 1px solid #d8dfd3; "
+            "  border-bottom-right-radius: 4px; }"
+            "QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover { background: #deecd7; }"
+            f"QDoubleSpinBox::up-arrow {{ image: url(\"{_SPIN_ARROW_UP}\"); width: 10px; height: 6px; }}"
+            f"QDoubleSpinBox::down-arrow {{ image: url(\"{_SPIN_ARROW_DOWN}\"); width: 10px; height: 6px; }}"
+            "QCheckBox { margin-left: 16px; }"
         )
+        table.verticalHeader().setDefaultSectionSize(46)
+        table.verticalHeader().setMinimumSectionSize(46)
         header = table.horizontalHeader()
-        for column, width in ((0, 52), (1, 120), (2, 140), (3, 125), (4, 145), (5, 145), (6, 145), (7, 145), (8, 145)):
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        for column, width in ((0, 58), (2, 150), (3, 128), (4, 122), (5, 132), (6, 112), (7, 128)):
             header.setSectionResizeMode(column, QHeaderView.Fixed)
             header.resizeSection(column, width)
-        header.setStretchLastSection(True)
         layout.addWidget(table, 1)
 
         controls: list[dict[str, Any]] = []
@@ -685,17 +980,17 @@ class LaserBatchQuoteDialog(QDialog):
 
         def apply_row_state(row_number: int, enabled: bool) -> None:
             foreground = QColor("#172033" if enabled else "#7b8798")
-            background = QColor("#fff7e8" if enabled else "#ffffff")
-            for column in (1, 3):
+            background = QColor("#f4faee" if enabled else "#ffffff")
+            for column in (1,):
                 item = table.item(row_number, column)
                 if item is not None:
                     item.setForeground(foreground)
                     item.setBackground(background)
-            for column in (2, 4, 5, 6, 7, 8):
+            for column in (2, 3, 4, 5, 6, 7):
                 widget = table.cellWidget(row_number, column)
                 if widget is not None:
                     widget.setEnabled(enabled)
-            table.setRowHeight(row_number, 38)
+            table.setRowHeight(row_number, 46)
 
         for op_name in self._operation_names():
             estimate = dict(
@@ -722,26 +1017,20 @@ class LaserBatchQuoteDialog(QDialog):
                 if str(mode_combo.itemData(idx) or "") == target_mode:
                     mode_combo.setCurrentIndex(idx)
                     break
-            driver_edit = self._make_item(str(current.get("driver_label", op_row.get("driver_label", "Qtd./peca")) or "Qtd./peca"), editable=False)
+            driver_label = str(current.get("driver_label", op_row.get("driver_label", "Qtd./peça")) or "Qtd./peça")
             driver_spin = _spin(4, 0.0, 1000000.0, float(current.get("driver_units", op_row.get("driver_units", 1.0)) or 0.0), 1.0)
             setup_spin = _spin(4, 0.0, 1000000.0, float(current.get("setup_min", op_row.get("setup_min", 0.0)) or 0.0), 0.25)
             time_spin = _spin(4, 0.0, 1000000.0, float(current.get("unit_time_base_min", current.get("tempo_unit_min", op_row.get("unit_time_base_min", 0.0))) or 0.0), 0.05)
             hour_spin = _spin(4, 0.0, 1000000.0, float(current.get("hour_rate_eur", op_row.get("hour_rate_eur", 0.0)) or 0.0), 1.0)
             fixed_spin = _spin(4, 0.0, 1000000.0, float(current.get("fixed_unit_eur", current.get("custo_unit_eur", op_row.get("fixed_unit_eur", 0.0))) or 0.0), 0.1)
-            check_host = QWidget()
-            check_layout = QHBoxLayout(check_host)
-            check_layout.setContentsMargins(0, 0, 0, 0)
-            check_layout.setAlignment(Qt.AlignCenter)
-            check_layout.addWidget(check)
-            table.setCellWidget(row, 0, check_host)
+            table.setCellWidget(row, 0, check)
             table.setItem(row, 1, self._make_item(op_name, editable=False))
             table.setCellWidget(row, 2, mode_combo)
-            table.setItem(row, 3, driver_edit)
-            table.setCellWidget(row, 4, driver_spin)
-            table.setCellWidget(row, 5, setup_spin)
-            table.setCellWidget(row, 6, time_spin)
-            table.setCellWidget(row, 7, hour_spin)
-            table.setCellWidget(row, 8, fixed_spin)
+            table.setCellWidget(row, 3, driver_spin)
+            table.setCellWidget(row, 4, setup_spin)
+            table.setCellWidget(row, 5, time_spin)
+            table.setCellWidget(row, 6, hour_spin)
+            table.setCellWidget(row, 7, fixed_spin)
             check.setToolTip(f"Ativar ou desativar {op_name}")
             check.toggled.connect(
                 lambda checked, row_number=row: (
@@ -754,7 +1043,7 @@ class LaserBatchQuoteDialog(QDialog):
                     "nome": op_name,
                     "check": check,
                     "mode": mode_combo,
-                    "driver_label": driver_edit.text(),
+                    "driver_label": driver_label,
                     "driver_units": driver_spin,
                     "setup": setup_spin,
                     "time": time_spin,
@@ -765,9 +1054,7 @@ class LaserBatchQuoteDialog(QDialog):
             apply_row_state(row, check.isChecked())
 
         def toggle_operation_from_row(row_number: int, column: int) -> None:
-            # Os campos numericos e o seletor de modo continuam dedicados a edicao.
-            # Nas zonas descritivas, um clique em qualquer ponto ativa/desativa a linha.
-            if column not in (1, 3) or row_number < 0 or row_number >= len(controls):
+            if column != 1 or row_number < 0 or row_number >= len(controls):
                 return
             check = controls[row_number]["check"]
             check.setChecked(not check.isChecked())
@@ -893,6 +1180,30 @@ class LaserBatchQuoteDialog(QDialog):
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
         return item
 
+    def _make_quantity_spin(self, value: int = 1) -> QSpinBox:
+        spin = QSpinBox()
+        spin.setObjectName("BatchQuantityEditor")
+        spin.setRange(1, 1_000_000)
+        spin.setValue(max(1, int(value or 1)))
+        spin.setAlignment(Qt.AlignCenter)
+        spin.setMinimumWidth(96)
+        spin.setToolTip("Quantidade de peças deste desenho. Podes escrever diretamente ou usar as setas.")
+        if spin.lineEdit() is not None:
+            spin.lineEdit().setAlignment(Qt.AlignCenter)
+        spin.valueChanged.connect(self._quantity_changed)
+        return spin
+
+    def _quantity_changed(self, _value: int = 0) -> None:
+        sender = self.sender()
+        for row_index in range(self.batch_table.rowCount()):
+            cell_widget = self.batch_table.cellWidget(row_index, self.COL_QUANTITY)
+            if cell_widget is sender or (
+                cell_widget is not None and cell_widget.findChild(QSpinBox, "BatchQuantityEditor") is sender
+            ):
+                self._recalculate_row_operation_meta(row_index)
+                break
+        self._invalidate_analysis()
+
     def _set_result_cell(self, row_index: int, col_index: int, text: str) -> None:
         item = self.batch_table.item(row_index, col_index)
         if item is None:
@@ -970,6 +1281,9 @@ class LaserBatchQuoteDialog(QDialog):
         if not paths:
             return
         existing = {self._row_path(row_index) for row_index in range(self.batch_table.rowCount())}
+        previous_signal_state = self.batch_table.blockSignals(True)
+        updates_were_enabled = self.batch_table.updatesEnabled()
+        self.batch_table.setUpdatesEnabled(False)
         for path in paths:
             clean_path = str(path or "").strip()
             if not clean_path or clean_path in existing:
@@ -983,13 +1297,23 @@ class LaserBatchQuoteDialog(QDialog):
             self.batch_table.setItem(row_index, self.COL_FILE, file_item)
             self.batch_table.setItem(row_index, self.COL_DESCRIPTION, self._make_item(desc))
             self.batch_table.setItem(row_index, self.COL_REFERENCE, self._make_item(ref))
-            self.batch_table.setItem(row_index, self.COL_QUANTITY, self._make_item("1", center=True))
+            quantity_spin = self._make_quantity_spin()
+            self.batch_table.setCellWidget(
+                row_index,
+                self.COL_QUANTITY,
+                quantity_spin,
+            )
             for column in (self.COL_BBOX, self.COL_AREA, self.COL_WEIGHT, self.COL_GEOMETRY_STATUS):
                 self._set_result_cell(row_index, column, "-")
             ops_btn = QPushButton("Corte Laser")
+            ops_btn.setObjectName("BatchOperationButton")
             ops_btn.setProperty("variant", "secondary")
             ops_btn.clicked.connect(self._edit_sender_operations)
-            self.batch_table.setCellWidget(row_index, self.COL_OPERATIONS, ops_btn)
+            self.batch_table.setCellWidget(
+                row_index,
+                self.COL_OPERATIONS,
+                ops_btn,
+            )
             self._set_row_operation_meta(row_index, {})
             self._set_result_cell(row_index, self.COL_TIME, "-")
             self._set_result_cell(row_index, self.COL_UNIT_PRICE, "-")
@@ -999,6 +1323,8 @@ class LaserBatchQuoteDialog(QDialog):
             if matched:
                 self.pdf_matches[clean_path] = matched
                 self._refresh_row_file_tooltip(row_index)
+        self.batch_table.blockSignals(previous_signal_state)
+        self.batch_table.setUpdatesEnabled(updates_were_enabled)
         self.line_payloads = []
         self.summary = {}
         self._clear_summary()
@@ -1090,6 +1416,14 @@ class LaserBatchQuoteDialog(QDialog):
         return str(item.text() if item is not None else "").strip()
 
     def _row_quantity(self, row_index: int) -> int:
+        quantity_widget = self.batch_table.cellWidget(row_index, self.COL_QUANTITY)
+        quantity_spin = (
+            quantity_widget
+            if isinstance(quantity_widget, QSpinBox)
+            else quantity_widget.findChild(QSpinBox, "BatchQuantityEditor") if quantity_widget is not None else None
+        )
+        if isinstance(quantity_spin, QSpinBox):
+            return max(1, int(quantity_spin.value()))
         text = self._row_text(row_index, self.COL_QUANTITY).replace(",", ".")
         try:
             value = int(round(float(text or 1)))
@@ -1128,10 +1462,10 @@ class LaserBatchQuoteDialog(QDialog):
             thickness = self._thickness_value()
             thickness_txt = f" | espessura global {_fmt_num(thickness, 3)} mm" if thickness > 0 else " | espessura por selecionar"
             self.batch_info_label.setText(
-                f"{self.batch_table.rowCount()} ficheiros | {total_pieces} pecas totais{thickness_txt}{pdf_txt}"
+                f"{self.batch_table.rowCount()} ficheiros | {total_pieces} peças totais{thickness_txt}{pdf_txt}"
             )
         else:
-            self.batch_info_label.setText("Seleciona varios DXF/DWG da mesma espessura e preenche as quantidades.")
+            self.batch_info_label.setText("Seleciona vários DXF/DWG da mesma espessura e preenche as quantidades.")
 
     def _clear_summary(self) -> None:
         for label in self.summary_labels.values():
@@ -1209,6 +1543,8 @@ class LaserBatchQuoteDialog(QDialog):
                 return False
             analysis = dict(result.get("analysis", {}) or {})
             line = self._apply_row_operations_to_line(dict(result.get("line", {}) or {}), row_index)
+            line["laser_source_mode"] = "batch"
+            line["laser_batch_id"] = self.batch_id
             pdf_paths = list(self.pdf_matches.get(path, []) or [])
             if pdf_paths:
                 line["desenhos_pdf"] = pdf_paths

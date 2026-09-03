@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -330,6 +331,57 @@ def _audit_trash(findings: list[Finding]) -> None:
         )
 
 
+def _audit_tracked_secrets(findings: list[Finding]) -> None:
+    # Construir os marcadores evita que o próprio auditor pareça conter uma
+    # chave privada quando percorre os ficheiros controlados pelo Git.
+    private_key_marker = b"-----BEGIN PRIVATE " + b"KEY-----"
+    openssh_key_marker = b"-----BEGIN OPENSSH PRIVATE " + b"KEY-----"
+    try:
+        proc = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=ROOT,
+            capture_output=True,
+            check=True,
+        )
+        relative_paths = [Path(value.decode("utf-8")) for value in proc.stdout.split(b"\0") if value]
+    except Exception:
+        return
+
+    forbidden_names = {
+        "lugest.env",
+        "lugest_trial.json",
+        "id_rsa",
+        "id_ed25519",
+    }
+    for relative_path in relative_paths:
+        name = relative_path.name.casefold()
+        if name in forbidden_names or relative_path.suffix.casefold() in {".key", ".p12", ".pfx"}:
+            findings.append(
+                Finding(
+                    "HIGH",
+                    "Segredos no Git",
+                    f"O ficheiro sensível {relative_path.as_posix()} está controlado pelo Git.",
+                    ROOT / relative_path,
+                )
+            )
+            continue
+        path = ROOT / relative_path
+        try:
+            if path.is_file() and path.stat().st_size <= 2_000_000:
+                raw = path.read_bytes()
+                if private_key_marker in raw or openssh_key_marker in raw:
+                    findings.append(
+                        Finding(
+                            "HIGH",
+                            "Chave privada",
+                            f"Foi encontrada uma chave privada no ficheiro controlado {relative_path.as_posix()}.",
+                            path,
+                        )
+                    )
+        except OSError:
+            continue
+
+
 def _print_report(findings: list[Finding]) -> int:
     buckets = {"HIGH": [], "MEDIUM": [], "LOW": []}
     for finding in findings:
@@ -359,6 +411,7 @@ def main() -> int:
     _audit_source_defaults(findings)
     _audit_plaintext_files(findings)
     _audit_trash(findings)
+    _audit_tracked_secrets(findings)
     return _print_report(findings)
 
 
