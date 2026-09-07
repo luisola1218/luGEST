@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -16,7 +17,28 @@ LEGACY_CONFIGURED_MODULES = (
 )
 
 
-def load_legacy_runtime() -> SimpleNamespace:
+@dataclass(frozen=True)
+class LegacyRuntime:
+    """Explicit legacy dependencies supplied at backend construction.
+
+Modules remain adapters to the historical runtime; tests can supply doubles
+without importing main.py or connecting to the customer's database.
+"""
+
+    desktop_main: Any
+    billing_pdf_actions: Any
+    tax_compliance: Any
+    app_misc_actions: Any
+    encomendas_actions: Any
+    materia_actions: Any
+    ne_expedicao_actions: Any
+    orc_actions: Any
+    operador_ordens_actions: Any
+    plan_actions: Any
+    produtos_actions: Any
+
+
+def load_legacy_runtime() -> LegacyRuntime:
     import main as desktop_main
     from lugest_desktop.legacy import app_misc_actions
     from lugest_desktop.legacy import encomendas_actions
@@ -48,7 +70,7 @@ def load_legacy_runtime() -> SimpleNamespace:
         if callable(configure):
             configure(desktop_main.__dict__)
 
-    return SimpleNamespace(
+    return LegacyRuntime(
         desktop_main=desktop_main,
         billing_pdf_actions=billing_pdf_actions,
         tax_compliance=tax_compliance,
@@ -56,4 +78,4 @@ def load_legacy_runtime() -> SimpleNamespace:
     )
 
 
-__all__ = ["LEGACY_CONFIGURED_MODULES", "load_legacy_runtime"]
+__all__ = ["LEGACY_CONFIGURED_MODULES", "LegacyRuntime", "load_legacy_runtime"]

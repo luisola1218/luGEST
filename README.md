@@ -68,6 +68,7 @@ backups/                        copias locais, fora do Git
 - [Auditoria técnica do sistema](docs/plans/SYSTEM_AUDIT_2026-08-18.md)
 - [Plano de conjuntos e montagem](docs/plans/CONJUNTOS_MONTAGEM_PLAN.md)
 - [Estrutura recomendada](docs/architecture/PROJECT_STRUCTURE.md)
+- [Guia de manutencao do backend](docs/architecture/BACKEND_GUIDE.md)
 - [Base de dados MySQL](mysql/README.md)
 
 ## Verificacoes
@@ -95,8 +96,10 @@ de testes ou com autorização consciente através de `-AllowRemoteDatabase`.
 - As paginas vivem nos respetivos modulos e sao carregadas quando abertas,
   atraves de `lugest_qt/ui/page_registry.py`. `runtime_pages.py` conserva apenas
   imports de compatibilidade. A janela principal nao importa todas as paginas.
-- `main_bridge.py` ainda precisa de extracoes incrementais; as atualizacoes
-  ja vivem em `services/bridge_mixins/updates.py`.
+- `main_bridge.py` compoe os adaptadores por area. Para localizar uma alteracao,
+  usar `python scripts/backend_map.py nome_do_metodo` e o guia do backend.
+  Os adaptadores preservam a integracao legacy; custos de operacoes, combinacao
+  de snapshots e persistencia de configuracao ja sao componentes independentes.
 - O licenciamento comercial tem uma base assinada e testável em
   `lugest_core/licensing`, mas ainda não bloqueia o produto: os planos, módulos,
   postos e tolerância offline têm de ser decididos antes da integração.

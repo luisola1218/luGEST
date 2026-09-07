@@ -21,6 +21,9 @@
 
 ## Arquitetura
 
+- [Guia de manutencao do backend](architecture/BACKEND_GUIDE.md)
+- [Resultado e validacao da reorganizacao do backend](plans/BACKEND_REFACTOR_2026-09-07.md)
+- [Indice pesquisavel dos metodos do backend](architecture/BACKEND_METHOD_INDEX.md)
 - [Reorganizacao e validacao de 2026-09-07](plans/ARCHITECTURE_REFACTOR_2026-09-07.md)
 - [Estrutura recomendada do projeto](architecture/PROJECT_STRUCTURE.md)
 - [Arquitetura de licenciamento](architecture/LICENSING_ARCHITECTURE.md)

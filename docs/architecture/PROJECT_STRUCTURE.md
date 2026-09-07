@@ -3,8 +3,10 @@
 Estado em 2026-09-07: a aplicacao tem separacao em `lugest_core`,
 `lugest_infra`, `lugest_desktop/legacy` e `lugest_qt`. As implementacoes das
 paginas foram retiradas de `runtime_pages.py`; o ficheiro conserva uma fachada
-de compatibilidade com resolucao por procura. `main_bridge.py` e a pagina de
-orcamentos continuam grandes e precisam de extracoes por responsabilidade.
+de compatibilidade com resolucao por procura. `main_bridge.py` foi reduzido a
+composicao e inicializacao; 485 metodos foram separados em 32 areas. A pagina
+de orcamentos continua grande. Consultar o [guia do backend](BACKEND_GUIDE.md)
+para localizar implementacoes e conhecer os limites da integracao legacy.
 
 Atualizacao incremental: a janela principal deve importar paginas pelos modulos
 proprios em `lugest_qt/ui/pages/*_page.py`, atraves do registo central e lazy em
@@ -109,7 +111,9 @@ explicitamente autorizada.
 ## Proximos refactors recomendados
 
 - Dividir a pagina de orcamentos por editor, catalogo e apresentacao de linhas.
-- Dividir `main_bridge.py` por servicos de dominio.
+- Extrair as restantes regras dos adaptadores para servicos de dominio, seguindo
+  os exemplos de `operation_costing.py`, `snapshots.py` e do repositorio de
+  configuracao; os adaptadores ainda partilham estado legacy.
 - Trocar `module_context.py` por dependencias explicitas.
 - Renomear gradualmente `*_rooting.py` para nomes claros como `*_ui.py` ou
   `*_routing.py`, mantendo shims temporarios.
