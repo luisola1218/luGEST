@@ -13,6 +13,7 @@ import inspect
 from pathlib import Path
 import sys
 import textwrap
+from typing import get_type_hints
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -34,15 +35,50 @@ def backend_methods():
     return methods
 
 
+def business_implementations(fn, methods):
+    """Follow explicit functions and typed service factories, without calling them."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    found = {}
+
+    def resolve_function(node):
+        if isinstance(node, ast.Name):
+            return fn.__globals__.get(node.id)
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == 'self':
+            entry = methods.get(node.attr)
+            return entry[0] if entry else None
+        return None
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        target = resolve_function(node.func)
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Call):
+            factory = resolve_function(node.func.value.func)
+            if inspect.isfunction(factory):
+                try:
+                    service = get_type_hints(factory).get('return')
+                    target = getattr(service, node.func.attr, None) if inspect.isclass(service) else None
+                except (NameError, TypeError, AttributeError):
+                    target = None
+        if inspect.isfunction(target) and target.__module__.startswith('lugest_modules.'):
+            path = Path(inspect.getsourcefile(target)).resolve()
+            found[target.__qualname__] = (path, inspect.getsourcelines(target)[1])
+    return found
+
+
 def write_index(methods):
     target = ROOT / "docs/architecture/BACKEND_METHOD_INDEX.md"
     rows = ["# Indice dos metodos do backend", "",
             "Gerado por `python scripts/backend_map.py --write-index`. Nao editar manualmente.", "",
             "Mostra a implementacao efetiva segundo a ordem de heranca de `LegacyBackend`.", "",
-            "| Metodo | Implementacao |", "| --- | --- |"]
-    for name, (_fn, path, line) in sorted(methods.items()):
+            "A ultima coluna segue funcoes e fabricas tipadas ate ao modulo de negocio, sem iniciar o runtime.", "",
+            "| Metodo | Adaptador / implementacao | Modulo de negocio |", "| --- | --- | --- |"]
+    for name, (fn, path, line) in sorted(methods.items()):
         relative = path.relative_to(ROOT).as_posix()
-        rows.append(f"| `{name}` | [{path.stem}:{line}](../../{relative}#L{line}) |")
+        delegates = business_implementations(fn, methods)
+        links = ', '.join(f'[{label}](../../{target.relative_to(ROOT).as_posix()}#L{target_line})'
+                          for label, (target, target_line) in sorted(delegates.items())) or '-'
+        rows.append(f"| `{name}` | [{path.stem}:{line}](../../{relative}#L{line}) | {links} |")
     target.write_text("\n".join(rows) + "\n", encoding="utf-8")
     print(target)
 
@@ -63,6 +99,8 @@ def main():
         selected = {args.method: selected[args.method]}
     for name, (fn, path, line) in sorted(selected.items()):
         print(f"{name}{inspect.signature(fn)}\n  {path.relative_to(ROOT)}:{line}")
+        for label, (target, target_line) in business_implementations(fn, methods).items():
+            print(f'  -> business: {label}: {target.relative_to(ROOT)}:{target_line}')
         if len(selected) == 1:
             tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
             attributes = sorted({n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)

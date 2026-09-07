@@ -129,6 +129,7 @@ if ($SafeOnly) {
         'scripts\verify_business_modules.py',
         'scripts\verify_quote_editors.py',
         'scripts\verify_nesting_study_service.py',
+        'scripts\verify_inventory_services.py',
         'scripts\verify_quote_snapshot_save.py'
     )
     foreach ($relativeScript in $safeScripts) {

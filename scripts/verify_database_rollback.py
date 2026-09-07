@@ -22,7 +22,34 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 FLOWS = ("verify_purchase_flow", "verify_conjuntos_montagem_flow",
          "verify_fabrication_order_flow", "verify_planning_flow", "verify_billing_flow",
-         "verify_quote_nesting_flow")
+         "verify_quote_nesting_flow", "verify_inventory_flow")
+
+
+def _inventory_flow():
+    """Temporary product exercised only inside this runner's transaction."""
+    from copy import deepcopy
+    from uuid import uuid4
+    from lugest_qt.services.legacy_backend import LegacyBackend
+    backend = LegacyBackend()
+    code = 'TST-ST-' + uuid4().hex[:10]
+    product = backend.product_save({'codigo': code, 'descricao': 'Parafuso teste transacional',
+                                    'qty': 10, 'p_compra': 3.5, 'pvp1': 5, 'unid': 'UN'})
+    assert product['qty'] == 10
+    before = deepcopy(backend.ensure_data())
+    try:
+        backend.product_consume(code, 2, issue_mode='operator')
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('Missing operator accepted')
+    assert backend.ensure_data() == before
+    result = backend.product_consume(code, 2, issue_mode='operator', target_operator='TEST')
+    assert result['qty'] == 8
+    backend.reload(force=True)
+    assert backend.product_detail(code)['qty'] == 8
+    summary = backend.product_issue_summary(operator_name='TEST', codigo=code)
+    assert summary['linhas'] == 1 and summary['qtd_total'] == 2
+    print('inventory-db-ok invalid-no-mutation=yes issue=yes reload=yes movements=yes', flush=True)
 
 
 def _quote_nesting_flow():
@@ -153,6 +180,8 @@ def main():
                 os.environ[key] = str(Path(temporary) / folder)
             if args.flow == 'verify_quote_nesting_flow':
                 code = _quote_nesting_flow()
+            elif args.flow == 'verify_inventory_flow':
+                code = _inventory_flow()
             else:
                 entry = runpy.run_path(str(ROOT / "scripts" / (args.flow + ".py")))
                 code = entry["main"]()

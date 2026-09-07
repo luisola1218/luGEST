@@ -49,6 +49,14 @@ def main():
         assert not missing, (relative, missing)
     assert 'main' not in sys.modules
     assert 'lugest_qt.ui.pages.quotes_page' not in sys.modules
+    from backend_map import backend_methods, business_implementations
+    methods = backend_methods()
+    for method, target in {'client_rows': 'ClientService.rows',
+                           'orc_save_nesting_study': 'NestingStudyService.save',
+                           'product_consume': 'StockIssueService.consume',
+                           '_normalize_orc_line': 'normalize_line'}.items():
+        assert target in business_implementations(methods[method][0], methods), method
+    assert 'main' not in sys.modules
     print(f'business-modules-ok files={len(files)} boundaries=yes callback-globals=yes no-main=yes')
 
 

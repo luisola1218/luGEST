@@ -22,6 +22,7 @@
 ## Arquitetura
 
 - [Monolito modular: modulos implementados, contratos e trabalho restante](architecture/MODULAR_MONOLITH.md)
+- [Validacao da migracao modular de 2026-09-07](plans/MODULAR_MIGRATION_2026-09-07.md)
 - [Guia de manutencao do backend](architecture/BACKEND_GUIDE.md)
 - [Fase de clientes e testes integrados](plans/CLIENTS_PHASE_2026-09-07.md)
 - [Resultado e validacao da reorganizacao do backend](plans/BACKEND_REFACTOR_2026-09-07.md)

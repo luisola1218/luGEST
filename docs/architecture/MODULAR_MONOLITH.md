@@ -5,7 +5,7 @@ passa a ser o modulo de negocio em `lugest_modules/`, com as suas regras,
 casos de uso, adaptadores de dados e interface proximos uns dos outros.
 
 **A migracao ainda nao esta concluida.** Estes limites ja se aplicam aos novos
-componentes de clientes e orcamentos. O backend historico ainda contem estado
+componentes de clientes, orcamentos e inventario. O backend historico ainda contem estado
 partilhado e outras areas continuam nos adaptadores antigos. Nao confundir a
 existencia desta estrutura com a migracao de todo o ERP.
 
@@ -16,6 +16,9 @@ existencia desta estrutura com a migracao de todo o ERP.
 | Validar, pesquisar, guardar e remover clientes | `lugest_modules/clients/application/service.py` |
 | Persistir clientes no runtime existente | `lugest_modules/clients/infrastructure/legacy_repository.py` |
 | Formulario de clientes | `lugest_modules/clients/presentation/page.py` |
+| Consultas de produtos, movimentos e valores de stock | `lugest_modules/inventory/application/product_queries.py` |
+| Validacao de baixas e entregas a operadores | `lugest_modules/inventory/application/consumption.py` |
+| Leitura de produtos e gravacao das baixas no runtime | `lugest_modules/inventory/infrastructure/` |
 | Criar linhas comerciais de produto e servico | `lugest_modules/quotes/domain/lines.py` |
 | Normalizar uma linha completa de orcamento | `lugest_modules/quotes/application/line_normalization.py` |
 | Guardar e combinar estudos de nesting | `lugest_modules/quotes/application/nesting_studies.py` |
@@ -31,6 +34,10 @@ Cada modulo expoe `api.py` para outros modulos de negocio. O ponto de composicao
 da aplicacao pode importar adaptadores concretos para construir os servicos.
 Os caminhos antigos de clientes sao imports de compatibilidade; novas regras
 nao devem voltar a ser implementadas nesses ficheiros.
+
+`scripts/backend_map.py nome_do_metodo` mostra o adaptador e segue as funcoes
+e fabricas tipadas ate ao caso de uso no modulo. O indice gerado contem a mesma
+ligacao na coluna "Modulo de negocio".
 
 ## Dependencias permitidas
 
@@ -74,6 +81,22 @@ opcional. A falha do espelho nao desfaz uma gravacao principal ja aceite. Nao e
 uma transacao atomica entre ambos. A aceitaçao por um worker assincrono tambem
 nao garante durabilidade; estes aspetos continuam a exigir evolucao propria.
 
+## Inventario
+
+As consultas de produtos recebem um repositorio de leitura que devolve copias,
+regras de valorizacao/catalogo/qualidade e um relogio para o ano de recurso.
+Nao recebem `LegacyBackend` nem o snapshot completo. O detalhe devolvido nao
+permite alterar metadados aninhados no cache por acidente.
+
+O servico de baixas valida quantidade, existencia, disponibilidade numerica e
+operador antes de pedir qualquer escrita. Corrige a baixa em memoria que ocorria
+antes do erro de operador em falta. Quantidades NaN e infinitas sao rejeitadas.
+O repositorio verifica a quantidade esperada e restaura os campos e movimentos
+se a gravacao falhar imediatamente. Esta verificacao protege a janela local
+entre leitura e escrita; nao substitui controlo de concorrencia transacional
+entre instalacoes. Criacao, edicao, remocao e classificacao de produtos ainda
+passam por adaptadores antigos.
+
 ## Verificar uma alteracao
 
 ```powershell
@@ -81,6 +104,7 @@ nao garante durabilidade; estes aspetos continuam a exigir evolucao propria.
 .venv\Scripts\python.exe scripts\verify_clients_integration.py
 .venv\Scripts\python.exe scripts\verify_quote_editors.py
 .venv\Scripts\python.exe scripts\verify_nesting_study_service.py
+.venv\Scripts\python.exe scripts\verify_inventory_services.py
 powershell -File scripts\verify_project.ps1 -SafeOnly
 ```
 
@@ -95,6 +119,7 @@ script funcional com escrita direta por engano:
 ```powershell
 .venv\Scripts\python.exe scripts\verify_database_rollback.py verify_quote_nesting_flow
 .venv\Scripts\python.exe scripts\verify_database_rollback.py verify_conjuntos_montagem_flow
+.venv\Scripts\python.exe scripts\verify_database_rollback.py verify_inventory_flow
 ```
 
 O executor confirma InnoDB, bloqueia commits reais/DDL e compara o conteudo das
@@ -107,8 +132,9 @@ AUTO_INCREMENT. Nao testa concorrencia real nem persistencia assincrona.
    orcamentos. Ainda tem 5350 linhas, incluindo um construtor extenso.
 2. Migrar os comandos de orcamento, conversao para encomenda e conjuntos para
    servicos com repositorios. O adaptador de orcamentos ainda tem 1898 linhas.
-3. Migrar encomendas, inventario, compras, producao, faturacao e as restantes
-   areas. Ainda partilham estado atraves dos mixins de `LegacyBackend`.
+3. Migrar encomendas, restantes comandos de inventario, compras, producao,
+   faturacao e as restantes areas. Ainda partilham estado atraves dos mixins
+   de `LegacyBackend`.
 4. Substituir os adaptadores do snapshot global por repositorios por modulo
    e definir as transacoes que envolvem mais de um modulo.
 5. Retirar a inicializacao global historica de `main.py` e validar concorrencia,
