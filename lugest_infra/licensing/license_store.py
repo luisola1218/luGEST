@@ -4,6 +4,8 @@ import os
 import tempfile
 from pathlib import Path
 
+from lugest_infra.app_paths import AppPaths
+
 
 class LicenseStore:
     """Small atomic store for a signed license token.
@@ -20,12 +22,7 @@ class LicenseStore:
 
     @staticmethod
     def default_path() -> Path:
-        base_dir = str(os.environ.get("PROGRAMDATA", "") or "").strip()
-        if not base_dir:
-            base_dir = str(os.environ.get("LOCALAPPDATA", "") or "").strip()
-        if not base_dir:
-            base_dir = str(Path.home() / "AppData" / "Local")
-        return Path(base_dir) / "luGEST" / "licensing" / "license.lugest"
+        return AppPaths(Path.cwd()).license_file()
 
     def load(self) -> str:
         if not self.path.exists():

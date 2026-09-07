@@ -43,7 +43,7 @@ if (-not $InstallDir) {
         $InstallDir = Join-Path $env:ProgramFiles 'LuisGEST'
     }
     else {
-        $InstallDir = Join-Path $env:LOCALAPPDATA 'LuisGEST'
+        $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\LuisGEST'
     }
 }
 

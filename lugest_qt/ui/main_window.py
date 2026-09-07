@@ -41,25 +41,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .pages.avarias_page import AvariasPage
-from .pages.billing_page import BillingPage
-from .pages.diagnostics_page import DiagnosticsPage
-from .pages.direct_services_page import DirectServicesPage
-from .pages.material_assistant_page import MaterialAssistantPage
-from .pages.materials_page import MaterialsPage
-from .pages.operator_page import OperatorPage
-from .pages.opp_page import OppPage
-from .pages.orders_page import OrdersPage
-from .pages.partners_pages import ClientsPage, SuppliersPage
-from .pages.planning_page import PlanningPage
-from .pages.products_page import ProductsPage
-from .pages.pulse_page import PulsePage
-from .pages.purchase_notes_legacy_page import PurchaseNotesPage
-from .pages.quality_page import QualityPage
-from .pages.quotes_page import QuotesPage
-from .pages.shipping_page import ExpeditionPage
-from .pages.stock_dashboard_page import StockDashboardPage
-from .pages.transports_page import TransportsPage
+from .page_registry import build_page_factories
 from .theme import apply_theme, polish_widget_tree
 
 
@@ -252,28 +234,7 @@ class MainWindow(QMainWindow):
         self._page_refresh_timer.setSingleShot(True)
         self._page_refresh_timer.timeout.connect(self._run_pending_page_refresh)
         self._suppressed_scheduled_refresh_keys: set[str] = set()
-        self.page_factories = {
-            "stock_dashboard": lambda: StockDashboardPage(self.backend),
-            "pulse": lambda: PulsePage(self.runtime_service, self.backend),
-            "operator": lambda: OperatorPage(self.runtime_service, self.backend),
-            "planning": lambda: PlanningPage(self.runtime_service, self.backend),
-            "avarias": lambda: AvariasPage(self.runtime_service),
-            "purchase_notes": lambda: PurchaseNotesPage(self.backend),
-            "shipping": lambda: ExpeditionPage(self.backend),
-            "billing": lambda: BillingPage(self.backend),
-            "materials": lambda: MaterialsPage(self.backend),
-            "products": lambda: ProductsPage(self.backend),
-            "direct_services": lambda: DirectServicesPage(self.backend),
-            "clients": lambda: ClientsPage(self.backend),
-            "suppliers": lambda: SuppliersPage(self.backend),
-            "orders": lambda: OrdersPage(self.backend),
-            "quotes": lambda: QuotesPage(self.backend),
-            "opp": lambda: OppPage(self.backend),
-            "material_assistant": lambda: MaterialAssistantPage(self.backend),
-            "transportes": lambda: TransportsPage(self.backend),
-            "quality": lambda: QualityPage(self.backend),
-            "diagnostics": lambda: DiagnosticsPage(self.backend),
-        }
+        self.page_factories = build_page_factories(self.backend, self.runtime_service)
 
         self.setWindowTitle("luGEST Qt")
         self.setMinimumSize(1180, 760)

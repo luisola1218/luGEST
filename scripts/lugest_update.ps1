@@ -28,7 +28,19 @@ function Read-JsonFile($path) {
 }
 
 function Save-JsonFile($path, $payload) {
-    $payload | ConvertTo-Json -Depth 8 | Set-Content -Path $path -Encoding UTF8
+    $parent = Split-Path -Parent $path
+    if ($parent) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+    $temporary = Join-Path $parent ('.' + [IO.Path]::GetFileName($path) + '.' + [guid]::NewGuid().ToString('N') + '.tmp')
+    try {
+        $json = ($payload | ConvertTo-Json -Depth 8) + [Environment]::NewLine
+        [IO.File]::WriteAllText($temporary, $json, (New-Object Text.UTF8Encoding($false)))
+        Move-Item -LiteralPath $temporary -Destination $path -Force
+    }
+    finally {
+        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Get-JsonValue($obj, $name, $default = "") {
@@ -138,6 +150,9 @@ function Download-RemoteFile($url, $targetPath, $token) {
 
 function Read-Manifest($manifestRef, $config, $workDir) {
     $manifestPath = Join-Path $workDir 'latest.json'
+    if ($manifestRef -match '^http://') {
+        throw "O manifesto remoto tem de usar HTTPS."
+    }
     if ($manifestRef -match '^https?://') {
         $token = [string]$GitHubToken
         if (-not $token) {
@@ -285,9 +300,10 @@ function Restart-LuisGEST($appDir) {
 
 $appDir = Resolve-AppDir
 if (-not $ConfigPath) {
-    $ConfigPath = Join-Path $appDir 'update_config.json'
+    $ConfigPath = Join-Path $env:LOCALAPPDATA 'luGEST-data\config\update_config.json'
 }
 $config = Read-JsonFile $ConfigPath
+$resultPath = Join-Path (Split-Path -Parent $ConfigPath) 'update_last_result.json'
 $versionPath = Join-Path $appDir 'VERSION'
 $currentVersion = [string]$CurrentVersion
 if (-not $currentVersion) {
@@ -324,7 +340,7 @@ try {
     Write-Info "Versao disponivel: $latestVersion"
     if ($cmp -ge 0) {
         Write-Info "Nao existem atualizacoes novas."
-        Save-JsonFile (Join-Path $appDir 'update_last_result.json') @{
+        Save-JsonFile $resultPath @{
             checked_at = (Get-Date).ToString('s')
             current_version = $currentVersion
             latest_version = $latestVersion
@@ -365,6 +381,9 @@ try {
             throw "Manifest sem package_url."
         }
         $packageResolved = Resolve-RelativePathOrUrl $packageRef $manifestBase
+        if ($packageResolved -match '^http://') {
+            throw "O pacote remoto tem de usar HTTPS."
+        }
         if ($packageResolved -match '^https?://') {
             $token = [string]$GitHubToken
             if (-not $token) {
@@ -381,11 +400,12 @@ try {
     }
 
     $expectedHash = [string](Get-JsonValue $manifest 'sha256' '')
-    if ($expectedHash) {
-        $actualHash = (Get-FileHash $packagePath -Algorithm SHA256).Hash
-        if ($actualHash.ToLowerInvariant() -ne $expectedHash.ToLowerInvariant()) {
-            throw "Checksum invalido. Esperado $expectedHash, obtido $actualHash."
-        }
+    if ($expectedHash -notmatch '^[A-Fa-f0-9]{64}$') {
+        throw "Manifest sem um SHA-256 valido e completo para o pacote."
+    }
+    $actualHash = (Get-FileHash $packagePath -Algorithm SHA256).Hash
+    if ($actualHash.ToLowerInvariant() -ne $expectedHash.ToLowerInvariant()) {
+        throw "Checksum invalido. Esperado $expectedHash, obtido $actualHash."
     }
 
     $backupRoot = Join-Path (Split-Path $appDir -Parent) 'Backups LuisGEST'
@@ -421,7 +441,7 @@ try {
     if (Test-Path $versionPath) {
         Set-Content -Path $versionPath -Value $latestVersion -Encoding UTF8
     }
-    Save-JsonFile (Join-Path $appDir 'update_last_result.json') @{
+    Save-JsonFile $resultPath @{
         installed_at = (Get-Date).ToString('s')
         previous_version = $currentVersion
         installed_version = $latestVersion

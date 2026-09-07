@@ -42,7 +42,8 @@ LUGEST_DB_NAME=lugest
 ## Estrutura principal
 
 ```text
-main.py                         entrada desktop atual
+lugest_qt/app.py                 entrada desktop atual (python -m lugest_qt.app)
+main.py                         runtime historico usado pelo adaptador legacy
 lugest_qt/                      UI Qt, paginas e bridge da aplicacao
 impulse_mobile_app/             app Flutter LuGEST Field para servicos no terreno
 lugest_core/                    logica de dominio reutilizavel
@@ -91,8 +92,11 @@ de testes ou com autorização consciente através de `-AllowRemoteDatabase`.
   local ou fallback, nao como fonte de verdade.
 - A raiz ainda contem alguns wrappers de compatibilidade para modulos legacy.
   Devem desaparecer quando nao houver imports externos dependentes deles.
-- `runtime_pages.py` e `main_bridge.py` sao os proximos candidatos a divisao
-  por modulo: orcamentos, compras, stock, operador, faturacao e laser.
+- As paginas vivem nos respetivos modulos e sao carregadas quando abertas,
+  atraves de `lugest_qt/ui/page_registry.py`. `runtime_pages.py` conserva apenas
+  imports de compatibilidade. A janela principal nao importa todas as paginas.
+- `main_bridge.py` ainda precisa de extracoes incrementais; as atualizacoes
+  ja vivem em `services/bridge_mixins/updates.py`.
 - O licenciamento comercial tem uma base assinada e testável em
   `lugest_core/licensing`, mas ainda não bloqueia o produto: os planos, módulos,
   postos e tolerância offline têm de ser decididos antes da integração.

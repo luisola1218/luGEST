@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import copy
 import csv
@@ -20,6 +20,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from lugest_infra.app_paths import AppPaths
+from lugest_infra.config import AtomicJsonStore
 from lugest_infra.storage import files as lugest_storage
 from lugest_infra.pdf.text import clip_text as _pdf_clip_text
 from lugest_infra.pdf.text import fit_font_size as _pdf_fit_font_size
@@ -56,6 +58,7 @@ from lugest_core.materials import (
     profile_sizes as _profile_sizes,
 )
 from lugest_core.search import search_matches as _smart_search_matches
+from .bridge_mixins.updates import UpdatesBridgeMixin
 from .legacy_runtime import load_legacy_runtime
 from .bridge_mixins import (
     BillingBridgeMixin,
@@ -363,6 +366,7 @@ class _ValueHolder:
 
 
 class LegacyBackend(
+    UpdatesBridgeMixin,
     DirectServicesBridgeMixin,
     BillingBridgeMixin,
     PurchasingBridgeMixin,
@@ -387,6 +391,7 @@ class LegacyBackend(
         self.tax_compliance = legacy.tax_compliance
         desktop_main = legacy.desktop_main
         self.base_dir = Path(getattr(desktop_main, "BASE_DIR", Path.cwd()))
+        self.app_paths = AppPaths(self.base_dir)
         self.data: dict[str, Any] | None = None
         self._base_data_snapshot: dict[str, Any] | None = None
         self._data_loaded_at = 0.0
@@ -404,6 +409,7 @@ class LegacyBackend(
         )
         self.user: dict[str, Any] | None = None
         self._qt_config_cache: dict[str, Any] | None = None
+        self._qt_config_last_error = ""
         self._product_taxonomy_nodes_cache: tuple[
             dict[str, Any],
             dict[tuple[str, str], dict[str, Any]],
@@ -1036,7 +1042,12 @@ class LegacyBackend(
             pass
 
     def _qt_config_path(self) -> Path:
-        return self.base_dir / "lugest_qt_config.json"
+        target = self.app_paths.config_file("lugest_qt_config.json")
+        self.app_paths.migrate_legacy_file(self.base_dir / "lugest_qt_config.json", target)
+        return target
+
+    def _qt_config_store(self) -> AtomicJsonStore:
+        return AtomicJsonStore(self._qt_config_path())
 
     def _load_qt_config(self) -> dict[str, Any]:
         if isinstance(self._qt_config_cache, dict):
@@ -1048,15 +1059,6 @@ class LegacyBackend(
             if callable(connect):
                 conn = connect()
                 with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        CREATE TABLE IF NOT EXISTS app_config (
-                            ckey VARCHAR(80) PRIMARY KEY,
-                            cvalue LONGTEXT NULL,
-                            updated_at DATETIME NULL
-                        )
-                        """
-                    )
                     cur.execute("SELECT cvalue FROM app_config WHERE ckey=%s LIMIT 1", ("qt_desktop_config",))
                     row = cur.fetchone()
                 if row:
@@ -1076,24 +1078,25 @@ class LegacyBackend(
                 pass
         if not payload:
             try:
-                path = self._qt_config_path()
-                if path.exists():
-                    parsed = json.loads(path.read_text(encoding="utf-8"))
-                    if isinstance(parsed, dict):
-                        payload = parsed
-            except Exception:
+                parsed = self._qt_config_store().load(default={})
+                if isinstance(parsed, dict):
+                    payload = parsed
+            except Exception as exc:
+                self._qt_config_last_error = f"Falha ao carregar a configuração local: {exc}"
                 payload = {}
         self._qt_config_cache = dict(payload)
         return dict(payload)
 
     def _save_qt_config(self, payload: dict[str, Any]) -> dict[str, Any]:
         clean = dict(payload or {})
-        self._qt_config_cache = dict(clean)
-        self._product_taxonomy_nodes_cache = None
+        local_saved = False
+        database_saved = False
+        errors: list[str] = []
         try:
-            self._qt_config_path().write_text(json.dumps(clean, ensure_ascii=False, indent=2), encoding="utf-8")
-        except Exception:
-            pass
+            self._qt_config_store().save(clean)
+            local_saved = True
+        except Exception as exc:
+            errors.append(f"local: {exc}")
         conn = None
         try:
             connect = getattr(self.desktop_main, "_mysql_connect", None)
@@ -1118,14 +1121,22 @@ class LegacyBackend(
                         ("qt_desktop_config", json.dumps(clean, ensure_ascii=False)),
                     )
                 conn.commit()
-        except Exception:
-            pass
+                database_saved = True
+        except Exception as exc:
+            errors.append(f"MySQL: {exc}")
         finally:
             try:
                 if conn:
                     conn.close()
             except Exception:
                 pass
+        if not local_saved and not database_saved:
+            detail = "; ".join(errors) or "nenhum destino de configuração disponível"
+            self._qt_config_last_error = detail
+            raise RuntimeError(f"Não foi possível guardar a configuração do luGEST ({detail}).")
+        self._qt_config_last_error = "; ".join(errors)
+        self._qt_config_cache = dict(clean)
+        self._product_taxonomy_nodes_cache = None
         return dict(clean)
 
     def ensure_pdf_light_theme(self) -> dict[str, Any]:
@@ -2080,6 +2091,7 @@ class LegacyBackend(
                 line["descricao"] = new_desc
                 changed = True
         return changed
+
 
     def _update_materia_preco_from_unit(self, materia_id: str, preco_unit: Any) -> bool:
         material = self.material_by_id(str(materia_id or "").strip())
@@ -3680,11 +3692,12 @@ class LegacyBackend(
             pass
         return record
 
+
     def update_material(self, material_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         data = self.ensure_data()
         record = self.material_by_id(material_id)
         if record is None:
-            raise ValueError("Material não encontrado.")
+            raise ValueError("Material nÃ£o encontrado.")
         values = self._normalise_material_payload(payload)
         record.update(
             {
@@ -3699,7 +3712,7 @@ class LegacyBackend(
                 "kg_m": values["kg_m"],
                 "quantidade": values["quantidade"],
                 "reservado": values["reservado"],
-                "Localização": values["local"],
+                "LocalizaÃ§Ã£o": values["local"],
                 "Localizacao": values["local"],
                 "lote_interno": str(record.get("lote_interno", "") or values["lote_interno"] or self._next_material_internal_lot()).strip(),
                 "lote_fornecedor": values["lote_fornecedor"],
@@ -16250,268 +16263,6 @@ class LegacyBackend(
         self._save_qt_config(cfg)
         return self.ui_options()
 
-    def app_version(self) -> str:
-        candidates = [
-            self.base_dir / "VERSION",
-            Path.cwd() / "VERSION",
-        ]
-        for path in candidates:
-            try:
-                if path.exists():
-                    value = path.read_text(encoding="utf-8").strip()
-                    if value:
-                        return value
-            except Exception:
-                continue
-        return "0.0.0"
-
-    def update_settings(self) -> dict[str, Any]:
-        cfg = self._load_qt_config()
-        stored = dict(cfg.get("update_settings", {}) or {})
-        stored.pop("github_token", None)
-        manifest_env = str(os.environ.get("LUGEST_UPDATE_MANIFEST_URL", "") or "").strip()
-        github_token_env = str(os.environ.get("LUGEST_UPDATE_GITHUB_TOKEN", "") or "").strip()
-        defaults = {
-            "current_version": self.app_version(),
-            "manifest_url": manifest_env or "..\\Atualizacoes\\latest.json",
-            "channel": "stable",
-            "github_token": github_token_env,
-            "auto_check": False,
-        }
-        return {**defaults, **stored, "current_version": self.app_version()}
-
-    def update_save_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
-        cfg = self._load_qt_config()
-        current = dict(cfg.get("update_settings", {}) or {})
-        current.pop("github_token", None)
-        for key in ("manifest_url", "channel", "auto_check"):
-            if key in dict(payload or {}):
-                current[key] = payload.get(key)
-        current["current_version"] = self.app_version()
-        cfg["update_settings"] = current
-        self._save_qt_config(cfg)
-        return self.update_settings()
-
-    def _update_version_parts(self, value: Any) -> tuple[int, int, int, int]:
-        parts = [int(match.group(0)) for match in re.finditer(r"\d+", str(value or ""))]
-        while len(parts) < 4:
-            parts.append(0)
-        return tuple(parts[:4])
-
-    def _update_resolve_ref(self, value: Any, base: Path | None = None) -> str:
-        txt = str(value or "").strip()
-        if not txt:
-            return ""
-        if re.match(r"^https?://", txt, flags=re.IGNORECASE):
-            return txt
-        parsed = urllib.parse.urlparse(txt)
-        if parsed.scheme.lower() == "file":
-            return urllib.request.url2pathname(parsed.path)
-        path = Path(txt)
-        if path.is_absolute():
-            return str(path)
-        return str((base or self.base_dir) / path)
-
-    def _update_github_headers(self, token: str = "", *, binary_asset: bool = False) -> dict[str, str]:
-        headers: dict[str, str] = {}
-        token_txt = str(token or "").strip()
-        if token_txt:
-            headers["Authorization"] = f"Bearer {token_txt}"
-        headers["User-Agent"] = "LuisGEST-Updater"
-        headers["Accept"] = "application/octet-stream" if binary_asset else "application/vnd.github+json"
-        return headers
-
-    def _update_resolve_github_release_asset_api_url(self, url: str, token: str = "") -> str:
-        token_txt = str(token or "").strip()
-        if not token_txt:
-            return ""
-        txt = str(url or "").strip()
-        tag_match = re.match(
-            r"^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/releases/download/(?P<tag>[^/]+)/(?P<asset>[^/?#]+)$",
-            txt,
-            flags=re.IGNORECASE,
-        )
-        latest_match = re.match(
-            r"^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/releases/latest/download/(?P<asset>[^/?#]+)$",
-            txt,
-            flags=re.IGNORECASE,
-        )
-        match = tag_match or latest_match
-        if match is None:
-            return ""
-        owner = str(match.group("owner") or "").strip()
-        repo = str(match.group("repo") or "").strip()
-        asset_name = urllib.parse.unquote(str(match.group("asset") or "").strip())
-        if not owner or not repo or not asset_name:
-            return ""
-        api_url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
-        if tag_match is not None:
-            tag = str(tag_match.group("tag") or "").strip()
-            if not tag:
-                return ""
-            api_url = f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}"
-        request = urllib.request.Request(api_url, headers=self._update_github_headers(token_txt))
-        with urllib.request.urlopen(request, timeout=12) as response:
-            payload = json.loads(response.read().decode("utf-8", errors="ignore"))
-        if isinstance(payload, dict):
-            for asset in list(payload.get("assets", []) or []):
-                if str(dict(asset).get("name", "") or "") == asset_name:
-                    return str(dict(asset).get("url", "") or "").strip()
-        return ""
-
-    def _update_read_json_ref(self, ref: str) -> tuple[dict[str, Any], Path | None]:
-        resolved = self._update_resolve_ref(ref)
-        if not resolved:
-            raise ValueError("Configura o URL/caminho do manifest de atualizacao.")
-        if re.match(r"^https?://", resolved, flags=re.IGNORECASE):
-            settings = self.update_settings()
-            headers = {}
-            token = str(settings.get("github_token", "") or "").strip()
-            request_url = resolved
-            if token:
-                asset_api_url = self._update_resolve_github_release_asset_api_url(resolved, token)
-                if asset_api_url:
-                    request_url = asset_api_url
-                    headers = self._update_github_headers(token, binary_asset=True)
-                else:
-                    headers["Authorization"] = f"Bearer {token}"
-                    headers["User-Agent"] = "LuisGEST-Updater"
-            request = urllib.request.Request(request_url, headers=headers)
-            with urllib.request.urlopen(request, timeout=12) as response:
-                payload = json.loads(response.read().decode("utf-8-sig", errors="ignore"))
-            return (payload if isinstance(payload, dict) else {}, None)
-        path = Path(resolved)
-        if not path.exists():
-            raise ValueError(f"Manifest nao encontrado: {path}")
-        payload = json.loads(path.read_text(encoding="utf-8-sig"))
-        return (payload if isinstance(payload, dict) else {}, path)
-
-    def _update_resolve_relative_ref(self, ref: str, base_ref: str, manifest_path: Path | None = None) -> str:
-        ref_txt = str(ref or "").strip()
-        if not ref_txt:
-            return ""
-        if re.match(r"^https?://", ref_txt, flags=re.IGNORECASE):
-            return ref_txt
-        if ref_txt.lower().startswith("file:///"):
-            return str(Path(urllib.request.url2pathname(urllib.parse.urlparse(ref_txt).path)))
-        base_txt = str(base_ref or "").strip()
-        if base_txt and re.match(r"^https?://", base_txt, flags=re.IGNORECASE):
-            encoded_ref = urllib.parse.quote(ref_txt, safe="/:@?&=%#+,;~-._")
-            return urllib.parse.urljoin(base_txt, encoded_ref)
-        if manifest_path is not None:
-            return str((manifest_path.parent / ref_txt).resolve())
-        return self._update_resolve_ref(ref_txt)
-
-    def _update_download_ref_to_temp(self, ref: str, suffix: str = ".tmp") -> Path:
-        resolved = self._update_resolve_ref(ref)
-        if not resolved:
-            raise ValueError("Referencia de atualizacao vazia.")
-        temp_path = Path(tempfile.mkdtemp(prefix="lugest_update_bootstrap_")) / f"asset{suffix}"
-        if re.match(r"^https?://", resolved, flags=re.IGNORECASE):
-            settings = self.update_settings()
-            headers = {}
-            token = str(settings.get("github_token", "") or "").strip()
-            request_url = resolved
-            if token:
-                asset_api_url = self._update_resolve_github_release_asset_api_url(resolved, token)
-                if asset_api_url:
-                    request_url = asset_api_url
-                    headers = self._update_github_headers(token, binary_asset=True)
-                else:
-                    headers["Authorization"] = f"Bearer {token}"
-                    headers["User-Agent"] = "LuisGEST-Updater"
-            request = urllib.request.Request(request_url, headers=headers)
-            with urllib.request.urlopen(request, timeout=20) as response, temp_path.open("wb") as handle:
-                shutil.copyfileobj(response, handle)
-            return temp_path
-        source = Path(resolved)
-        if not source.exists():
-            raise ValueError(f"Ficheiro de atualizacao nao encontrado: {source}")
-        shutil.copy2(source, temp_path)
-        return temp_path
-
-    def _update_download_ref_to_path(self, ref: str, target: Path) -> Path:
-        downloaded = self._update_download_ref_to_temp(ref, suffix=target.suffix or ".tmp")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(downloaded, target)
-        return target
-
-    def update_check(self) -> dict[str, Any]:
-        settings = self.update_settings()
-        current_version = self.app_version()
-        manifest, manifest_path = self._update_read_json_ref(str(settings.get("manifest_url", "") or ""))
-        latest_version = str(manifest.get("version", "") or "").strip()
-        if not latest_version:
-            raise ValueError("Manifest sem campo 'version'.")
-        package_url = str(manifest.get("package_url", "") or "").strip()
-        if not package_url:
-            raise ValueError("Manifest sem campo 'package_url'.")
-        available = self._update_version_parts(latest_version) > self._update_version_parts(current_version)
-        return {
-            "current_version": current_version,
-            "latest_version": latest_version,
-            "update_available": available,
-            "manifest_url": str(settings.get("manifest_url", "") or ""),
-            "manifest_path": str(manifest_path or ""),
-            "package_url": package_url,
-            "bootstrap_url": str(manifest.get("bootstrap_url", "") or ""),
-            "sha256": str(manifest.get("sha256", "") or ""),
-            "notes": str(manifest.get("notes", "") or ""),
-            "channel": str(manifest.get("channel", settings.get("channel", "stable")) or "stable"),
-        }
-
-    def update_installer_command(self) -> list[str]:
-        settings = dict(self.update_settings() or {})
-        powershell_exe = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
-        manifest_url = str(settings.get("manifest_url", "") or "").strip()
-        if not manifest_url:
-            raise ValueError("Configura primeiro o manifest de atualizacao.")
-        manifest, manifest_path = self._update_read_json_ref(manifest_url)
-        bootstrap_ref = str(manifest.get("bootstrap_url", "") or "").strip() or "Reparar Atualizador Instalado.ps1"
-        bootstrap_resolved = self._update_resolve_relative_ref(bootstrap_ref, manifest_url, manifest_path)
-        local_repair_script = self.base_dir / "Reparar Atualizador Instalado.ps1"
-        # Fluxo validado em cliente: renovar primeiro o reparador local e so depois
-        # executa-lo. Foi este comportamento que substituiu com sucesso a copia manual
-        # via TeamViewer que o utilizador fazia quando o update automatico falhava.
-        self._update_download_ref_to_path(bootstrap_resolved, local_repair_script)
-        command = [
-            str(powershell_exe),
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(local_repair_script),
-            "-InstallDir",
-            str(self.base_dir),
-            "-ManifestUrl",
-            manifest_url,
-            "-CurrentVersion",
-            self.app_version(),
-        ]
-        token = str(settings.get("github_token", "") or "").strip()
-        if token:
-            command.extend(["-GitHubToken", token])
-        return command
-
-    def _update_sync_installer_config(self) -> Path:
-        target = self.base_dir / "update_config.json"
-        settings = dict(self.update_settings() or {})
-        payload = {
-            "current_version": self.app_version(),
-            "manifest_url": str(settings.get("manifest_url", "") or "").strip(),
-            "channel": str(settings.get("channel", "stable") or "stable").strip() or "stable",
-            "github_token": str(settings.get("github_token", "") or "").strip(),
-            "auto_check": bool(settings.get("auto_check", False)),
-        }
-        target.write_text(json.dumps(payload, indent=4, ensure_ascii=False) + "\n", encoding="utf-8")
-        return target
-
-    def update_start_installer(self) -> dict[str, Any]:
-        config_path = self._update_sync_installer_config()
-        command = self.update_installer_command()
-        creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
-        subprocess.Popen(command, cwd=str(self.base_dir), close_fds=True, creationflags=creationflags)
-        return {"started": True, "command": command, "config_path": str(config_path)}
 
     def verify_supervisor_password(self, password: str) -> bool:
         stored = str(dict(self._load_qt_config().get("ui_options", {}) or {}).get("operator_supervisor_password", "") or "").strip()

@@ -1,5 +1,5 @@
 from __future__ import annotations
 
-from .runtime_pages import LegacyOrdersPage as OrdersPage
+from .orders_workspace import LegacyOrdersPage as OrdersPage
 
 __all__ = ["OrdersPage"]

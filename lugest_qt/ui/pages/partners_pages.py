@@ -54,20 +54,21 @@ def _section_card(title: str, subtitle: str = "", tone: str = "default", minimum
     if minimum_height:
         card.setMinimumHeight(minimum_height)
     layout = QVBoxLayout(card)
-    layout.setContentsMargins(14, 12, 14, 12)
-    layout.setSpacing(8)
+    layout.setContentsMargins(15, 14, 15, 14)
+    layout.setSpacing(10)
     title_label = QLabel(title)
-    title_label.setStyleSheet("font-size: 13px; font-weight: 900; color: #0f172a;")
+    title_label.setStyleSheet("font-size: 13px; font-weight: 900; color: #29442d;")
     layout.addWidget(title_label)
     if subtitle:
         subtitle_label = QLabel(subtitle)
         subtitle_label.setProperty("role", "muted")
         subtitle_label.setWordWrap(True)
+        subtitle_label.setStyleSheet("font-size: 10px; color: #68736b;")
         layout.addWidget(subtitle_label)
     form = QFormLayout()
     form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
     form.setHorizontalSpacing(14)
-    form.setVerticalSpacing(8)
+    form.setVerticalSpacing(10)
     form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
     layout.addLayout(form)
     return card, form
@@ -87,10 +88,10 @@ def _scrollable_form_area(content_layout: QGridLayout) -> QScrollArea:
 def _prepare_partner_fields(*widgets: QWidget) -> None:
     for widget in widgets:
         if isinstance(widget, (QLineEdit, QComboBox)):
-            widget.setMinimumHeight(34)
+            widget.setMinimumHeight(max(36, widget.minimumHeight()))
             widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         elif isinstance(widget, QTextEdit):
-            widget.setMinimumHeight(72)
+            widget.setMinimumHeight(max(72, widget.minimumHeight()))
             widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
 
@@ -98,7 +99,7 @@ def _search_box(edit: QLineEdit, object_name: str) -> QWidget:
     box = QWidget()
     box.setObjectName(object_name)
     box.setStyleSheet(
-        f"QWidget#{object_name} {{ background: #ffffff; border: 1px solid #b8c9df; border-radius: 8px; }}"
+        f"QWidget#{object_name} {{ background: #ffffff; border: 1px solid #bdc9b9; border-radius: 8px; }}"
         "QLineEdit { border: none; background: transparent; padding: 7px 8px 7px 0; }"
     )
     layout = QHBoxLayout(box)
@@ -107,7 +108,7 @@ def _search_box(edit: QLineEdit, object_name: str) -> QWidget:
     icon = QLabel("🔍")
     icon.setFixedWidth(20)
     icon.setAlignment(Qt.AlignCenter)
-    icon.setStyleSheet("font-size: 15px; color: #33516f;")
+    icon.setStyleSheet("font-size: 15px; color: #4c6b43;")
     layout.addWidget(icon)
     layout.addWidget(edit, 1)
     return box
@@ -131,15 +132,15 @@ def _row_matches_terms(row: dict, query: str) -> bool:
 
 def _metric_chip(title: str, value: str = "-", tone: str = "default") -> QLabel:
     colors = {
-        "default": ("#eef4fb", "#3b5877"),
-        "info": ("#eaf3ff", "#17426b"),
-        "success": ("#ecfdf3", "#14532d"),
-        "warning": ("#fff7df", "#8a5b00"),
+        "default": ("#f0f3ef", "#4a5850"),
+        "info": ("#edf3ea", "#3e5f35"),
+        "success": ("#e9f4e3", "#315d2a"),
+        "warning": ("#f4f2e8", "#6c6440"),
     }
     bg, fg = colors.get(tone, colors["default"])
     label = QLabel(f"{title}: {value}")
     label.setStyleSheet(
-        f"background: {bg}; color: {fg}; border: 1px solid rgba(107, 143, 179, 0.35); "
+        f"background: {bg}; color: {fg}; border: 1px solid #c9d4c5; "
         "border-radius: 6px; padding: 4px 8px; font-size: 9px; font-weight: 800;"
     )
     return label
@@ -151,27 +152,31 @@ def _partner_detail_tabs(entries: tuple[tuple[str, CardFrame], ...]) -> QTabWidg
     tabs.setStyleSheet(
         """
         QTabWidget::pane {
-            border: 1px solid #cbd8e5;
+            border: 1px solid #d0d8cd;
             border-radius: 7px;
-            background: #ffffff;
+            background: #f8faf7;
             top: -1px;
         }
         QTabBar::tab {
             min-width: 0;
-            min-height: 29px;
-            padding: 5px 5px;
+            min-height: 34px;
+            padding: 5px 7px;
             margin: 0;
-            border: 1px solid #cbd8e5;
-            background: #edf3f7;
-            color: #475467;
-            font-size: 9px;
+            border: 1px solid #d0d8cd;
+            background: #edf2eb;
+            color: #4d5b51;
+            font-size: 10px;
             font-weight: 800;
         }
         QTabBar::tab:selected {
             background: #ffffff;
-            color: #0b6868;
-            border-top: 2px solid #0aa6a6;
+            color: #355d2c;
+            border-top: 2px solid #6f9f45;
             border-bottom-color: #ffffff;
+        }
+        QTabBar::tab:hover:!selected {
+            background: #f4f7f2;
+            color: #45673b;
         }
         """
     )
@@ -183,7 +188,7 @@ def _partner_detail_tabs(entries: tuple[tuple[str, CardFrame], ...]) -> QTabWidg
         card.setStyleSheet("QFrame#PartnerTabSection { background: transparent; border: 0; border-radius: 0; }")
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(10, 10, 10, 10)
         layout.addWidget(card)
         layout.addStretch(1)
         tabs.addTab(page, title)
@@ -298,27 +303,34 @@ class ClientsPage(QWidget):
         table_layout.addWidget(self.table)
         split.addWidget(table_card)
 
-        form_card = CardFrame()
-        form_card.set_tone("info")
-        form_card.setMinimumWidth(390)
-        form_card.setMaximumWidth(520)
+        form_card = CardFrame(object_name="ClientDetailsCard")
+        form_card.set_tone("default")
+        form_card.setMinimumWidth(410)
+        form_card.setMaximumWidth(560)
+        form_card.setStyleSheet(
+            "QFrame#ClientDetailsCard { background: #f7f9f6; border: 1px solid #cfd8cc; border-radius: 9px; }"
+            "QFrame#ClientDetailsCard QLineEdit, QFrame#ClientDetailsCard QComboBox, QFrame#ClientDetailsCard QTextEdit { background: #ffffff; color: #29372e; border: 1px solid #c3cec0; border-radius: 6px; padding: 5px 7px; font-size: 11px; }"
+            "QFrame#ClientDetailsCard QLineEdit:focus, QFrame#ClientDetailsCard QComboBox:focus, QFrame#ClientDetailsCard QTextEdit:focus { border-color: #6f9f45; background: #fcfefb; }"
+            "QFrame#ClientDetailsCard QLabel { color: #445148; }"
+        )
         form_layout = QVBoxLayout(form_card)
-        form_layout.setContentsMargins(14, 12, 14, 12)
-        form_layout.setSpacing(8)
+        form_layout.setContentsMargins(15, 14, 15, 15)
+        form_layout.setSpacing(10)
         form_title = QLabel("Ficha do cliente")
-        form_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+        form_title.setStyleSheet("font-size: 16px; font-weight: 800; color: #263d2b;")
         form_subtitle = QLabel("Dados comerciais, contactos e condicoes para documentos.")
         form_subtitle.setProperty("role", "muted")
         form_subtitle.setWordWrap(True)
         form_subtitle.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        form_subtitle.setStyleSheet("font-size: 10.5px; color: #68736b;")
         self.client_code_edit = QLineEdit()
         self.client_name_edit = QLineEdit()
         self.client_nif_edit = QLineEdit()
         self.client_contact_edit = QLineEdit()
         self.client_email_edit = QLineEdit()
         self.client_address_edit = QTextEdit()
-        self.client_address_edit.setMinimumHeight(70)
-        self.client_address_edit.setMaximumHeight(92)
+        self.client_address_edit.setMinimumHeight(105)
+        self.client_address_edit.setMaximumHeight(150)
         self.client_terms_edit = QComboBox()
         self.client_latitude_edit = QLineEdit()
         self.client_latitude_edit.setPlaceholderText("ex.: 41.1579")
@@ -340,8 +352,8 @@ class ClientsPage(QWidget):
         self.client_terms_edit.addItems(PAYMENT_TERMS_OPTIONS)
         self.client_lead_edit = QLineEdit()
         self.client_notes_edit = QTextEdit()
-        self.client_notes_edit.setMinimumHeight(78)
-        self.client_notes_edit.setMaximumHeight(118)
+        self.client_notes_edit.setMinimumHeight(125)
+        self.client_notes_edit.setMaximumHeight(190)
         _prepare_partner_fields(
             self.client_code_edit,
             self.client_name_edit,
@@ -359,11 +371,11 @@ class ClientsPage(QWidget):
         form_grid.setContentsMargins(0, 0, 0, 0)
         form_grid.setHorizontalSpacing(10)
         form_grid.setVerticalSpacing(10)
-        ident_card, ident_form = _section_card("Identificacao", "Codigo interno e dados fiscais.", "default", 148)
-        contact_card, contact_form = _section_card("Contacto e localização", "Morada, coordenadas e acesso direto ao mapa.", "default", 300)
-        terms_card, terms_form = _section_card("Condicoes comerciais", "Prazos e notas usadas nos documentos.", "warning", 220)
+        ident_card, ident_form = _section_card("Identificação", "Código interno e dados fiscais.", "default", 190)
+        contact_card, contact_form = _section_card("Contacto e localização", "Morada, coordenadas e acesso direto ao mapa.", "default", 390)
+        terms_card, terms_form = _section_card("Condições comerciais", "Prazos e notas usadas nos documentos.", "default", 300)
         for label, widget in (
-            ("Codigo", self.client_code_edit),
+            ("Código", self.client_code_edit),
             ("Nome", self.client_name_edit),
             ("NIF", self.client_nif_edit),
         ):
@@ -388,10 +400,11 @@ class ClientsPage(QWidget):
         self.client_detail_tabs = _partner_detail_tabs(
             (("Identificação", ident_card), ("Contacto", contact_card), ("Comercial", terms_card))
         )
+        self.client_detail_tabs.setMinimumHeight(410)
         form_layout.addWidget(self.client_detail_tabs, 1)
         split.addWidget(form_card)
         split.setHandleWidth(7)
-        split.setSizes([980, 460])
+        split.setSizes([960, 500])
         split.setStretchFactor(0, 1)
         split.setStretchFactor(1, 0)
         root.addWidget(split, 1)

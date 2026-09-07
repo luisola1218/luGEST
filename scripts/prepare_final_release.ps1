@@ -27,6 +27,8 @@ $securityPlan = Join-Path $repoRoot 'docs\plans\SECURITY_TEST_PLAN.md'
 $localGuide = Join-Path $repoRoot 'docs\install\GUIA_ARRANQUE_QT_LOCAL.md'
 $updateGuide = Join-Path $repoRoot 'docs\install\UPDATE_FLOW_CLIENTE.md'
 $readinessGuide = Join-Path $repoRoot 'docs\install\PRONTIDAO_COMERCIAL.md'
+$updateScript = Join-Path $repoRoot 'scripts\lugest_update.ps1'
+$repairUpdateScript = Join-Path $repoRoot 'scripts\repair_installed_updater.ps1'
 $fluidityAudit = Join-Path $repoRoot 'docs\plans\AUDITORIA_FLUIDEZ_2026-07-23.md'
 $profileGuide = Join-Path $repoRoot 'docs\PERFIS_ESTRUTURAIS.md'
 $localAiGuide = Join-Path $repoRoot 'docs\install\IA_LOCAL_OLLAMA.md'
@@ -86,6 +88,8 @@ foreach ($requiredPath in @(
     $localGuide,
     $updateGuide,
     $readinessGuide,
+    $updateScript,
+    $repairUpdateScript,
     $fluidityAudit,
     $profileGuide,
     $localAiGuide
@@ -166,6 +170,10 @@ Copy-Item $iconFile $releaseRoot -Force
 Copy-Item $logoFile $releaseRoot -Force
 Copy-Item $versionFile $releaseRoot -Force
 Copy-Item -Recurse $logosDir $releaseRoot -Force
+Copy-Item $updateScript (Join-Path $releaseRoot 'Atualizar LuisGEST.ps1') -Force
+Copy-Item $repairUpdateScript (Join-Path $releaseRoot 'Reparar Atualizador Instalado.ps1') -Force
+Write-Utf8NoBomFile -Path (Join-Path $releaseRoot 'Atualizar LuisGEST.bat') -Content "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0Atualizar LuisGEST.ps1`" %*`r`n"
+Write-Utf8NoBomFile -Path (Join-Path $releaseRoot 'Reparar Atualizador Instalado.bat') -Content "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0Reparar Atualizador Instalado.ps1`" %*`r`n"
 
 if ($Commercial) {
     foreach ($commercialEnvName in @(
@@ -281,7 +289,7 @@ function Resolve-SafeDirectory {
 
     `$candidate = `$RequestedPath
     if ([string]::IsNullOrWhiteSpace(`$candidate)) {
-        `$candidate = Join-Path `$env:LOCALAPPDATA 'luGEST'
+        `$candidate = Join-Path `$env:LOCALAPPDATA 'Programs\luGEST'
     }
     `$fullPath = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables(`$candidate))
     `$driveRoot = [IO.Path]::GetPathRoot(`$fullPath).TrimEnd('\')
@@ -373,7 +381,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
-    $InstallRoot = Join-Path $env:LOCALAPPDATA 'luGEST'
+    $InstallRoot = Join-Path $env:LOCALAPPDATA 'Programs\luGEST'
 }
 $InstallRoot = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($InstallRoot))
 $envPath = Join-Path $InstallRoot 'lugest.env'
@@ -494,7 +502,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
-    $InstallRoot = Join-Path $env:LOCALAPPDATA 'luGEST'
+    $InstallRoot = Join-Path $env:LOCALAPPDATA 'Programs\luGEST'
 }
 $installRoot = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($InstallRoot)).TrimEnd('\')
 $driveRoot = [IO.Path]::GetPathRoot($installRoot).TrimEnd('\')
@@ -605,7 +613,7 @@ $presentationReadme = @"
 
 ## Ativar o trial no cliente
 1. Instalar primeiro o luGEST.
-2. Executar `CONFIGURAR_OWNER_TRIAL.ps1` na pasta onde o luGEST foi instalado (por omissao, `%LOCALAPPDATA%\luGEST`).
+2. Executar `CONFIGURAR_OWNER_TRIAL.ps1` na pasta onde o luGEST foi instalado (por omissao, `%LOCALAPPDATA%\Programs\luGEST`).
 3. Guardar o utilizador e a password OWNER num gestor de passwords; a password nao fica gravada em texto simples.
 4. Garantir acesso HTTPS (porta 443) a `www.google.com` e `www.cloudflare.com`; `www.microsoft.com` e a contingencia.
 5. Abrir o luGEST e entrar com a conta OWNER.
@@ -636,7 +644,7 @@ $trialGuide = @"
 
 ## Primeira ativacao
 1. Instalar o luGEST com `INSTALAR_LUGEST.ps1`.
-2. Confirmar a ligacao MySQL no ficheiro `lugest.env` da pasta instalada (por omissao, `%LOCALAPPDATA%\luGEST`).
+2. Confirmar a ligacao MySQL no ficheiro `lugest.env` da pasta instalada (por omissao, `%LOCALAPPDATA%\Programs\luGEST`).
 3. Executar `CONFIGURAR_OWNER_TRIAL.ps1` nessa pasta.
 4. Definir um utilizador OWNER e uma password forte, diferente das contas normais.
 5. Guardar estas credenciais num gestor de passwords. O ficheiro guarda apenas o hash PBKDF2-SHA256.
@@ -669,7 +677,7 @@ Esta pasta contem a aplicacao desktop luGEST preparada para instalacao e validac
 
 ## O que interessa
 - luGEST.exe: aplicacao principal.
-- INSTALAR_LUGEST.ps1: instala por omissao em `%LOCALAPPDATA%\luGEST`, sem exigir administrador; aceita outro destino com `-InstallRoot`.
+- INSTALAR_LUGEST.ps1: instala por omissao em `%LOCALAPPDATA%\Programs\luGEST`, sem exigir administrador; aceita outro destino com `-InstallRoot`.
 - DESINSTALAR_LUGEST.ps1: remove a aplicacao e preserva configuracao/dados locais em `Documentos\luGEST Backups`.
 - CONFIGURAR_OWNER_TRIAL.ps1: cria, depois da instalacao, as credenciais privadas para gerir o trial.
 - _internal: motor interno do executavel; nao apagar nem copiar o luGEST.exe sozinho.
@@ -696,7 +704,7 @@ Esta pasta contem a aplicacao desktop luGEST preparada para instalacao e validac
 
 ## Notas
 - Os atalhos .bat foram removidos para reduzir confusao; a instalacao usa apenas PowerShell e depois arranca pelo atalho.
-- A pasta por omissao e do utilizador atual. Para escolher outra: `powershell -ExecutionPolicy Bypass -File .\INSTALAR_LUGEST.ps1 -InstallRoot "D:\Aplicacoes\luGEST"`.
+- A pasta por omissao e do utilizador atual. Configuracao e logs ficam separados em `%LOCALAPPDATA%\luGEST-data`. Para escolher outro destino: `powershell -ExecutionPolicy Bypass -File .\INSTALAR_LUGEST.ps1 -InstallRoot "D:\Aplicacoes\luGEST"`.
 - Para instalar base nova no HeidiSQL, importar Base de Dados\mysql\IMPORTAR_NO_HEIDI.sql.
 "@
 Write-Utf8NoBomFile -Path (Join-Path $releaseRoot 'README.md') -Content $readme

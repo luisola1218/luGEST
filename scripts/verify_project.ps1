@@ -33,6 +33,8 @@ function Invoke-Checked {
     }
 }
 
+Push-Location -LiteralPath $repoRoot
+try {
 if (-not $SafeOnly -and -not $SkipCoreFlows -and -not $AllowRemoteDatabase) {
     $envFile = Join-Path $repoRoot 'lugest.env'
     if (Test-Path -LiteralPath $envFile) {
@@ -53,6 +55,7 @@ if (-not $SkipCompile) {
     Write-Host "A compilar ficheiros Python..." -ForegroundColor Cyan
     $compileScript = @'
 from pathlib import Path
+import os
 
 excluded = {
     ".venv",
@@ -65,12 +68,15 @@ excluded = {
     "generated",
     "output",
     "tmp",
+    ".git",
+    "__pycache__",
+    ".dart_tool",
+    "node_modules",
 }
-files = [
-    path
-    for path in Path(".").rglob("*.py")
-    if not any(part in excluded for part in path.parts)
-]
+files = []
+for directory, dirs, names in os.walk("."):
+    dirs[:] = [name for name in dirs if name not in excluded]
+    files.extend(Path(directory) / name for name in names if name.endswith(".py"))
 errors = []
 for path in files:
     try:
@@ -103,13 +109,18 @@ if ($SafeOnly) {
         'scripts\security_audit.py',
         'scripts\verify_architecture_boundaries.py',
         'scripts\verify_locked_dependencies.py',
+        'scripts\verify_app_storage.py',
+        'scripts\verify_update_security.py',
         'scripts\verify_runtime_diagnostics.py',
         'scripts\verify_license_foundation.py',
         'scripts\verify_mysql_schema_definition.py',
         'scripts\verify_migration_framework.py',
         'scripts\verify_laser_quote_engine.py',
         'scripts\verify_laser_nesting_flow.py',
-        'scripts\verify_quote_ui_controls.py'
+        'scripts\verify_quote_ui_controls.py',
+        'scripts\verify_partner_ui_layout.py',
+        'scripts\verify_runtime_cache.py',
+        'scripts\verify_page_modules.py'
     )
     foreach ($relativeScript in $safeScripts) {
         Invoke-Checked -Label "A correr $relativeScript..." -CommandArgs @((Join-Path $repoRoot $relativeScript))
@@ -126,3 +137,7 @@ if ($ReadOnlyDatabaseAudit) {
 }
 
 Write-Host "Verificacao concluida." -ForegroundColor Green
+}
+finally {
+    Pop-Location
+}

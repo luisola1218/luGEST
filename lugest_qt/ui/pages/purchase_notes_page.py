@@ -2473,16 +2473,133 @@ class PurchaseNotesPage(QWidget):
     def _line_dialog(self, title: str, initial: dict | None = None, material_mode: bool = False) -> dict | None:
         initial = dict(initial or {})
         dialog = QDialog(self)
+        dialog.setObjectName("PurchaseLineDialog")
         dialog.setWindowTitle(title)
         dialog.setMinimumWidth(980 if material_mode else 760)
         dialog.resize(1080 if material_mode else 820, 760 if material_mode else 620)
         dialog.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
         dialog.setSizeGripEnabled(True)
         dialog.setStyleSheet(
-            "QDialog { font-size: 12px; }"
-            " QLabel { font-size: 12px; }"
-            " QLineEdit, QComboBox, QDoubleSpinBox { font-size: 12px; min-height: 30px; padding: 0 8px; }"
-            " QPushButton { min-height: 34px; font-size: 12px; }"
+            """
+            QDialog#PurchaseLineDialog {
+                background: #f1f3f0;
+                color: #2f3b33;
+                font-family: 'Segoe UI';
+                font-size: 12px;
+            }
+            QDialog#PurchaseLineDialog QLabel {
+                color: #3f4d43;
+                font-size: 11px;
+            }
+            QDialog#PurchaseLineDialog QLabel#MaterialLineIntro {
+                background: #eef5e9;
+                border: 1px solid #cad9c2;
+                border-radius: 7px;
+                color: #45613c;
+                padding: 8px 10px;
+            }
+            QDialog#PurchaseLineDialog QLabel#MaterialSectionTitle {
+                background: transparent;
+                border: 0;
+                color: #29442d;
+                font-size: 14px;
+                font-weight: 800;
+            }
+            QDialog#PurchaseLineDialog QFrame#MaterialSelectorCard,
+            QDialog#PurchaseLineDialog QFrame#MaterialInfoCard,
+            QDialog#PurchaseLineDialog QFrame#MaterialTechCard,
+            QDialog#PurchaseLineDialog QFrame#MaterialCommercialCard {
+                background: #ffffff;
+                border: 1px solid #d2d9cf;
+                border-left: 3px solid #7da85a;
+                border-radius: 8px;
+            }
+            QDialog#PurchaseLineDialog QFrame#MaterialInfoCard {
+                background: #f8faf7;
+                border-left-color: #98a493;
+            }
+            QDialog#PurchaseLineDialog QLineEdit,
+            QDialog#PurchaseLineDialog QComboBox,
+            QDialog#PurchaseLineDialog QAbstractSpinBox {
+                min-height: 30px;
+                padding: 0 8px;
+                color: #26342b;
+                background: #ffffff;
+                border: 1px solid #c6d0c2;
+                border-radius: 6px;
+                selection-background-color: #dfeeda;
+                selection-color: #1f3524;
+            }
+            QDialog#PurchaseLineDialog QLineEdit:focus,
+            QDialog#PurchaseLineDialog QComboBox:focus,
+            QDialog#PurchaseLineDialog QAbstractSpinBox:focus {
+                border: 1px solid #6f9f45;
+                background: #fcfefb;
+            }
+            QDialog#PurchaseLineDialog QLineEdit:read-only,
+            QDialog#PurchaseLineDialog QAbstractSpinBox:read-only {
+                background: #f0f3ef;
+                color: #556158;
+            }
+            QDialog#PurchaseLineDialog QComboBox::drop-down,
+            QDialog#PurchaseLineDialog QAbstractSpinBox::up-button,
+            QDialog#PurchaseLineDialog QAbstractSpinBox::down-button {
+                width: 22px;
+                border-left: 1px solid #cbd4c8;
+                background: #eef3eb;
+            }
+            QDialog#PurchaseLineDialog QScrollArea,
+            QDialog#PurchaseLineDialog QScrollArea > QWidget > QWidget {
+                background: transparent;
+                border: 0;
+            }
+            QDialog#PurchaseLineDialog QScrollBar:vertical {
+                width: 12px;
+                margin: 2px;
+                background: #e5e9e3;
+                border: 0;
+                border-radius: 5px;
+            }
+            QDialog#PurchaseLineDialog QScrollBar::handle:vertical {
+                min-height: 36px;
+                margin: 1px;
+                background: #9aa699;
+                border-radius: 4px;
+            }
+            QDialog#PurchaseLineDialog QScrollBar::handle:vertical:hover {
+                background: #788878;
+            }
+            QDialog#PurchaseLineDialog QDialogButtonBox {
+                background: #f1f3f0;
+                border-top: 1px solid #d5dbd3;
+                padding-top: 8px;
+            }
+            QDialog#PurchaseLineDialog QPushButton {
+                min-height: 34px;
+                min-width: 104px;
+                padding: 0 16px;
+                border-radius: 7px;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            QDialog#PurchaseLineDialog QPushButton[variant="success"] {
+                color: #ffffff;
+                background: #659d32;
+                border: 1px solid #4f8127;
+            }
+            QDialog#PurchaseLineDialog QPushButton[variant="success"]:hover {
+                background: #568b2b;
+            }
+            QDialog#PurchaseLineDialog QPushButton[variant="secondary"] {
+                color: #334039;
+                background: #ffffff;
+                border: 1px solid #aeb9ac;
+            }
+            QDialog#PurchaseLineDialog QPushButton[variant="secondary"]:hover {
+                background: #edf2ea;
+                border-color: #82927f;
+            }
+            """
         )
         dialog_layout = QVBoxLayout(dialog)
         dialog_layout.setContentsMargins(12, 10, 12, 10)
@@ -2491,8 +2608,11 @@ class PurchaseNotesPage(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        scroll.verticalScrollBar().setSingleStep(36)
         content = QWidget()
+        content.setMinimumWidth(900 if material_mode else 700)
         content.setMaximumWidth(1040 if material_mode else 780)
         layout = QVBoxLayout(content)
         layout.setContentsMargins(14, 12, 14, 12)
@@ -2533,6 +2653,7 @@ class PurchaseNotesPage(QWidget):
             )
             intro.setWordWrap(True)
             intro.setProperty("role", "muted")
+            intro.setObjectName("MaterialLineIntro")
             layout.addWidget(intro)
         if material_mode:
             material_rows = [dict(row or {}) for row in list(self.backend.ne_material_options("") or [])]
@@ -2680,13 +2801,13 @@ class PurchaseNotesPage(QWidget):
                         values.append(value)
                 return values
 
-            selector_card = CardFrame()
+            selector_card = CardFrame(object_name="MaterialSelectorCard")
             selector_layout = QGridLayout(selector_card)
             selector_layout.setContentsMargins(12, 10, 12, 10)
             selector_layout.setHorizontalSpacing(10)
             selector_layout.setVerticalSpacing(8)
             selector_title = QLabel("Seleção de matéria-prima")
-            selector_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+            selector_title.setObjectName("MaterialSectionTitle")
             selector_hint = QLabel(
                 "O stock disponível aparece logo no seletor abaixo. Usa os filtros de tipo, qualidade, espessura e dimensão apenas para afinar a lista. "
                 "O stock é identificado pelo ID do material; o lote aparece apenas como referência adicional. "
@@ -2741,8 +2862,7 @@ class PurchaseNotesPage(QWidget):
                 selector_layout.setColumnStretch(col, 1)
             layout.addWidget(selector_card)
 
-            info_card = CardFrame()
-            info_card.set_tone("info")
+            info_card = CardFrame(object_name="MaterialInfoCard")
             info_layout = QGridLayout(info_card)
             info_layout.setContentsMargins(12, 10, 12, 10)
             info_layout.setHorizontalSpacing(12)
@@ -2764,25 +2884,28 @@ class PurchaseNotesPage(QWidget):
             code_display.setPlaceholderText("Gerado na entrada")
             local_display.setPlaceholderText("Opcional")
             lote_display.setPlaceholderText("Opcional")
-            info_layout.addWidget(QLabel("ID material"), 0, 0)
-            info_layout.addWidget(QLabel("Localização"), 0, 1)
-            info_layout.addWidget(QLabel("Lote fornecedor"), 0, 2)
-            info_layout.addWidget(price_base_label, 0, 3)
-            info_layout.addWidget(code_display, 1, 0)
-            info_layout.addWidget(local_display, 1, 1)
-            info_layout.addWidget(lote_display, 1, 2)
-            info_layout.addWidget(price_base_spin, 1, 3)
+            info_title = QLabel("Identificação e custo")
+            info_title.setObjectName("MaterialSectionTitle")
+            info_layout.addWidget(info_title, 0, 0, 1, 4)
+            info_layout.addWidget(QLabel("ID material"), 1, 0)
+            info_layout.addWidget(QLabel("Localização"), 1, 1)
+            info_layout.addWidget(QLabel("Lote fornecedor"), 1, 2)
+            info_layout.addWidget(price_base_label, 1, 3)
+            info_layout.addWidget(code_display, 2, 0)
+            info_layout.addWidget(local_display, 2, 1)
+            info_layout.addWidget(lote_display, 2, 2)
+            info_layout.addWidget(price_base_spin, 2, 3)
             for col in range(4):
                 info_layout.setColumnStretch(col, 1)
             layout.addWidget(info_card)
 
-            tech_card = CardFrame()
+            tech_card = CardFrame(object_name="MaterialTechCard")
             tech_layout = QGridLayout(tech_card)
             tech_layout.setContentsMargins(12, 10, 12, 10)
             tech_layout.setHorizontalSpacing(12)
             tech_layout.setVerticalSpacing(8)
             tech_title = QLabel("Dados técnicos")
-            tech_title.setStyleSheet("font-size: 14px; font-weight: 800; color: #0f172a;")
+            tech_title.setObjectName("MaterialSectionTitle")
             tech_hint = QLabel("Os mesmos campos técnicos da matéria-prima são usados aqui para garantir peso e stock coerentes.")
             tech_hint.setProperty("role", "muted")
             tech_hint.setWordWrap(True)
@@ -2827,7 +2950,7 @@ class PurchaseNotesPage(QWidget):
             for col in range(4):
                 tech_layout.setColumnStretch(col, 1)
             layout.addWidget(tech_card)
-            commercial_card = CardFrame()
+            commercial_card = CardFrame(object_name="MaterialCommercialCard")
             commercial_layout = QGridLayout(commercial_card)
             commercial_layout.setContentsMargins(12, 10, 12, 10)
             commercial_layout.setHorizontalSpacing(10)
@@ -2835,21 +2958,24 @@ class PurchaseNotesPage(QWidget):
             commercial_hint = QLabel("A linha fica simples: descrição, fornecedor, quantidade e preço. A ponte com o stock e os custos mantém-se por baixo.")
             commercial_hint.setProperty("role", "muted")
             commercial_hint.setWordWrap(True)
-            commercial_layout.addWidget(commercial_hint, 0, 0, 1, 4)
-            commercial_layout.addWidget(QLabel("Descrição da linha"), 1, 0)
-            commercial_layout.addWidget(desc_edit, 1, 1, 1, 3)
-            commercial_layout.addWidget(QLabel("Fornecedor linha"), 2, 0)
-            commercial_layout.addWidget(supplier_combo, 2, 1)
-            commercial_layout.addWidget(QLabel("Quantidade"), 2, 2)
-            commercial_layout.addWidget(qtd_spin, 2, 3)
-            commercial_layout.addWidget(QLabel("Unid."), 3, 0)
-            commercial_layout.addWidget(unid_edit, 3, 1)
-            commercial_layout.addWidget(QLabel("Preço unid. (EUR)"), 3, 2)
-            commercial_layout.addWidget(preco_spin, 3, 3)
-            commercial_layout.addWidget(QLabel("Desc. %"), 4, 0)
-            commercial_layout.addWidget(desconto_spin, 4, 1)
-            commercial_layout.addWidget(QLabel("IVA %"), 4, 2)
-            commercial_layout.addWidget(iva_spin, 4, 3)
+            commercial_title = QLabel("Dados da linha")
+            commercial_title.setObjectName("MaterialSectionTitle")
+            commercial_layout.addWidget(commercial_title, 0, 0, 1, 4)
+            commercial_layout.addWidget(commercial_hint, 1, 0, 1, 4)
+            commercial_layout.addWidget(QLabel("Descrição da linha"), 2, 0)
+            commercial_layout.addWidget(desc_edit, 2, 1, 1, 3)
+            commercial_layout.addWidget(QLabel("Fornecedor linha"), 3, 0)
+            commercial_layout.addWidget(supplier_combo, 3, 1)
+            commercial_layout.addWidget(QLabel("Quantidade"), 3, 2)
+            commercial_layout.addWidget(qtd_spin, 3, 3)
+            commercial_layout.addWidget(QLabel("Unid."), 4, 0)
+            commercial_layout.addWidget(unid_edit, 4, 1)
+            commercial_layout.addWidget(QLabel("Preço unid. (EUR)"), 4, 2)
+            commercial_layout.addWidget(preco_spin, 4, 3)
+            commercial_layout.addWidget(QLabel("Desc. %"), 5, 0)
+            commercial_layout.addWidget(desconto_spin, 5, 1)
+            commercial_layout.addWidget(QLabel("IVA %"), 5, 2)
+            commercial_layout.addWidget(iva_spin, 5, 3)
             for col in range(4):
                 commercial_layout.setColumnStretch(col, 1)
             layout.addWidget(commercial_card)
@@ -3484,8 +3610,10 @@ class PurchaseNotesPage(QWidget):
         cancel_button = buttons.button(QDialogButtonBox.Cancel)
         if ok_button is not None:
             ok_button.setText("Guardar")
+            ok_button.setProperty("variant", "success")
         if cancel_button is not None:
             cancel_button.setText("Fechar")
+            cancel_button.setProperty("variant", "secondary")
         buttons.accepted.connect(accept_handler)
         buttons.rejected.connect(dialog.reject)
         dialog_layout.addWidget(buttons)

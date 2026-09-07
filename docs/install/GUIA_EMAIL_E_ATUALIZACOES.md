@@ -29,7 +29,8 @@ Fluxo recomendado:
 4. A pasta `Atualizacoes` dessa entrega contem:
    - `latest.json`
    - `LuisGEST-Desktop-*.zip`
-5. Esses dois ficheiros sao colocados numa pasta partilhada, GitHub Release privado ou servidor proprio.
+   - `Reparar_Atualizador_Instalado.ps1`
+5. Esses tres ficheiros sao colocados numa pasta partilhada, GitHub Release privado ou servidor proprio.
 6. No cliente, o menu `Extras > Atualizacoes` aponta para o `latest.json`.
 7. O operador/admin carrega em `Verificar` e depois `Atualizar agora`.
 8. O atualizador cria backup da pasta do programa e tenta criar backup MySQL com `mysqldump`.
@@ -43,8 +44,8 @@ Para vender a clientes, a solucao recomendada e:
 
 - GitHub privado para desenvolvimento e historico.
 - Releases fechadas, assinadas e com numero de versao.
-- Um manifest de atualizacao controlado, por exemplo `latest.json`, com versao, ficheiro, checksum e notas.
-- O botao `Extras > Atualizacoes` consulta esse manifest, verifica checksum SHA256 e arranca o instalador externo.
+- Um manifest controlado com hashes SHA-256 obrigatorios para o ZIP e para o reparador.
+- O botao `Extras > Atualizacoes` exige HTTPS, valida os dois hashes e so depois arranca o instalador externo.
 
 O ideal em producao e o cliente nao instalar nada sem copia de seguranca e sem validacao da base de dados.
 
@@ -96,6 +97,7 @@ Passo a passo simples com GitHub:
 3. Enviar como ficheiros da Release:
    - `latest.json`
    - `LuisGEST-Desktop-2026-05-05-1.zip`
+   - `Reparar_Atualizador_Instalado.ps1`
 4. No campo `Manifest`, usar o URL do `latest.json` dessa Release.
 5. No cliente final, esse Manifest pode ja seguir preenchido no programa.
 6. No campo `Token GitHub`, colar o token.
@@ -112,6 +114,7 @@ https://github.com/luisola1218/luGEST/releases/download/v2026.05.05.1/latest.jso
 ## Como publicar uma nova versao
 
 1. Gerar a release com `scripts\prepare_final_release.ps1`.
-2. Copiar os ficheiros da pasta `Atualizacoes` para o local usado pelo cliente.
-3. Garantir que o `latest.json` e o `.zip` ficam na mesma pasta, ou ajustar `package_url`.
-4. No cliente, carregar em `Verificar`.
+2. Criar o manifesto com `scripts\create_update_manifest.py`; nao preencher hashes manualmente.
+3. Copiar o manifesto, o ZIP e o reparador para o local HTTPS usado pelo cliente.
+4. Garantir que `package_url` e `bootstrap_url` apontam para os assets publicados.
+5. No cliente piloto, carregar em `Verificar` e concluir uma atualizacao de ensaio.

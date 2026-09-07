@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import faulthandler
-import os
 import sys
 import threading
 import traceback
@@ -9,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from types import TracebackType
 from typing import TextIO
+
+from lugest_infra.app_paths import AppPaths
 
 
 class RuntimeDiagnostics:
@@ -44,10 +45,7 @@ class RuntimeDiagnostics:
     def log_path(self) -> Path:
         if self._configured_path is not None:
             return self._configured_path
-        base_dir = str(os.environ.get("LOCALAPPDATA", "") or "").strip()
-        if not base_dir:
-            base_dir = str(Path.home() / "AppData" / "Local")
-        return Path(base_dir) / self.application_dir / "logs" / self.filename
+        return AppPaths(Path.cwd(), application_name=self.application_dir).log_file(self.filename)
 
     def install(self) -> Path | None:
         with self._lock:

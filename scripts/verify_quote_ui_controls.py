@@ -12,12 +12,13 @@ def main() -> int:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
     from PySide6.QtCore import Qt, QTimer
-    from PySide6.QtWidgets import QApplication, QCheckBox, QDialog, QLineEdit, QMessageBox, QPushButton, QSpinBox, QTableWidget
+    from PySide6.QtWidgets import QApplication, QCheckBox, QDialog, QFrame, QLineEdit, QMessageBox, QPushButton, QSpinBox, QTableWidget
 
     from lugest_qt.services.legacy_backend import LegacyBackend
     from lugest_qt.ui.pages.laser_batch_quote_dialog import LaserBatchQuoteDialog
     from lugest_qt.ui.pages.laser_quote_dialogs import LaserQuoteDialog, MaterialSubtypeCatalogDialog
     from lugest_qt.ui.pages.materials_page import _NumericTableWidgetItem
+    from lugest_qt.ui.pages.purchase_notes_page import PurchaseNotesPage
     from lugest_qt.ui.pages.runtime_pages import QuotesPage
     from lugest_qt.ui.theme import apply_theme
 
@@ -81,6 +82,47 @@ def main() -> int:
     assert page.quote_lines_card.objectName() == "QuoteReferencesCard"
     assert page.lines_table.verticalScrollBarPolicy() == Qt.ScrollBarAlwaysOn
     assert footer_bottom <= page.height()
+    assert "#6f9f45" in page.quote_inspector_tabs.styleSheet()
+    assert "#0aa6a6" not in page.quote_inspector_tabs.styleSheet()
+    assert "#81a962" in page.notes_tabs.styleSheet()
+    assert "#fff1d4" not in page.notes_tabs.styleSheet()
+
+    purchase_page = PurchaseNotesPage(backend)
+    original_ne_material_options = backend.ne_material_options
+    original_material_price_preview = backend.material_price_preview
+    backend.ne_material_options = lambda _query="": []
+    backend.material_price_preview = lambda _row: {}
+    material_dialog_checked: list[bool] = []
+
+    def inspect_material_line_dialog() -> None:
+        material_dialog = next(
+            widget
+            for widget in QApplication.topLevelWidgets()
+            if isinstance(widget, QDialog) and widget.windowTitle() == "Adicionar linha de Matéria-Prima"
+        )
+        assert material_dialog.objectName() == "PurchaseLineDialog"
+        for object_name in (
+            "MaterialSelectorCard",
+            "MaterialInfoCard",
+            "MaterialTechCard",
+            "MaterialCommercialCard",
+        ):
+            assert material_dialog.findChild(QFrame, object_name) is not None
+        assert "#6f9f45" in material_dialog.styleSheet()
+        assert "#fff7e6" not in material_dialog.styleSheet()
+        material_dialog_checked.append(True)
+        material_dialog.reject()
+
+    QTimer.singleShot(0, inspect_material_line_dialog)
+    assert purchase_page._line_dialog(
+        "Adicionar linha de Matéria-Prima",
+        {"origem": "Matéria-Prima", "iva": 23, "qtd": 1},
+        material_mode=True,
+    ) is None
+    assert material_dialog_checked == [True]
+    backend.ne_material_options = original_ne_material_options
+    backend.material_price_preview = original_material_price_preview
+    purchase_page.close()
 
     dialog = LaserBatchQuoteDialog(backend)
     dialog.show()

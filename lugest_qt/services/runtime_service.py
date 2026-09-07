@@ -2,15 +2,23 @@ from __future__ import annotations
 
 import os
 import time
+from collections import OrderedDict
+from copy import deepcopy
 from pathlib import Path
+from typing import Callable
 
 
 class RuntimeService:
-    def __init__(self) -> None:
-        from lugest_qt.services import pulse_runtime
-
-        self.runtime = pulse_runtime
-        self._cache: dict[tuple, tuple[float, dict]] = {}
+    def __init__(self, runtime=None, *, clock: Callable[[], float] = time.monotonic, max_cache_entries: int = 128) -> None:
+        if max_cache_entries < 1:
+            raise ValueError("max_cache_entries must be positive")
+        if runtime is None:
+            from lugest_qt.services import pulse_runtime
+            runtime = pulse_runtime
+        self.runtime = runtime
+        self._clock = clock
+        self._max_cache_entries = max_cache_entries
+        self._cache: OrderedDict[tuple, tuple[float, dict]] = OrderedDict()
         self._default_ttl_sec = 3.0
 
     def _cache_get(self, key: tuple, ttl_sec: float | None = None) -> dict | None:
@@ -19,15 +27,19 @@ class RuntimeService:
             return None
         loaded_at, payload = row
         ttl = self._default_ttl_sec if ttl_sec is None else max(0.0, float(ttl_sec or 0.0))
-        if ttl <= 0 or (time.time() - loaded_at) > ttl:
+        if ttl <= 0 or (self._clock() - loaded_at) >= ttl:
             self._cache.pop(key, None)
             return None
-        return dict(payload or {})
+        self._cache.move_to_end(key)
+        return deepcopy(payload)
 
     def _cache_put(self, key: tuple, payload: dict) -> dict:
-        data = dict(payload or {})
-        self._cache[key] = (time.time(), data)
-        return dict(data)
+        data = deepcopy(dict(payload or {}))
+        self._cache[key] = (self._clock(), data)
+        self._cache.move_to_end(key)
+        while len(self._cache) > self._max_cache_entries:
+            self._cache.popitem(last=False)
+        return deepcopy(data)
 
     def invalidate_cache(self) -> None:
         self._cache.clear()

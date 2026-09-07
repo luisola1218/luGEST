@@ -7,8 +7,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 BOUNDARIES = {
-    "lugest_core": ("lugest_qt", "lugest_desktop", "lugest_infra"),
-    "lugest_infra": ("lugest_qt", "lugest_desktop"),
+    "lugest_core": ("lugest_qt", "lugest_desktop", "lugest_infra", "PySide6", "PyQt6", "PyQt5", "tkinter"),
+    "lugest_infra": ("lugest_qt", "lugest_desktop", "PySide6", "PyQt6", "PyQt5", "tkinter"),
 }
 
 

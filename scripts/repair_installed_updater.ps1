@@ -2,7 +2,8 @@ param(
     [string]$InstallDir = "",
     [string]$ManifestUrl = "",
     [string]$GitHubToken = "",
-    [string]$CurrentVersion = ""
+    [string]$CurrentVersion = "",
+    [string]$ConfigPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,7 +44,19 @@ function Get-JsonValue {
 
 function Save-JsonFile {
     param([string]$Path, $Payload)
-    $Payload | ConvertTo-Json -Depth 8 | Set-Content -Path $Path -Encoding UTF8
+    $parent = Split-Path -Parent $Path
+    if ($parent) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+    $temporary = Join-Path $parent ('.' + [IO.Path]::GetFileName($Path) + '.' + [guid]::NewGuid().ToString('N') + '.tmp')
+    try {
+        $json = ($Payload | ConvertTo-Json -Depth 8) + [Environment]::NewLine
+        [IO.File]::WriteAllText($temporary, $json, (New-Object Text.UTF8Encoding($false)))
+        Move-Item -LiteralPath $temporary -Destination $Path -Force
+    }
+    finally {
+        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Copy-ItemIfDifferent {
@@ -179,7 +192,7 @@ function Download-RemoteFile {
 
 $installRoot = Resolve-InstallDir $InstallDir
 $qtConfigPath = Join-Path $installRoot "lugest_qt_config.json"
-$updateConfigPath = Join-Path $installRoot "update_config.json"
+$updateConfigPath = if ($ConfigPath) { $ConfigPath } else { Join-Path $env:LOCALAPPDATA "luGEST-data\config\update_config.json" }
 $versionPath = Join-Path $installRoot "VERSION"
 $updatePs1Target = Join-Path $installRoot "Atualizar LuisGEST.ps1"
 $updateBatTarget = Join-Path $installRoot "Atualizar LuisGEST.bat"
@@ -221,6 +234,9 @@ try {
     }
     else {
         Write-Info "A descarregar a release remota para reparar o atualizador instalado..."
+        if ($ManifestUrl -match '^http://') {
+            throw "O manifesto remoto tem de usar HTTPS."
+        }
         $manifestPath = Join-Path $workDir "latest.json"
         Download-RemoteFile $ManifestUrl $manifestPath $GitHubToken
         $manifest = Read-JsonFile $manifestPath
@@ -229,15 +245,19 @@ try {
             throw "Manifest sem package_url."
         }
         $packageResolved = Resolve-RelativePathOrUrl $packageRef $ManifestUrl
+        if ($packageResolved -match '^http://') {
+            throw "O pacote remoto tem de usar HTTPS."
+        }
         $packagePath = Join-Path $workDir "package.zip"
         Download-RemoteFile $packageResolved $packagePath $GitHubToken
 
         $expectedHash = [string](Get-JsonValue $manifest "sha256" "")
-        if ($expectedHash) {
-            $actualHash = (Get-FileHash $packagePath -Algorithm SHA256).Hash
-            if ($actualHash.ToLowerInvariant() -ne $expectedHash.ToLowerInvariant()) {
-                throw "Checksum invalido. Esperado $expectedHash, obtido $actualHash."
-            }
+        if ($expectedHash -notmatch '^[A-Fa-f0-9]{64}$') {
+            throw "Manifest sem um SHA-256 valido e completo para o pacote."
+        }
+        $actualHash = (Get-FileHash $packagePath -Algorithm SHA256).Hash
+        if ($actualHash.ToLowerInvariant() -ne $expectedHash.ToLowerInvariant()) {
+            throw "Checksum invalido. Esperado $expectedHash, obtido $actualHash."
         }
 
         $extractDir = Join-Path $workDir "extract"
@@ -272,7 +292,6 @@ try {
         current_version = $CurrentVersion
         manifest_url = $ManifestUrl
         channel = "stable"
-        github_token = $GitHubToken
         auto_check = [bool](Get-JsonValue $qtUpdate "auto_check" $false)
     }
     Save-JsonFile $updateConfigPath $payload
@@ -297,6 +316,7 @@ try {
         "-File", $releaseUpdatePs1,
         "-AppDir", $installRoot,
         "-ManifestUrl", $ManifestUrl,
+        "-ConfigPath", $updateConfigPath,
         "-CurrentVersion", $CurrentVersion
     )
     if ($GitHubToken) {
