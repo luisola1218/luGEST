@@ -1,3 +1,4 @@
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -85,7 +86,7 @@ class LaserBatchQuoteDialog(QDialog):
         )
         if not self.batch_id:
             try:
-                self.batch_id = self.backend.desktop_main.uuid.uuid4().hex[:12].upper()
+                self.batch_id = uuid.uuid4().hex[:12].upper()
             except Exception:
                 self.batch_id = str(id(self))
         self.line_payloads: list[dict[str, Any]] = []

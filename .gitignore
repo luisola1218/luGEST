@@ -23,6 +23,7 @@ tmp/
 mobile_gateway_data/
 reports/*.prof
 reports/stress/
+reports/integration/
 
 # Logs and runtime files
 *.log

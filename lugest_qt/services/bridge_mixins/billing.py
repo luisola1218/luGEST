@@ -1,4 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
+
+import uuid
 
 import json
 import os
@@ -50,7 +52,7 @@ class BillingBridgeMixin:
         return None
 
     def _billing_next_number(self) -> str:
-        year = str(self.desktop_main.datetime.now().year)
+        year = str(datetime.now().year)
         highest = 0
         for row in self._billing_records():
             raw = str((row or {}).get("numero", "") or "").strip().upper()
@@ -479,7 +481,7 @@ class BillingBridgeMixin:
         seq = max(start_seq, int(self._parse_float(serie_obj.get("next_seq", start_seq), start_seq) or start_seq))
         used_numbers: set[str] = set()
         used_seq: set[tuple[str, int]] = set()
-        year = issue_txt[:4] if len(issue_txt) >= 4 and issue_txt[:4].isdigit() else str(self.desktop_main.datetime.now().year)
+        year = issue_txt[:4] if len(issue_txt) >= 4 and issue_txt[:4].isdigit() else str(datetime.now().year)
         for record in self._billing_records():
             if not isinstance(record, dict):
                 continue
@@ -988,7 +990,7 @@ class BillingBridgeMixin:
 
     def _billing_normalize_invoice(self, payload: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
         row = dict(existing or {})
-        row_id = str(payload.get("id", "") or row.get("id", "") or self.desktop_main.uuid.uuid4().hex[:12].upper()).strip()
+        row_id = str(payload.get("id", "") or row.get("id", "") or uuid.uuid4().hex[:12].upper()).strip()
         doc_type = str(payload.get("doc_type", "") or row.get("doc_type", "") or "FT").strip() or "FT"
         numero_fatura = str(payload.get("numero_fatura", "") or row.get("numero_fatura", "") or "").strip()
         serie = str(payload.get("serie", "") or row.get("serie", "") or "").strip()
@@ -1110,7 +1112,7 @@ class BillingBridgeMixin:
 
     def _billing_normalize_payment(self, payload: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
         row = dict(existing or {})
-        row_id = str(payload.get("id", "") or row.get("id", "") or self.desktop_main.uuid.uuid4().hex[:12].upper()).strip()
+        row_id = str(payload.get("id", "") or row.get("id", "") or uuid.uuid4().hex[:12].upper()).strip()
         data_pagamento = str(payload.get("data_pagamento", "") or row.get("data_pagamento", "") or "").strip()[:10]
         valor = round(self._parse_float(payload.get("valor", row.get("valor", 0)), 0), 2)
         metodo = str(payload.get("metodo", "") or row.get("metodo", "") or "").strip()
@@ -1297,7 +1299,7 @@ class BillingBridgeMixin:
             or str((order or {}).get("data_criacao", "") or "").strip()[:10]
             or str((service or {}).get("data_servico", "") or "").strip()[:10]
         )
-        year = sale_date[:4] if len(sale_date) >= 4 and sale_date[:4].isdigit() else str(self.desktop_main.datetime.now().year)
+        year = sale_date[:4] if len(sale_date) >= 4 and sale_date[:4].isdigit() else str(datetime.now().year)
         latest_invoice = ""
         latest_invoice_date = ""
         if list(rec.get("faturas", []) or []):
@@ -1358,7 +1360,7 @@ class BillingBridgeMixin:
         }
 
     def billing_available_years(self) -> list[str]:
-        years: set[str] = {str(self.desktop_main.datetime.now().year)}
+        years: set[str] = {str(datetime.now().year)}
         for row in self.billing_rows("", "Todas", "Todos"):
             year = str(row.get("ano", "") or "").strip()
             if year:
@@ -2015,7 +2017,7 @@ class BillingBridgeMixin:
                 "company_city": "-",
                 "company_postal_code": "0000-000",
                 "company_country": "PT",
-                "fiscal_year": (computed_start[:4] if len(computed_start) >= 4 else str(self.desktop_main.datetime.now().year)),
+                "fiscal_year": (computed_start[:4] if len(computed_start) >= 4 else str(datetime.now().year)),
                 "start_date": computed_start,
                 "end_date": computed_end,
                 "currency_code": "EUR",
@@ -2049,7 +2051,7 @@ class BillingBridgeMixin:
             raise ValueError("Nao existem faturas pendentes para preparar comunicacao AT.")
         issuer = dict(getattr(self.desktop_main, "get_guia_emitente_info", lambda: {})() or {})
         producer = self._billing_software_producer_info(issuer)
-        batch_id = self.desktop_main.uuid.uuid4().hex[:12].upper()
+        batch_id = uuid.uuid4().hex[:12].upper()
         payload = {
             "header": {
                 "generated_at": self.desktop_main.now_iso(),
@@ -2106,7 +2108,7 @@ class BillingBridgeMixin:
         export_rows = self._billing_export_invoice_rows(start_date, end_date)
         if not export_rows:
             raise ValueError("Nao existem faturas no intervalo indicado para exportar SAF-T(PT).")
-        output_target = Path(output_path) if str(output_path or "").strip() else (self.base_dir / "generated" / "compliance" / "saft" / f"saft_pt_{self.desktop_main.datetime.now().strftime('%Y%m%d_%H%M%S')}.xml")
+        output_target = Path(output_path) if str(output_path or "").strip() else (self.base_dir / "generated" / "compliance" / "saft" / f"saft_pt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml")
         rendered = self.tax_compliance.render_saft_pt_xml(self._billing_export_payload_from_rows(export_rows, start_date=start_date, end_date=end_date), output_target)
         return str(rendered)
 

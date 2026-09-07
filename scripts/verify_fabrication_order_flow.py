@@ -74,6 +74,7 @@ def main() -> int:
                 ],
             }
         )
+        data = backend.ensure_data()
         data.setdefault("produtos", []).append(
             {
                 "codigo": product_code,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 import copy
 from datetime import datetime, timedelta
 from typing import Any
@@ -27,7 +29,7 @@ class DirectServicesBridgeMixin:
         )
 
     def _direct_service_next_number(self) -> str:
-        year = str(self.desktop_main.datetime.now().year)
+        year = str(datetime.now().year)
         highest = 0
         prefix = f"SRV-{year}-"
         for row in self._direct_services():
@@ -66,7 +68,7 @@ class DirectServicesBridgeMixin:
         subtotal = round(qty * unit_price, 2)
         tax_value = round(subtotal * iva_perc / 100.0, 2)
         return {
-            "id": str(payload.get("id", "") or self.desktop_main.uuid.uuid4().hex[:12].upper()).strip(),
+            "id": str(payload.get("id", "") or uuid.uuid4().hex[:12].upper()).strip(),
             "kind": kind,
             "ref": str(payload.get("ref", "") or "").strip(),
             "description": description,

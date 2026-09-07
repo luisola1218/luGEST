@@ -44,6 +44,11 @@ mostra os metodos chamados e os atributos do estado utilizados.
 Para codigo novo, preferir um servico com argumentos explicitos e testes
 isolados, chamado por um metodo curto no adaptador. Exemplos implementados:
 
+- Clientes: `lugest_core/clients.py` contem casos de uso e o contrato
+  `ClientRepository`. `lugest_infra/legacy/clients_repository.py` adapta a
+  persistencia antiga atraves de callbacks explicitos; `bridge_mixins/clients.py`
+  apenas compoe estas dependencias. O teste `verify_clients_integration.py`
+  percorre a pagina Qt, o backend, o servico e o repositorio sem MySQL.
 - `lugest_core/operation_costing.py`: estimativa de custos com configuracao e
   funcoes de normalizacao explicitas; nao le MySQL nem configuracao local.
 - `lugest_core/snapshots.py`: comparacao e combinacao de snapshots; recebe os
@@ -111,6 +116,12 @@ erro. Validar com `verify_configuration_repository.py` e `verify_app_storage.py`
 com `backend_map.py`. A coordenacao esta em `orders.py`; seguir as dependencias
 listadas antes de alterar a gravacao ou consumo partilhados.
 
+**Mudar validacao ou pesquisa de clientes:** alterar `ClientService` em
+`lugest_core/clients.py`. Para alterar a escrita, seguir o contrato do
+repositorio. O adaptador fornece a normalizacao de pesquisa historica, mantendo
+a compatibilidade com a interface. O caminho assincrono confirma aceitacao na
+fila, nao durabilidade; erros posteriores continuam a pertencer ao worker.
+
 **Mudar a combinacao de alteracoes entre postos:** usar `SnapshotMergePolicy`.
 A politica atual preserva linhas remotas que o posto nao alterou; conflitos
 na mesma linha identificada continuam a favorecer a linha local inteira.
@@ -149,6 +160,17 @@ intencional de API requer rever os consumidores e o contrato explicitamente.
 
 As verificacoes isoladas nao substituem testes integrados de stock, faturacao
 e producao numa base de staging nem a validacao do executavel empacotado.
+
+Quando houver autorizacao explicita para usar a base atual, o runner
+`verify_database_rollback.py` permite testar um fluxo com rollback e comparacao
+do conteudo das tabelas. Nao pertence a `-SafeOnly`: exige InnoDB, serializa
+ligacoes, bloqueia DDL e nao valida durabilidade assincrona. Ver o
+[relatorio desta fase](../plans/CLIENTS_PHASE_2026-09-07.md).
+
+Metodos que chamam outros fluxos de gravacao devem voltar a obter os dados com
+`ensure_data`/`get_encomenda_by_numero` antes de continuar a altera-los: a
+gravacao pode substituir o snapshot. A regressao e coberta por
+`verify_quote_snapshot_save.py`.
 
 ## Trabalho que continua a ser legacy
 

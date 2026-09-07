@@ -48,6 +48,9 @@ def main():
         missing -= set(vars(module)) | set(vars(builtins)) | {"__class__"}
         assert not missing, f"{module.__name__}: missing globals {sorted(missing)}"
         tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in {"uuid", "datetime"}:
+                assert not (isinstance(node.value, ast.Attribute) and node.value.attr == "desktop_main"), "Import standard-library dependencies directly"
         if module.__name__.endswith("main_bridge"):
             cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "LegacyBackend")
             assert {n.name for n in cls.body if isinstance(n, ast.FunctionDef)} == {"__init__", "_env_float"}, "Business logic returned to the composition root"

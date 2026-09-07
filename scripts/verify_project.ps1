@@ -124,7 +124,9 @@ if ($SafeOnly) {
         'scripts\verify_backend_modules.py',
         'scripts\verify_snapshot_merge.py',
         'scripts\verify_configuration_repository.py',
-        'scripts\verify_operation_costing.py'
+        'scripts\verify_operation_costing.py',
+        'scripts\verify_clients_integration.py',
+        'scripts\verify_quote_snapshot_save.py'
     )
     foreach ($relativeScript in $safeScripts) {
         Invoke-Checked -Label "A correr $relativeScript..." -CommandArgs @((Join-Path $repoRoot $relativeScript))

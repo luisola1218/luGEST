@@ -1,4 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
+
+import uuid
 
 import copy
 import json
@@ -48,7 +50,7 @@ class QuotesBridgeMixin:
                 seq = int(data.get("orc_seq", 1) or 1)
             except Exception:
                 seq = 1
-            year = int(getattr(self.desktop_main.datetime.now(), "year", 0) or 0)
+            year = int(getattr(datetime.now(), "year", 0) or 0)
             return f"ORC-{year}-{seq:04d}"
 
     def _orc_number_sort_key(self, numero: str) -> tuple[int, int, str]:
@@ -120,7 +122,7 @@ class QuotesBridgeMixin:
         return rows
 
     def orc_available_years(self) -> list[str]:
-        current_year = str(self.desktop_main.datetime.now().year)
+        current_year = str(datetime.now().year)
         years = {current_year}
         for row in list(self.ensure_data().get("orcamentos", []) or []):
             if not isinstance(row, dict):
@@ -984,7 +986,7 @@ class QuotesBridgeMixin:
         multiplier = round(self._parse_float(quantity, 0), 2)
         if multiplier <= 0:
             raise ValueError("Quantidade do conjunto invalida.")
-        group_uuid = self.desktop_main.uuid.uuid4().hex[:12].upper()
+        group_uuid = uuid.uuid4().hex[:12].upper()
         rows: list[dict[str, Any]] = []
         for item in list(detail.get("itens", []) or []):
             line = {
@@ -1177,7 +1179,7 @@ class QuotesBridgeMixin:
         multiplier = round(self._parse_float(quantity, 0), 2)
         if multiplier <= 0:
             raise ValueError("Quantidade do conjunto invalida.")
-        group_uuid = self.desktop_main.uuid.uuid4().hex[:12].upper()
+        group_uuid = uuid.uuid4().hex[:12].upper()
         rows: list[dict[str, Any]] = []
         for item in list(detail.get("itens", []) or []):
             line = {
@@ -1515,7 +1517,7 @@ class QuotesBridgeMixin:
         numero = str(payload.get("numero", "") or "").strip()
         existing = next((row for row in data.get("orcamentos", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if existing is None:
-            year = int(getattr(self.desktop_main.datetime.now(), "year", 0) or 0)
+            year = int(getattr(datetime.now(), "year", 0) or 0)
             automatic_number = not numero or numero.upper().startswith(f"ORC-{year}-")
             if automatic_number:
                 numero = str(self.desktop_main.next_orc_numero(data))
@@ -1529,6 +1531,9 @@ class QuotesBridgeMixin:
         lines = [self._normalize_orc_line(row) for row in list(payload.get("linhas", []) or [])]
         if client_code:
             self._repair_orc_ref_history(client_code)
+            # Repairs can save and replace the active snapshot. Subsequent
+            # reference allocation must use that snapshot, not the old mapping.
+            data = self.ensure_data()
             taken_refs, _pairs = self._active_client_ref_usage(client_code, exclude_orc_numero=numero)
             reusable_pairs = self._known_client_ref_pairs(client_code)
             seen_refs: set[str] = set()
@@ -1645,7 +1650,7 @@ class QuotesBridgeMixin:
             "subtotal": subtotal,
             "total": total,
             "numero_encomenda": str(payload.get("numero_encomenda", "") or (existing or {}).get("numero_encomenda", "") or "").strip(),
-            "ano": int(str(payload.get("ano", "") or (existing or {}).get("ano", "") or self.desktop_main.datetime.now().year)),
+            "ano": int(str(payload.get("ano", "") or (existing or {}).get("ano", "") or datetime.now().year)),
             "executado_por": str(payload.get("executado_por", "") or (existing or {}).get("executado_por", "") or "").strip(),
             "nota_transporte": (
                 str(payload.get("nota_transporte", "") or "").strip()
@@ -1657,6 +1662,10 @@ class QuotesBridgeMixin:
             "prazo_entrega_data": prazo_entrega_data,
             "nota_cliente": str(payload.get("nota_cliente", "") or (existing or {}).get("nota_cliente", "") or "").strip(),
         }
+        # Normalization/repair helpers may have replaced self.data while this
+        # quote was being prepared. Publish into the current cache.
+        data = self.ensure_data()
+        existing = next((row for row in data.get("orcamentos", []) if str(row.get("numero", "") or "").strip() == numero), None)
         if existing is None:
             data.setdefault("orcamentos", []).append(note)
             if numero == self._peek_next_orc_number():

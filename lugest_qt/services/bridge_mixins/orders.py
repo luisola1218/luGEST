@@ -1217,6 +1217,10 @@ class OrdersBackendMixin:
         imported_pieces = 0
         imported_items = 0
         for line in rows:
+            # Importing a piece can save and replace the backend snapshot.
+            enc = self.get_encomenda_by_numero(numero)
+            if enc is None:
+                raise ValueError("Encomenda não encontrada.")
             line_type = self.desktop_main.normalize_orc_line_type(line.get("tipo_item"))
             if self.desktop_main.orc_line_is_piece(line):
                 self.order_piece_create_or_update(
@@ -1269,6 +1273,9 @@ class OrdersBackendMixin:
                 }
             )
             imported_items += 1
+        enc = self.get_encomenda_by_numero(numero)
+        if enc is None:
+            raise ValueError("Encomenda não encontrada.")
         order_sheets = enc.setdefault("produto_fichas", [])
         existing_sheet = next(
             (row for row in order_sheets if str(row.get("codigo", "") or "").strip() == code),
