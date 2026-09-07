@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from lugest_qt.services.bridge_helpers import _search_normalize
-from lugest_core.clients import ClientService
-from lugest_infra.legacy.clients_repository import LegacyClientRepository
+from lugest_modules.clients.api import ClientService
+from lugest_modules.clients.infrastructure.legacy_repository import LegacyClientRepository
 from typing import Any
 
 

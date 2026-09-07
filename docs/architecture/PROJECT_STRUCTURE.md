@@ -1,5 +1,10 @@
 # Estrutura do projeto e regras de evolução
 
+A evolucao atual e um [monolito modular por negocio](MODULAR_MONOLITH.md).
+`lugest_modules/clients` e `lugest_modules/quotes` ja contem componentes com
+contratos explicitos. As camadas e adaptadores descritos abaixo ainda suportam
+as areas historicas; a migracao integral continua pendente.
+
 Estado em 2026-09-07: a aplicacao tem separacao em `lugest_core`,
 `lugest_infra`, `lugest_desktop/legacy` e `lugest_qt`. As implementacoes das
 paginas foram retiradas de `runtime_pages.py`; o ficheiro conserva uma fachada

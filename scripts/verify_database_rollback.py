@@ -21,7 +21,38 @@ import traceback
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 FLOWS = ("verify_purchase_flow", "verify_conjuntos_montagem_flow",
-         "verify_fabrication_order_flow", "verify_planning_flow", "verify_billing_flow")
+         "verify_fabrication_order_flow", "verify_planning_flow", "verify_billing_flow",
+         "verify_quote_nesting_flow")
+
+
+def _quote_nesting_flow():
+    """Only called after the transaction guard is installed by this runner."""
+    from uuid import uuid4
+    from lugest_qt.services.legacy_backend import LegacyBackend
+    backend = LegacyBackend()
+    token = uuid4().hex[:12]
+    client = backend.client_save({'codigo': 'CT-' + token, 'nome': 'Transactional test'})
+    number = 'ORC-TEST-' + token
+    backend.orc_save({'numero': number, 'cliente': client, 'linhas': [{
+        'tipo_item': backend.desktop_main.ORC_LINE_TYPE_SERVICE,
+        'descricao': 'Transactional test', 'qtd': 1, 'preco_unit': 1,
+        'operacao': 'Montagem',
+    }]})
+    key = 'rollback-test-' + token
+    saved = backend.orc_save_nesting_study(number, {
+        'group_key': key, 'group_label': 'Transactional integration test',
+        'quote_bridge': {'quantity': 2},
+    })
+    assert saved['quote_number'] == number
+    assert backend._mysql_orc_nesting_studies(number)[key]['quote_bridge']['quantity'] == 2
+    created = saved['created_at']
+    saved['quote_bridge']['quantity'] = 3
+    updated = backend.orc_save_nesting_study(number, saved)
+    assert updated['created_at'] == created
+    assert backend.orc_nesting_studies(number)[key]['quote_bridge']['quantity'] == 3
+    backend._mysql_delete_orc_nesting_studies(number, key)
+    assert key not in backend._mysql_orc_nesting_studies(number)
+    print('quote-nesting-db-ok create=yes update=yes sql-mirror=yes delete=yes', flush=True)
 
 
 def table_hashes(connection, tables):
@@ -120,8 +151,11 @@ def main():
             for key, folder in (("LUGEST_USER_DATA_DIR", "user"), ("LUGEST_MACHINE_DATA_DIR", "machine"),
                                 ("LUGEST_SHARED_STORAGE_ROOT", "shared")):
                 os.environ[key] = str(Path(temporary) / folder)
-            entry = runpy.run_path(str(ROOT / "scripts" / (args.flow + ".py")))
-            code = entry["main"]()
+            if args.flow == 'verify_quote_nesting_flow':
+                code = _quote_nesting_flow()
+            else:
+                entry = runpy.run_path(str(ROOT / "scripts" / (args.flow + ".py")))
+                code = entry["main"]()
             if code not in (0, None):
                 raise RuntimeError(f"Flow returned {code}")
         report["status"] = "passed"

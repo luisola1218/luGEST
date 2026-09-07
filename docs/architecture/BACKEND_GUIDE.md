@@ -3,6 +3,11 @@
 Este guia e o ponto de entrada para alterar o Lugest sem depender de IA ou de
 conhecimento previo do antigo `main_bridge.py`.
 
+Os componentes migrados por negocio vivem agora em `lugest_modules/`.
+Consultar primeiro o [guia do monolito modular](MODULAR_MONOLITH.md), que identifica
+as implementacoes de clientes, editores, regras, nesting e PDFs de orcamentos,
+os contratos e as partes que ainda dependem do runtime historico.
+
 ## Comecar uma alteracao
 
 1. Encontrar a pagina em `lugest_qt/ui/pages/` e a chamada `self.backend.metodo`.
@@ -18,7 +23,8 @@ conhecimento previo do antigo `main_bridge.py`.
 4. Alterar a regra no dominio, o acesso a dados no repositorio ou a coordenacao
    no adaptador da respetiva area. Evitar colocar uma regra nova no widget.
 5. Executar os testes da responsabilidade alterada e a porta `-SafeOnly`.
-   Fluxos com escrita requerem uma base de staging configurada para esse fim.
+   Fluxos com escrita requerem staging ou o executor transacional de rollback,
+   quando houver autorizacao para testar na base atual.
 
 ## Camadas e composicao
 
