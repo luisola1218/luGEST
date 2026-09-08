@@ -34,7 +34,7 @@ def main():
                 imports.extend(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imports.append(node.module)
-            if 'presentation' in parts:
+            if any(layer in parts for layer in ('presentation', 'application', 'domain')):
                 assert not (isinstance(node, ast.Attribute) and node.attr in {'desktop_main', 'ensure_data', '_base_data_snapshot'}), relative
         for imported in imports:
             assert imported != 'main' and not imported.startswith('lugest_desktop'), (relative, imported)
@@ -64,6 +64,7 @@ def main():
                            'conjunto_refresh_prices': 'AssemblyRefresh.refresh',
                            'conjunto_save': 'AssemblyCatalog.save',
                            'orc_purchase_needs': 'PurchaseNeeds.rows',
+                           'orc_convert_to_order': 'QuoteConversion.convert',
                            'assembly_model_remove': 'AssemblyCatalog.remove',
                            '_normalize_assembly_model_item': 'normalize_item',
                            'conjunto_expand': 'expand_model',

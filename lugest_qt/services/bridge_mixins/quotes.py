@@ -1,7 +1,6 @@
 from __future__ import annotations
 from lugest_qt.services.quote_purchase_composition import purchase_needs
-from lugest_modules.quotes.application.order_lines import build_order_lines
-from lugest_qt.services.quote_order_composition import order_line_ports
+from lugest_qt.services.quote_order_composition import quote_conversion
 from lugest_modules.quotes.application.assemblies import normalize_item, price_item, refresh_model, expand_model, technical_sheet
 from lugest_qt.services.assembly_composition import assembly_rules, assembly_refresh, assembly_catalog, assembly_queries
 from lugest_modules.quotes.application.assembly_refresh import assign_parameter_codes
@@ -414,146 +413,8 @@ class QuotesBridgeMixin:
         return "conjunto"
 
     def orc_convert_to_order(self, numero: str, nota_cliente: str = "") -> dict[str, Any]:
-        data = self.ensure_data()
-        numero = str(numero or "").strip()
-        note = str(nota_cliente or "").strip()
-        orc = next((row for row in data.get("orcamentos", []) if str(row.get("numero", "") or "").strip() == numero), None)
-        if orc is None:
-            raise ValueError("Orçamento não encontrado.")
-        if str(orc.get("numero_encomenda", "") or "").strip():
-            raise ValueError("Orcamento ja convertido.")
-        estado_norm = str(orc.get("estado", "") or "").strip().lower()
-        if "aprovado" not in estado_norm:
-            raise ValueError("Apenas orcamentos aprovados podem ser convertidos.")
-        if not list(orc.get("linhas", []) or []):
-            raise ValueError("Sem linhas para converter.")
-        cli = self._normalize_orc_client(orc.get("cliente", {}))
-        codigo = str(cli.get("codigo", "") or "").strip()
-        if codigo and self.desktop_main.find_cliente(data, codigo):
-            cliente_code = codigo
-        else:
-            cliente_code = ""
-            for row in list(data.get("clientes", []) or []):
-                if not isinstance(row, dict):
-                    continue
-                if cli.get("nif") and str(row.get("nif", "") or "").strip() == str(cli.get("nif", "") or "").strip():
-                    cliente_code = str(row.get("codigo", "") or "").strip()
-                    break
-                if cli.get("nome") and str(row.get("nome", "") or "").strip() == str(cli.get("nome", "") or "").strip():
-                    cliente_code = str(row.get("codigo", "") or "").strip()
-                    break
-            if not cliente_code:
-                cliente_code = str(self.desktop_main.next_cliente_codigo(data))
-                data.setdefault("clientes", []).append(
-                    {
-                        "codigo": cliente_code,
-                        "nome": str(cli.get("nome", "") or "").strip(),
-                        "nif": str(cli.get("nif", "") or "").strip(),
-                        "morada": str(cli.get("morada", "") or "").strip(),
-                        "contacto": str(cli.get("contacto", "") or "").strip(),
-                        "email": str(cli.get("email", "") or "").strip(),
-                        "observacoes": "",
-                    }
-                )
-        alert_txt = (
-            f"ALERTA: Encomenda gerada por conversao do orcamento {orc.get('numero')}. "
-            "Confirmar dados de cliente, materiais, espessuras e prazos."
-        )
-        obs_txt = f"{alert_txt} | Origem: Orcamento {orc.get('numero')}"
-        if note:
-            obs_txt += f" | Nota cliente: {note}"
-        enc = {
-            "numero": self.desktop_main.next_encomenda_numero(data),
-            "cliente": cliente_code,
-            "nota_cliente": note,
-            "nota_transporte": str(orc.get("nota_transporte", "") or "").strip(),
-            "preco_transporte": round(self._parse_float(orc.get("preco_transporte", 0), 0), 2),
-            "custo_transporte": round(self._parse_float(orc.get("custo_transporte", 0), 0), 2),
-            "paletes": round(self._parse_float(orc.get("paletes", 0), 0), 2),
-            "peso_bruto_kg": round(self._parse_float(orc.get("peso_bruto_kg", 0), 0), 2),
-            "volume_m3": round(self._parse_float(orc.get("volume_m3", 0), 0), 3),
-            "transportadora_id": str(orc.get("transportadora_id", "") or "").strip(),
-            "transportadora_nome": str(orc.get("transportadora_nome", "") or "").strip(),
-            "referencia_transporte": str(orc.get("referencia_transporte", "") or "").strip(),
-            "zona_transporte": str(orc.get("zona_transporte", "") or "").strip(),
-            "local_descarga": str(cli.get("morada", "") or "").strip(),
-            "transporte_numero": "",
-            "estado_transporte": "",
-            "data_criacao": self.desktop_main.now_iso(),
-            "data_entrega": str(orc.get("prazo_entrega_data", "") or "").strip()[:10],
-            "tempo": 0.0,
-            "tempo_estimado": 0.0,
-            "cativar": False,
-            "posto_trabalho": self._normalize_workcenter_value(orc.get("posto_trabalho", "")),
-            "observacoes": obs_txt,
-            "alerta_conversao": True,
-            "estado": "Preparacao",
-            "materiais": [],
-            "reservas": [],
-            "montagem_itens": [],
-            "numero_orcamento": orc.get("numero"),
-            "tipo_encomenda": "Cliente",
-            "produto_fichas": [],
-        }
-        sheet_groups: dict[str, dict[str, float]] = {}
-        sheet_sources: dict[str, dict[str, Any]] = {}
-        for source_line in list(orc.get("linhas", []) or []):
-            sheet_code = str(source_line.get("conjunto_codigo", "") or "").strip()
-            if not sheet_code:
-                continue
-            group_key = str(source_line.get("grupo_uuid", "") or "").strip() or sheet_code
-            base_qty = self._parse_float(source_line.get("qtd_base", 0), 0)
-            line_qty = self._parse_float(source_line.get("qtd", 0), 0)
-            group_qty = (line_qty / base_qty) if base_qty > 0 and line_qty > 0 else 1.0
-            code_groups = sheet_groups.setdefault(sheet_code, {})
-            code_groups[group_key] = max(float(code_groups.get(group_key, 0) or 0), group_qty)
-            if sheet_code in sheet_sources:
-                continue
-            try:
-                stored_sheet = dict(self.conjunto_detail(sheet_code) or {})
-            except Exception:
-                stored_sheet = {}
-            sheet_sources[sheet_code] = {
-                "codigo": sheet_code,
-                "param_codigo": str(stored_sheet.get("param_codigo", "") or source_line.get("conjunto_param_codigo", "") or "").strip(),
-                "descricao": str(
-                    stored_sheet.get("descricao", "")
-                    or source_line.get("conjunto_nome", "")
-                    or sheet_code
-                ).strip(),
-                "notas": str(stored_sheet.get("notas", "") or "").strip(),
-                "ficha_tecnica": self._normalize_conjunto_technical_sheet(
-                    source_line.get("ficha_tecnica", {}) or stored_sheet.get("ficha_tecnica", {})
-                ),
-            }
-        for sheet_code, snapshot in sheet_sources.items():
-            snapshot["quantidade_conjuntos"] = round(
-                max(1.0, sum(sheet_groups.get(sheet_code, {}).values())),
-                2,
-            )
-            enc["produto_fichas"].append(snapshot)
-        enc_of = str(self._order_of_code(enc, create=True) or "").strip()
-        prepared = build_order_lines(order_line_ports(self, data, cliente_code),
-                                     list(orc.get("linhas", []) or []), enc_of,
-                                     enc.get("posto_trabalho", ""))
-        enc["materiais"] = prepared.materials
-        enc["montagem_itens"] = prepared.assembly_items
-        enc["tempo_estimado"] = prepared.estimated_minutes
-        enc["tempo"] = round(prepared.estimated_minutes / 60.0, 2) if prepared.estimated_minutes > 0 else 0.0
-        for internal_ref, external_ref in prepared.references:
-            self.desktop_main.update_refs(data, internal_ref, external_ref)
-        data.setdefault("encomendas", []).append(enc)
-        self._ensure_unique_order_piece_refs(enc)
-        self.desktop_main.update_estado_encomenda_por_espessuras(enc)
-        orc["numero_encomenda"] = enc["numero"]
-        if note:
-            orc["nota_cliente"] = note
-        orc["estado"] = "Convertido em Encomenda"
-        self._save(force=True)
-        return {
-            "orcamento": self.orc_detail(numero),
-            "encomenda": self.order_detail(enc["numero"]),
-        }
+        order_number = quote_conversion(self).convert(numero, nota_cliente)
+        return {"orcamento": self.orc_detail(numero), "encomenda": self.order_detail(order_number)}
 
     def _quote_purchase_need_key(self, kind: str, line: dict[str, Any]) -> str:
         return purchase_needs(self).key(kind, line)

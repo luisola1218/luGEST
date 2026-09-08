@@ -6,7 +6,10 @@ from .application.queries import QuoteQueries, QuoteReadRepository
 from .application.assembly_catalog import AssemblyCatalog
 from .application.assembly_refresh import AssemblyRefresh, AssemblyCatalogRepository
 from .application.assembly_queries import AssemblyQueries
+from .application.conversion import QuoteConversion, ConversionRepository
+from .application.purchase_needs import PurchaseNeeds, PurchaseNeedsRepository
 
 __all__ = ['NestingStudyRepository', 'NestingStudyService', 'product_line', 'service_line',
            'QuoteCommands', 'QuoteWriteRepository', 'QuoteQueries', 'QuoteReadRepository',
-           'AssemblyCatalog', 'AssemblyRefresh', 'AssemblyCatalogRepository', 'AssemblyQueries']
+           'AssemblyCatalog', 'AssemblyRefresh', 'AssemblyCatalogRepository', 'AssemblyQueries',
+           'QuoteConversion', 'ConversionRepository', 'PurchaseNeeds', 'PurchaseNeedsRepository']

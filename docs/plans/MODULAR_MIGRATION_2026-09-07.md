@@ -106,3 +106,23 @@ Validacao: 31 verificacoes locais, 351 ficheiros compilados. Na base atual:
 inventario 15.753 s, compras 18.863 s, conjuntos/montagem 38.856 s, fabrico
 19.285 s e planeamento 71.912 s. Todos com rollback e conteudo das 55 tabelas
 igual ao inicio. Guia de manutencao e indice atualizados.
+
+### Coordenacao da conversao e editor de conjuntos
+
+QuoteConversion substitui a coordenacao direta no bridge. O repositorio prepara
+cliente, encomenda, referencias e sequencias numa copia, verifica se os campos
+locais mudaram e publica o resultado com gravacao bloqueante. Falhas de
+validacao e gravacao, conversao duplicada e snapshot desatualizado sao cobertos
+por testes independentes. Os contadores SQL podem ser reservados separadamente;
+esta protecao local nao e uma transacao SQL unica de todas as integracoes.
+
+O construtor visual calculado foi extraido para calculated_assembly_editor.py,
+com contexto inicial e acoes explicitas. Abre com um QWidget simples; o teste
+confirma cancelamento sem gravacao e confirmacao com totais corretos. A pagina
+canonica tem agora 3199 linhas e o adaptador de orcamentos 485; continuam por
+migrar os restantes gestores visuais, outras areas e o runtime global.
+
+Validacao final: 33 verificacoes locais aprovadas, 356 ficheiros compilados,
+487 contratos preservados. Com a nova conversao, passaram conjuntos/montagem
+(39.204 s), fabrico (19.149 s), planeamento (71.650 s) e faturacao (19.143 s),
+sempre com rollback e conteudo das 55 tabelas igual ao inicio.

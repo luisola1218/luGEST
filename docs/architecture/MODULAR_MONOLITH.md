@@ -32,6 +32,8 @@ existencia desta estrutura com a migracao de todo o ERP.
 | Atualizacao preparada de precos e codigos de parametro | `lugest_modules/quotes/application/assembly_refresh.py` |
 | Persistencia dos catalogos e recuperacao perante erro | `lugest_modules/quotes/infrastructure/legacy_assembly_repository.py` |
 | Preparar pecas, montagem e tempos para encomenda | `lugest_modules/quotes/application/order_lines.py` |
+| Coordenar conversao de orcamento aprovado | `lugest_modules/quotes/application/conversion.py` |
+| Preparacao isolada e gravacao da conversao | `lugest_modules/quotes/infrastructure/legacy_conversion_repository.py` |
 | Necessidades de compra com stock partilhado entre linhas | `lugest_modules/quotes/application/purchase_needs.py` |
 | Atualizar o snapshot de um estudo | `lugest_modules/quotes/infrastructure/legacy_nesting_repository.py` |
 | SQL dos estudos de nesting | `lugest_modules/quotes/infrastructure/mysql_nesting_store.py` |
@@ -43,6 +45,7 @@ existencia desta estrutura com a migracao de todo o ERP.
 | Construcao de paineis e encaminhamento de eventos | `lugest_modules/quotes/presentation/workspace.py` |
 | Aparencia dos paineis | `lugest_modules/quotes/presentation/workspace_styles.py` |
 | Dependencias do controlador de orcamentos | `lugest_modules/quotes/presentation/page_services.py` |
+| Construtor visual de conjuntos calculados | `lugest_modules/quotes/presentation/calculated_assembly_editor.py` |
 
 Cada modulo expoe `api.py` para outros modulos de negocio. O ponto de composicao
 da aplicacao pode importar adaptadores concretos para construir os servicos.
@@ -147,6 +150,8 @@ e conjuntos usa a mesma funcao e devolve linhas independentes do original.
 .venv\Scripts\python.exe scripts\verify_quote_workspace.py
 .venv\Scripts\python.exe scripts\verify_assembly_rules.py
 .venv\Scripts\python.exe scripts\verify_quote_order_lines.py
+.venv\Scripts\python.exe scripts\verify_quote_conversion.py
+.venv\Scripts\python.exe scripts\verify_calculated_assembly_editor.py
 .venv\Scripts\python.exe scripts\verify_purchase_needs.py
 powershell -File scripts\verify_project.ps1 -SafeOnly
 ```
@@ -172,11 +177,16 @@ AUTO_INCREMENT. Nao testa concorrencia real nem persistencia assincrona.
 ## Trabalho ainda necessario para concluir a migracao
 
 1. Continuar a dividir o controlador de orcamentos: os paineis ja sao uma vista
-   independente, mas o controlador de negocio visual ainda concentra os
-   gestores de conjuntos e outras interacoes extensas.
-2. Migrar a persistencia da conversao de orcamento para encomenda e a criacao
-   do pedido de compra. Preparacao de linhas e calculo de faltas ja sao casos
-   de uso separados; os alocadores de referencias ainda usam o runtime. CRUD,
+   independente, assim como o construtor de conjuntos calculados. O controlador
+   ainda concentra os gestores de conjuntos, agrupamento de linhas e outras
+   interacoes extensas. Guardar modelo e conjunto no construtor ainda sao duas
+   operacoes; falta definir a transacao conjunta deste percurso.
+2. Migrar a criacao do pedido de compra e substituir os adaptadores historicos
+   da conversao. QuoteConversion ja coordena cliente, encomenda e orcamento com
+   repositorio explicito: prepara em copia, verifica alteracoes locais e pede
+   gravacao bloqueante. A transacao SQL entre modulos continua por resolver;
+   contadores podem ser reservados independentemente. Preparacao de linhas e
+   calculo de faltas ja sao casos de uso separados. CRUD,
    consultas, precos, normalizacao, expansao e atualizacao do catalogo de
    conjuntos ja usam casos de uso; a alocacao de codigos e procura da linha de
    origem ainda ligam ao runtime antigo pela composicao. Os comandos de
