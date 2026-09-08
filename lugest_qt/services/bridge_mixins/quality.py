@@ -1,4 +1,5 @@
 from __future__ import annotations
+from lugest_qt.services.quality_composition import nonconformities
 
 import copy
 import re
@@ -387,29 +388,13 @@ class QualityBackendMixin:
             self._save(force=True, audit=False)
 
     def _quality_reference_key(self, value: Any, fallback: Any = "") -> str:
-        raw = str(value or fallback or "").strip()
-        match = re.search(r"\bNE-\d{4}-\d{4}\b", raw, flags=re.IGNORECASE)
-        if match:
-            return match.group(0).upper()
-        return re.sub(r"\s+", " ", raw).casefold()
+        return nonconformities(self).reference_key(value, fallback)
 
     def _quality_nc_key(self, payload: dict[str, Any]) -> tuple[str, str, str, str]:
-        origem_raw = str(payload.get("origem", "") or "").strip()
-        origem = re.sub(r"\s+", " ", origem_raw).casefold()
-        if "rece" in origem and "fornecedor" in origem:
-            origem = "rececao fornecedor"
-        referencia = self._quality_reference_key(payload.get("referencia", ""), payload.get("ne_numero", ""))
-        entidade_tipo = str(payload.get("entidade_tipo", "") or payload.get("linked_entity_type", "") or "").strip()
-        entidade_id = str(payload.get("entidade_id", "") or payload.get("linked_entity_id", "") or "").strip()
-        if not entidade_tipo and str(payload.get("material_id", "") or "").strip():
-            entidade_tipo = "Material"
-            entidade_id = str(payload.get("material_id", "") or "").strip()
-        if not entidade_id:
-            entidade_id = str(payload.get("material_id", "") or payload.get("produto_codigo", "") or payload.get("fornecedor_id", "") or payload.get("fornecedor_nome", "") or "").strip()
-        return (origem, referencia, entidade_tipo.casefold(), entidade_id.casefold())
+        return nonconformities(self).key(payload)
 
     def _quality_is_open_nc(self, row: dict[str, Any]) -> bool:
-        return str(row.get("estado", "") or "Aberta").strip().casefold() == "aberta"
+        return nonconformities(self).is_open(row)
 
     def _quality_find_open_nc(self, payload: dict[str, Any], *, exclude_id: str = "") -> dict[str, Any] | None:
         key = self._quality_nc_key(payload)
@@ -424,50 +409,10 @@ class QualityBackendMixin:
         return None
 
     def _quality_nc_quantity(self, row: dict[str, Any] | None, field: str) -> float:
-        if not isinstance(row, dict):
-            return 0.0
-        for key in (field, field.replace("qtd_", "quality_"), field.replace("qtd_", "")):
-            if key in row:
-                value = self._parse_float(row.get(key, 0), 0)
-                if value:
-                    return value
-        desc = str(row.get("descricao", "") or "")
-        label = {
-            "qtd_recebida": "recebido",
-            "qtd_aprovada": "aprovado",
-            "qtd_rejeitada": "rejeitado",
-            "qtd_pendente": "pendente",
-        }.get(field, field)
-        match = re.search(rf"{re.escape(label)}\s*:\s*([0-9]+(?:[.,][0-9]+)?)", desc, flags=re.IGNORECASE)
-        if match:
-            return self._parse_float(match.group(1), 0)
-        return 0.0
+        return nonconformities(self).quantity(row, field)
 
     def _quality_normalize_open_nc_duplicates(self) -> None:
-        data = self.ensure_data()
-        rows = [row for row in list(data.get("quality_nonconformities", []) or []) if isinstance(row, dict)]
-        first_by_key: dict[tuple[str, str, str, str], dict[str, Any]] = {}
-        changed = False
-        for row in rows:
-            if not self._quality_is_open_nc(row):
-                continue
-            key = self._quality_nc_key(row)
-            if not all(key):
-                continue
-            keeper = first_by_key.get(key)
-            if keeper is None:
-                first_by_key[key] = row
-                continue
-            row["estado"] = "Cancelada"
-            row["updated_at"] = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
-            row["updated_by"] = self._current_user_label()
-            row["acao"] = (
-                str(row.get("acao", "") or "").strip()
-                + f"\nCancelada automaticamente: NC duplicada de {str(keeper.get('id', '') or '').strip()}."
-            ).strip()
-            changed = True
-        if changed:
-            self._save(force=True, audit=False)
+        return nonconformities(self).normalize_duplicates()
 
     def quality_reception_rows(self, filter_text: str = "", state_filter: str = "Pendentes") -> list[dict[str, Any]]:
         query = str(filter_text or "").strip().lower()
@@ -849,148 +794,13 @@ class QualityBackendMixin:
         return doc
 
     def quality_nc_rows(self, filter_text: str = "", state_filter: str = "Ativas") -> list[dict[str, Any]]:
-        self._quality_normalize_open_nc_duplicates()
-        query = str(filter_text or "").strip().lower()
-        state = str(state_filter or "Ativas").strip().lower()
-        rows: list[dict[str, Any]] = []
-        for raw in list(self.ensure_data().get("quality_nonconformities", []) or []):
-            if not isinstance(raw, dict):
-                continue
-            row = dict(raw)
-            estado = str(row.get("estado", "") or "Aberta").strip() or "Aberta"
-            estado_norm = estado.lower()
-            if state not in {"todos", "todas", "all"}:
-                if "ativ" in state and estado_norm in {"fechada", "cancelada"}:
-                    continue
-                if "abert" in state and estado_norm != "aberta":
-                    continue
-                if "trat" in state and "trat" not in estado_norm:
-                    continue
-                if "fech" in state and estado_norm != "fechada":
-                    continue
-            emitted = {
-                "id": str(row.get("id", "") or "").strip(),
-                "origem": str(row.get("origem", "") or "").strip(),
-                "referencia": str(row.get("referencia", "") or "").strip(),
-                "entidade_tipo": str(row.get("entidade_tipo", "") or row.get("linked_entity_type", "") or "").strip(),
-                "entidade_id": str(row.get("entidade_id", "") or row.get("linked_entity_id", "") or "").strip(),
-                "entidade_label": str(row.get("entidade_label", "") or row.get("linked_entity_label", "") or "").strip(),
-                "tipo": str(row.get("tipo", "") or "").strip(),
-                "gravidade": str(row.get("gravidade", "") or "Media").strip(),
-                "estado": estado,
-                "responsavel": str(row.get("responsavel", "") or "").strip(),
-                "prazo": str(row.get("prazo", "") or "").strip()[:10],
-                "descricao": str(row.get("descricao", "") or "").strip(),
-                "causa": str(row.get("causa", "") or "").strip(),
-                "acao": str(row.get("acao", "") or "").strip(),
-                "eficacia": str(row.get("eficacia", "") or "").strip(),
-                "fornecedor_id": str(row.get("fornecedor_id", "") or "").strip(),
-                "fornecedor_nome": str(row.get("fornecedor_nome", "") or "").strip(),
-                "material_id": str(row.get("material_id", "") or "").strip(),
-                "lote_fornecedor": str(row.get("lote_fornecedor", "") or "").strip(),
-                "ne_numero": str(row.get("ne_numero", "") or "").strip(),
-                "decisao": str(row.get("decisao", "") or "").strip(),
-                "movement_id": str(row.get("movement_id", "") or "").strip(),
-                "qtd_recebida": round(self._quality_nc_quantity(row, "qtd_recebida"), 4),
-                "qtd_aprovada": round(self._quality_nc_quantity(row, "qtd_aprovada"), 4),
-                "qtd_rejeitada": round(self._quality_nc_quantity(row, "qtd_rejeitada"), 4),
-                "qtd_pendente": round(self._quality_nc_quantity(row, "qtd_pendente"), 4),
-                "created_at": str(row.get("created_at", "") or "").strip(),
-                "closed_at": str(row.get("closed_at", "") or "").strip(),
-            }
-            if query and not any(query in str(value).lower() for value in emitted.values()):
-                continue
-            rows.append(emitted)
-        rows.sort(key=lambda item: (str(item.get("estado", "")) == "Fechada", str(item.get("prazo", "") or "9999"), str(item.get("id", ""))), reverse=False)
-        return rows
+        return nonconformities(self).rows(filter_text, state_filter)
 
     def quality_nc_save(self, payload: dict[str, Any]) -> dict[str, Any]:
-        data = self.ensure_data()
-        rows = data.setdefault("quality_nonconformities", [])
-        nc_id = str(payload.get("id", "") or "").strip()
-        existing = next((row for row in rows if isinstance(row, dict) and str(row.get("id", "") or "").strip() == nc_id), None) if nc_id else None
-        before = copy.deepcopy(existing) if isinstance(existing, dict) else None
-        if not nc_id:
-            nc_id = self._next_prefixed_id(rows, "NC")
-        now = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
-        row = {
-            "id": nc_id,
-            "origem": str(payload.get("origem", "") or "").strip(),
-            "referencia": str(payload.get("referencia", "") or "").strip(),
-            "entidade_tipo": str(payload.get("entidade_tipo", payload.get("linked_entity_type", "")) or "").strip(),
-            "entidade_id": str(payload.get("entidade_id", payload.get("linked_entity_id", "")) or "").strip(),
-            "tipo": str(payload.get("tipo", "") or "Processo").strip() or "Processo",
-            "gravidade": str(payload.get("gravidade", "") or "Media").strip() or "Media",
-            "estado": str(payload.get("estado", "") or (existing or {}).get("estado", "Aberta") or "Aberta").strip() or "Aberta",
-            "responsavel": str(payload.get("responsavel", "") or "").strip(),
-            "prazo": str(payload.get("prazo", "") or "").strip()[:10],
-            "descricao": str(payload.get("descricao", "") or "").strip(),
-            "causa": str(payload.get("causa", "") or "").strip(),
-            "acao": str(payload.get("acao", "") or "").strip(),
-            "eficacia": str(payload.get("eficacia", "") or "").strip(),
-            "fornecedor_id": str(payload.get("fornecedor_id", (existing or {}).get("fornecedor_id", "")) or "").strip(),
-            "fornecedor_nome": str(payload.get("fornecedor_nome", (existing or {}).get("fornecedor_nome", "")) or "").strip(),
-            "material_id": str(payload.get("material_id", (existing or {}).get("material_id", "")) or "").strip(),
-            "lote_fornecedor": str(payload.get("lote_fornecedor", (existing or {}).get("lote_fornecedor", "")) or "").strip(),
-            "ne_numero": str(payload.get("ne_numero", (existing or {}).get("ne_numero", "")) or "").strip(),
-            "guia": str(payload.get("guia", (existing or {}).get("guia", "")) or "").strip(),
-            "fatura": str(payload.get("fatura", (existing or {}).get("fatura", "")) or "").strip(),
-            "decisao": str(payload.get("decisao", (existing or {}).get("decisao", "")) or "").strip(),
-            "movement_id": str(payload.get("movement_id", (existing or {}).get("movement_id", "")) or "").strip(),
-            "qtd_recebida": round(self._parse_float(payload.get("qtd_recebida", (existing or {}).get("qtd_recebida", 0)), 0), 4),
-            "qtd_aprovada": round(self._parse_float(payload.get("qtd_aprovada", (existing or {}).get("qtd_aprovada", 0)), 0), 4),
-            "qtd_rejeitada": round(self._parse_float(payload.get("qtd_rejeitada", (existing or {}).get("qtd_rejeitada", 0)), 0), 4),
-            "qtd_pendente": round(self._parse_float(payload.get("qtd_pendente", (existing or {}).get("qtd_pendente", 0)), 0), 4),
-            "created_at": str((existing or {}).get("created_at", "") or now),
-            "updated_at": now,
-            "created_by": str((existing or {}).get("created_by", "") or self._current_user_label()),
-            "updated_by": self._current_user_label(),
-            "closed_at": str((existing or {}).get("closed_at", "") or "").strip(),
-        }
-        row["entidade_label"] = str(payload.get("entidade_label", "") or "").strip() or self._quality_link_label(
-            row["entidade_tipo"], row["entidade_id"]
-        )
-        if not row["referencia"] and row["entidade_id"]:
-            row["referencia"] = row["entidade_id"]
-        if self._quality_is_open_nc(row):
-            duplicate = self._quality_find_open_nc(row, exclude_id=nc_id)
-            if duplicate is not None:
-                dup_id = str(duplicate.get("id", "") or "").strip()
-                raise ValueError(
-                    f"Já existe uma NC aberta ({dup_id}) para esta origem, referência e entidade. "
-                    "Fecha ou edita essa NC antes de criar outra."
-                )
-        if existing is None:
-            rows.append(row)
-        else:
-            existing.update(row)
-            row = existing
-        self._append_audit_event(
-            data,
-            action="NC guardada",
-            entity_type="Nao conformidade",
-            entity_id=nc_id,
-            summary=f"{row.get('tipo', '')} | {row.get('estado', '')} | {row.get('referencia', '')}",
-            before=before,
-            after=row,
-        )
-        self._save(force=True, audit=False)
-        return dict(row)
+        return nonconformities(self).save(payload)
 
     def quality_nc_close(self, nc_id: str, eficacia: str = "") -> dict[str, Any]:
-        data = self.ensure_data()
-        target = next((row for row in list(data.get("quality_nonconformities", []) or []) if isinstance(row, dict) and str(row.get("id", "") or "").strip() == str(nc_id or "").strip()), None)
-        if target is None:
-            raise ValueError("Nao conformidade nao encontrada.")
-        before = copy.deepcopy(target)
-        target["estado"] = "Fechada"
-        target["closed_at"] = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
-        target["closed_by"] = self._current_user_label()
-        if str(eficacia or "").strip():
-            target["eficacia"] = str(eficacia or "").strip()
-        self._append_audit_event(data, action="NC fechada", entity_type="Nao conformidade", entity_id=str(nc_id), summary=str(target.get("eficacia", "") or ""), before=before, after=target)
-        self._save(force=True, audit=False)
-        return dict(target)
+        return nonconformities(self).close(nc_id, eficacia)
 
     def quality_nc_release_material(self, nc_id: str, decision: str = "Aprovado pela qualidade") -> dict[str, Any]:
         data = self.ensure_data()

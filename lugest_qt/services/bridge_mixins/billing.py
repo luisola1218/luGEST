@@ -1,4 +1,5 @@
 from __future__ import annotations
+from lugest_qt.services.billing_composition import payments
 
 import uuid
 
@@ -1111,32 +1112,7 @@ class BillingBridgeMixin:
         return effective
 
     def _billing_normalize_payment(self, payload: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
-        row = dict(existing or {})
-        row_id = str(payload.get("id", "") or row.get("id", "") or uuid.uuid4().hex[:12].upper()).strip()
-        data_pagamento = str(payload.get("data_pagamento", "") or row.get("data_pagamento", "") or "").strip()[:10]
-        valor = round(self._parse_float(payload.get("valor", row.get("valor", 0)), 0), 2)
-        metodo = str(payload.get("metodo", "") or row.get("metodo", "") or "").strip()
-        referencia = str(payload.get("referencia", "") or row.get("referencia", "") or "").strip()
-        titulo = str(payload.get("titulo_comprovativo", "") or row.get("titulo_comprovativo", "") or "").strip()
-        caminho = str(payload.get("caminho_comprovativo", "") or row.get("caminho_comprovativo", "") or "").strip()
-        fatura_id = str(payload.get("fatura_id", "") or row.get("fatura_id", "") or "").strip()
-        obs = str(payload.get("obs", "") or row.get("obs", "") or "").strip()
-        if valor <= 0:
-            raise ValueError("Valor do pagamento invalido.")
-        if not data_pagamento:
-            data_pagamento = str(self.desktop_main.now_iso())[:10]
-        return {
-            "id": row_id,
-            "fatura_id": fatura_id,
-            "data_pagamento": data_pagamento,
-            "valor": valor,
-            "metodo": metodo,
-            "referencia": referencia,
-            "titulo_comprovativo": titulo,
-            "caminho_comprovativo": caminho,
-            "obs": obs,
-            "created_at": str(row.get("created_at", "") or self.desktop_main.now_iso()),
-        }
+        return payments(self).normalize(payload, existing)
 
     def _billing_record_sale_total(self, record: dict[str, Any], quote: dict[str, Any] | None = None) -> float:
         manual = round(self._parse_float(record.get("valor_venda_manual", 0), 0), 2)
@@ -1846,42 +1822,10 @@ class BillingBridgeMixin:
         return self.billing_detail(reg_num)
 
     def billing_add_payment(self, numero: str, payload: dict[str, Any]) -> dict[str, Any]:
-        reg_num = str(numero or "").strip()
-        record = self._billing_find_record(reg_num)
-        if record is None:
-            raise ValueError("Registo de faturação não encontrado.")
-        payload_dict = dict(payload or {})
-        row_id = str(payload_dict.get("id", "") or "").strip()
-        invoice_id = str(payload_dict.get("fatura_id", "") or "").strip()
-        if invoice_id and not any(str(row.get("id", "") or "").strip() == invoice_id for row in list(record.get("faturas", []) or [])):
-            raise ValueError("A fatura associada ao pagamento não existe neste registo.")
-        if invoice_id:
-            invoice = next((row for row in list(record.get("faturas", []) or []) if str(row.get("id", "") or "").strip() == invoice_id), None)
-            if self._billing_invoice_is_void(invoice):
-                raise ValueError("Nao e possivel associar pagamentos a uma fatura anulada.")
-        existing = next((row for row in list(record.get("pagamentos", []) or []) if str(row.get("id", "") or "").strip() == row_id), None) if row_id else None
-        payment = self._billing_normalize_payment(payload_dict, existing)
-        if existing is None:
-            record.setdefault("pagamentos", []).append(payment)
-        else:
-            existing.update(payment)
-        record["updated_at"] = self.desktop_main.now_iso()
-        self._save(force=True)
-        return self.billing_detail(reg_num)
+        return self.billing_detail(payments(self).add(numero, payload))
 
     def billing_remove_payment(self, numero: str, payment_id: str) -> dict[str, Any]:
-        reg_num = str(numero or "").strip()
-        row_id = str(payment_id or "").strip()
-        record = self._billing_find_record(reg_num)
-        if record is None:
-            raise ValueError("Registo de faturação não encontrado.")
-        before = len(list(record.get("pagamentos", []) or []))
-        record["pagamentos"] = [row for row in list(record.get("pagamentos", []) or []) if str(row.get("id", "") or "").strip() != row_id]
-        if len(record["pagamentos"]) == before:
-            raise ValueError("Pagamento não encontrado.")
-        record["updated_at"] = self.desktop_main.now_iso()
-        self._save(force=True)
-        return self.billing_detail(reg_num)
+        return self.billing_detail(payments(self).remove(numero, payment_id))
 
     def _billing_export_invoice_rows(self, start_date: str = "", end_date: str = "") -> list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]]:
         start_txt = str(start_date or "").strip()[:10]

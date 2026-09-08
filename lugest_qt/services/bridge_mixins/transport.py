@@ -1,4 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
+from lugest_modules.transport.application.order_links import synchronize_orders
+from lugest_qt.services.transport_composition import tariff_service, transport_stops
 
 import os
 import tempfile
@@ -116,83 +118,19 @@ class TransportBridgeMixin:
         return values
 
     def transport_tariff_defaults(self) -> dict[str, Any]:
-        return {
-            "id": "",
-            "transportadora_id": "",
-            "transportadora_nome": "",
-            "zona": "",
-            "valor_base": 0.0,
-            "valor_por_palete": 0.0,
-            "valor_por_kg": 0.0,
-            "valor_por_m3": 0.0,
-            "custo_minimo": 0.0,
-            "ativo": True,
-            "observacoes": "",
-        }
+        return tariff_service(self).defaults()
 
     def _transport_tariff_signature(self, row: dict[str, Any] | None) -> str:
-        row = dict(row or {})
-        carrier_parts = [
-            part
-            for part in [
-                str(row.get("transportadora_id", "") or "").strip(),
-                str(row.get("transportadora_nome", "") or "").strip(),
-            ]
-            if part
-        ]
-        carrier = " - ".join(carrier_parts).strip(" -") or "Sem transportadora"
-        zone = str(row.get("zona", "") or "").strip() or "Sem zona"
-        return f"{carrier} | {zone}"
+        return tariff_service(self).signature(row)
 
     def _transport_tariff_next_id(self) -> int:
-        highest = 0
-        for row in list(self.ensure_data().get("transportes_tarifarios", []) or []):
-            highest = max(highest, int(self._parse_float((row or {}).get("id", 0), 0) or 0))
-        return highest + 1
+        return tariff_service(self).next_id()
 
     def _transport_tariff_match(self, transportadora_id: Any = "", transportadora_nome: Any = "", zona: Any = "") -> dict[str, Any] | None:
-        zone_norm = self.desktop_main.norm_text(zona)
-        if not zone_norm:
-            return None
-        supplier_id = str(transportadora_id or "").strip()
-        supplier_name_norm = self.desktop_main.norm_text(transportadora_nome)
-        best: tuple[int, int, dict[str, Any]] | None = None
-        for raw in list(self.ensure_data().get("transportes_tarifarios", []) or []):
-            if not isinstance(raw, dict) or not bool(raw.get("ativo", True)):
-                continue
-            if self.desktop_main.norm_text(raw.get("zona", "")) != zone_norm:
-                continue
-            row_supplier_id = str(raw.get("transportadora_id", "") or "").strip()
-            row_supplier_name_norm = self.desktop_main.norm_text(raw.get("transportadora_nome", ""))
-            score = 0
-            if supplier_id and row_supplier_id and row_supplier_id == supplier_id:
-                score = 3
-            elif supplier_name_norm and row_supplier_name_norm and row_supplier_name_norm == supplier_name_norm:
-                score = 2
-            elif not row_supplier_id and not row_supplier_name_norm:
-                score = 1
-            if score <= 0:
-                continue
-            row_id = int(self._parse_float(raw.get("id", 0), 0) or 0)
-            candidate = (score, -row_id, raw)
-            if best is None or candidate > best:
-                best = candidate
-        return dict(best[2]) if best else None
+        return tariff_service(self).match(transportadora_id, transportadora_nome, zona)
 
     def _transport_tariff_cost_from_row(self, row: dict[str, Any] | None, paletes: Any = 0, peso_bruto_kg: Any = 0, volume_m3: Any = 0) -> float:
-        row = dict(row or {})
-        base = round(self._parse_float(row.get("valor_base", 0), 0), 2)
-        per_pal = round(self._parse_float(row.get("valor_por_palete", 0), 0), 2)
-        per_kg = round(self._parse_float(row.get("valor_por_kg", 0), 0), 4)
-        per_m3 = round(self._parse_float(row.get("valor_por_m3", 0), 0), 2)
-        minimum = round(self._parse_float(row.get("custo_minimo", 0), 0), 2)
-        pal = max(0.0, round(self._parse_float(paletes, 0), 2))
-        peso = max(0.0, round(self._parse_float(peso_bruto_kg, 0), 2))
-        volume = max(0.0, round(self._parse_float(volume_m3, 0), 3))
-        total = round(base + (pal * per_pal) + (peso * per_kg) + (volume * per_m3), 2)
-        if minimum > 0:
-            total = max(total, minimum)
-        return round(total, 2)
+        return tariff_service(self).cost(row, paletes, peso_bruto_kg, volume_m3)
 
     def _transport_tariff_suggestion(
         self,
@@ -203,18 +141,7 @@ class TransportBridgeMixin:
         peso_bruto_kg: Any = 0,
         volume_m3: Any = 0,
     ) -> dict[str, Any]:
-        tariff = self._transport_tariff_match(transportadora_id, transportadora_nome, zona)
-        if tariff is None:
-            return {
-                "tarifario_id": "",
-                "tarifario_label": "",
-                "custo_sugerido": 0.0,
-            }
-        return {
-            "tarifario_id": tariff.get("id", ""),
-            "tarifario_label": self._transport_tariff_signature(tariff),
-            "custo_sugerido": self._transport_tariff_cost_from_row(tariff, paletes, peso_bruto_kg, volume_m3),
-        }
+        return tariff_service(self).suggestion(transportadora_id, transportadora_nome, zona, paletes, peso_bruto_kg, volume_m3)
 
     def _transport_metrics_for_order(self, enc: dict[str, Any] | None, cliente_obj: dict[str, Any] | None = None) -> dict[str, Any]:
         enc = dict(enc or {})
@@ -371,59 +298,18 @@ class TransportBridgeMixin:
         return trip_txt or "Planeada"
 
     def _transport_stop_checklist_state(self, stop: dict[str, Any]) -> str:
-        checks = [
-            bool((stop or {}).get("check_carga_ok")),
-            bool((stop or {}).get("check_docs_ok")),
-            bool((stop or {}).get("check_paletes_ok")),
-        ]
-        if checks and all(checks):
-            return "OK"
-        if any(checks):
-            return "Parcial"
-        return "Pendente"
+        return transport_stops(self).checklist(stop)
 
     def _transport_reindex_stops(self, trip: dict[str, Any]) -> None:
-        stops = list(trip.get("paragens", []) or [])
-        stops.sort(
-            key=lambda row: (
-                int(self._parse_float((row or {}).get("ordem", 0), 0) or 0),
-                str((row or {}).get("data_planeada", "") or ""),
-                str((row or {}).get("encomenda_numero", (row or {}).get("encomenda", "")) or ""),
-            )
-        )
-        for index, stop in enumerate(stops, start=1):
-            stop["ordem"] = index
-        trip["paragens"] = stops
+        return transport_stops(self).reindex(trip)
 
     def _transport_sync_order_links(self) -> None:
-        assigned: dict[str, tuple[str, str]] = {}
-        for tr in list(self.ensure_data().get("transportes", []) or []):
-            if not isinstance(tr, dict):
-                continue
-            trip_num = str(tr.get("numero", "") or "").strip()
-            trip_state = str(tr.get("estado", "") or "").strip() or "Planeado"
-            if not trip_num or "anulad" in self.desktop_main.norm_text(trip_state):
-                continue
-            for stop in list(tr.get("paragens", []) or []):
-                if not isinstance(stop, dict):
-                    continue
-                enc_num = str(stop.get("encomenda_numero", stop.get("encomenda", "")) or "").strip()
-                if not enc_num:
-                    continue
-                assigned[enc_num] = (trip_num, self._transport_stop_state(stop, trip_state))
-        for enc in list(self.ensure_data().get("encomendas", []) or []):
-            if not isinstance(enc, dict):
-                continue
-            num = str(enc.get("numero", "") or "").strip()
-            if not num:
-                continue
-            trip_info = assigned.get(num)
-            if trip_info is None:
-                enc["transporte_numero"] = ""
-                enc["estado_transporte"] = ""
-                continue
-            enc["transporte_numero"] = trip_info[0]
-            enc["estado_transporte"] = trip_info[1]
+        data = self.ensure_data()
+        orders = list(data.get("encomendas", []) or [])
+        updated = synchronize_orders(list(data.get("transportes", []) or []), orders, self.desktop_main.norm_text)
+        for original, projected in zip(orders, updated):
+            if isinstance(original, dict):
+                original.update(projected)
 
     def transport_defaults(self) -> dict[str, Any]:
         payload = dict(self._transport_defaults())
@@ -434,81 +320,13 @@ class TransportBridgeMixin:
         return payload
 
     def transport_tariff_rows(self, filter_text: str = "") -> list[dict[str, Any]]:
-        query = str(filter_text or "").strip().lower()
-        rows: list[dict[str, Any]] = []
-        for raw in list(self.ensure_data().get("transportes_tarifarios", []) or []):
-            if not isinstance(raw, dict):
-                continue
-            row = {
-                "id": int(self._parse_float(raw.get("id", 0), 0) or 0),
-                "transportadora_id": str(raw.get("transportadora_id", "") or "").strip(),
-                "transportadora_nome": str(raw.get("transportadora_nome", "") or "").strip(),
-                "zona": str(raw.get("zona", "") or "").strip(),
-                "valor_base": round(self._parse_float(raw.get("valor_base", 0), 0), 2),
-                "valor_por_palete": round(self._parse_float(raw.get("valor_por_palete", 0), 0), 2),
-                "valor_por_kg": round(self._parse_float(raw.get("valor_por_kg", 0), 0), 4),
-                "valor_por_m3": round(self._parse_float(raw.get("valor_por_m3", 0), 0), 2),
-                "custo_minimo": round(self._parse_float(raw.get("custo_minimo", 0), 0), 2),
-                "ativo": bool(raw.get("ativo", True)),
-                "observacoes": str(raw.get("observacoes", "") or "").strip(),
-                "label": self._transport_tariff_signature(raw),
-            }
-            if query and not any(query in str(value).lower() for value in row.values()):
-                continue
-            rows.append(row)
-        rows.sort(key=lambda item: (self.desktop_main.norm_text(item.get("transportadora_nome", "")), self.desktop_main.norm_text(item.get("zona", "")), item.get("id", 0)))
-        return rows
+        return tariff_service(self).rows(filter_text)
 
     def transport_tariff_save(self, payload: dict[str, Any]) -> dict[str, Any]:
-        data = self.ensure_data()
-        rows = data.setdefault("transportes_tarifarios", [])
-        tariff_id = int(self._parse_float(payload.get("id", 0), 0) or 0)
-        zone = str(payload.get("zona", "") or "").strip()
-        if not zone:
-            raise ValueError("Zona obrigatoria no tarifario.")
-        transportadora_id, transportadora_nome, _contact = self._normalize_supplier_reference(
-            payload.get("transportadora_id", ""),
-            payload.get("transportadora_nome", ""),
-        )
-        zone_norm = self.desktop_main.norm_text(zone)
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            if int(self._parse_float(row.get("id", 0), 0) or 0) == tariff_id:
-                continue
-            same_zone = self.desktop_main.norm_text(row.get("zona", "")) == zone_norm
-            same_supplier = (
-                str(row.get("transportadora_id", "") or "").strip() == transportadora_id
-                and self.desktop_main.norm_text(row.get("transportadora_nome", "")) == self.desktop_main.norm_text(transportadora_nome)
-            )
-            if same_zone and same_supplier:
-                raise ValueError("Ja existe um tarifario para essa transportadora e zona.")
-        target = next((row for row in rows if int(self._parse_float((row or {}).get("id", 0), 0) or 0) == tariff_id), None) if tariff_id > 0 else None
-        if target is None:
-            target = self.transport_tariff_defaults()
-            target["id"] = self._transport_tariff_next_id()
-            rows.append(target)
-        target["transportadora_id"] = transportadora_id
-        target["transportadora_nome"] = transportadora_nome
-        target["zona"] = zone
-        target["valor_base"] = round(self._parse_float(payload.get("valor_base", target.get("valor_base", 0)), 0), 2)
-        target["valor_por_palete"] = round(self._parse_float(payload.get("valor_por_palete", target.get("valor_por_palete", 0)), 0), 2)
-        target["valor_por_kg"] = round(self._parse_float(payload.get("valor_por_kg", target.get("valor_por_kg", 0)), 0), 4)
-        target["valor_por_m3"] = round(self._parse_float(payload.get("valor_por_m3", target.get("valor_por_m3", 0)), 0), 2)
-        target["custo_minimo"] = round(self._parse_float(payload.get("custo_minimo", target.get("custo_minimo", 0)), 0), 2)
-        target["ativo"] = bool(payload.get("ativo", target.get("ativo", True)))
-        target["observacoes"] = str(payload.get("observacoes", target.get("observacoes", "")) or "").strip()
-        self._save(force=True)
-        return dict(target)
+        return tariff_service(self).save(payload)
 
     def transport_tariff_remove(self, tariff_id: Any) -> None:
-        target_id = int(self._parse_float(tariff_id, 0), 0)
-        rows = list(self.ensure_data().get("transportes_tarifarios", []) or [])
-        filtered = [row for row in rows if int(self._parse_float((row or {}).get("id", 0), 0) or 0) != target_id]
-        if len(filtered) == len(rows):
-            raise ValueError("Tarifario nao encontrado.")
-        self.ensure_data()["transportes_tarifarios"] = filtered
-        self._save(force=True)
+        return tariff_service(self).remove(tariff_id)
 
     def transport_pending_orders(self, filter_text: str = "") -> list[dict[str, Any]]:
         data = self.ensure_data()
@@ -848,50 +666,7 @@ class TransportBridgeMixin:
         return self.transport_detail(numero)
 
     def transport_request_service(self, numero: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        trip = self._transport_find(numero)
-        if trip is None:
-            raise ValueError("Transporte nao encontrado.")
-        payload = dict(payload or {})
-        supplier_id, supplier_text, _supplier_contact = self._normalize_supplier_reference(
-            payload.get("transportadora_id", trip.get("transportadora_id", "")),
-            payload.get("transportadora_nome", trip.get("transportadora_nome", "")),
-        )
-        if "transportadora_id" in payload or "transportadora_nome" in payload:
-            trip["transportadora_id"] = supplier_id
-            trip["transportadora_nome"] = supplier_text
-        trip["paletes_total_manual"] = round(self._parse_float(payload.get("paletes_total_manual", trip.get("paletes_total_manual", 0)), 0), 2)
-        trip["peso_total_manual_kg"] = round(self._parse_float(payload.get("peso_total_manual_kg", trip.get("peso_total_manual_kg", 0)), 0), 2)
-        trip["volume_total_manual_m3"] = round(self._parse_float(payload.get("volume_total_manual_m3", trip.get("volume_total_manual_m3", 0)), 0), 3)
-        trip["custo_previsto"] = round(self._parse_float(payload.get("custo_previsto", trip.get("custo_previsto", 0)), 0), 2)
-        request_state = str(payload.get("pedido_transporte_estado", trip.get("pedido_transporte_estado", "Pedido enviado")) or "Pedido enviado").strip() or "Pedido enviado"
-        trip["pedido_transporte_estado"] = request_state
-        trip["pedido_transporte_ref"] = str(payload.get("pedido_transporte_ref", trip.get("pedido_transporte_ref", "")) or "").strip()
-        trip["pedido_transporte_obs"] = str(payload.get("pedido_transporte_obs", trip.get("pedido_transporte_obs", "")) or "").strip()
-        trip["pedido_resposta_obs"] = str(payload.get("pedido_resposta_obs", trip.get("pedido_resposta_obs", "")) or "").strip()
-        normalized_state = self.desktop_main.norm_text(request_state)
-        if normalized_state in {"nao pedido", "nao-pedido"}:
-            trip["pedido_transporte_at"] = ""
-            trip["pedido_transporte_by"] = ""
-            trip["pedido_confirmado_at"] = ""
-            trip["pedido_confirmado_by"] = ""
-            trip["pedido_recusado_at"] = ""
-            trip["pedido_recusado_by"] = ""
-        else:
-            trip["pedido_transporte_at"] = self.desktop_main.now_iso()
-            trip["pedido_transporte_by"] = str((self.user or {}).get("username", "") or "").strip()
-            if "confirm" in normalized_state:
-                trip["pedido_confirmado_at"] = self.desktop_main.now_iso()
-                trip["pedido_confirmado_by"] = str((self.user or {}).get("username", "") or "").strip()
-                trip["pedido_recusado_at"] = ""
-                trip["pedido_recusado_by"] = ""
-            elif "recus" in normalized_state:
-                trip["pedido_recusado_at"] = self.desktop_main.now_iso()
-                trip["pedido_recusado_by"] = str((self.user or {}).get("username", "") or "").strip()
-                trip["pedido_confirmado_at"] = ""
-                trip["pedido_confirmado_by"] = ""
-        trip["updated_at"] = self.desktop_main.now_iso()
-        self._save(force=True)
-        return self.transport_detail(numero)
+        return self.transport_detail(transport_stops(self).request_service(numero, payload))
 
     def transport_remove_trip(self, numero: str) -> None:
         trip_num = str(numero or "").strip()
@@ -907,58 +682,7 @@ class TransportBridgeMixin:
         self._save(force=True)
 
     def transport_update_stop(self, numero: str, encomenda_numero: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        trip = self._transport_find(numero)
-        if trip is None:
-            raise ValueError("Transporte nao encontrado.")
-        enc_num = str(encomenda_numero or "").strip()
-        target = next(
-            (
-                row
-                for row in list(trip.get("paragens", []) or [])
-                if str((row or {}).get("encomenda_numero", (row or {}).get("encomenda", "")) or "").strip() == enc_num
-            ),
-            None,
-        )
-        if target is None:
-            raise ValueError("Paragem nao encontrada.")
-        payload = dict(payload or {})
-        guide_number = str(payload.get("expedicao_numero", target.get("expedicao_numero", "")) or "").strip()
-        if guide_number:
-            valid_guides = {row.get("numero", "") for row in self.transport_guide_options(enc_num)}
-            if valid_guides and guide_number not in valid_guides:
-                raise ValueError("A guia escolhida nao pertence a esta encomenda.")
-        target["expedicao_numero"] = guide_number
-        target["zona_transporte"] = str(payload.get("zona_transporte", target.get("zona_transporte", "")) or "").strip()
-        target["local_descarga"] = str(payload.get("local_descarga", target.get("local_descarga", "")) or "").strip()
-        target["latitude"] = str(payload.get("latitude", target.get("latitude", "")) or "").strip()
-        target["longitude"] = str(payload.get("longitude", target.get("longitude", "")) or "").strip()
-        target["contacto"] = str(payload.get("contacto", target.get("contacto", "")) or "").strip()
-        target["telefone"] = str(payload.get("telefone", target.get("telefone", "")) or "").strip()
-        target["data_planeada"] = str(payload.get("data_planeada", target.get("data_planeada", "")) or "").strip()
-        if "check_carga_ok" in payload:
-            target["check_carga_ok"] = bool(payload.get("check_carga_ok"))
-        if "check_docs_ok" in payload:
-            target["check_docs_ok"] = bool(payload.get("check_docs_ok"))
-        if "check_paletes_ok" in payload:
-            target["check_paletes_ok"] = bool(payload.get("check_paletes_ok"))
-        if "pod_estado" in payload:
-            target["pod_estado"] = str(payload.get("pod_estado", "") or "").strip()
-        if "pod_recebido_nome" in payload:
-            target["pod_recebido_nome"] = str(payload.get("pod_recebido_nome", "") or "").strip()
-        if "pod_recebido_at" in payload:
-            target["pod_recebido_at"] = str(payload.get("pod_recebido_at", "") or "").strip()
-        if "pod_obs" in payload:
-            target["pod_obs"] = str(payload.get("pod_obs", "") or "").strip()
-        if "observacoes" in payload:
-            target["observacoes"] = str(payload.get("observacoes", "") or "").strip()
-        if (
-            "recebid" in self.desktop_main.norm_text(str(target.get("pod_estado", "") or ""))
-            and not str(target.get("pod_recebido_at", "") or "").strip()
-        ):
-            target["pod_recebido_at"] = self.desktop_main.now_iso()
-        trip["updated_at"] = self.desktop_main.now_iso()
-        self._save(force=True)
-        return self.transport_detail(numero)
+        return self.transport_detail(transport_stops(self).update(numero, encomenda_numero, payload))
 
     def transport_assign_orders(self, numero: str, order_numbers: list[str]) -> dict[str, Any]:
         trip = self._transport_find(numero)
@@ -1088,124 +812,16 @@ class TransportBridgeMixin:
         return self.transport_detail(numero)
 
     def transport_remove_stop(self, numero: str, encomenda_numero: str) -> dict[str, Any]:
-        trip = self._transport_find(numero)
-        if trip is None:
-            raise ValueError("Transporte nao encontrado.")
-        enc_num = str(encomenda_numero or "").strip()
-        before = len(list(trip.get("paragens", []) or []))
-        trip["paragens"] = [
-            row
-            for row in list(trip.get("paragens", []) or [])
-            if str((row or {}).get("encomenda_numero", (row or {}).get("encomenda", "")) or "").strip() != enc_num
-        ]
-        if len(list(trip.get("paragens", []) or [])) == before:
-            raise ValueError("Paragem nao encontrada.")
-        self._transport_reindex_stops(trip)
-        trip["updated_at"] = self.desktop_main.now_iso()
-        self._transport_sync_order_links()
-        self._save(force=True)
-        return self.transport_detail(numero)
+        return self.transport_detail(transport_stops(self).remove(numero, encomenda_numero))
 
     def transport_move_stop(self, numero: str, encomenda_numero: str, direction: int) -> dict[str, Any]:
-        trip = self._transport_find(numero)
-        if trip is None:
-            raise ValueError("Transporte nao encontrado.")
-        enc_num = str(encomenda_numero or "").strip()
-        stops = list(trip.get("paragens", []) or [])
-        index = next(
-            (
-                idx
-                for idx, row in enumerate(stops)
-                if str((row or {}).get("encomenda_numero", (row or {}).get("encomenda", "")) or "").strip() == enc_num
-            ),
-            -1,
-        )
-        if index < 0:
-            raise ValueError("Paragem nao encontrada.")
-        target = index + (1 if int(direction or 0) > 0 else -1)
-        if target < 0 or target >= len(stops):
-            return self.transport_detail(numero)
-        stops[index], stops[target] = stops[target], stops[index]
-        trip["paragens"] = stops
-        self._transport_reindex_stops(trip)
-        trip["updated_at"] = self.desktop_main.now_iso()
-        self._save(force=True)
-        return self.transport_detail(numero)
+        return self.transport_detail(transport_stops(self).move(numero, encomenda_numero, direction))
 
     def transport_set_status(self, numero: str, estado: str) -> dict[str, Any]:
-        trip = self._transport_find(numero)
-        if trip is None:
-            raise ValueError("Transporte nao encontrado.")
-        state_txt = str(estado or "").strip()
-        if not state_txt:
-            raise ValueError("Estado obrigatorio.")
-        state_norm = self.desktop_main.norm_text(state_txt)
-        stops = [row for row in list(trip.get("paragens", []) or []) if isinstance(row, dict)]
-        if any(token in state_norm for token in ("carga", "transito", "conclu")) and not stops:
-            raise ValueError("Adiciona pelo menos uma encomenda à viagem antes de avançar o estado.")
-        if "transito" in state_norm:
-            incomplete = [
-                str(stop.get("encomenda_numero", "") or "").strip()
-                for stop in stops
-                if self._transport_stop_checklist_state(stop) != "OK"
-                or not str(stop.get("expedicao_numero", "") or "").strip()
-            ]
-            if incomplete:
-                raise ValueError(
-                    "Antes de iniciar o transporte confirma carga, documentos, paletes e guia em: "
-                    + ", ".join(incomplete)
-                )
-        if "conclu" in state_norm:
-            incomplete = [
-                str(stop.get("encomenda_numero", "") or "").strip()
-                for stop in stops
-                if "entreg" not in self.desktop_main.norm_text(str(stop.get("estado", "") or ""))
-                or "recebid" not in self.desktop_main.norm_text(str(stop.get("pod_estado", "") or ""))
-            ]
-            if incomplete:
-                raise ValueError(
-                    "Só podes concluir a viagem depois de marcar cada destino como Entregue e registar o POD: "
-                    + ", ".join(incomplete)
-                )
-        trip["estado"] = state_txt
-        trip["updated_at"] = self.desktop_main.now_iso()
-        self._transport_sync_order_links()
-        self._save(force=True)
-        return self.transport_detail(numero)
+        return self.transport_detail(transport_stops(self).set_status(numero, estado))
 
     def transport_set_stop_status(self, numero: str, encomenda_numero: str, estado: str, observacoes: str = "") -> dict[str, Any]:
-        trip = self._transport_find(numero)
-        if trip is None:
-            raise ValueError("Transporte nao encontrado.")
-        enc_num = str(encomenda_numero or "").strip()
-        target = next(
-            (
-                row
-                for row in list(trip.get("paragens", []) or [])
-                if str((row or {}).get("encomenda_numero", (row or {}).get("encomenda", "")) or "").strip() == enc_num
-            ),
-            None,
-        )
-        if target is None:
-            raise ValueError("Paragem nao encontrada.")
-        next_state = str(estado or "").strip() or "Planeada"
-        if "entreg" in self.desktop_main.norm_text(next_state):
-            missing: list[str] = []
-            if not str(target.get("expedicao_numero", "") or "").strip():
-                missing.append("guia")
-            if self._transport_stop_checklist_state(target) != "OK":
-                missing.append("checklist")
-            if "recebid" not in self.desktop_main.norm_text(str(target.get("pod_estado", "") or "")):
-                missing.append("POD")
-            if missing:
-                raise ValueError("Antes de concluir o destino preenche: " + ", ".join(missing) + ".")
-        target["estado"] = next_state
-        if str(observacoes or "").strip():
-            target["observacoes"] = str(observacoes or "").strip()
-        trip["updated_at"] = self.desktop_main.now_iso()
-        self._transport_sync_order_links()
-        self._save(force=True)
-        return self.transport_detail(numero)
+        return self.transport_detail(transport_stops(self).set_stop_status(numero, encomenda_numero, estado, observacoes))
 
     def transport_route_sheet_render(self, numero: str, path: str | Path) -> Path:
         detail = self.transport_detail(numero)

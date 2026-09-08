@@ -18,7 +18,7 @@ def references(table):
 
 
 def main():
-    for module in ('clients', 'inventory', 'quotes'):
+    for module in ('clients', 'inventory', 'quotes', 'transport', 'billing', 'quality'):
         importlib.import_module(f'lugest_modules.{module}.api')
     assert not any(name.startswith('PySide6') for name in sys.modules), 'Business APIs loaded Qt'
     assert 'main' not in sys.modules
@@ -65,6 +65,10 @@ def main():
                            'conjunto_save': 'AssemblyCatalog.save',
                            'orc_purchase_needs': 'PurchaseNeeds.rows',
                            'orc_convert_to_order': 'QuoteConversion.convert',
+                           'transport_tariff_save': 'TariffService.save',
+                           'transport_move_stop': 'TransportStops.move',
+                           'billing_add_payment': 'Payments.add',
+                           'quality_nc_save': 'Nonconformities.save',
                            'assembly_model_remove': 'AssemblyCatalog.remove',
                            '_normalize_assembly_model_item': 'normalize_item',
                            'conjunto_expand': 'expand_model',

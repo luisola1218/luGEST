@@ -5,7 +5,8 @@ passa a ser o modulo de negocio em `lugest_modules/`, com as suas regras,
 casos de uso, adaptadores de dados e interface proximos uns dos outros.
 
 **A migracao ainda nao esta concluida.** Estes limites ja se aplicam aos novos
-componentes de clientes, orcamentos e inventario. O backend historico ainda contem estado
+componentes de clientes, orcamentos, inventario, transportes, faturacao e qualidade.
+O backend historico ainda contem estado
 partilhado e outras areas continuam nos adaptadores antigos. Nao confundir a
 existencia desta estrutura com a migracao de todo o ERP.
 
@@ -45,6 +46,11 @@ existencia desta estrutura com a migracao de todo o ERP.
 | Construcao de paineis e encaminhamento de eventos | `lugest_modules/quotes/presentation/workspace.py` |
 | Aparencia dos paineis | `lugest_modules/quotes/presentation/workspace_styles.py` |
 | Dependencias do controlador de orcamentos | `lugest_modules/quotes/presentation/page_services.py` |
+| CRUD, selecao e calculo de tarifarios | `lugest_modules/transport/application/tariffs.py` |
+| Paragens, pedido externo e progressao da viagem | `lugest_modules/transport/application/stops.py` |
+| Ligacao das encomendas as viagens ativas | `lugest_modules/transport/application/order_links.py` |
+| Pagamentos de faturacao | `lugest_modules/billing/application/payments.py` |
+| Criar, fechar, consultar e tratar duplicados de NC | `lugest_modules/quality/application/nonconformities.py` |
 | Construtor visual de conjuntos calculados | `lugest_modules/quotes/presentation/calculated_assembly_editor.py` |
 
 Cada modulo expoe `api.py` para outros modulos de negocio. O ponto de composicao
@@ -152,6 +158,10 @@ e conjuntos usa a mesma funcao e devolve linhas independentes do original.
 .venv\Scripts\python.exe scripts\verify_quote_order_lines.py
 .venv\Scripts\python.exe scripts\verify_quote_conversion.py
 .venv\Scripts\python.exe scripts\verify_calculated_assembly_editor.py
+.venv\Scripts\python.exe scripts\verify_transport_tariffs.py
+.venv\Scripts\python.exe scripts\verify_transport_stops.py
+.venv\Scripts\python.exe scripts\verify_billing_payments.py
+.venv\Scripts\python.exe scripts\verify_quality_nonconformities.py
 .venv\Scripts\python.exe scripts\verify_purchase_needs.py
 powershell -File scripts\verify_project.ps1 -SafeOnly
 ```
@@ -192,8 +202,12 @@ AUTO_INCREMENT. Nao testa concorrencia real nem persistencia assincrona.
    origem ainda ligam ao runtime antigo pela composicao. Os comandos de
    gravacao, remocao, estado e consulta de orcamentos ja migraram.
 3. Migrar encomendas, restantes comandos de inventario, compras, producao,
-   faturacao e as restantes areas. Ainda partilham estado atraves dos mixins
-   de `LegacyBackend`.
+   restantes operacoes de faturacao e as restantes areas. Pagamentos ja usam
+   agregados isolados; a emissao de faturas ainda pertence ao adaptador antigo.
+   Tarifarios e edicao de paragens ja usam servicos, mas criacao de viagens,
+   atribuicao de encomendas e parte das consultas ainda precisam de migracao.
+   NC ja usam repositorio com auditoria, mas rececao e libertacao de stock de
+   qualidade ainda partilham estado atraves dos mixins de `LegacyBackend`.
 4. Substituir os adaptadores do snapshot global por repositorios por modulo
    e definir as transacoes que envolvem mais de um modulo.
 5. Retirar a inicializacao global historica de `main.py` e validar concorrencia,

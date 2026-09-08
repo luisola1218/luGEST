@@ -54,7 +54,7 @@ def _ensure_supplier(backend: LegacyBackend) -> tuple[str, str]:
 def main() -> None:
     backend = LegacyBackend()
     backend.reload(force=True)
-    backend._save = lambda force=False: None  # type: ignore[assignment]
+    backend._save = lambda force=False, **kwargs: None  # type: ignore[assignment]
     trip_number = f"TR-VERIFY-{uuid4().hex[:8].upper()}"
     pdf_path = Path(tempfile.gettempdir()) / "lugest_transport_verify.pdf"
     created_order = ""

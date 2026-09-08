@@ -22,7 +22,73 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 FLOWS = ("verify_purchase_flow", "verify_conjuntos_montagem_flow",
          "verify_fabrication_order_flow", "verify_planning_flow", "verify_billing_flow",
-         "verify_quote_nesting_flow", "verify_inventory_flow")
+         "verify_quote_nesting_flow", "verify_inventory_flow", "verify_transportes_module",
+         "verify_transport_tariff_flow", "verify_quality_nc_flow", "verify_transport_stop_flow")
+
+
+def _transport_stop_flow():
+    from uuid import uuid4
+    from lugest_qt.services.legacy_backend import LegacyBackend
+    backend = LegacyBackend()
+    token = uuid4().hex[:10]
+    client = backend.client_save({'codigo': 'CT-' + token, 'nome': 'Teste transportes'})
+    orders = [backend.order_create_or_update({'cliente': client['codigo'],
+              'nota_cliente': 'Teste transacional', 'nota_transporte': 'Transporte a Nosso Cargo'})['numero']
+              for _ in range(2)]
+    trip = backend.transport_create_or_update({'numero': 'TR-TEST-' + token, 'tipo_responsavel': 'Nosso Cargo'})['numero']
+    backend.transport_assign_orders(trip, orders)
+    backend.transport_move_stop(trip, orders[0], 1)
+    backend.reload(force=True)
+    assert [row['encomenda_numero'] for row in backend.transport_detail(trip)['paragens']] == list(reversed(orders))
+    backend.transport_set_status(trip, 'Em carga')
+    backend.reload(force=True)
+    assert backend.transport_detail(trip)['estado'] == 'Em carga'
+    backend.transport_remove_stop(trip, orders[0])
+    backend.reload(force=True)
+    assert [row['encomenda_numero'] for row in backend.transport_detail(trip)['paragens']] == [orders[1]]
+    order = next(row for row in backend.ensure_data()['encomendas'] if row['numero'] == orders[0])
+    assert order.get('transporte_numero', '') == ''
+    print('transport-stop-db-ok reorder=yes state=yes remove=yes order-links=yes reload=yes', flush=True)
+
+
+def _quality_nc_flow():
+    from uuid import uuid4
+    from lugest_qt.services.legacy_backend import LegacyBackend
+    backend = LegacyBackend()
+    identifier = 'NC-TEST-' + uuid4().hex[:10]
+    payload = {'id': identifier, 'origem': 'Teste transacional', 'referencia': identifier,
+               'entidade_tipo': 'Processo', 'entidade_id': identifier,
+               'entidade_label': 'Teste transacional', 'descricao': 'Validacao NC'}
+    backend.quality_nc_save(payload)
+    backend.reload(force=True)
+    find = lambda: next(row for row in backend.ensure_data().get('quality_nonconformities', [])
+                        if row.get('id') == identifier)
+    assert find()['estado'] == 'Aberta'
+    backend.quality_nc_save({**payload, 'descricao': 'Atualizada'})
+    backend.reload(force=True)
+    assert find()['descricao'] == 'Atualizada'
+    backend.quality_nc_close(identifier, 'Verificada')
+    backend.reload(force=True)
+    assert find()['estado'] == 'Fechada' and find()['eficacia'] == 'Verificada'
+    print('quality-nc-db-ok create=yes edit=yes close=yes reload=yes', flush=True)
+
+
+def _transport_tariff_flow():
+    from uuid import uuid4
+    from lugest_qt.services.legacy_backend import LegacyBackend
+    backend = LegacyBackend()
+    zone = 'TEST-' + uuid4().hex[:10]
+    tariff = backend.transport_tariff_save({'zona': zone, 'valor_base': 10, 'valor_por_palete': 3})
+    identifier = tariff['id']
+    backend.reload(force=True)
+    assert backend._transport_tariff_suggestion(zona=zone, paletes=2)['custo_sugerido'] == 16
+    backend.transport_tariff_save({**tariff, 'valor_base': 20})
+    backend.reload(force=True)
+    assert backend._transport_tariff_suggestion(zona=zone, paletes=2)['custo_sugerido'] == 26
+    backend.transport_tariff_remove(identifier)
+    backend.reload(force=True)
+    assert not backend.transport_tariff_rows(zone)
+    print('transport-tariff-db-ok create=yes edit=yes remove=yes reload=yes', flush=True)
 
 
 def _inventory_flow():
@@ -194,6 +260,12 @@ def main():
                 code = _quote_nesting_flow()
             elif args.flow == 'verify_inventory_flow':
                 code = _inventory_flow()
+            elif args.flow == 'verify_transport_tariff_flow':
+                code = _transport_tariff_flow()
+            elif args.flow == 'verify_quality_nc_flow':
+                code = _quality_nc_flow()
+            elif args.flow == 'verify_transport_stop_flow':
+                code = _transport_stop_flow()
             else:
                 entry = runpy.run_path(str(ROOT / "scripts" / (args.flow + ".py")))
                 code = entry["main"]()
