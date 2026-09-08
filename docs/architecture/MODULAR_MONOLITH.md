@@ -26,6 +26,11 @@ existencia desta estrutura com a migracao de todo o ERP.
 | Guardar e combinar estudos de nesting | `lugest_modules/quotes/application/nesting_studies.py` |
 | Guardar/remover orcamento e alterar estado | `lugest_modules/quotes/application/commands.py` |
 | Consultar lista, anos e detalhe de orcamentos | `lugest_modules/quotes/application/queries.py` |
+| Guardar/remover conjuntos e modelos | `lugest_modules/quotes/application/assembly_catalog.py` |
+| Listas e detalhes dos catalogos de conjuntos | `lugest_modules/quotes/application/assembly_queries.py` |
+| Normalizacao, precos e expansao dos componentes | `lugest_modules/quotes/application/assemblies.py` |
+| Atualizacao preparada de precos e codigos de parametro | `lugest_modules/quotes/application/assembly_refresh.py` |
+| Persistencia dos catalogos e recuperacao perante erro | `lugest_modules/quotes/infrastructure/legacy_assembly_repository.py` |
 | Atualizar o snapshot de um estudo | `lugest_modules/quotes/infrastructure/legacy_nesting_repository.py` |
 | SQL dos estudos de nesting | `lugest_modules/quotes/infrastructure/mysql_nesting_store.py` |
 | PDF de conjunto e de nesting | `lugest_modules/quotes/infrastructure/assembly_report.py`, `nesting_report.py` |
@@ -119,7 +124,13 @@ entre instalacoes. Criacao, edicao e remocao tambem passam agora por casos de us
 e repositorios do modulo. A reposicao perante erro inclui produtos, movimentos
 e sequencia. A normalizacao acontece antes de obter o snapshot de escrita,
 evitando guardar num snapshot que uma dependencia ja substituiu. A classificacao
-de catalogo e a atualizacao de precos de conjuntos ainda usam callbacks antigos.
+de catalogo ainda usa callbacks antigos. Os precos dos conjuntos sao calculados
+em `quotes/application/assemblies.py`, com capacidades explicitas para consultar
+produtos, materiais e linhas de orcamentos. `AssemblyRefresh` prepara o catalogo
+completo antes de escrever; um item invalido nao altera os modelos anteriores.
+O adaptador restaura o catalogo perante falha imediata de gravacao e rejeita
+substituicoes de um snapshot local entretanto alterado. A expansao de modelos
+e conjuntos usa a mesma funcao e devolve linhas independentes do original.
 
 ## Verificar uma alteracao
 
@@ -132,6 +143,7 @@ de catalogo e a atualizacao de precos de conjuntos ainda usam callbacks antigos.
 .venv\Scripts\python.exe scripts\verify_product_commands.py
 .venv\Scripts\python.exe scripts\verify_quote_commands.py
 .venv\Scripts\python.exe scripts\verify_quote_workspace.py
+.venv\Scripts\python.exe scripts\verify_assembly_rules.py
 powershell -File scripts\verify_project.ps1 -SafeOnly
 ```
 
@@ -158,8 +170,11 @@ AUTO_INCREMENT. Nao testa concorrencia real nem persistencia assincrona.
 1. Continuar a dividir o controlador de orcamentos: os paineis ja sao uma vista
    independente, mas o controlador de negocio visual ainda concentra os
    gestores de conjuntos e outras interacoes extensas.
-2. Migrar conversao de orcamento para encomenda e conjuntos para servicos com
-   repositorios. Os comandos de gravacao, remocao, estado e consulta ja migraram.
+2. Migrar conversao de orcamento para encomenda e integracao com compras. CRUD,
+   consultas, precos, normalizacao, expansao e atualizacao do catalogo de
+   conjuntos ja usam casos de uso; a alocacao de codigos e procura da linha de
+   origem ainda ligam ao runtime antigo pela composicao. Os comandos de
+   gravacao, remocao, estado e consulta de orcamentos ja migraram.
 3. Migrar encomendas, restantes comandos de inventario, compras, producao,
    faturacao e as restantes areas. Ainda partilham estado atraves dos mixins
    de `LegacyBackend`.

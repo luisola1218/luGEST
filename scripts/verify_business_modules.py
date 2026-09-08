@@ -61,6 +61,11 @@ def main():
                            'product_save': 'ProductCommands.save',
                            'orc_save': 'QuoteCommands.save',
                            'orc_detail': 'QuoteQueries.detail',
+                           'conjunto_refresh_prices': 'AssemblyRefresh.refresh',
+                           'conjunto_save': 'AssemblyCatalog.save',
+                           'assembly_model_remove': 'AssemblyCatalog.remove',
+                           '_normalize_assembly_model_item': 'normalize_item',
+                           'conjunto_expand': 'expand_model',
                            '_normalize_orc_line': 'normalize_line'}.items():
         assert target in business_implementations(methods[method][0], methods), method
     assert 'main' not in sys.modules

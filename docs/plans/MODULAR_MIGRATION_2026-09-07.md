@@ -74,3 +74,17 @@ e montagem (40.362 s), nesting (5.518 s), fabrico (19.567 s), compras (19.694 s)
 faturacao (19.697 s) e planeamento (74.461 s). Todos terminaram com rollback e
 conteudo identico nas 55 tabelas verificadas. Os limites sobre contadores,
 concorrencia e durabilidade referidos acima continuam a aplicar-se.
+
+### Catalogos de conjuntos
+
+CRUD e consultas dos dois catalogos passam por AssemblyCatalog/AssemblyQueries.
+Normalizacao e expansao partilham regras independentes; as duas implementacoes
+identicas de expansao foram consolidadas. AssemblyRefresh prepara o catalogo
+antes de gravar, rejeita alteracoes locais concorrentes e recupera o snapshot
+perante erro imediato. Os testes cobrem produtos, MP, precos laser, valores
+manuais, copias aninhadas, falhas de validacao e escrita, preservacao de campos
+historicos e separacao entre modelos e conjuntos.
+
+Validacao final deste passo: 29 verificacoes locais, 344 ficheiros compilados,
+487 contratos mantidos. Conjuntos/montagem/conversao passaram novamente na base
+atual (39.670 s), com rollback e conteudo identico nas 55 tabelas.
