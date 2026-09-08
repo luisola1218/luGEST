@@ -128,6 +128,8 @@ if ($SafeOnly) {
         'scripts\verify_clients_integration.py',
         'scripts\verify_business_modules.py',
         'scripts\verify_assembly_rules.py',
+        'scripts\verify_quote_order_lines.py',
+        'scripts\verify_purchase_needs.py',
         'scripts\verify_quote_editors.py',
         'scripts\verify_quote_workspace.py',
         'scripts\verify_nesting_study_service.py',

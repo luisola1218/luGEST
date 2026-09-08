@@ -1,4 +1,7 @@
 from __future__ import annotations
+from lugest_qt.services.quote_purchase_composition import purchase_needs
+from lugest_modules.quotes.application.order_lines import build_order_lines
+from lugest_qt.services.quote_order_composition import order_line_ports
 from lugest_modules.quotes.application.assemblies import normalize_item, price_item, refresh_model, expand_model, technical_sheet
 from lugest_qt.services.assembly_composition import assembly_rules, assembly_refresh, assembly_catalog, assembly_queries
 from lugest_modules.quotes.application.assembly_refresh import assign_parameter_codes
@@ -530,160 +533,15 @@ class QuotesBridgeMixin:
             )
             enc["produto_fichas"].append(snapshot)
         enc_of = str(self._order_of_code(enc, create=True) or "").strip()
-        mats: dict[str, dict[str, Any]] = {}
-        piece_idx = 1
-        total_time = 0.0
-        used_refs: set[str] = set()
-        montagem_items: list[dict[str, Any]] = []
-        for line in list(orc.get("linhas", []) or []):
-            line_type = self.desktop_main.normalize_orc_line_type(line.get("tipo_item"))
-            production_route = self._quote_line_production_route(line)
-            qtd_line = float(line.get("qtd", 0) or 0)
-            tempo_peca = float(line.get("tempo_peca_min", line.get("tempo_pecas_min", 0)) or 0)
-            total_time += tempo_peca * max(qtd_line, 0.0)
-            if production_route in {"montagem", "conjunto"}:
-                montagem_items.append(
-                    {
-                        "linha_ordem": len(montagem_items) + 1,
-                        "tipo_item": line_type,
-                        "stock_item_kind": str(line.get("stock_item_kind", "") or "").strip(),
-                        "descricao": str(line.get("descricao", "") or "").strip(),
-                        "dimensao": str(line.get("dimensao", line.get("dimensoes", "")) or "").strip(),
-                        "material": str(line.get("material", "") or "").strip(),
-                        "material_family": str(line.get("material_family", "") or "").strip(),
-                        "material_subtype": str(line.get("material_subtype", "") or "").strip(),
-                        "espessura": str(line.get("espessura", "") or "").strip(),
-                        "stock_material_id": str(line.get("stock_material_id", "") or "").strip(),
-                        "produto_codigo": str(line.get("produto_codigo", "") or "").strip(),
-                        "produto_unid": str(line.get("produto_unid", "") or "").strip(),
-                        "_product_pending_create": bool(line.get("_product_pending_create", False)),
-                        "qtd_planeada": round(qtd_line, 2),
-                        "qtd_consumida": 0.0,
-                        "preco_unit": round(self._parse_float(line.get("preco_unit", 0), 0), 4),
-                        "conjunto_codigo": str(line.get("conjunto_codigo", "") or "").strip(),
-                        "conjunto_nome": str(line.get("conjunto_nome", "") or "").strip(),
-                        "grupo_uuid": str(line.get("grupo_uuid", "") or "").strip(),
-                        "estado": "Pendente" if production_route == "montagem" else "Componente",
-                        "obs": (
-                            str(line.get("operacao", "") or production_route).strip()
-                            if production_route == "montagem"
-                            else "Conjunto sem desenho/operacoes tecnicas. Nao segue para operador."
-                        ),
-                        "created_at": self.desktop_main.now_iso(),
-                        "consumed_at": "",
-                        "consumed_by": "",
-                    }
-                )
-                continue
-            material = str(line.get("material", "") or "").strip()
-            espessura = str(line.get("espessura", "") or "").strip()
-            if not material or not espessura:
-                raise ValueError("Todas as linhas precisam de material e espessura.")
-            mats.setdefault(material, {"material": material, "estado": "Preparacao", "espessuras": {}})
-            mats[material]["espessuras"].setdefault(
-                espessura,
-                {"espessura": espessura, "tempo_min": 0.0, "tempos_operacao": {}, "maquinas_operacao": {}, "estado": "Preparacao", "pecas": []},
-            )
-            planning_ops = [op for op in self._quote_line_operations_value(line) if op != "Montagem"]
-            if production_route == "serralharia":
-                planning_ops = [op for op in planning_ops if op != "Corte Laser"]
-                if "Serralharia" not in planning_ops:
-                    planning_ops.insert(0, "Serralharia")
-            elif production_route == "laser":
-                if "Corte Laser" not in planning_ops:
-                    planning_ops.insert(0, "Corte Laser")
-            esp_bucket = mats[material]["espessuras"][espessura]
-            tempos_operacao = esp_bucket.setdefault("tempos_operacao", {})
-            maquinas_operacao = esp_bucket.setdefault("maquinas_operacao", {})
-            detailed_op_times = {
-                str(self.desktop_main.normalize_operacao_nome(op_name) or op_name or "").strip(): self._parse_float(raw_value, 0)
-                for op_name, raw_value in dict(line.get("tempos_operacao", {}) or {}).items()
-                if str(self.desktop_main.normalize_operacao_nome(op_name) or op_name or "").strip() and self._parse_float(raw_value, 0) > 0
-            }
-            if detailed_op_times:
-                for op_name, unit_time in detailed_op_times.items():
-                    if op_name not in planning_ops:
-                        continue
-                    total_time = unit_time * max(qtd_line, 0.0)
-                    tempos_operacao[op_name] = round(float(tempos_operacao.get(op_name, 0) or 0) + total_time, 2)
-                    if op_name == "Corte Laser":
-                        esp_bucket["tempo_min"] = round(float(esp_bucket.get("tempo_min", 0) or 0) + total_time, 2)
-                        if not str(maquinas_operacao.get(op_name, "") or "").strip():
-                            maquinas_operacao[op_name] = self.workcenter_default_resource(op_name, preferred=enc.get("posto_trabalho", ""))
-            elif len(planning_ops) == 1:
-                op_name = planning_ops[0]
-                tempos_operacao[op_name] = round(float(tempos_operacao.get(op_name, 0) or 0) + (tempo_peca * max(qtd_line, 0.0)), 2)
-                if op_name == "Corte Laser":
-                    esp_bucket["tempo_min"] = round(float(esp_bucket.get("tempo_min", 0) or 0) + (tempo_peca * max(qtd_line, 0.0)), 2)
-                if not str(maquinas_operacao.get(op_name, "") or "").strip():
-                    maquinas_operacao[op_name] = self.workcenter_default_resource(op_name, preferred=enc.get("posto_trabalho", ""))
-            elif "Corte Laser" in planning_ops:
-                tempos_operacao["Corte Laser"] = round(float(tempos_operacao.get("Corte Laser", 0) or 0) + (tempo_peca * max(qtd_line, 0.0)), 2)
-                esp_bucket["tempo_min"] = round(float(esp_bucket.get("tempo_min", 0) or 0) + (tempo_peca * max(qtd_line, 0.0)), 2)
-                if not str(maquinas_operacao.get("Corte Laser", "") or "").strip():
-                    maquinas_operacao["Corte Laser"] = self.workcenter_default_resource("Corte Laser", preferred=enc.get("posto_trabalho", ""))
-            raw_ref_interna = str(line.get("ref_interna", "") or "").strip()
-            if raw_ref_interna and raw_ref_interna not in used_refs:
-                ref_interna = raw_ref_interna
-            else:
-                ref_interna = str(self.desktop_main.next_ref_interna_unique(data, cliente_code, list(used_refs)))
-            used_refs.add(ref_interna)
-            ops_txt = self._quote_line_operations_text(line)
-            peca = {
-                "id": f"PEC{piece_idx:05d}",
-                "ref_interna": ref_interna,
-                "ref_externa": str(line.get("ref_externa", "") or "").strip(),
-                "material": material,
-                "tipo_material": str(line.get("tipo_material", "") or line.get("material_family", "") or "CHAPA").strip().upper(),
-                "subtipo_material": str(line.get("material_subtype", "") or material).strip(),
-                "espessura": espessura,
-                "dimensao": str(line.get("dimensao", line.get("dimensoes", "")) or line.get("profile_size", "") or line.get("tube_section", "") or "").strip(),
-                "quantidade_pedida": qtd_line,
-                "Operacoes": ops_txt,
-                "Observacoes": str(line.get("descricao", "") or "").strip(),
-                "conjunto_codigo": str(line.get("conjunto_codigo", "") or "").strip(),
-                "conjunto_nome": str(line.get("conjunto_nome", "") or "").strip(),
-                "grupo_uuid": str(line.get("grupo_uuid", "") or "").strip(),
-                "desenho": str(line.get("desenho", "") or "").strip(),
-                "desenho_pdf": str(line.get("desenho_pdf", "") or "").strip(),
-                "desenhos_pdf": [
-                    str(item or "").strip()
-                    for item in list(line.get("desenhos_pdf", []) or [])
-                    if str(item or "").strip()
-                ],
-                "ficheiros": [
-                    str(item or "").strip()
-                    for item in [
-                        line.get("desenho", ""),
-                        line.get("desenho_pdf", ""),
-                        *list(line.get("desenhos_pdf", []) or []),
-                        *list(line.get("ficheiros", []) or []),
-                    ]
-                    if str(item or "").strip()
-                ],
-                "tempo_peca_min": tempo_peca,
-                "tempos_operacao": dict(line.get("tempos_operacao", {}) or {}),
-                "custos_operacao": dict(line.get("custos_operacao", {}) or {}),
-                "operacoes_detalhe": [dict(item or {}) for item in list(line.get("operacoes_detalhe", []) or []) if isinstance(item, dict)],
-                "of": enc_of,
-                "opp": f"OPP-{enc_of.split('-', 1)[1]}-{piece_idx:02d}" if enc_of.startswith("OF-") and "-" in enc_of else self.desktop_main.next_opp_numero(data),
-                "estado": "Preparacao",
-                "produzido_ok": 0.0,
-                "produzido_nok": 0.0,
-                "inicio_producao": "",
-                "fim_producao": "",
-            }
-            peca["operacoes_fluxo"] = self.desktop_main.build_operacoes_fluxo(ops_txt)
-            piece_idx += 1
-            mats[material]["espessuras"][espessura]["pecas"].append(peca)
-            self.desktop_main.update_refs(data, peca["ref_interna"], peca["ref_externa"])
-        enc["materiais"] = []
-        for row in mats.values():
-            row["espessuras"] = list(row["espessuras"].values())
-            enc["materiais"].append(row)
-        enc["montagem_itens"] = montagem_items
-        enc["tempo_estimado"] = round(total_time, 2)
-        enc["tempo"] = round(total_time / 60.0, 2) if total_time > 0 else 0.0
+        prepared = build_order_lines(order_line_ports(self, data, cliente_code),
+                                     list(orc.get("linhas", []) or []), enc_of,
+                                     enc.get("posto_trabalho", ""))
+        enc["materiais"] = prepared.materials
+        enc["montagem_itens"] = prepared.assembly_items
+        enc["tempo_estimado"] = prepared.estimated_minutes
+        enc["tempo"] = round(prepared.estimated_minutes / 60.0, 2) if prepared.estimated_minutes > 0 else 0.0
+        for internal_ref, external_ref in prepared.references:
+            self.desktop_main.update_refs(data, internal_ref, external_ref)
         data.setdefault("encomendas", []).append(enc)
         self._ensure_unique_order_piece_refs(enc)
         self.desktop_main.update_estado_encomenda_por_espessuras(enc)
@@ -698,118 +556,10 @@ class QuotesBridgeMixin:
         }
 
     def _quote_purchase_need_key(self, kind: str, line: dict[str, Any]) -> str:
-        if kind == "product":
-            code = str(line.get("produto_codigo", "") or "").strip()
-            if code:
-                return f"product:{code}"
-            return "product:new:" + self.desktop_main.norm_text(str(line.get("descricao", "") or "").strip())
-        ref = str(line.get("stock_material_id", "") or "").strip()
-        if ref:
-            return f"material:{ref}"
-        parts = [
-            str(line.get("material", "") or "").strip(),
-            str(line.get("espessura", "") or "").strip(),
-            str(line.get("material_subtype", "") or line.get("calc_mode", "") or "").strip(),
-            str(line.get("descricao", "") or "").strip(),
-        ]
-        return "material:new:" + "|".join(self.desktop_main.norm_text(part) for part in parts if part)
+        return purchase_needs(self).key(kind, line)
 
     def orc_purchase_needs(self, numero: str = "", lines: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
-        data = self.ensure_data()
-        numero_txt = str(numero or "").strip()
-        quote_lines = list(lines or [])
-        if not quote_lines:
-            orc = next((row for row in data.get("orcamentos", []) if str(row.get("numero", "") or "").strip() == numero_txt), None)
-            if orc is None:
-                raise ValueError("Orcamento nao encontrado.")
-            quote_lines = list(orc.get("linhas", []) or [])
-        product_map = {
-            str(prod.get("codigo", "") or "").strip(): prod
-            for prod in list(data.get("produtos", []) or [])
-            if str(prod.get("codigo", "") or "").strip()
-        }
-        grouped: dict[str, dict[str, Any]] = {}
-        for raw in quote_lines:
-            line = dict(raw or {})
-            line_type = self.desktop_main.normalize_orc_line_type(line.get("tipo_item"))
-            if line_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT:
-                qty = max(0.0, self._parse_float(line.get("qtd", 0), 0))
-                if qty <= 1e-9:
-                    continue
-                code = str(line.get("produto_codigo", "") or "").strip()
-                product = product_map.get(code)
-                available = max(0.0, self._parse_float((product or {}).get("qty", 0), 0)) if product is not None else 0.0
-                missing = qty if product is None else max(0.0, qty - available)
-                if missing <= 1e-9:
-                    continue
-                key = self._quote_purchase_need_key("product", line)
-                entry = grouped.setdefault(
-                    key,
-                    {
-                        "kind": "product",
-                        "ref": code,
-                        "descricao": str(line.get("descricao", "") or (product or {}).get("descricao", "") or "").strip(),
-                        "unid": str(line.get("produto_unid", "") or (product or {}).get("unid", "") or "UN").strip() or "UN",
-                        "qtd": 0.0,
-                        "qtd_disponivel": available,
-                        "preco": round(self._parse_float((product or {}).get("p_compra", line.get("preco_unit", 0)), 0), 4),
-                        "_product_pending_create": product is None or bool(line.get("_product_pending_create", False)),
-                    },
-                )
-                entry["qtd"] = round(self._parse_float(entry.get("qtd", 0), 0) + missing, 2)
-                continue
-            if line_type != self.desktop_main.ORC_LINE_TYPE_PIECE or not self._quote_line_is_raw_material(line):
-                continue
-            qty = max(0.0, self._parse_float(line.get("qtd", 0), 0))
-            if qty <= 1e-9:
-                continue
-            stock_id = str(line.get("stock_material_id", "") or "").strip()
-            material_record = self.material_by_id(stock_id) if stock_id else None
-            available = 0.0
-            if isinstance(material_record, dict):
-                available = max(
-                    0.0,
-                    self._parse_float(material_record.get("quantidade", 0), 0)
-                    - self._parse_float(material_record.get("reservado", 0), 0),
-                )
-            missing = qty if material_record is None else max(0.0, qty - available)
-            if missing <= 1e-9:
-                continue
-            formato = str(line.get("material_subtype", "") or line.get("calc_mode", "") or (material_record or {}).get("formato", "") or "Chapa").strip()
-            if formato == "Stock MP":
-                formato = str((material_record or {}).get("formato", "") or self.desktop_main.detect_materia_formato(material_record or {}) or "Chapa").strip()
-            price = self._parse_float(line.get("price_base_value", 0), 0)
-            if price <= 0 and isinstance(material_record, dict):
-                price = self._parse_float(material_record.get("p_compra", material_record.get("preco_unid", 0)), 0)
-            key = self._quote_purchase_need_key("material", line)
-            entry = grouped.setdefault(
-                key,
-                {
-                    "kind": "material",
-                    "ref": stock_id,
-                    "descricao": str(line.get("descricao", "") or "").strip(),
-                    "dimensao": str(line.get("dimensao", line.get("dimensoes", "")) or "").strip(),
-                    "unid": "UN",
-                    "qtd": 0.0,
-                    "qtd_disponivel": available,
-                    "preco": round(price, 4),
-                    "material": str(line.get("material", "") or (material_record or {}).get("material", "") or "").strip(),
-                    "espessura": str(line.get("espessura", "") or (material_record or {}).get("espessura", "") or "").strip(),
-                    "formato": formato or "Chapa",
-                    "comprimento": round(self._parse_float(line.get("length_mm", (material_record or {}).get("comprimento", 0)), 0), 3),
-                    "largura": round(self._parse_float(line.get("width_mm", (material_record or {}).get("largura", 0)), 0), 3),
-                    "diametro": round(self._parse_float(line.get("diameter_mm", (material_record or {}).get("diametro", 0)), 0), 3),
-                    "metros": round(self._parse_float(line.get("meters_per_unit", (material_record or {}).get("metros", 0)), 0), 4),
-                    "kg_m": round(self._parse_float(line.get("kg_per_m", (material_record or {}).get("kg_m", 0)), 0), 4),
-                    "peso_unid": round(self._parse_float(line.get("stock_metric_value", (material_record or {}).get("peso_unid", 0)), 0), 4),
-                    "_material_pending_create": material_record is None,
-                    "_material_manual": material_record is None,
-                },
-            )
-            entry["qtd"] = round(self._parse_float(entry.get("qtd", 0), 0) + missing, 2)
-        rows = [row for row in grouped.values() if self._parse_float(row.get("qtd", 0), 0) > 0]
-        rows.sort(key=lambda row: (str(row.get("kind", "")), str(row.get("ref", "") or row.get("descricao", ""))))
-        return rows
+        return purchase_needs(self).rows(numero, lines)
 
     def orc_create_purchase_quote(self, numero: str, lines: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         numero_txt = str(numero or "").strip()

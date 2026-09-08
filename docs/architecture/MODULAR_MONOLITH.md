@@ -31,6 +31,8 @@ existencia desta estrutura com a migracao de todo o ERP.
 | Normalizacao, precos e expansao dos componentes | `lugest_modules/quotes/application/assemblies.py` |
 | Atualizacao preparada de precos e codigos de parametro | `lugest_modules/quotes/application/assembly_refresh.py` |
 | Persistencia dos catalogos e recuperacao perante erro | `lugest_modules/quotes/infrastructure/legacy_assembly_repository.py` |
+| Preparar pecas, montagem e tempos para encomenda | `lugest_modules/quotes/application/order_lines.py` |
+| Necessidades de compra com stock partilhado entre linhas | `lugest_modules/quotes/application/purchase_needs.py` |
 | Atualizar o snapshot de um estudo | `lugest_modules/quotes/infrastructure/legacy_nesting_repository.py` |
 | SQL dos estudos de nesting | `lugest_modules/quotes/infrastructure/mysql_nesting_store.py` |
 | PDF de conjunto e de nesting | `lugest_modules/quotes/infrastructure/assembly_report.py`, `nesting_report.py` |
@@ -144,6 +146,8 @@ e conjuntos usa a mesma funcao e devolve linhas independentes do original.
 .venv\Scripts\python.exe scripts\verify_quote_commands.py
 .venv\Scripts\python.exe scripts\verify_quote_workspace.py
 .venv\Scripts\python.exe scripts\verify_assembly_rules.py
+.venv\Scripts\python.exe scripts\verify_quote_order_lines.py
+.venv\Scripts\python.exe scripts\verify_purchase_needs.py
 powershell -File scripts\verify_project.ps1 -SafeOnly
 ```
 
@@ -170,7 +174,9 @@ AUTO_INCREMENT. Nao testa concorrencia real nem persistencia assincrona.
 1. Continuar a dividir o controlador de orcamentos: os paineis ja sao uma vista
    independente, mas o controlador de negocio visual ainda concentra os
    gestores de conjuntos e outras interacoes extensas.
-2. Migrar conversao de orcamento para encomenda e integracao com compras. CRUD,
+2. Migrar a persistencia da conversao de orcamento para encomenda e a criacao
+   do pedido de compra. Preparacao de linhas e calculo de faltas ja sao casos
+   de uso separados; os alocadores de referencias ainda usam o runtime. CRUD,
    consultas, precos, normalizacao, expansao e atualizacao do catalogo de
    conjuntos ja usam casos de uso; a alocacao de codigos e procura da linha de
    origem ainda ligam ao runtime antigo pela composicao. Os comandos de

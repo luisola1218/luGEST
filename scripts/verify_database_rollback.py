@@ -35,6 +35,11 @@ def _inventory_flow():
     product = backend.product_save({'codigo': code, 'descricao': 'Parafuso teste transacional',
                                     'qty': 10, 'p_compra': 3.5, 'pvp1': 5, 'unid': 'UN'})
     assert product['qty'] == 10
+    demand = {'tipo_item': backend.desktop_main.ORC_LINE_TYPE_PRODUCT,
+              'produto_codigo': code, 'qtd': 6, 'descricao': product['descricao']}
+    needs = backend.orc_purchase_needs(lines=[demand, dict(demand)])
+    assert len(needs) == 1 and needs[0]['qtd'] == 2
+    assert backend.product_detail(code)['qty'] == 10
     before = deepcopy(backend.ensure_data())
     try:
         backend.product_consume(code, 2, issue_mode='operator')

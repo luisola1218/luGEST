@@ -88,3 +88,21 @@ historicos e separacao entre modelos e conjuntos.
 Validacao final deste passo: 29 verificacoes locais, 344 ficheiros compilados,
 487 contratos mantidos. Conjuntos/montagem/conversao passaram novamente na base
 atual (39.670 s), com rollback e conteudo identico nas 55 tabelas.
+
+### Preparacao de encomenda e faltas de compra
+
+A preparacao de pecas, montagem e tempos saiu do bridge para `order_lines.py`.
+Foi corrigida a substituicao acidental do total acumulado pelo tempo de uma
+operacao: o teste com duas pecas e montagem confirma 20 minutos, antes 14.
+Os alocadores de identificadores continuam ligados ao runtime, e a conversao
+completa ainda precisa de uma fronteira transacional entre modulos.
+
+O calculo de necessidades de compra passa por repositorio de leitura explicito.
+O saldo de stock e usado uma vez por produto/material ao percorrer as linhas.
+Duas linhas de 6 unidades com stock 10 originam uma falta de 2, em vez de zero.
+O caso tambem foi validado atraves do backend na base atual, sem consumir stock.
+
+Validacao: 31 verificacoes locais, 351 ficheiros compilados. Na base atual:
+inventario 15.753 s, compras 18.863 s, conjuntos/montagem 38.856 s, fabrico
+19.285 s e planeamento 71.912 s. Todos com rollback e conteudo das 55 tabelas
+igual ao inicio. Guia de manutencao e indice atualizados.

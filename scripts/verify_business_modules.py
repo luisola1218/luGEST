@@ -63,6 +63,7 @@ def main():
                            'orc_detail': 'QuoteQueries.detail',
                            'conjunto_refresh_prices': 'AssemblyRefresh.refresh',
                            'conjunto_save': 'AssemblyCatalog.save',
+                           'orc_purchase_needs': 'PurchaseNeeds.rows',
                            'assembly_model_remove': 'AssemblyCatalog.remove',
                            '_normalize_assembly_model_item': 'normalize_item',
                            'conjunto_expand': 'expand_model',

@@ -10,7 +10,11 @@ os contratos e as partes que ainda dependem do runtime historico.
 
 ## Comecar uma alteracao
 
-1. Encontrar a pagina em `lugest_qt/ui/pages/` e a chamada `self.backend.metodo`.
+1. Encontrar a funcionalidade na tabela do guia modular. As paginas migradas
+   residem em `lugest_modules/<negocio>/presentation/` e recebem servicos
+   explicitos. Em orcamentos, seguir `self.services.metodo` e o respetivo
+   `quote_page_composition.py`; os widgets estao em `self.view`. Nas paginas
+   historicas de `lugest_qt/ui/pages/`, seguir `self.backend.metodo`.
 2. Localizar a implementacao e as dependencias com:
 
    ```powershell
@@ -30,11 +34,15 @@ os contratos e as partes que ainda dependem do runtime historico.
 
 ```text
 Pagina Qt
-  -> LegacyBackend (API de compatibilidade)
-      -> adaptador da area em services/bridge_mixins/
-          -> lugest_core: regras independentes de UI e armazenamento
-          -> lugest_infra: acesso a armazenamento e servicos externos
-          -> LegacyRuntime: integracao historica ainda em migracao
+  -> servicos explicitos, ligados na composicao
+      -> modulo de negocio em lugest_modules/<negocio>/
+          -> application/domain: casos de uso e regras
+          -> contratos implementados em infrastructure/
+              -> adaptadores do armazenamento atual
+
+Compatibilidade ainda usada na composicao e nas paginas antigas:
+  LegacyBackend -> services/bridge_mixins/ -> modulos de negocio
+                                         -> LegacyRuntime ainda por migrar
 ```
 
 `services/legacy_backend.py` e a entrada publica. `services/main_bridge.py`
