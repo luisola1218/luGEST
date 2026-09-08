@@ -3,6 +3,30 @@ from lugest_modules.inventory.application.product_queries import ProductQueries,
 from lugest_modules.inventory.infrastructure.legacy_product_repository import LegacyProductReadRepository
 from lugest_modules.inventory.application.consumption import StockIssueService
 from lugest_modules.inventory.infrastructure.legacy_stock_issue_repository import LegacyStockIssueRepository
+from lugest_modules.inventory.application.product_definition import ProductDefinitionRules, normalize_product
+from lugest_modules.inventory.application.product_commands import ProductCommands
+from lugest_modules.inventory.infrastructure.legacy_product_write_repository import LegacyProductWriteRepository
+
+
+def product_definition_rules(backend) -> ProductDefinitionRules:
+    return ProductDefinitionRules(
+        unit_price=backend.desktop_main.produto_preco_unitario,
+        _parse_float=backend._parse_float, _product_dimensoes=backend._product_dimensoes,
+        _product_resolve_catalog_fields=backend._product_resolve_catalog_fields,
+        product_copilot_analysis=backend.product_copilot_analysis,
+        product_next_code=backend.product_next_code,
+    )
+
+
+def product_commands(backend) -> ProductCommands:
+    repository = LegacyProductWriteRepository(
+        get_data=backend.ensure_data, save_dataset=backend._save,
+        add_movement=backend.desktop_main.add_produto_mov,
+        ensure_sequence=backend.desktop_main.ensure_produto_seq,
+    )
+    return ProductCommands(repository, normalize=lambda payload: normalize_product(product_definition_rules(backend), payload),
+                           parse_float=backend._parse_float, format_number=backend._fmt,
+                           now=backend.desktop_main.now_iso)
 
 
 def stock_issue_service(backend) -> StockIssueService:

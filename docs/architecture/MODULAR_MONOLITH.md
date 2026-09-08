@@ -18,17 +18,24 @@ existencia desta estrutura com a migracao de todo o ERP.
 | Formulario de clientes | `lugest_modules/clients/presentation/page.py` |
 | Consultas de produtos, movimentos e valores de stock | `lugest_modules/inventory/application/product_queries.py` |
 | Validacao de baixas e entregas a operadores | `lugest_modules/inventory/application/consumption.py` |
+| Criacao, edicao e remocao de produtos | `lugest_modules/inventory/application/product_commands.py` |
+| Normalizacao e previsao de preco de produto | `lugest_modules/inventory/application/product_definition.py` |
 | Leitura de produtos e gravacao das baixas no runtime | `lugest_modules/inventory/infrastructure/` |
 | Criar linhas comerciais de produto e servico | `lugest_modules/quotes/domain/lines.py` |
 | Normalizar uma linha completa de orcamento | `lugest_modules/quotes/application/line_normalization.py` |
 | Guardar e combinar estudos de nesting | `lugest_modules/quotes/application/nesting_studies.py` |
+| Guardar/remover orcamento e alterar estado | `lugest_modules/quotes/application/commands.py` |
+| Consultar lista, anos e detalhe de orcamentos | `lugest_modules/quotes/application/queries.py` |
 | Atualizar o snapshot de um estudo | `lugest_modules/quotes/infrastructure/legacy_nesting_repository.py` |
 | SQL dos estudos de nesting | `lugest_modules/quotes/infrastructure/mysql_nesting_store.py` |
 | PDF de conjunto e de nesting | `lugest_modules/quotes/infrastructure/assembly_report.py`, `nesting_report.py` |
 | Editores de MP, produto, mao de obra, consumiveis, estrutura, linha e STEP/IGS | `lugest_modules/quotes/presentation/*_editor.py` |
 | Consulta e atualizacao de precos nos editores | `lugest_modules/quotes/presentation/material_prices.py` |
 | Ligar estes componentes ao runtime existente | `lugest_qt/services/quote_*_composition.py` |
-| Lista, selecao, estado e coordenacao da pagina de orcamentos | `lugest_qt/ui/pages/quotes_page.py` |
+| Lista, selecao, estado e coordenacao da pagina de orcamentos | `lugest_modules/quotes/presentation/page.py` |
+| Construcao de paineis e encaminhamento de eventos | `lugest_modules/quotes/presentation/workspace.py` |
+| Aparencia dos paineis | `lugest_modules/quotes/presentation/workspace_styles.py` |
+| Dependencias do controlador de orcamentos | `lugest_modules/quotes/presentation/page_services.py` |
 
 Cada modulo expoe `api.py` para outros modulos de negocio. O ponto de composicao
 da aplicacao pode importar adaptadores concretos para construir os servicos.
@@ -69,6 +76,20 @@ atualizar a tabela. Cancelar o editor nao altera as linhas da pagina.
 Os contratos ainda usam alguns nomes historicos e callbacks genericos. Tornar
 essas interfaces mais pequenas e tipadas faz parte da migracao restante.
 
+O controlador `QuotePage` recebe `QuotePageServices`, sem `LegacyBackend`,
+`desktop_main` ou acesso ao snapshot. A composicao fornece tambem as fabricas
+dos dialogos laser historicos. Os campos visuais estao em `page.view`; o estado
+de edicao continua no controlador. O ponto antigo em `lugest_qt/ui/pages` e
+apenas o construtor de compatibilidade. Um teste constroi e utiliza o controlador
+sem importar `main.py` nem criar o backend. A pesquisa tem um temporizador de
+180 ms explicitamente criado e testado; antes o callback referia um temporizador
+inexistente.
+
+As consultas da carteira pedem resumos com os campos visiveis e a contagem das
+linhas. Nao copiam desenhos, estudos de nesting ou todas as linhas de cada
+orcamento apenas para apresentar a lista. O detalhe continua a devolver uma
+copia do agregado.
+
 ## Persistencia dos estudos
 
 O servico valida o orcamento e o grupo, preserva a data de criacao e recebe o
@@ -94,8 +115,11 @@ antes do erro de operador em falta. Quantidades NaN e infinitas sao rejeitadas.
 O repositorio verifica a quantidade esperada e restaura os campos e movimentos
 se a gravacao falhar imediatamente. Esta verificacao protege a janela local
 entre leitura e escrita; nao substitui controlo de concorrencia transacional
-entre instalacoes. Criacao, edicao, remocao e classificacao de produtos ainda
-passam por adaptadores antigos.
+entre instalacoes. Criacao, edicao e remocao tambem passam agora por casos de uso
+e repositorios do modulo. A reposicao perante erro inclui produtos, movimentos
+e sequencia. A normalizacao acontece antes de obter o snapshot de escrita,
+evitando guardar num snapshot que uma dependencia ja substituiu. A classificacao
+de catalogo e a atualizacao de precos de conjuntos ainda usam callbacks antigos.
 
 ## Verificar uma alteracao
 
@@ -105,6 +129,9 @@ passam por adaptadores antigos.
 .venv\Scripts\python.exe scripts\verify_quote_editors.py
 .venv\Scripts\python.exe scripts\verify_nesting_study_service.py
 .venv\Scripts\python.exe scripts\verify_inventory_services.py
+.venv\Scripts\python.exe scripts\verify_product_commands.py
+.venv\Scripts\python.exe scripts\verify_quote_commands.py
+.venv\Scripts\python.exe scripts\verify_quote_workspace.py
 powershell -File scripts\verify_project.ps1 -SafeOnly
 ```
 
@@ -128,10 +155,11 @@ AUTO_INCREMENT. Nao testa concorrencia real nem persistencia assincrona.
 
 ## Trabalho ainda necessario para concluir a migracao
 
-1. Retirar o estado de edicao e a construcao dos paineis do controlador de
-   orcamentos. Ainda tem 5350 linhas, incluindo um construtor extenso.
-2. Migrar os comandos de orcamento, conversao para encomenda e conjuntos para
-   servicos com repositorios. O adaptador de orcamentos ainda tem 1898 linhas.
+1. Continuar a dividir o controlador de orcamentos: os paineis ja sao uma vista
+   independente, mas o controlador de negocio visual ainda concentra os
+   gestores de conjuntos e outras interacoes extensas.
+2. Migrar conversao de orcamento para encomenda e conjuntos para servicos com
+   repositorios. Os comandos de gravacao, remocao, estado e consulta ja migraram.
 3. Migrar encomendas, restantes comandos de inventario, compras, producao,
    faturacao e as restantes areas. Ainda partilham estado atraves dos mixins
    de `LegacyBackend`.

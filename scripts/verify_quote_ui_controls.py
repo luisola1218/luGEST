@@ -52,14 +52,14 @@ def main() -> int:
     page._render_quote_lines()
     app.processEvents()
 
-    assert page.lines_table.columnCount() == 14
-    assert page.lines_table.horizontalHeaderItem(page.LINE_COL_MARK).text() == "Apagar"
-    first_mark = page.lines_table.item(0, page.LINE_COL_MARK)
+    assert page.view.lines_table.columnCount() == 14
+    assert page.view.lines_table.horizontalHeaderItem(page.LINE_COL_MARK).text() == "Apagar"
+    first_mark = page.view.lines_table.item(0, page.LINE_COL_MARK)
     assert first_mark is not None and bool(first_mark.flags() & Qt.ItemIsUserCheckable)
     first_mark.setCheckState(Qt.Checked)
     app.processEvents()
     assert page._checked_line_indexes() == [0]
-    assert page.remove_quote_lines_btn.isEnabled()
+    assert page.view.remove_quote_lines_btn.isEnabled()
 
     page._handle_quote_lines_sort(page.LINE_COL_QUANTITY)
     app.processEvents()
@@ -77,15 +77,15 @@ def main() -> int:
     page._show_detail()
     page.show()
     app.processEvents()
-    footer = page.quote_selected_line_caption.parentWidget()
+    footer = page.view.quote_selected_line_caption.parentWidget()
     footer_bottom = footer.mapTo(page, footer.rect().bottomLeft()).y()
-    assert page.quote_lines_card.objectName() == "QuoteReferencesCard"
-    assert page.lines_table.verticalScrollBarPolicy() == Qt.ScrollBarAlwaysOn
+    assert page.view.quote_lines_card.objectName() == "QuoteReferencesCard"
+    assert page.view.lines_table.verticalScrollBarPolicy() == Qt.ScrollBarAlwaysOn
     assert footer_bottom <= page.height()
-    assert "#6f9f45" in page.quote_inspector_tabs.styleSheet()
-    assert "#0aa6a6" not in page.quote_inspector_tabs.styleSheet()
-    assert "#81a962" in page.notes_tabs.styleSheet()
-    assert "#fff1d4" not in page.notes_tabs.styleSheet()
+    assert "#6f9f45" in page.view.quote_inspector_tabs.styleSheet()
+    assert "#0aa6a6" not in page.view.quote_inspector_tabs.styleSheet()
+    assert "#81a962" in page.view.notes_tabs.styleSheet()
+    assert "#fff1d4" not in page.view.notes_tabs.styleSheet()
 
     purchase_page = PurchaseNotesPage(backend)
     original_ne_material_options = backend.ne_material_options
@@ -139,8 +139,8 @@ def main() -> int:
     assert dialog.batch_table.columnWidth(dialog.COL_QUANTITY) >= 76
     assert dialog.batch_table.verticalHeader().defaultSectionSize() >= 38
     assert dialog.batch_table.verticalHeader().defaultSectionSize() >= 46
-    assert "Segoe UI Semibold" in page.header_total_label.styleSheet()
-    assert "font-weight: 600" in page.header_total_label.styleSheet()
+    assert "Segoe UI Semibold" in page.view.header_total_label.styleSheet()
+    assert "font-weight: 600" in page.view.header_total_label.styleSheet()
 
     direct_quantity = dialog._make_quantity_spin(12)
     operation_button = QPushButton("Corte Laser")

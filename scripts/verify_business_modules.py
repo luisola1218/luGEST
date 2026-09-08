@@ -18,6 +18,10 @@ def references(table):
 
 
 def main():
+    for module in ('clients', 'inventory', 'quotes'):
+        importlib.import_module(f'lugest_modules.{module}.api')
+    assert not any(name.startswith('PySide6') for name in sys.modules), 'Business APIs loaded Qt'
+    assert 'main' not in sys.modules
     files = list((ROOT / 'lugest_modules').rglob('*.py'))
     for path in files:
         relative = path.relative_to(ROOT)
@@ -54,6 +58,9 @@ def main():
     for method, target in {'client_rows': 'ClientService.rows',
                            'orc_save_nesting_study': 'NestingStudyService.save',
                            'product_consume': 'StockIssueService.consume',
+                           'product_save': 'ProductCommands.save',
+                           'orc_save': 'QuoteCommands.save',
+                           'orc_detail': 'QuoteQueries.detail',
                            '_normalize_orc_line': 'normalize_line'}.items():
         assert target in business_implementations(methods[method][0], methods), method
     assert 'main' not in sys.modules

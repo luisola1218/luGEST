@@ -49,7 +49,14 @@ def _inventory_flow():
     assert backend.product_detail(code)['qty'] == 8
     summary = backend.product_issue_summary(operator_name='TEST', codigo=code)
     assert summary['linhas'] == 1 and summary['qtd_total'] == 2
-    print('inventory-db-ok invalid-no-mutation=yes issue=yes reload=yes movements=yes', flush=True)
+    backend.product_save({**backend.product_detail(code), 'qty': 6})
+    backend.reload(force=True)
+    assert backend.product_detail(code)['qty'] == 6
+    assert any(row['tipo'] == 'AJUSTE_STOCK' for row in backend.product_movements(code))
+    assert backend.product_remove_many([code, code]) == 1
+    backend.reload(force=True)
+    assert not any(row['codigo'] == code for row in backend.product_rows())
+    print('inventory-db-ok create=yes edit=yes delete=yes invalid-no-mutation=yes issue=yes reload=yes movements=yes', flush=True)
 
 
 def _quote_nesting_flow():

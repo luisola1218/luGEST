@@ -54,3 +54,23 @@ comandos restantes, as outras areas do ERP, o estado global e a inicializacao.
 Nao foram validadas concorrencia entre instalacoes, durabilidade assincrona
 nem instalacao limpa do executavel. Este resultado nao e uma declaracao de
 projeto finalizado ou de prontidao comercial.
+
+## Ciclo de 8 de setembro: comandos, consultas e interface
+
+Produtos passam a ter comandos de criacao, alteracao e remocao com repositorio
+explicito e recuperacao do snapshot em caso de erro imediato. Orcamentos passam
+a ter comandos e consultas independentes do bridge. A listagem copia apenas
+os campos de resumo, evitando copiar estudos pesados de nesting.
+
+A pagina canonica reside no modulo de orcamentos e recebe QuotePageServices.
+O workspace possui os widgets, estilos e sinais; o controlador usa `self.view`
+explicitamente. Foi corrigido o temporizador de pesquisa em falta. O ficheiro
+antigo e apenas um construtor de compatibilidade; o controlador canonico ainda
+precisa de ser dividido por casos de utilizacao.
+
+Validacao: 28 verificacoes locais aprovadas, 337 ficheiros compilados e os 487
+contratos preservados. Na base atual passaram inventario (15.372 s), conjuntos
+e montagem (40.362 s), nesting (5.518 s), fabrico (19.567 s), compras (19.694 s),
+faturacao (19.697 s) e planeamento (74.461 s). Todos terminaram com rollback e
+conteudo identico nas 55 tabelas verificadas. Os limites sobre contadores,
+concorrencia e durabilidade referidos acima continuam a aplicar-se.
