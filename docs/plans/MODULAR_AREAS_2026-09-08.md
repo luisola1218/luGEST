@@ -36,6 +36,34 @@ instalacoes nem elimina os restantes adaptadores historicos.
   separadamente nos dois fluxos anteriores com gravacao real protegida.
 
 Relatorios locais: `reports/integration/`. O rollback pode deixar intervalos nos
-contadores AUTO_INCREMENT. Criacao/atribuicao de viagens, rececao de qualidade,
+contadores AUTO_INCREMENT. Rececao de qualidade,
 emissao de faturas e outras areas continuam em migracao; consultar a lista no
 guia do monolito modular.
+
+
+## Continuacao: viagens, atribuicoes e consultas
+
+- `transport/application/trips.py`: criacao, edicao e remocao, com validacao
+  anterior a publicacao no snapshot e a reserva do identificador.
+- `transport/application/assignments.py`: validacao de todas as encomendas
+  antes da atribuicao, detecao de outra viagem e aplicacao do custo sugerido.
+- `transport/application/queries.py`: listas, detalhe, elegibilidade, metricas
+  e opcoes sobre copias dos registos. Recalcular o estado de expedicao para
+  apresentar uma encomenda nao altera a encomenda partilhada.
+- `transport/infrastructure/route_report.py`: os dois formatos do documento de
+  viagem recebem detalhe e capacidades explicitas; nao recebem o backend.
+- A remocao de NC passou a usar o mesmo repositorio com auditoria e recuperacao
+  das outras operacoes do ciclo de vida.
+
+Validacao local: 40 verificacoes aprovadas, 383 ficheiros compilados e 487
+contratos preservados. Novos testes cobrem dados invalidos sem reserva de
+numero, atribuicoes parcialmente invalidas sem efeitos, conflitos locais,
+falhas de escrita, consultas sem alteracao do snapshot e remocao de NC.
+O fluxo SQL de viagens/paragens passou novamente (15.682 s), com releitura;
+o fluxo de transportes/PDF passou (1.272 s, com substituto de `_save`).
+Os dois verificaram igualdade do conteudo das 55 tabelas apos rollback.
+
+As verificacoes de estado esperado protegem alteracoes locais. Nao sao um
+mecanismo de concorrencia entre instalacoes. O adaptador de numeracao ainda
+pode reservar contadores/configuracao independentemente da gravacao da viagem.
+A migracao global continua com os pontos registados em MODULAR_MONOLITH.md.

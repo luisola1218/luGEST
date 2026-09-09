@@ -51,7 +51,7 @@ def main():
         failure = not fail_audit
         audit_failure = fail_audit
         for action in (lambda: service.save(dict(payload, id="NC2", descricao="Alterada")),
-                       lambda: service.close("NC2")):
+                       lambda: service.close("NC2"), lambda: service.remove("NC2")):
             original = deepcopy(state)
             try:
                 action()
@@ -74,6 +74,16 @@ def main():
         pass
     else:
         raise AssertionError("Stale catalog accepted")
+    service.remove("NC3")
+    assert not any(row.get("id") == "NC3" for row in repository.rows())
+    original = deepcopy(state)
+    try:
+        service.remove("missing")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Missing NC removed")
+    assert state == original
     assert "main" not in sys.modules
     print("quality-nc-ok lifecycle=yes duplicates=yes quantities=yes audit-restored=yes failures-restored=yes")
 

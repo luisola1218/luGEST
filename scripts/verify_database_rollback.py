@@ -70,7 +70,10 @@ def _quality_nc_flow():
     backend.quality_nc_close(identifier, 'Verificada')
     backend.reload(force=True)
     assert find()['estado'] == 'Fechada' and find()['eficacia'] == 'Verificada'
-    print('quality-nc-db-ok create=yes edit=yes close=yes reload=yes', flush=True)
+    backend.quality_nc_remove(identifier)
+    backend.reload(force=True)
+    assert not any(row.get('id') == identifier for row in backend.ensure_data().get('quality_nonconformities', []))
+    print('quality-nc-db-ok create=yes edit=yes close=yes remove=yes reload=yes', flush=True)
 
 
 def _transport_tariff_flow():

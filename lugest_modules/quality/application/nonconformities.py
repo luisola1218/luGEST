@@ -257,3 +257,14 @@ class Nonconformities:
         return copy.deepcopy(target)
 
 
+
+    def remove(self, nc_id: str) -> None:
+        original = self.repository.rows()
+        value = str(nc_id or "").strip()
+        before = next((row for row in original if isinstance(row, dict) and str(row.get("id", "") or "").strip() == value), None)
+        if before is None:
+            raise ValueError("Nao conformidade nao encontrada.")
+        rows = [row for row in original if not (isinstance(row, dict) and str(row.get("id", "") or "").strip() == value)]
+        event = dict(action="NC removida", entity_type="Nao conformidade", entity_id=value,
+                     summary=str(before.get("descricao", "") or ""), before=before)
+        self.repository.replace(rows, expected=original, event=event)

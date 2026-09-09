@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 from lugest_qt.services.quality_composition import nonconformities
 
 import copy
@@ -861,15 +861,7 @@ class QualityBackendMixin:
         return {"material_id": material_id, "quality_status": "APROVADO", "nc_id": nc_id_txt}
 
     def quality_nc_remove(self, nc_id: str) -> None:
-        data = self.ensure_data()
-        value = str(nc_id or "").strip()
-        rows = list(data.get("quality_nonconformities", []) or [])
-        before = next((row for row in rows if isinstance(row, dict) and str(row.get("id", "") or "").strip() == value), None)
-        data["quality_nonconformities"] = [row for row in rows if not (isinstance(row, dict) and str(row.get("id", "") or "").strip() == value)]
-        if before is None:
-            raise ValueError("Nao conformidade nao encontrada.")
-        self._append_audit_event(data, action="NC removida", entity_type="Nao conformidade", entity_id=value, summary=str(before.get("descricao", "") or ""), before=before)
-        self._save(force=True, audit=False)
+        nonconformities(self).remove(nc_id)
 
     def quality_document_rows(self, filter_text: str = "") -> list[dict[str, Any]]:
         query = str(filter_text or "").strip().lower()

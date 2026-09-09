@@ -160,6 +160,9 @@ e conjuntos usa a mesma funcao e devolve linhas independentes do original.
 .venv\Scripts\python.exe scripts\verify_calculated_assembly_editor.py
 .venv\Scripts\python.exe scripts\verify_transport_tariffs.py
 .venv\Scripts\python.exe scripts\verify_transport_stops.py
+.venv\Scripts\python.exe scripts\verify_transport_trips.py
+.venv\Scripts\python.exe scripts\verify_transport_assignments.py
+.venv\Scripts\python.exe scripts\verify_transport_queries.py
 .venv\Scripts\python.exe scripts\verify_billing_payments.py
 .venv\Scripts\python.exe scripts\verify_quality_nonconformities.py
 .venv\Scripts\python.exe scripts\verify_purchase_needs.py
@@ -204,8 +207,9 @@ AUTO_INCREMENT. Nao testa concorrencia real nem persistencia assincrona.
 3. Migrar encomendas, restantes comandos de inventario, compras, producao,
    restantes operacoes de faturacao e as restantes areas. Pagamentos ja usam
    agregados isolados; a emissao de faturas ainda pertence ao adaptador antigo.
-   Tarifarios e edicao de paragens ja usam servicos, mas criacao de viagens,
-   atribuicao de encomendas e parte das consultas ainda precisam de migracao.
+   Transportes ja tem servicos para tarifarios, viagens, atribuicoes, paragens
+   e consultas, com renderizacao PDF separada. Os adaptadores de persistencia,
+   numeracao e calculos de expedicao ainda dependem de capacidades historicas.
    NC ja usam repositorio com auditoria, mas rececao e libertacao de stock de
    qualidade ainda partilham estado atraves dos mixins de `LegacyBackend`.
 4. Substituir os adaptadores do snapshot global por repositorios por modulo
