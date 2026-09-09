@@ -11,7 +11,7 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 
 def main():
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QMessageBox
     from PySide6.QtTest import QTest
     from lugest_modules.quotes.presentation.workspace import QuoteWorkspace, QuoteWorkspaceActions
     app = QApplication.instance() or QApplication([])
@@ -41,6 +41,8 @@ def main():
         from lugest_modules.quotes.presentation.page import QuotePage
         from lugest_modules.quotes.presentation.page_services import QuotePageServices
         values = {field.name: (lambda *args, **kwargs: None) for field in fields(QuotePageServices)}
+        paired_saves = []
+        values["save_assembly_pair"] = lambda template, live: paired_saves.append((template, live))
         values.update(ORC_LINE_TYPE_PIECE='peca', ORC_LINE_TYPE_PRODUCT='produto', ORC_LINE_TYPE_SERVICE='servico',
                       current_user=lambda: {}, branding=lambda: {}, norm_text=lambda value: str(value).lower(),
                       normalize_orc_line_type=lambda value: str(value or 'peca'),
@@ -51,6 +53,14 @@ def main():
         page.line_rows = [{'tipo_item': 'servico', 'descricao': 'Teste', 'qtd': 2, 'preco_unit': 10}]
         page._render_quote_lines()
         assert 'Teste' in page.view.lines_table.item(0, page.LINE_COL_DESCRIPTION).text()
+        page.view.lines_table.selectRow(0)
+        def choose_both(dialog):
+            combo = next(widget for widget in dialog.findChildren(QComboBox) if widget.findData("both") >= 0)
+            combo.setCurrentIndex(combo.findData("both"))
+            return QDialog.Accepted
+        with patch.object(QDialog, "exec", choose_both), patch.object(QMessageBox, "information", lambda *args: None):
+            page._save_selected_lines_as_group()
+        assert len(paired_saves) == 1 and paired_saves[0][0]["itens"]
         assert not hasattr(page, 'backend')
         assert not errors, errors
         page.close()

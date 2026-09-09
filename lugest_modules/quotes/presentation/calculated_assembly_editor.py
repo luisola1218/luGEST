@@ -12,9 +12,8 @@ from lugest_qt.ui.pages.runtime_common import configure_table as _configure_tabl
 class CalculatedAssemblyPorts:
     quote_number: str
     workcenter: str
-    assembly_model_save: Callable
+    save_pair: Callable
     conjunto_next_param_codigo: Callable
-    conjunto_save: Callable
     laser_batch_dialog: Callable
     norm_text: Callable
     orc_line_is_piece: Callable
@@ -438,7 +437,7 @@ def edit_calculated_assembly(owner: QWidget, ports: CalculatedAssemblyPorts, ini
         "controlo_qualidade": quality_edit.toPlainText().strip(),
     }
     try:
-        ports.assembly_model_save(
+        ports.save_pair(
             {
                 "codigo": assembly_code,
                 "param_codigo": param_edit.text().strip(),
@@ -449,9 +448,7 @@ def edit_calculated_assembly(owner: QWidget, ports: CalculatedAssemblyPorts, ini
                 "origem": "orcamento_conjunto_calculado",
                 "created_at": str(initial.get("created_at", "") or "").strip(),
                 "ficha_tecnica": technical_sheet,
-            }
-        )
-        ports.conjunto_save(
+            },
             {
                 "codigo": assembly_code,
                 "param_codigo": param_edit.text().strip(),

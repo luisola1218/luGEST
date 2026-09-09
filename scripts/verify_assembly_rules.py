@@ -9,6 +9,8 @@ from lugest_modules.quotes.application.assemblies import AssemblyRules, normaliz
 from lugest_modules.quotes.application.assembly_refresh import AssemblyRefresh
 from lugest_modules.quotes.application.assembly_catalog import AssemblyCatalog
 from lugest_modules.quotes.application.assembly_queries import AssemblyQueries
+from lugest_modules.quotes.application.assembly_pair import AssemblyPair
+from lugest_modules.quotes.infrastructure.legacy_assembly_pair_repository import LegacyAssemblyPairRepository
 from lugest_modules.quotes.infrastructure.legacy_assembly_repository import LegacyAssemblyRepository
 
 
@@ -174,6 +176,44 @@ def main():
     assert state["conjuntos_modelo"] == [] and len(state["conjuntos"]) == 1
     catalog.remove("C1")
     assert state["conjuntos"] == []
+    pair_repo = LegacyAssemblyPairRepository(lambda: state, save_dataset)
+    pair = AssemblyPair(templates, catalog, pair_repo)
+    start = len(saves)
+    pair_payload = dict(payload, codigo="PAIR")
+    assert pair.save(pair_payload, pair_payload) == "PAIR"
+    assert len(saves) == start + 1 and saves[-1] == dict(force=True, blocking=True)
+    assert state["conjuntos"][0]["codigo"] == state["conjuntos_modelo"][0]["codigo"] == "PAIR"
+    assert state["conjuntos"][0]["param_codigo"] == state["conjuntos_modelo"][0]["param_codigo"]
+    original = deepcopy(state)
+    for invalid in (dict(pair_payload, itens=[]), dict(pair_payload, codigo="OTHER")):
+        start = len(saves)
+        try:
+            pair.save(pair_payload, invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Invalid second catalog accepted")
+        assert state == original and len(saves) == start
+    failure = True
+    try:
+        pair.save(dict(pair_payload, descricao="Changed"), dict(pair_payload, descricao="Changed"))
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("Paired save failure hidden")
+    assert state == original
+    failure = False
+    template = templates.prepare(pair_payload)
+    live = catalog.prepare(pair_payload)
+    state["conjuntos"][0]["descricao"] = "Concurrent"
+    original = deepcopy(state)
+    try:
+        pair_repo.replace(template, live)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Stale paired catalog accepted")
+    assert state == original
     assert "main" not in sys.modules and not any(name.startswith("PySide6") for name in sys.modules)
     print("assembly-rules-ok catalog-prices=yes fallback=yes detached=yes failure-isolation=yes")
 

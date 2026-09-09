@@ -23,8 +23,7 @@ def main():
     values = {field.name: forbidden for field in fields(CalculatedAssemblyPorts)}
     values.update(
         quote_number="O1", workcenter="Montagem", conjunto_next_param_codigo=lambda: "0001",
-        assembly_model_save=lambda payload: saved.append(("template", deepcopy(payload))),
-        conjunto_save=lambda payload: saved.append(("catalog", deepcopy(payload))),
+        save_pair=lambda template, live: saved.append((deepcopy(template), deepcopy(live))),
         norm_text=lambda value: value.lower(), orc_line_is_piece=lambda line: False,
         _quote_pick_workcenter=lambda *args: "Montagem",
         _wrap_assembly_item=lambda line: {"kind": "product", "line": deepcopy(line), "total_cost": 10},
@@ -42,8 +41,8 @@ def main():
         with patch.object(QDialog, "exec", lambda dialog: QDialog.Accepted):
             result = edit_calculated_assembly(owner, ports, initial)
         assert result["assembly_code"] == "CJ1" and result["workcenter"] == "Montagem"
-        assert [kind for kind, payload in saved] == ["template", "catalog"]
-        assert saved[1][1]["total_custo"] == 10 and saved[1][1]["total_final"] == 12
+        assert len(saved) == 1
+        assert saved[0][1]["total_custo"] == 10 and saved[0][1]["total_final"] == 12
     assert not errors and initial == original
     assert "main" not in sys.modules and "lugest_modules.quotes.presentation.page" not in sys.modules
     owner.close()

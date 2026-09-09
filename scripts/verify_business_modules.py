@@ -65,6 +65,7 @@ def main():
                            'conjunto_save': 'AssemblyCatalog.save',
                            'orc_purchase_needs': 'PurchaseNeeds.rows',
                            'orc_convert_to_order': 'QuoteConversion.convert',
+                           '_quote_line_production_route': 'LineRouting.production_route',
                            'transport_tariff_save': 'TariffService.save',
                            'transport_move_stop': 'TransportStops.move',
                            'transport_create_or_update': 'TripCommands.save',

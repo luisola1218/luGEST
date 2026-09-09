@@ -23,7 +23,25 @@ sys.path.insert(0, str(ROOT))
 FLOWS = ("verify_purchase_flow", "verify_conjuntos_montagem_flow",
          "verify_fabrication_order_flow", "verify_planning_flow", "verify_billing_flow",
          "verify_quote_nesting_flow", "verify_inventory_flow", "verify_transportes_module",
-         "verify_transport_tariff_flow", "verify_quality_nc_flow", "verify_transport_stop_flow")
+         "verify_transport_tariff_flow", "verify_quality_nc_flow", "verify_transport_stop_flow", "verify_assembly_pair_flow")
+
+
+def _assembly_pair_flow():
+    from uuid import uuid4
+    from lugest_qt.services.legacy_backend import LegacyBackend
+    from lugest_qt.services.assembly_composition import assembly_pair
+    backend = LegacyBackend()
+    code = "CJ-PAIR-" + uuid4().hex[:10]
+    payload = {"codigo": code, "descricao": "Teste gravacao conjunta", "itens": [
+        {"tipo_item": backend.desktop_main.ORC_LINE_TYPE_SERVICE, "descricao": "Montagem", "qtd": 2, "preco_unit": 5}]}
+    assembly_pair(backend).save(payload, dict(payload, margem_perc=20))
+    backend.reload(force=True)
+    template = backend.assembly_model_detail(code)
+    live = backend.conjunto_detail(code)
+    assert template["codigo"] == live["codigo"] == code
+    assert template["param_codigo"] == live["param_codigo"]
+    assert live["total_custo"] == 10 and live["total_final"] == 12
+    print("assembly-pair-db-ok both-catalogs=yes parameters=yes totals=yes reload=yes", flush=True)
 
 
 def _transport_stop_flow():
@@ -267,6 +285,8 @@ def main():
                 code = _transport_tariff_flow()
             elif args.flow == 'verify_quality_nc_flow':
                 code = _quality_nc_flow()
+            elif args.flow == 'verify_assembly_pair_flow':
+                code = _assembly_pair_flow()
             elif args.flow == 'verify_transport_stop_flow':
                 code = _transport_stop_flow()
             else:

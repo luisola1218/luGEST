@@ -1,9 +1,17 @@
 """Create, update and remove assembly aggregates before touching persistence."""
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from lugest_modules.quotes.application.assemblies import AssemblyRules, normalize_item, refresh_model, technical_sheet
 from lugest_modules.quotes.application.assembly_refresh import AssemblyCatalogRepository, assign_parameter_codes
+
+
+@dataclass(frozen=True)
+class PreparedAssembly:
+    code: str
+    models: list[dict[str, Any]]
+    expected: list[dict[str, Any]]
 
 
 class AssemblyCatalog:
@@ -15,6 +23,11 @@ class AssemblyCatalog:
         self.live_prices = live_prices
 
     def save(self, payload: dict[str, Any]) -> str:
+        prepared = self.prepare(payload)
+        self.repository.replace(prepared.models, expected=prepared.expected)
+        return prepared.code
+
+    def prepare(self, payload: dict[str, Any]) -> PreparedAssembly:
         payload = deepcopy(payload)
         description = str(payload.get("descricao", "") or "").strip()
         if not description:
@@ -56,8 +69,7 @@ class AssemblyCatalog:
             models.append(model)
         else:
             models[models.index(existing)] = model
-        self.repository.replace(models, expected=original)
-        return code
+        return PreparedAssembly(code, models, original)
 
     def remove(self, codigo: str) -> None:
         code = str(codigo or "").strip()

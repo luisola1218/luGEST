@@ -45,3 +45,12 @@ def assembly_rules(backend) -> AssemblyRules:
         quote_source=lambda item, code: deepcopy(backend._conjunto_find_quote_source(item, code)),
         now_iso=lambda: backend.desktop_main.now_iso(),
     )
+
+
+from lugest_modules.quotes.application.assembly_pair import AssemblyPair
+from lugest_modules.quotes.infrastructure.legacy_assembly_pair_repository import LegacyAssemblyPairRepository
+
+
+def assembly_pair(backend) -> AssemblyPair:
+    return AssemblyPair(assembly_catalog(backend, templates=True), assembly_catalog(backend),
+                        LegacyAssemblyPairRepository(backend.ensure_data, backend._save))

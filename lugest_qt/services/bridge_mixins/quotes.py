@@ -1,4 +1,5 @@
-from __future__ import annotations
+﻿from __future__ import annotations
+from lugest_qt.services.quote_routing_composition import line_routing
 from lugest_qt.services.quote_purchase_composition import purchase_needs
 from lugest_qt.services.quote_order_composition import quote_conversion
 from lugest_modules.quotes.application.assemblies import normalize_item, price_item, refresh_model, expand_model, technical_sheet
@@ -320,97 +321,22 @@ class QuotesBridgeMixin:
         return target
 
     def _quote_line_operations_value(self, line: dict[str, Any] | None = None) -> list[str]:
-        row = dict(line or {})
-        values: list[Any] = []
-        raw_text = str(row.get("operacao", "") or "").strip()
-        if raw_text:
-            values.append(raw_text)
-        for key in ("operacoes_lista", "operacoes_fluxo", "operacoes_detalhe"):
-            raw = row.get(key)
-            if isinstance(raw, list):
-                values.extend(raw)
-        for key in ("tempos_operacao", "custos_operacao"):
-            raw_map = row.get(key)
-            if isinstance(raw_map, dict):
-                values.extend(str(name or "").strip() for name in raw_map.keys() if str(name or "").strip())
-        return self.quote_parse_operacoes_lista(values)
+        return line_routing(self).operations(line)
 
     def _quote_line_operations_text(self, line: dict[str, Any] | None = None) -> str:
-        return self.quote_format_operacoes(self._quote_line_operations_value(line))
+        return line_routing(self).operations_text(line)
 
     def _quote_line_is_production_ready(self, line: dict[str, Any] | None = None) -> bool:
-        row = dict(line or {})
-        if self.desktop_main.normalize_orc_line_type(row.get("tipo_item")) != self.desktop_main.ORC_LINE_TYPE_PIECE:
-            return False
-        drawing_path = str(row.get("desenho", "") or "").strip()
-        ops = [
-            str(self.desktop_main.normalize_operacao_nome(op) or op or "").strip()
-            for op in self._quote_line_operations_value(row)
-        ]
-        ops = [op for op in ops if op and op != "Montagem"]
-        material = str(row.get("material", "") or "").strip()
-        thickness = str(row.get("espessura", "") or "").strip()
-        time_per_piece = self._parse_float(row.get("tempo_peca_min", row.get("tempo_pecas_min", 0)), 0)
-        detail_ready = bool(
-            list(row.get("operacoes_detalhe", []) or [])
-            or dict(row.get("tempos_operacao", {}) or {})
-            or dict(row.get("custos_operacao", {}) or {})
-        )
-        has_work = bool(ops or detail_ready or time_per_piece > 0)
-        return bool(has_work and (drawing_path or (material and thickness)))
+        return line_routing(self).production_ready(line)
 
     def _quote_line_is_raw_material(self, line: dict[str, Any] | None = None) -> bool:
-        row = dict(line or {})
-        if self.desktop_main.normalize_orc_line_type(row.get("tipo_item")) != self.desktop_main.ORC_LINE_TYPE_PIECE:
-            return False
-        if str(row.get("stock_item_kind", "") or "").strip() == "raw_material":
-            return True
-        if str(row.get("stock_material_id", "") or "").strip():
-            return True
-        if self._quote_line_looks_stock_material_ref(row.get("ref_externa")):
-            if str(row.get("desenho", "") or "").strip():
-                return False
-            if round(self._parse_float(row.get("tempo_peca_min", row.get("tempo_pecas_min", 0)), 0), 4) > 0:
-                return False
-            operacao_norm = self.desktop_main.norm_text(str(row.get("operacao", "") or "").strip())
-            if operacao_norm in {"", "-", "stockmp", "materia prima", "materia-prima"}:
-                return True
-        subtype = self.desktop_main.norm_text(str(row.get("material_subtype", "") or row.get("calc_mode", "") or "").strip())
-        if subtype == "stockmp":
-            return True
-        return False
+        return line_routing(self).raw_material(line)
 
     def _quote_line_looks_stock_material_ref(self, value: Any) -> bool:
-        raw = str(value or "").strip().upper()
-        return bool(raw.startswith("MAT") and raw[3:].isdigit())
+        return line_routing(self).stock_material_reference(value)
 
     def _quote_line_production_route(self, line: dict[str, Any] | None = None) -> str:
-        row = dict(line or {})
-        line_type = self.desktop_main.normalize_orc_line_type(row.get("tipo_item"))
-        if line_type == self.desktop_main.ORC_LINE_TYPE_PRODUCT:
-            return "montagem"
-        if line_type == self.desktop_main.ORC_LINE_TYPE_SERVICE:
-            return "montagem"
-        if not self._quote_line_is_production_ready(row):
-            return "conjunto"
-        ops = [str(self.desktop_main.normalize_operacao_nome(op) or op or "").strip() for op in self._quote_line_operations_value(row)]
-        ops = [op for op in ops if op]
-        subtype_norm = self.desktop_main.norm_text(str(row.get("material_subtype", "") or row.get("calc_mode", "") or "").strip())
-        material_norm = self.desktop_main.norm_text(str(row.get("material", "") or "").strip())
-        drawing_path = str(row.get("desenho", "") or "").strip()
-        if "Corte Laser" in ops and drawing_path:
-            return "laser"
-        if any(token in subtype_norm for token in ("tubo", "cantoneira", "perfil", "barra", "ferronervurado", "chapa")):
-            return "serralharia"
-        if any(token in material_norm for token in ("tubo", "cantoneira", "perfil", "barra", "ferro nervurado")):
-            return "serralharia"
-        if "Serralharia" in ops:
-            return "serralharia"
-        if "Corte Laser" in ops:
-            return "laser"
-        if "Montagem" in ops:
-            return "montagem"
-        return "conjunto"
+        return line_routing(self).production_route(line)
 
     def orc_convert_to_order(self, numero: str, nota_cliente: str = "") -> dict[str, Any]:
         order_number = quote_conversion(self).convert(numero, nota_cliente)

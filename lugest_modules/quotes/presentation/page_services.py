@@ -7,6 +7,7 @@ from lugest_modules.quotes.presentation.profile_editor import ProfileEditorPorts
 
 @dataclass(frozen=True)
 class QuotePageServices:
+    save_assembly_pair: Callable[..., Any]
     editor_ports: QuoteEditorPorts
     profile_editor_ports: ProfileEditorPorts
     ORC_LINE_TYPE_PIECE: str

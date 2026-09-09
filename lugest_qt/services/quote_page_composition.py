@@ -1,5 +1,6 @@
 """Compose a quote page without exposing the runtime to its controller."""
 from copy import deepcopy
+from lugest_qt.services.assembly_composition import assembly_pair
 from lugest_modules.quotes.presentation.page_services import QuotePageServices
 from lugest_qt.services.quote_editor_composition import quote_editor_ports, profile_editor_ports
 from lugest_qt.ui.pages.laser_quote_dialogs import LaserQuoteDialog, LaserSettingsDialog
@@ -10,6 +11,7 @@ from lugest_qt.ui.pages.runtime_support import _open_operation_cost_profiles_dia
 
 def quote_page_services(backend) -> QuotePageServices:
     return QuotePageServices(
+        save_assembly_pair=lambda template, live: assembly_pair(backend).save(template, live),
         editor_ports=quote_editor_ports(backend),
         profile_editor_ports=profile_editor_ports(backend),
         quote_authors=lambda: deepcopy(backend.ensure_data().get('orcamentistas', [])),

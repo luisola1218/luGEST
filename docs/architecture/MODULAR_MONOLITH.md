@@ -27,6 +27,11 @@ existencia desta estrutura com a migracao de todo o ERP.
 | Guardar e combinar estudos de nesting | `lugest_modules/quotes/application/nesting_studies.py` |
 | Guardar/remover orcamento e alterar estado | `lugest_modules/quotes/application/commands.py` |
 | Consultar lista, anos e detalhe de orcamentos | `lugest_modules/quotes/application/queries.py` |
+| Classificar linhas e decidir o encaminhamento para producao | `lugest_modules/quotes/domain/routing.py` |
+| Guardar modelo e conjunto numa operacao | `lugest_modules/quotes/application/assembly_pair.py` |
+| Guardar selecao como conjunto/modelo | `lugest_modules/quotes/presentation/group_editor.py` |
+| Editor e gestor de modelos | `lugest_modules/quotes/presentation/assembly_models.py` |
+| Catalogo visual de conjuntos guardados | `lugest_modules/quotes/presentation/saved_assemblies.py` |
 | Guardar/remover conjuntos e modelos | `lugest_modules/quotes/application/assembly_catalog.py` |
 | Listas e detalhes dos catalogos de conjuntos | `lugest_modules/quotes/application/assembly_queries.py` |
 | Normalizacao, precos e expansao dos componentes | `lugest_modules/quotes/application/assemblies.py` |
@@ -46,6 +51,7 @@ existencia desta estrutura com a migracao de todo o ERP.
 | Construcao de paineis e encaminhamento de eventos | `lugest_modules/quotes/presentation/workspace.py` |
 | Aparencia dos paineis | `lugest_modules/quotes/presentation/workspace_styles.py` |
 | Dependencias do controlador de orcamentos | `lugest_modules/quotes/presentation/page_services.py` |
+| Viagens, atribuicoes, consultas e PDF de transporte | `lugest_modules/transport/README.md` |
 | CRUD, selecao e calculo de tarifarios | `lugest_modules/transport/application/tariffs.py` |
 | Paragens, pedido externo e progressao da viagem | `lugest_modules/transport/application/stops.py` |
 | Ligacao das encomendas as viagens ativas | `lugest_modules/transport/application/order_links.py` |
@@ -191,9 +197,11 @@ AUTO_INCREMENT. Nao testa concorrencia real nem persistencia assincrona.
 
 1. Continuar a dividir o controlador de orcamentos: os paineis ja sao uma vista
    independente, assim como o construtor de conjuntos calculados. O controlador
-   ainda concentra os gestores de conjuntos, agrupamento de linhas e outras
-   interacoes extensas. Guardar modelo e conjunto no construtor ainda sao duas
-   operacoes; falta definir a transacao conjunta deste percurso.
+   ainda concentra renderizacao de linhas, email, integracoes laser e outras
+   interacoes extensas. Agrupamento de linhas, gestores e editor de modelos
+   ja recebem dados e capacidades explicitas. Guardar
+   modelo e conjunto, tanto no construtor como na selecao de linhas, ja prepara
+   ambos os catalogos e usa uma gravacao bloqueante unica.
 2. Migrar a criacao do pedido de compra e substituir os adaptadores historicos
    da conversao. QuoteConversion ja coordena cliente, encomenda e orcamento com
    repositorio explicito: prepara em copia, verifica alteracoes locais e pede
