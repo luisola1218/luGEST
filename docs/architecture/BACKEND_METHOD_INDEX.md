@@ -731,9 +731,9 @@ A ultima coluna segue funcoes e fabricas tipadas ate ao modulo de negocio, sem i
 | `pulse_plan_delay_set_reason` | [planning_delays:49](../../lugest_qt/services/bridge_mixins/planning_delays.py#L49) | - |
 | `purchase_advice_for_line` | [purchasing:110](../../lugest_qt/services/bridge_mixins/purchasing.py#L110) | - |
 | `quality_data_health` | [quality:52](../../lugest_qt/services/bridge_mixins/quality.py#L52) | - |
-| `quality_document_remove` | [quality:934](../../lugest_qt/services/bridge_mixins/quality.py#L934) | - |
-| `quality_document_rows` | [quality:866](../../lugest_qt/services/bridge_mixins/quality.py#L866) | - |
-| `quality_document_save` | [quality:891](../../lugest_qt/services/bridge_mixins/quality.py#L891) | - |
+| `quality_document_remove` | [quality:872](../../lugest_qt/services/bridge_mixins/quality.py#L872) | [QualityDocuments.remove](../../lugest_modules/quality/application/documents.py#L92) |
+| `quality_document_rows` | [quality:866](../../lugest_qt/services/bridge_mixins/quality.py#L866) | [QualityDocuments.rows](../../lugest_modules/quality/application/documents.py#L22) |
+| `quality_document_save` | [quality:869](../../lugest_qt/services/bridge_mixins/quality.py#L869) | [QualityDocuments.save](../../lugest_modules/quality/application/documents.py#L48) |
 | `quality_dossier_pdf` | [quality_reports:604](../../lugest_qt/services/bridge_mixins/quality_reports.py#L604) | - |
 | `quality_iso_checklist` | [quality_reports:611](../../lugest_qt/services/bridge_mixins/quality_reports.py#L611) | - |
 | `quality_link_options` | [quality:106](../../lugest_qt/services/bridge_mixins/quality.py#L106) | - |

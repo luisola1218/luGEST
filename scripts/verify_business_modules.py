@@ -73,6 +73,7 @@ def main():
                            'billing_add_payment': 'Payments.add',
                            'quality_nc_save': 'Nonconformities.save',
                            'quality_nc_remove': 'Nonconformities.remove',
+                           'quality_document_save': 'QualityDocuments.save',
                            'transport_detail': 'TransportQueries.detail',
                            'transport_route_sheet_render': 'RouteReport.render',
                            'assembly_model_remove': 'AssemblyCatalog.remove',

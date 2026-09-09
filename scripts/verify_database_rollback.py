@@ -23,7 +23,29 @@ sys.path.insert(0, str(ROOT))
 FLOWS = ("verify_purchase_flow", "verify_conjuntos_montagem_flow",
          "verify_fabrication_order_flow", "verify_planning_flow", "verify_billing_flow",
          "verify_quote_nesting_flow", "verify_inventory_flow", "verify_transportes_module",
-         "verify_transport_tariff_flow", "verify_quality_nc_flow", "verify_transport_stop_flow", "verify_assembly_pair_flow")
+         "verify_transport_tariff_flow", "verify_quality_nc_flow", "verify_transport_stop_flow", "verify_assembly_pair_flow", "verify_quality_document_flow")
+
+
+def _quality_document_flow():
+    from uuid import uuid4
+    from lugest_qt.services.legacy_backend import LegacyBackend
+    backend = LegacyBackend()
+    identifier = "DOC-TEST-" + uuid4().hex[:10]
+    with tempfile.TemporaryDirectory(prefix="lugest_document_source_") as directory:
+        source = Path(directory) / "evidence.txt"
+        source.write_text("Transactional document evidence", encoding="utf-8")
+        payload = {"id": identifier, "titulo": "Teste transacional", "caminho": str(source)}
+        saved = backend.quality_document_save(payload)
+        backend.reload(force=True)
+        found = next(row for row in backend.quality_document_rows() if row["id"] == identifier)
+        assert Path(found["caminho"]).read_text(encoding="utf-8") == "Transactional document evidence"
+        backend.quality_document_save({**payload, "titulo": "Revisto", "caminho": saved["caminho"]})
+        backend.reload(force=True)
+        assert next(row for row in backend.quality_document_rows() if row["id"] == identifier)["titulo"] == "Revisto"
+        backend.quality_document_remove(identifier)
+        backend.reload(force=True)
+        assert not any(row["id"] == identifier for row in backend.quality_document_rows())
+    print("quality-document-db-ok create=yes file=yes edit=yes remove=yes reload=yes", flush=True)
 
 
 def _assembly_pair_flow():
@@ -285,6 +307,8 @@ def main():
                 code = _transport_tariff_flow()
             elif args.flow == 'verify_quality_nc_flow':
                 code = _quality_nc_flow()
+            elif args.flow == 'verify_quality_document_flow':
+                code = _quality_document_flow()
             elif args.flow == 'verify_assembly_pair_flow':
                 code = _assembly_pair_flow()
             elif args.flow == 'verify_transport_stop_flow':

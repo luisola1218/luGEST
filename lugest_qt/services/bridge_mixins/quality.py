@@ -1,5 +1,5 @@
 ﻿from __future__ import annotations
-from lugest_qt.services.quality_composition import nonconformities
+from lugest_qt.services.quality_composition import nonconformities, quality_documents
 
 import copy
 import re
@@ -864,80 +864,10 @@ class QualityBackendMixin:
         nonconformities(self).remove(nc_id)
 
     def quality_document_rows(self, filter_text: str = "") -> list[dict[str, Any]]:
-        query = str(filter_text or "").strip().lower()
-        rows: list[dict[str, Any]] = []
-        for raw in list(self.ensure_data().get("quality_documents", []) or []):
-            if not isinstance(raw, dict):
-                continue
-            row = {
-                "id": str(raw.get("id", "") or "").strip(),
-                "titulo": str(raw.get("titulo", "") or "").strip(),
-                "tipo": str(raw.get("tipo", "") or "").strip(),
-                "entidade": str(raw.get("entidade", "") or "").strip(),
-                "referencia": str(raw.get("referencia", "") or "").strip(),
-                "versao": str(raw.get("versao", "") or "").strip(),
-                "estado": str(raw.get("estado", "") or "Ativo").strip(),
-                "responsavel": str(raw.get("responsavel", "") or "").strip(),
-                "caminho": str(raw.get("caminho", "") or "").strip(),
-                "obs": str(raw.get("obs", "") or "").strip(),
-                "updated_at": str(raw.get("updated_at", "") or raw.get("created_at", "") or "").strip(),
-            }
-            if query and not any(query in str(value).lower() for value in row.values()):
-                continue
-            rows.append(row)
-        rows.sort(key=lambda item: (str(item.get("tipo", "")), str(item.get("titulo", ""))))
-        return rows
+        return quality_documents(self).rows(filter_text)
 
     def quality_document_save(self, payload: dict[str, Any]) -> dict[str, Any]:
-        data = self.ensure_data()
-        rows = data.setdefault("quality_documents", [])
-        doc_id = str(payload.get("id", "") or "").strip()
-        existing = next((row for row in rows if isinstance(row, dict) and str(row.get("id", "") or "").strip() == doc_id), None) if doc_id else None
-        before = copy.deepcopy(existing) if isinstance(existing, dict) else None
-        if not doc_id:
-            doc_id = self._next_prefixed_id(rows, "DOC")
-        titulo = str(payload.get("titulo", "") or "").strip()
-        if not titulo:
-            raise ValueError("Titulo do documento obrigatorio.")
-        source_path = str(payload.get("caminho", "") or "").strip()
-        stored_path = source_path
-        if source_path:
-            stored_path = self._store_shared_file(source_path, "quality/documents", preferred_name=self._file_reference_name(source_path, titulo or doc_id))
-        now = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
-        row = {
-            "id": doc_id,
-            "titulo": titulo,
-            "tipo": str(payload.get("tipo", "") or "Evidencia").strip() or "Evidencia",
-            "entidade": str(payload.get("entidade", "") or "").strip(),
-            "referencia": str(payload.get("referencia", "") or "").strip(),
-            "entidade_tipo": str(payload.get("entidade_tipo", payload.get("entidade", "")) or "").strip(),
-            "entidade_id": str(payload.get("entidade_id", payload.get("referencia", "")) or "").strip(),
-            "versao": str(payload.get("versao", "") or "1").strip() or "1",
-            "estado": str(payload.get("estado", "") or "Ativo").strip() or "Ativo",
-            "responsavel": str(payload.get("responsavel", "") or "").strip(),
-            "caminho": stored_path,
-            "obs": str(payload.get("obs", "") or "").strip(),
-            "created_at": str((existing or {}).get("created_at", "") or now),
-            "updated_at": now,
-            "created_by": str((existing or {}).get("created_by", "") or self._current_user_label()),
-            "updated_by": self._current_user_label(),
-        }
-        if existing is None:
-            rows.append(row)
-        else:
-            existing.update(row)
-            row = existing
-        self._append_audit_event(data, action="Documento qualidade guardado", entity_type="Documento", entity_id=doc_id, summary=titulo, before=before, after=row)
-        self._save(force=True, audit=False)
-        return dict(row)
+        return quality_documents(self).save(payload)
 
     def quality_document_remove(self, doc_id: str) -> None:
-        data = self.ensure_data()
-        value = str(doc_id or "").strip()
-        rows = list(data.get("quality_documents", []) or [])
-        before = next((row for row in rows if isinstance(row, dict) and str(row.get("id", "") or "").strip() == value), None)
-        data["quality_documents"] = [row for row in rows if not (isinstance(row, dict) and str(row.get("id", "") or "").strip() == value)]
-        if before is None:
-            raise ValueError("Documento nao encontrado.")
-        self._append_audit_event(data, action="Documento qualidade removido", entity_type="Documento", entity_id=value, summary=str(before.get("titulo", "") or ""), before=before)
-        self._save(force=True, audit=False)
+        return quality_documents(self).remove(doc_id)
