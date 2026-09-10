@@ -56,6 +56,8 @@ existencia desta estrutura com a migracao de todo o ERP.
 | Paragens, pedido externo e progressao da viagem | `lugest_modules/transport/application/stops.py` |
 | Ligacao das encomendas as viagens ativas | `lugest_modules/transport/application/order_links.py` |
 | Pagamentos de faturacao | `lugest_modules/billing/application/payments.py` |
+| Criar pedido de cotacao a partir do orcamento | `lugest_modules/quotes/application/purchase_quote.py` |
+| Gravar notas, precos e conjuntos | `lugest_modules/purchasing/application/note_commands.py` |
 | Ciclo de notas de compra, conversao e estados de entrega | `lugest_modules/purchasing/README.md` |
 | Documentos e auditoria de qualidade | `lugest_modules/quality/application/documents.py` |
 | Criar, fechar, consultar e tratar duplicados de NC | `lugest_modules/quality/application/nonconformities.py` |
@@ -204,8 +206,9 @@ AUTO_INCREMENT. Nao testa concorrencia real nem persistencia assincrona.
    ja recebem dados e capacidades explicitas. Guardar
    modelo e conjunto, tanto no construtor como na selecao de linhas, ja prepara
    ambos os catalogos e usa uma gravacao bloqueante unica.
-2. Migrar a criacao do pedido de compra e substituir os adaptadores historicos
-   da conversao. QuoteConversion ja coordena cliente, encomenda e orcamento com
+2. Substituir os adaptadores historicos da conversao. O pedido de cotacao
+   a partir de faltas ja usa `PurchaseQuote`; a gravacao da nota e dos catalogos
+   de precos usa `NoteCommands`, com preparacao isolada e uma gravacao final. QuoteConversion ja coordena cliente, encomenda e orcamento com
    repositorio explicito: prepara em copia, verifica alteracoes locais e pede
    gravacao bloqueante. A transacao SQL entre modulos continua por resolver;
    contadores podem ser reservados independentemente. Preparacao de linhas e

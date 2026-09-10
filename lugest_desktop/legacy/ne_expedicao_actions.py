@@ -4606,63 +4606,10 @@ def add_exp_linha(self):
 
 def _sync_ne_linhas_with_materia(self, ne):
     _ensure_configured()
-    changed = False
-    mat_map = {m.get("id"): m for m in self.data.get("materiais", [])}
-    for l in ne.get("linhas", []):
-        if not origem_is_materia(l.get("origem", "")):
-            continue
-        if l.get("_stock_in") or l.get("entregue"):
-            continue
-        m = mat_map.get(l.get("ref"))
-        if not m:
-            continue
-        new_preco = round(materia_preco_unitario(m), 6)
-        cur_preco = parse_float(l.get("preco", 0), 0)
-        if abs(new_preco - cur_preco) > 1e-9:
-            l["preco"] = new_preco
-            q = parse_float(l.get("qtd", 0), 0)
-            desconto = max(0.0, min(100.0, parse_float(l.get("desconto", 0), 0)))
-            iva = max(0.0, min(100.0, parse_float(l.get("iva", 23), 23)))
-            l["total"] = round(((q * new_preco) * (1.0 - (desconto / 100.0))) * (1.0 + (iva / 100.0)), 6)
-            changed = True
-        formato = m.get("formato", detect_materia_formato(m))
-        comp = parse_float(m.get("comprimento", 0), 0)
-        larg = parse_float(m.get("largura", 0), 0)
-        metros = parse_float(m.get("metros", 0), 0)
-        new_desc = _ne_build_material_desc(
-            m.get("material", ""),
-            m.get("espessura", ""),
-            formato,
-            comp,
-            larg,
-            metros,
-        )
-        if (l.get("descricao", "") or "") != new_desc:
-            l["descricao"] = new_desc
-            changed = True
-        if l.get("unid", "") != "UN":
-            l["unid"] = "UN"
-            changed = True
-        # Mantemos apenas a base tecnica sincronizada. Lote e localizacao passam
-        # a ser decididos linha a linha no momento da rececao.
-        new_meta = {
-            "source_material_id": m.get("id", ""),
-            "material": m.get("material", ""),
-            "espessura": m.get("espessura", ""),
-            "comprimento": parse_float(m.get("comprimento", 0), 0),
-            "largura": parse_float(m.get("largura", 0), 0),
-            "metros": parse_float(m.get("metros", 0), 0),
-            "peso_unid": parse_float(m.get("peso_unid", 0), 0),
-            "p_compra": parse_float(m.get("p_compra", 0), 0),
-            "formato": formato,
-        }
-        for k, v in new_meta.items():
-            if l.get(k) != v:
-                l[k] = v
-                changed = True
-    if changed:
-        ne["total"] = sum(parse_float(x.get("total", 0), 0) for x in ne.get("linhas", []))
-    return changed
+    from lugest_modules.purchasing.application.material_lines import MaterialLineRules, sync_material_lines
+    rules = MaterialLineRules(origem_is_materia, materia_preco_unitario, parse_float,
+                              detect_materia_formato, _ne_build_material_desc)
+    return sync_material_lines(ne, self.data.get("materiais", []), rules)
 
 def _dialog_ne_origem_linha(self):
     _ensure_configured()

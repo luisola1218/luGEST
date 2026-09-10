@@ -1,4 +1,6 @@
 from __future__ import annotations
+from lugest_qt.services.purchasing_composition import purchase_pricing, material_line_rules
+from lugest_modules.purchasing.application.material_lines import sync_material_lines
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,10 +12,10 @@ class PurchasingDocumentsBackendMixin:
 
     def _sync_ne_from_materia(self) -> None:
         data = self.ensure_data()
-        holder = SimpleNamespace(data=data)
+        rules = material_line_rules(self)
         changed = False
         for ne in data.get("notas_encomenda", []):
-            if self.ne_expedicao_actions._sync_ne_linhas_with_materia(holder, ne):
+            if sync_material_lines(ne, data.get("materiais", []), rules):
                 changed = True
         if changed:
             self._save(force=True)
@@ -29,88 +31,25 @@ class PurchasingDocumentsBackendMixin:
             self._save(force=True)
 
     def _sync_note_lines_with_products(self, note: dict[str, Any]) -> bool:
-        changed = False
-        product_map = {str(row.get("codigo", "") or "").strip(): row for row in list(self.ensure_data().get("produtos", []) or [])}
-        for line in list(note.get("linhas", []) or []):
-            if self.desktop_main.origem_is_materia(line.get("origem", "Produto")):
-                continue
-            product = product_map.get(str(line.get("ref", "") or "").strip())
-            if not product:
-                continue
-            new_price = round(self._parse_float(self.desktop_main.produto_preco_unitario(product), 0), 6)
-            old_price = self._parse_float(line.get("preco", 0), 0)
-            if abs(new_price - old_price) > 1e-9:
-                line["preco"] = new_price
-                qty = self._parse_float(line.get("qtd", 0), 0)
-                discount = max(0.0, min(100.0, self._parse_float(line.get("desconto", 0), 0)))
-                iva = max(0.0, min(100.0, self._parse_float(line.get("iva", 23), 23)))
-                base = (qty * new_price) * (1.0 - (discount / 100.0))
-                line["total"] = round(base + (base * iva / 100.0), 4)
-                changed = True
-            new_desc = str(product.get("descricao", "") or "").strip()
-            if new_desc and str(line.get("descricao", "") or "").strip() != new_desc:
-                line["descricao"] = new_desc
-                changed = True
-        return changed
+        return purchase_pricing(self).sync_products(self.ensure_data().get("produtos", []), note)
 
     def _update_materia_preco_from_unit(self, materia_id: str, preco_unit: Any) -> bool:
-        material = self.material_by_id(str(materia_id or "").strip())
-        if material is None:
-            return False
-        price_line = self._parse_float(preco_unit, 0)
-        old = self._parse_float(material.get("p_compra", 0), 0)
-        new_value = old
-        formato = str(material.get("formato") or self.desktop_main.detect_materia_formato(material) or "").strip()
-        if formato == "Tubo":
-            metros = self._parse_float(material.get("metros", 0), 0)
-            if metros > 0:
-                new_value = round(price_line / metros, 6)
-        elif formato in ("Chapa", "Perfil"):
-            peso = self._parse_float(material.get("peso_unid", 0), 0)
-            if peso > 0:
-                new_value = round(price_line / peso, 6)
-        else:
-            new_value = round(price_line, 6)
-        if abs(new_value - old) <= 1e-9:
-            return False
-        material["p_compra"] = new_value
-        material["atualizado_em"] = self.desktop_main.now_iso()
-        refresh_model = getattr(self, "_conjunto_refresh_model_prices", None)
-        if callable(refresh_model):
-            for model in list(self.ensure_data().get("conjuntos", []) or []):
+        data = self.ensure_data()
+        changed = purchase_pricing(self).update_material(data.get("materiais", []), materia_id, preco_unit)
+        if changed:
+            for model in list(data.get("conjuntos", []) or []):
                 if isinstance(model, dict):
-                    refresh_model(model)
-        return True
+                    self._conjunto_refresh_model_prices(model)
+        return changed
 
     def _update_produto_preco_from_unit(self, produto_codigo: str, preco_unit: Any) -> bool:
-        code = str(produto_codigo or "").strip()
-        product = next((row for row in list(self.ensure_data().get("produtos", []) or []) if str(row.get("codigo", "") or "").strip() == code), None)
-        if product is None:
-            return False
-        price_line = self._parse_float(preco_unit, 0)
-        old = self._parse_float(product.get("p_compra", 0), 0)
-        new_value = old
-        modo = self.desktop_main.produto_modo_preco(product.get("categoria", ""), product.get("tipo", ""))
-        if modo == "peso":
-            peso = self._parse_float(product.get("peso_unid", 0), 0)
-            if peso > 0:
-                new_value = round(price_line / peso, 6)
-        elif modo == "metros":
-            metros = self._parse_float(product.get("metros_unidade", product.get("metros", 0)), 0)
-            if metros > 0:
-                new_value = round(price_line / metros, 6)
-        else:
-            new_value = round(price_line, 6)
-        if abs(new_value - old) <= 1e-9:
-            return False
-        product["p_compra"] = new_value
-        product["atualizado_em"] = self.desktop_main.now_iso()
-        refresh_model = getattr(self, "_conjunto_refresh_model_prices", None)
-        if callable(refresh_model):
-            for model in list(self.ensure_data().get("conjuntos", []) or []):
+        data = self.ensure_data()
+        changed = purchase_pricing(self).update_product(data.get("produtos", []), produto_codigo, preco_unit)
+        if changed:
+            for model in list(data.get("conjuntos", []) or []):
                 if isinstance(model, dict):
-                    refresh_model(model)
-        return True
+                    self._conjunto_refresh_model_prices(model)
+        return changed
 
     def _resolve_supplier(self, raw_value: str) -> tuple[str, str, str]:
         raw = str(raw_value or "").strip()

@@ -3,6 +3,9 @@
 | Comportamento | Implementacao |
 | --- | --- |
 | Rascunho, aprovacao, envio, remocao e conversao por fornecedor | `application/note_lifecycle.py` |
+| Guardar nota e catalogos de precos numa operacao | `application/note_commands.py` |
+| Normalizar linhas e inferir materiais | `application/line_normalization.py` |
+| Precos e sincronizacao das linhas | `application/pricing.py`, `application/material_lines.py` |
 | Estados derivados das entregas | `application/note_status.py` |
 | Gravacao preparada das notas e sequencia local | `infrastructure/legacy_note_repository.py` |
 | Datas e referencias ausentes da tabela historica | `infrastructure/note_metadata.py` |
@@ -22,8 +25,17 @@ transacao que as tabelas relacionais. Nao e necessaria uma alteracao de schema.
 O carregamento aplica apenas os campos permitidos a notas que ainda existem.
 Datas perdidas antes desta correcao nao sao reconstruidas nem inventadas.
 
+A gravacao completa usa `LegacyPurchaseRepository` para notas, produtos,
+materiais e conjuntos. Os calculos decorrem em copias; os conjuntos sao
+recalculados uma vez depois de atualizar os precos. Apenas o resultado final e
+publicado. Os adaptadores antigos reutilizam as mesmas regras numericas.
+
 ## Verificacao
 
+- `scripts/verify_purchase_commands.py`: preparacao dos quatro catalogos,
+  falhas de calculo/escrita, uma gravacao e conflitos locais.
+- `scripts/verify_purchase_lines.py`: materiais, produtos, inferencia e valores
+  nao finitos.
 - `scripts/verify_purchase_lifecycle.py`: validacoes, estados, duplicacao,
   falhas de gravacao, conflitos locais e metadados.
 - `scripts/verify_database_rollback.py verify_purchase_lifecycle_flow`:
@@ -33,6 +45,7 @@ Datas perdidas antes desta correcao nao sao reconstruidas nem inventadas.
 
 ## Fronteira ainda historica
 
-`ne_save`, normalizacao e precos de linhas, sincronizacao de catalogos,
-rececao e documentos ainda dependem dos adaptadores antigos. Este modulo
+Sugestoes e historico de fornecedores, rececao e documentos ainda dependem
+dos adaptadores antigos. A geometria e algumas regras de valor continuam
+ligadas por capacidades explicitas na composicao. Este modulo
 nao representa a conclusao da migracao de compras ou do ERP.

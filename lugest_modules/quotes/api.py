@@ -11,7 +11,9 @@ from .application.assembly_queries import AssemblyQueries
 from .application.conversion import QuoteConversion, ConversionRepository
 from .application.purchase_needs import PurchaseNeeds, PurchaseNeedsRepository
 
-__all__ = ['AssemblyPair', 'AssemblyPairRepository', 'LineRouting', 'RoutingRules', 'NestingStudyRepository', 'NestingStudyService', 'product_line', 'service_line',
+__all__ = ['PurchaseQuote', 'AssemblyPair', 'AssemblyPairRepository', 'LineRouting', 'RoutingRules', 'NestingStudyRepository', 'NestingStudyService', 'product_line', 'service_line',
            'QuoteCommands', 'QuoteWriteRepository', 'QuoteQueries', 'QuoteReadRepository',
            'AssemblyCatalog', 'AssemblyRefresh', 'AssemblyCatalogRepository', 'AssemblyQueries',
            'QuoteConversion', 'ConversionRepository', 'PurchaseNeeds', 'PurchaseNeedsRepository']
+
+from .application.purchase_quote import PurchaseQuote

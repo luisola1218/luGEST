@@ -16,3 +16,10 @@ def purchase_needs(backend) -> PurchaseNeeds:
             detect_materia_formato=lambda material: backend.desktop_main.detect_materia_formato(material),
         ),
     )
+
+
+from lugest_modules.quotes.application.purchase_quote import PurchaseQuote
+
+
+def purchase_quote(backend) -> PurchaseQuote:
+    return PurchaseQuote(purchase_needs(backend), backend._parse_float, backend.ne_save, backend.ne_detail)

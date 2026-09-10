@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from lugest_modules.quotes.application.purchase_quote import PurchaseQuote
 from lugest_modules.quotes.application.purchase_needs import PurchaseNeeds, PurchaseNeedsRules
 from lugest_modules.quotes.infrastructure.legacy_purchase_needs_repository import LegacyPurchaseNeedsRepository
 
@@ -44,6 +45,21 @@ def main():
         pass
     else:
         raise AssertionError("Missing quote accepted")
+    saved = []
+    def create(payload):
+        saved.append(deepcopy(payload))
+        return {"numero": "NE1", "linhas": payload["lines"]}
+    quotation = PurchaseQuote(service, rules.parse_float, create, lambda number: {"numero": number})
+    result = quotation.create("O1")
+    assert result["numero"] == "NE1" and saved[0]["lines"][0]["qtd"] == 2
+    assert result["line_count"] == 1 and state == original
+    try:
+        quotation.create("O1", [dict(product, qtd=1)])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Purchase request created without shortage")
+    assert len(saved) == 1
     assert "main" not in sys.modules and not any(name.startswith("PySide6") for name in sys.modules)
     print("purchase-needs-ok repeated-products=yes repeated-materials=yes reservations=yes read-only=yes")
 

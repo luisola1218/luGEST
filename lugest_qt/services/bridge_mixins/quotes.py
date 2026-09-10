@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 from lugest_qt.services.quote_routing_composition import line_routing
-from lugest_qt.services.quote_purchase_composition import purchase_needs
+from lugest_qt.services.quote_purchase_composition import purchase_needs, purchase_quote
 from lugest_qt.services.quote_order_composition import quote_conversion
 from lugest_modules.quotes.application.assemblies import normalize_item, price_item, refresh_model, expand_model, technical_sheet
 from lugest_qt.services.assembly_composition import assembly_rules, assembly_refresh, assembly_catalog, assembly_queries
@@ -349,60 +349,7 @@ class QuotesBridgeMixin:
         return purchase_needs(self).rows(numero, lines)
 
     def orc_create_purchase_quote(self, numero: str, lines: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        numero_txt = str(numero or "").strip()
-        needs = self.orc_purchase_needs(numero_txt, lines)
-        if not needs:
-            raise ValueError("Nao existem necessidades de compra nas linhas do orcamento.")
-        note = self.ne_save(
-            {
-                "fornecedor": "",
-                "fornecedor_id": "",
-                "contacto": "",
-                "obs": f"Pedido de cotacao gerado a partir do orcamento {numero_txt}".strip(),
-                "lines": [
-                    (
-                        {
-                            "ref": str(need.get("ref", "") or "").strip(),
-                            "descricao": str(need.get("descricao", "") or "").strip() or str(need.get("material", "") or "").strip(),
-                            "origem": "Materia-prima",
-                            "qtd": round(self._parse_float(need.get("qtd", 0), 0), 2),
-                            "unid": str(need.get("unid", "") or "UN").strip() or "UN",
-                            "preco": round(self._parse_float(need.get("preco", 0), 0), 4),
-                            "desconto": 0.0,
-                            "iva": 23.0,
-                            "material": str(need.get("material", "") or "").strip(),
-                            "espessura": str(need.get("espessura", "") or "").strip(),
-                            "dimensao": str(need.get("dimensao", "") or "").strip(),
-                            "dimensoes": str(need.get("dimensao", "") or "").strip(),
-                            "formato": str(need.get("formato", "") or "Chapa").strip() or "Chapa",
-                            "comprimento": self._parse_float(need.get("comprimento", 0), 0),
-                            "largura": self._parse_float(need.get("largura", 0), 0),
-                            "diametro": self._parse_float(need.get("diametro", 0), 0),
-                            "metros": self._parse_float(need.get("metros", 0), 0),
-                            "kg_m": self._parse_float(need.get("kg_m", 0), 0),
-                            "peso_unid": self._parse_float(need.get("peso_unid", 0), 0),
-                            "_material_pending_create": bool(need.get("_material_pending_create", False)),
-                            "_material_manual": bool(need.get("_material_manual", False)),
-                        }
-                        if str(need.get("kind", "") or "") == "material"
-                        else {
-                            "ref": str(need.get("ref", "") or "").strip(),
-                            "descricao": str(need.get("descricao", "") or "").strip(),
-                            "origem": "Produto",
-                            "qtd": round(self._parse_float(need.get("qtd", 0), 0), 2),
-                            "unid": str(need.get("unid", "") or "UN").strip() or "UN",
-                            "preco": round(self._parse_float(need.get("preco", 0), 0), 4),
-                            "desconto": 0.0,
-                            "iva": 23.0,
-                            "_product_pending_create": bool(need.get("_product_pending_create", False)),
-                        }
-                    )
-                    for need in needs
-                ],
-            }
-        )
-        note_number = str(note.get("numero", "") or "").strip()
-        return {"numero": note_number, "line_count": len(list(note.get("linhas", []) or [])), "needs": needs, "detail": self.ne_detail(note_number)}
+        return purchase_quote(self).create(numero, lines)
 
     def orc_suggest_notes(self, payload: dict[str, Any]) -> str:
         helper = self._orc_render_helper()

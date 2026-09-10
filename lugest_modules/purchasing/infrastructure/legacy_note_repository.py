@@ -21,17 +21,21 @@ class LegacyNoteRepository:
         return self.allocate(self.candidate)
 
     def replace(self, rows, *, expected):
+        return self._replace_catalogs({"notas_encomenda": rows}, {"notas_encomenda": expected})
+
+    def _replace_catalogs(self, updates, expected):
         data = self.get_data()
         try:
-            if self.rows() != expected:
+            if any(list(data.get(key, []) or []) != rows for key, rows in expected.items()):
                 raise ValueError("As notas foram alteradas. Atualize e tente novamente.")
-            keys = ["notas_encomenda"]
+            keys = list(updates)
             if self.candidate is not None:
                 if self.original_sequence != ("seq" in data, data.get("seq")):
                     raise ValueError("A numeracao foi alterada. Atualize e tente novamente.")
                 keys.append("seq")
             previous = {key: deepcopy(data[key]) for key in keys if key in data}
-            data["notas_encomenda"] = deepcopy(rows)
+            prepared = deepcopy(updates)
+            data.update(prepared)
             if self.candidate is not None:
                 data["seq"] = deepcopy(self.candidate["seq"])
             try:

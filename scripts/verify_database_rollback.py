@@ -23,7 +23,52 @@ sys.path.insert(0, str(ROOT))
 FLOWS = ("verify_purchase_flow", "verify_conjuntos_montagem_flow",
          "verify_fabrication_order_flow", "verify_planning_flow", "verify_billing_flow",
          "verify_quote_nesting_flow", "verify_inventory_flow", "verify_transportes_module",
-         "verify_transport_tariff_flow", "verify_quality_nc_flow", "verify_transport_stop_flow", "verify_assembly_pair_flow", "verify_quality_document_flow", "verify_purchase_lifecycle_flow")
+         "verify_transport_tariff_flow", "verify_quality_nc_flow", "verify_transport_stop_flow", "verify_assembly_pair_flow", "verify_quality_document_flow", "verify_purchase_lifecycle_flow", "verify_purchase_command_flow")
+
+
+def _purchase_command_flow():
+    from uuid import uuid4
+    from copy import deepcopy
+    from lugest_qt.services.legacy_backend import LegacyBackend
+    backend = LegacyBackend()
+    token = uuid4().hex[:10]
+    code = "P-NE-" + token
+    backend.product_save({"codigo": code, "descricao": "Produto teste compra", "p_compra": 2, "qty": 1})
+    payload = {"lines": [{"ref": code, "origem": "Produto", "descricao": "Produto teste compra", "qtd": 2, "preco": 4, "iva": 0}]}
+    number = backend.ne_save(payload)["numero"]
+    backend.reload(force=True)
+    assert backend.product_detail(code)["p_compra"] == 4
+    find = lambda: next(row for row in backend.ensure_data()["notas_encomenda"] if row["numero"] == number)
+    assert find()["linhas"][0]["preco"] == 4 and find()["total"] == 8
+    changed = deepcopy(payload)
+    changed["numero"] = number
+    changed["lines"][0]["preco"] = 5
+    before = deepcopy(backend.ensure_data())
+    save = backend._save
+    def fail(**kwargs):
+        raise RuntimeError("Controlled persistence failure")
+    backend._save = fail
+    try:
+        try:
+            backend.ne_save(changed)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("Injected failure hidden")
+        assert backend.ensure_data() == before
+    finally:
+        backend._save = save
+    backend.ne_save(changed)
+    backend.reload(force=True)
+    assert find()["linhas"][0]["preco"] == 5 and find()["total"] == 10
+    assert backend.product_detail(code)["p_compra"] == 5
+    rfq = backend.orc_create_purchase_quote("ORC-TEST-" + token, [{
+        "tipo_item": backend.desktop_main.ORC_LINE_TYPE_PRODUCT,
+        "produto_codigo": code, "descricao": "Produto teste compra", "qtd": 3}])
+    backend.reload(force=True)
+    request = next(row for row in backend.ensure_data()["notas_encomenda"] if row["numero"] == rfq["numero"])
+    assert request["linhas"][0]["qtd"] == 2 and backend.product_detail(code)["qty"] == 1
+    print("purchase-command-db-ok create=yes edit=yes price-catalog=yes failure-recovery=yes quote-shortage=yes reload=yes", flush=True)
 
 
 def _purchase_lifecycle_flow():
@@ -327,6 +372,8 @@ def main():
                 code = _transport_tariff_flow()
             elif args.flow == 'verify_quality_nc_flow':
                 code = _quality_nc_flow()
+            elif args.flow == 'verify_purchase_command_flow':
+                code = _purchase_command_flow()
             elif args.flow == 'verify_purchase_lifecycle_flow':
                 code = _purchase_lifecycle_flow()
             elif args.flow == 'verify_quality_document_flow':
