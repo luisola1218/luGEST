@@ -135,6 +135,7 @@ if ($SafeOnly) {
         'scripts\verify_billing_payments.py',
         'scripts\verify_quality_nonconformities.py',
         'scripts\verify_quality_documents.py',
+        'scripts\verify_purchase_lifecycle.py',
         'scripts\verify_assembly_rules.py',
         'scripts\verify_quote_order_lines.py',
         'scripts\verify_quote_routing.py',

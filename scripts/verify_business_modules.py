@@ -18,7 +18,7 @@ def references(table):
 
 
 def main():
-    for module in ('clients', 'inventory', 'quotes', 'transport', 'billing', 'quality'):
+    for module in ('clients', 'inventory', 'quotes', 'transport', 'billing', 'quality', 'purchasing'):
         importlib.import_module(f'lugest_modules.{module}.api')
     assert not any(name.startswith('PySide6') for name in sys.modules), 'Business APIs loaded Qt'
     assert 'main' not in sys.modules
@@ -74,6 +74,7 @@ def main():
                            'quality_nc_save': 'Nonconformities.save',
                            'quality_nc_remove': 'Nonconformities.remove',
                            'quality_document_save': 'QualityDocuments.save',
+                           'ne_generate_supplier_orders': 'NoteLifecycle.generate_orders',
                            'transport_detail': 'TransportQueries.detail',
                            'transport_route_sheet_render': 'RouteReport.render',
                            'assembly_model_remove': 'AssemblyCatalog.remove',

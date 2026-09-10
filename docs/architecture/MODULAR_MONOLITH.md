@@ -56,6 +56,7 @@ existencia desta estrutura com a migracao de todo o ERP.
 | Paragens, pedido externo e progressao da viagem | `lugest_modules/transport/application/stops.py` |
 | Ligacao das encomendas as viagens ativas | `lugest_modules/transport/application/order_links.py` |
 | Pagamentos de faturacao | `lugest_modules/billing/application/payments.py` |
+| Ciclo de notas de compra, conversao e estados de entrega | `lugest_modules/purchasing/README.md` |
 | Documentos e auditoria de qualidade | `lugest_modules/quality/application/documents.py` |
 | Criar, fechar, consultar e tratar duplicados de NC | `lugest_modules/quality/application/nonconformities.py` |
 | Construtor visual de conjuntos calculados | `lugest_modules/quotes/presentation/calculated_assembly_editor.py` |

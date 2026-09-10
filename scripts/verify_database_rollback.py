@@ -23,7 +23,27 @@ sys.path.insert(0, str(ROOT))
 FLOWS = ("verify_purchase_flow", "verify_conjuntos_montagem_flow",
          "verify_fabrication_order_flow", "verify_planning_flow", "verify_billing_flow",
          "verify_quote_nesting_flow", "verify_inventory_flow", "verify_transportes_module",
-         "verify_transport_tariff_flow", "verify_quality_nc_flow", "verify_transport_stop_flow", "verify_assembly_pair_flow", "verify_quality_document_flow")
+         "verify_transport_tariff_flow", "verify_quality_nc_flow", "verify_transport_stop_flow", "verify_assembly_pair_flow", "verify_quality_document_flow", "verify_purchase_lifecycle_flow")
+
+
+def _purchase_lifecycle_flow():
+    from lugest_qt.services.legacy_backend import LegacyBackend
+    backend = LegacyBackend()
+    number = backend.ne_create_draft()["numero"]
+    backend.reload(force=True)
+    find = lambda: next(row for row in backend.ensure_data()["notas_encomenda"] if row["numero"] == number)
+    assert find()["_draft"]
+    backend.ne_save({"numero": number, "lines": [{"descricao": "Teste ciclo de compra", "origem": "Produto", "qtd": 1, "preco": 5}]})
+    backend.ne_approve(number)
+    backend.reload(force=True)
+    assert find()["estado"] in {"Aprovada", "Cotacao aprovada"} and find()["data_aprovacao"]
+    backend.ne_mark_sent(number)
+    backend.reload(force=True)
+    assert find()["estado"] == "Enviada" and find()["data_envio"]
+    backend.ne_remove(number)
+    backend.reload(force=True)
+    assert not any(row["numero"] == number for row in backend.ensure_data()["notas_encomenda"])
+    print("purchase-lifecycle-db-ok draft=yes approve=yes sent=yes remove=yes reload=yes", flush=True)
 
 
 def _quality_document_flow():
@@ -307,6 +327,8 @@ def main():
                 code = _transport_tariff_flow()
             elif args.flow == 'verify_quality_nc_flow':
                 code = _quality_nc_flow()
+            elif args.flow == 'verify_purchase_lifecycle_flow':
+                code = _purchase_lifecycle_flow()
             elif args.flow == 'verify_quality_document_flow':
                 code = _quality_document_flow()
             elif args.flow == 'verify_assembly_pair_flow':
