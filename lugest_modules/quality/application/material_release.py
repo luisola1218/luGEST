@@ -20,6 +20,7 @@ class ReleaseRules:
     actor: Callable
     quarantine: Callable
     sync_notes: Callable
+    release_movements: Callable | None = None
 
 class MaterialRelease:
     def __init__(self, repository: ReleaseRepository, rules: ReleaseRules):
@@ -43,7 +44,9 @@ class MaterialRelease:
             raise ValueError("Material ligado a NC nao encontrado.")
         before_material = copy.deepcopy(material)
         now = self.rules.now_iso()
-        self.rules.quarantine(material, kind="Material")
+        linked = self.rules.release_movements(data, material, now, decision) if self.rules.release_movements else False
+        if not linked:
+            self.rules.quarantine(material, kind="Material")
         pending_qty = self.rules.parse_float(material.get("quality_pending_qty", 0), 0)
         before_qty = self.rules.parse_float(material.get("quantidade", 0), 0)
         stock_event = None

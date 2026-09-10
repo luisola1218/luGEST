@@ -30,8 +30,9 @@ recupera o catalogo e a auditoria perante falha imediata. O adaptador antigo
 
 ## Fronteira atual
 
-Rececao e conciliacao de movimentos ainda pertencem ao adaptador
-historico em `lugest_qt/services/bridge_mixins/quality.py`.
+Rececao, conciliacao, libertacao e consultas usam casos de uso do modulo.
+O mixin quality.py mantem as assinaturas de compatibilidade; relatórios ainda
+usam quality_reports.py e a persistencia passa pelo runtime partilhado.
 O armazenamento de ficheiros ainda usa o adaptador partilhado: a recuperacao
 do registo nao remove automaticamente um ficheiro copiado antes de uma falha
 de gravacao. A remocao de metadados tambem nao apaga o ficheiro, que pode ter
@@ -51,5 +52,25 @@ Em erro imediato recupera os cinco catalogos, incluindo campos antes ausentes.
 Teste: `scripts/verify_quality_release.py` cobre falhas, repeticao sem duplicar
 stock e alteracoes concorrentes locais. O fluxo SQL `verify_quality_nc_flow`
 cobre tambem libertacao e releitura (55 tabelas inalteradas apos rollback).
-Esta cobertura usa material sem movimentos de rececao associados; a conciliacao
-desses movimentos continua no adaptador historico e precisa de cobertura propria.
+A cobertura foi alargada a rececoes associadas e reconciliacao apos releitura
+em `verify_quality_reception_flow`.
+
+
+## Rececao e conciliacao
+
+- `application/receptions.py`: avalia um movimento, prepara NC e devolucao;
+  repositorio local de NC recolhe alteracoes e auditorias para a mesma gravacao.
+- `application/delivery_movements.py`: projecao de movimentos, totais de qualidade
+  e libertacao de pendentes. Quantidades explicitas prevalecem sobre estimativas
+  antigas de NC; NC sem movimento so permite inferencia numa rececao unica.
+- `application/queries.py`: resumo, integridade e selecao de entidades.
+- `infrastructure/legacy_reception_repository.py`: verifica catalogos esperados,
+  prepara logs, publica uma vez e recupera oito catalogos em erro imediato.
+- `infrastructure/reception_metadata.py`: conserva decisoes quantitativas,
+  identificadores de movimentos e metadados de devolucao no runtime_state SQL.
+  A reaplicacao verifica referencia e quantidade do movimento; nao cria linhas.
+
+Testes: `verify_quality_receptions.py` e fluxo protegido
+`verify_database_rollback.py verify_quality_reception_flow`. Incluem parcial,
+rejeicao, devolucao, isolamento de notas, valores nao finitos, falha de gravacao,
+metadados, libertacao associada, conciliacao e consultas apos releitura.

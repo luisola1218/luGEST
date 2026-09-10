@@ -23,7 +23,68 @@ sys.path.insert(0, str(ROOT))
 FLOWS = ("verify_purchase_flow", "verify_conjuntos_montagem_flow",
          "verify_fabrication_order_flow", "verify_planning_flow", "verify_billing_flow",
          "verify_quote_nesting_flow", "verify_inventory_flow", "verify_transportes_module",
-         "verify_transport_tariff_flow", "verify_quality_nc_flow", "verify_transport_stop_flow", "verify_assembly_pair_flow", "verify_quality_document_flow", "verify_purchase_lifecycle_flow", "verify_purchase_command_flow")
+         "verify_transport_tariff_flow", "verify_quality_nc_flow", "verify_transport_stop_flow", "verify_assembly_pair_flow", "verify_quality_document_flow", "verify_purchase_lifecycle_flow", "verify_purchase_command_flow", "verify_quality_reception_flow")
+
+
+def _quality_reception_flow():
+    from uuid import uuid4
+    from copy import deepcopy
+    from lugest_qt.services.legacy_backend import LegacyBackend
+    backend = LegacyBackend()
+    token = uuid4().hex[:10]
+    code = "P-QA-" + token
+    backend.product_save({"codigo": code, "descricao": "Teste qualidade", "qty": 0})
+    numbers = [backend.ne_save({"lines": [{"ref": code, "origem": "Produto", "descricao": "Teste qualidade", "qtd": 5, "preco": 1}]})["numero"] for _ in range(2)]
+    for note in backend.ensure_data()["notas_encomenda"]:
+        if note["numero"] in numbers:
+            note["linhas"][0]["entregas_linha"] = [{"qtd": 5, "data": "2026-09-10", "guia": "TEST",
+                "quality_status": "EM_INSPECAO", "quality_approved_qty": 0, "quality_rejected_qty": 0, "stock_ref": code}]
+    backend._save(force=True, blocking=True)
+    backend.reload(force=True)
+    rows = [row for row in backend.quality_reception_rows() if row["id"] == code]
+    assert len(rows) == 2
+    payload = dict(tipo="Produto", id=code, movement_id=rows[0]["movement_id"], quality_status="APROVADO", qtd_aprovada=2)
+    before = deepcopy(backend.ensure_data())
+    try:
+        backend.quality_reception_save(dict(payload, qtd_aprovada=6))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Excess quantity accepted")
+    assert backend.ensure_data() == before
+    backend.quality_reception_save(payload)
+    backend.reload(force=True)
+    assert backend.product_detail(code)["qty"] == 2
+    result = backend.quality_reception_save(dict(payload, quality_status="DEVOLVER_FORNECEDOR", qtd_aprovada=0, qtd_rejeitada=1))
+    backend.reload(force=True)
+    assert any(row.get("nc_id") == result["quality_nc_id"] and row.get("qtd") == 1 for row in backend.ensure_data()["quality_documents"])
+    assert len([row for row in backend.quality_reception_rows() if row["id"] == code]) == 2
+    backend.quality_reception_save(dict(payload, qtd_aprovada=2))
+    backend.reload(force=True)
+    assert backend.product_detail(code)["qty"] == 4
+    # Link a separate material to an actual receipt and confirm release survives reconciliation.
+    material = deepcopy(backend.ensure_data()["materiais"][0])
+    mid = "MAT-QA-" + token
+    material.update(id=mid, quantidade=0, quality_pending_qty=3, quality_approved_qty=0, quality_status="EM_INSPECAO")
+    backend.ensure_data()["materiais"].append(material)
+    note = next(row for row in backend.ensure_data()["notas_encomenda"] if row["numero"] == numbers[1])
+    note["linhas"].append({"origem": "Matéria-prima", "ref": mid, "descricao": "Teste material", "qtd": 3, "preco": 1,
+        "entregas_linha": [{"qtd": 3, "data": "2026-09-10", "stock_ref": mid, "quality_status": "EM_INSPECAO"}]})
+    backend._save(force=True, blocking=True)
+    nc = backend.quality_nc_save({"origem": "Receção fornecedor", "referencia": numbers[1], "entidade_tipo": "Material", "entidade_id": mid, "material_id": mid})
+    backend.quality_nc_release_material(nc["id"])
+    backend.reload(force=True)
+    backend._quality_sync_pending_from_delivery_movements()
+    backend.reload(force=True)
+    material = backend.material_by_id(mid)
+    assert material["quantidade"] == 3 and material["quality_pending_qty"] == 0 and material["quality_status"] == "APROVADO"
+    backend.quality_nc_release_material(nc["id"])
+    backend.reload(force=True)
+    assert backend.material_by_id(mid)["quantidade"] == 3
+    assert backend.quality_summary()["documents"] >= 1
+    assert "issues" in backend.quality_data_health()
+    assert backend.quality_link_options()["Produto"]
+    print("quality-reception-db-ok partial=yes returns=yes rejected=yes linked-release=yes reconciliation=yes queries=yes reload=yes", flush=True)
 
 
 def _purchase_command_flow():
@@ -387,6 +448,8 @@ def main():
                 code = _inventory_flow()
             elif args.flow == 'verify_transport_tariff_flow':
                 code = _transport_tariff_flow()
+            elif args.flow == 'verify_quality_reception_flow':
+                code = _quality_reception_flow()
             elif args.flow == 'verify_quality_nc_flow':
                 code = _quality_nc_flow()
             elif args.flow == 'verify_purchase_command_flow':

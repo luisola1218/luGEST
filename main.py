@@ -7768,6 +7768,8 @@ def _runtime_state_payload(data):
             payload[key] = copy.deepcopy(default)
     from lugest_modules.purchasing.infrastructure.note_metadata import KEY, export_metadata
     payload[KEY] = export_metadata(source.get("notas_encomenda", []))
+    from lugest_modules.quality.infrastructure import reception_metadata
+    payload[reception_metadata.KEY] = reception_metadata.export_metadata(source)
     try:
         return json.loads(json.dumps(payload, ensure_ascii=False))
     except Exception:
@@ -7801,6 +7803,8 @@ def _apply_runtime_state_payload(data, payload):
 
     from lugest_modules.purchasing.infrastructure.note_metadata import apply_metadata
     apply_metadata(data.get("notas_encomenda", []), source)
+    from lugest_modules.quality.infrastructure import reception_metadata
+    reception_metadata.apply_metadata(data, source)
 
 
 def _extract_fornecedor_seq(value):

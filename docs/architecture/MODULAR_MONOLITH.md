@@ -223,8 +223,9 @@ AUTO_INCREMENT. Nao testa concorrencia real nem persistencia assincrona.
    Transportes ja tem servicos para tarifarios, viagens, atribuicoes, paragens
    e consultas, com renderizacao PDF separada. Os adaptadores de persistencia,
    numeracao e calculos de expedicao ainda dependem de capacidades historicas.
-   NC ja usam repositorio com auditoria, mas rececao e libertacao de stock de
-   qualidade ainda partilham estado atraves dos mixins de `LegacyBackend`.
+   Qualidade ja usa casos de uso para NC, documentos, rececao, conciliacao,
+   libertacao e consultas, com catalogos isolados e gravacao bloqueante.
+   Relatorios de qualidade e o adaptador de persistencia continuam historicos.
 4. Substituir os adaptadores do snapshot global por repositorios por modulo
    e definir as transacoes que envolvem mais de um modulo.
 5. Retirar a inicializacao global historica de `main.py` e validar concorrencia,
