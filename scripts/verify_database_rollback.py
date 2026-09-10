@@ -178,6 +178,23 @@ def _quality_nc_flow():
     backend.quality_nc_remove(identifier)
     backend.reload(force=True)
     assert not any(row.get('id') == identifier for row in backend.ensure_data().get('quality_nonconformities', []))
+    from copy import deepcopy
+    material = deepcopy(backend.ensure_data()['materiais'][0])
+    material_id = 'MAT-TEST-' + uuid4().hex[:10]
+    material.update(id=material_id, quantidade=0, quality_pending_qty=3,
+                    quality_approved_qty=0, quality_status='EM_INSPECAO', inspection_status='EM_INSPECAO')
+    backend.ensure_data()['materiais'].append(material)
+    backend._save(force=True, blocking=True)
+    backend.quality_nc_save(dict(payload, entidade_tipo='Material', entidade_id=material_id, material_id=material_id))
+    backend.quality_nc_release_material(identifier)
+    backend.reload(force=True)
+    released = backend.material_by_id(material_id)
+    assert released['quantidade'] == 3 and released['quality_pending_qty'] == 0
+    assert released['quality_status'] == 'APROVADO' and find()['estado'] == 'Fechada'
+    backend.quality_nc_release_material(identifier)
+    backend.reload(force=True)
+    assert backend.material_by_id(material_id)['quantidade'] == 3
+    print('quality-release-db-ok stock=yes close=yes repeated=yes reload=yes', flush=True)
     print('quality-nc-db-ok create=yes edit=yes close=yes remove=yes reload=yes', flush=True)
 
 

@@ -1,5 +1,7 @@
-﻿from __future__ import annotations
-from lugest_qt.services.quality_composition import nonconformities, quality_documents
+from __future__ import annotations
+from lugest_qt.services.quality_composition import nonconformities, quality_documents, material_release
+
+from lugest_modules.quality.application.stock_policy import status_code, quarantine
 
 import copy
 import re
@@ -181,43 +183,14 @@ class QualityBackendMixin:
         return entity_id_txt
 
     def _quality_status_code(self, value: Any) -> str:
-        raw = str(value or "").strip().casefold()
-        if "devol" in raw:
-            return "DEVOLVER_FORNECEDOR"
-        if "averig" in raw or "analise" in raw or "análise" in raw:
-            return "EM_AVERIGUACAO"
-        if "rejeit" in raw:
-            return "REJEITADO"
-        if "aprov" in raw:
-            return "APROVADO"
-        return "EM_INSPECAO"
+        return status_code(value)
 
     def _quality_status_is_available(self, value: Any) -> bool:
-        return self._quality_status_code(value) == "APROVADO"
+        return status_code(value) == "APROVADO"
 
     def _quality_quarantine_pending_stock(self, item: dict[str, Any], *, kind: str, max_qty: float | None = None) -> bool:
-        if not isinstance(item, dict):
-            return False
-        status = self._quality_status_code(item.get("quality_status", item.get("inspection_status", "")))
-        if status == "APROVADO":
-            return False
-        qty_key = "qty" if str(kind or "").casefold().startswith("prod") else "quantidade"
-        current_qty = self._parse_float(item.get(qty_key, 0), 0)
-        pending = self._parse_float(item.get("quality_pending_qty", 0), 0)
-        if current_qty <= 0:
-            return False
-        quarantine_qty = current_qty
-        if max_qty is not None:
-            quarantine_qty = min(current_qty, max(0.0, self._parse_float(max_qty, 0) - pending))
-        if quarantine_qty <= 0:
-            return False
-        item["quality_pending_qty"] = pending + quarantine_qty
-        item["quality_received_qty"] = max(self._parse_float(item.get("quality_received_qty", 0), 0), pending + quarantine_qty)
-        item[qty_key] = max(0.0, current_qty - quarantine_qty)
-        item["quality_blocked"] = True
-        item["logistic_status"] = str(item.get("logistic_status", "") or "RECEBIDO").strip()
-        item["atualizado_em"] = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
-        return True
+        return quarantine(item, kind=kind, max_qty=max_qty, parse_float=self._parse_float,
+                          now_iso=lambda: self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
 
     def _quality_movement_pending_qty(self, movement: dict[str, Any]) -> float:
         qty = self._parse_float(movement.get("qtd", 0), 0)
@@ -803,62 +776,7 @@ class QualityBackendMixin:
         return nonconformities(self).close(nc_id, eficacia)
 
     def quality_nc_release_material(self, nc_id: str, decision: str = "Aprovado pela qualidade") -> dict[str, Any]:
-        data = self.ensure_data()
-        nc_id_txt = str(nc_id or "").strip()
-        target = next((row for row in list(data.get("quality_nonconformities", []) or []) if isinstance(row, dict) and str(row.get("id", "") or "").strip() == nc_id_txt), None)
-        if target is None:
-            raise ValueError("Nao conformidade nao encontrada.")
-        material_id = str(target.get("material_id", "") or "").strip()
-        if not material_id and str(target.get("entidade_tipo", "") or "").strip() == "Material":
-            material_id = str(target.get("entidade_id", "") or "").strip()
-        if not material_id:
-            raise ValueError("Esta NC nao esta ligada a um material.")
-        material = self.material_by_id(material_id)
-        if material is None:
-            raise ValueError("Material ligado a NC nao encontrado.")
-        before_material = copy.deepcopy(material)
-        now = str(self.desktop_main.now_iso() or datetime.now().isoformat(timespec="seconds"))
-        self._quality_quarantine_pending_stock(material, kind="Material")
-        pending_qty = self._parse_float(material.get("quality_pending_qty", 0), 0)
-        before_qty = self._parse_float(material.get("quantidade", 0), 0)
-        if pending_qty > 0:
-            material["quantidade"] = before_qty + pending_qty
-            material["quality_pending_qty"] = 0.0
-            material["quality_approved_qty"] = self._parse_float(material.get("quality_approved_qty", 0), 0) + pending_qty
-            self.desktop_main.log_stock(
-                data,
-                "ENTRADA_QUALIDADE",
-                f"{material_id} qtd={pending_qty} NC={nc_id_txt}",
-                operador=self._current_user_label(),
-            )
-        material["quality_status"] = "APROVADO"
-        material["inspection_status"] = "APROVADO"
-        material["quality_blocked"] = False
-        material["inspection_decision"] = str(decision or "Aprovado pela qualidade").strip()
-        material["quality_nc_id"] = ""
-        material["supplier_claim_id"] = ""
-        material["quality_released_at"] = now
-        material["quality_released_by"] = self._current_user_label()
-        material["atualizado_em"] = now
-        target["decisao"] = str(decision or "Aprovado pela qualidade").strip()
-        target["acao"] = (str(target.get("acao", "") or "").strip() + f"\nLibertacao de material: {material['inspection_decision']}").strip()
-        target["estado"] = "Fechada"
-        target["closed_at"] = now
-        target["closed_by"] = self._current_user_label()
-        target["updated_at"] = now
-        target["updated_by"] = self._current_user_label()
-        self._append_audit_event(
-            data,
-            action="Material libertado pela qualidade",
-            entity_type="Material",
-            entity_id=material_id,
-            summary=f"NC {nc_id_txt}: {material['inspection_decision']}",
-            before=before_material,
-            after=material,
-        )
-        self._sync_ne_from_materia()
-        self._save(force=True, audit=False)
-        return {"material_id": material_id, "quality_status": "APROVADO", "nc_id": nc_id_txt}
+        return material_release(self).release(nc_id, decision)
 
     def quality_nc_remove(self, nc_id: str) -> None:
         nonconformities(self).remove(nc_id)

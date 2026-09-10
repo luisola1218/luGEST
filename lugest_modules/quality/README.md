@@ -30,9 +30,26 @@ recupera o catalogo e a auditoria perante falha imediata. O adaptador antigo
 
 ## Fronteira atual
 
-Rececao, movimentos e libertacao de stock ainda pertencem ao adaptador
+Rececao e conciliacao de movimentos ainda pertencem ao adaptador
 historico em `lugest_qt/services/bridge_mixins/quality.py`.
 O armazenamento de ficheiros ainda usa o adaptador partilhado: a recuperacao
 do registo nao remove automaticamente um ficheiro copiado antes de uma falha
 de gravacao. A remocao de metadados tambem nao apaga o ficheiro, que pode ter
 outras referencias. Nao assumir uma transacao unica entre SQL e ficheiros.
+
+
+## Libertacao de material por NC
+
+`application/material_release.py` prepara materiais, NC e notas de compra em
+copias. `stock_policy.py` concentra a politica de quarentena, tambem usada
+pelas fachadas de compatibilidade. A composicao fornece a sincronizacao de
+linhas de compra por uma capacidade explicita.
+`infrastructure/legacy_release_repository.py` verifica o estado esperado,
+prepara stock_log/audit_log antes de publicar e pede uma gravacao bloqueante.
+Em erro imediato recupera os cinco catalogos, incluindo campos antes ausentes.
+
+Teste: `scripts/verify_quality_release.py` cobre falhas, repeticao sem duplicar
+stock e alteracoes concorrentes locais. O fluxo SQL `verify_quality_nc_flow`
+cobre tambem libertacao e releitura (55 tabelas inalteradas apos rollback).
+Esta cobertura usa material sem movimentos de rececao associados; a conciliacao
+desses movimentos continua no adaptador historico e precisa de cobertura propria.
